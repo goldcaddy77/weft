@@ -10,7 +10,7 @@ Everything else stays with your application or upstream libraries.
 
 Only `chat()` is required. If an SDK can produce a response with content, tool calls, usage, model, and stop reason, it can satisfy the structural interface.
 
-```typescript
+```typescript partial
 import type { ChatResponse, LLMProvider, Message } from 'weft';
 
 const provider: LLMProvider = {
@@ -31,17 +31,17 @@ const provider: LLMProvider = {
 
 ## Built-In Providers Are Gone
 
-Weft no longer ships built-in providers. Supply your own from `@anthropic-ai/sdk`, `openai`, a hand-rolled HTTP client, `armorer`, or a test mock.
+Weft no longer ships built-in providers. Supply your own from [`@anthropic-ai/sdk`](https://www.npmjs.com/package/@anthropic-ai/sdk), [`openai`](https://www.npmjs.com/package/openai), a hand-rolled HTTP client, [armorer](https://github.com/stevekinney/armorer), or a test mock.
 
 That keeps provider policy where it belongs: near API keys, retry behavior, regional routing, logging, and vendor-specific response parsing.
 
 ## What About MCP?
 
-Weft no longer ships an MCP client.
+Weft no longer ships a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) client.
 
 If you want tools from MCP servers, use any MCP client and adapt the discovered tools to `AgentTool[]`:
 
-```typescript
+```typescript partial
 import type { AgentTool } from 'weft';
 
 async function loadMcpTools(client: ThirdPartyMcpClient): Promise<AgentTool[]> {
@@ -66,7 +66,7 @@ Tenant-scoped tools are the workflow's responsibility, not Weft's.
 
 That is deliberate. The workflow has the tenant context, request shape, authorization data, and product-specific boundary. A central agent definition does not.
 
-```typescript
+```typescript partial
 import type { AgentToolDefinition, LLMProvider, TenantContext, WorkflowContext } from 'weft';
 
 declare const provider: LLMProvider;

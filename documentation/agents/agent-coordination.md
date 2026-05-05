@@ -110,7 +110,7 @@ The debate runs in rounds. In each round, the advocate argues first, then the cr
 
 The `DebateResult`:
 
-```typescript
+```typescript partial
 interface DebateResult {
   verdict: string;
   rounds: DebateRound[];
@@ -164,7 +164,7 @@ Two additional options let you tune consensus behavior. Set `voting: 'confidence
 
 The `SuperviseResult`:
 
-```typescript
+```typescript partial
 interface SuperviseResult {
   finalResult: string;
   workerResults: AgentResult[];

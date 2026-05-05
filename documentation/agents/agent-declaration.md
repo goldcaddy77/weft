@@ -6,7 +6,7 @@ Definitions are intentionally thin. They do not own provider setup, tool discove
 
 ## Basic usage
 
-```typescript
+```typescript partial
 import { defineAgent, type AgentToolDefinition } from 'weft';
 
 declare const webSearch: AgentToolDefinition;
@@ -25,7 +25,7 @@ const researcher = defineAgent({
 
 The resulting value is an `AgentDefinition`:
 
-```typescript
+```typescript partial
 interface AgentDefinition {
   name: string;
   model: string;
@@ -53,7 +53,7 @@ interface AgentDefinition {
 
 Register the definition with a provider. Weft only requires a structural `LLMProvider`: a `name` and a `chat()` method.
 
-```typescript
+```typescript partial
 import { Engine, defineAgent, type LLMProvider } from 'weft';
 
 declare const provider: LLMProvider;
@@ -71,7 +71,7 @@ engine.register(assistant, { provider });
 
 After registration, start the agent by name:
 
-```typescript
+```typescript partial
 const handle = await engine.start('assistant', 'Summarize this incident report.');
 const result = await handle.result();
 ```
@@ -82,7 +82,7 @@ For provider setup examples and ownership boundaries, see [What Weft Owns](./wha
 
 Use `ctx.agent()` when the agent loop is part of a larger workflow:
 
-```typescript
+```typescript partial
 import type { LLMProvider, WorkflowContext } from 'weft';
 
 declare const provider: LLMProvider;
@@ -106,7 +106,7 @@ async function* triageWorkflow(ctx: WorkflowContext, incident: string) {
 
 **Tenant-scoped tools:** Weft no longer enforces tool scoping centrally. Pass scoped tools at invocation time.
 
-```typescript
+```typescript partial
 import type { AgentToolDefinition, LLMProvider, TenantContext, WorkflowContext } from 'weft';
 
 declare const provider: LLMProvider;

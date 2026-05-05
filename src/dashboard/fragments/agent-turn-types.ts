@@ -13,7 +13,7 @@ export interface AgentTurnData {
   response: string;
   /**
    * Cumulative conversation snapshot at the moment this turn completed,
-   * truncated per the caps in `src/ai/event-message-snapshot.ts`. Empty for
+   * truncated per the caps in `src/ai/agent/event-message-snapshot.ts`. Empty for
    * legacy events that pre-date the snapshot field.
    */
   messages: Message[];

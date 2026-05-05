@@ -45,7 +45,7 @@ The practical result is straightforward. If an agent plans 30 tool calls and the
 
 Use `ctx.agent()` when the agent loop is one step inside a larger workflow:
 
-```typescript
+```typescript partial
 import { Engine, type AgentTool, type LLMProvider, type WorkflowContext } from 'weft';
 
 declare const provider: LLMProvider;

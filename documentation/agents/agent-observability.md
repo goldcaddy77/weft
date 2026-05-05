@@ -17,7 +17,7 @@ Fired before a provider call starts.
 | `inputTokenEstimate` | `number` | Estimated input tokens for the current turn     |
 | `conversationLength` | `number` | Number of messages in the conversation snapshot |
 
-```typescript
+```typescript partial
 import { AgentTurnStartedEvent } from 'weft';
 
 const events = new EventTarget();
@@ -44,7 +44,7 @@ Fired after a provider call completes.
 | `toolCallCount` | `number`             | Number of tool calls requested by the model |
 | `messages`      | `readonly Message[]` | Size-bounded conversation snapshot          |
 
-```typescript
+```typescript partial
 import { AgentTurnCompletedEvent } from 'weft';
 
 events.addEventListener(AgentTurnCompletedEvent.type, (event) => {
@@ -94,7 +94,7 @@ Fired after an agent loop resumes and the effect log prevents one or more duplic
 | `agentId`             | `string` | Agent instance identifier                                   |
 | `duplicatesPrevented` | `number` | Tool calls replayed from committed records, not re-executed |
 
-```typescript
+```typescript partial
 import { AgentCheckpointResumedEvent } from 'weft';
 
 events.addEventListener(AgentCheckpointResumedEvent.type, (event) => {
@@ -128,7 +128,7 @@ events.addEventListener(AgentCheckpointResumedEvent.type, (event) => {
 
 **Tool performance monitoring:** Pair `AgentToolCalledEvent` and `AgentToolReturnedEvent` by `operationId`. Record `duration`, `success`, `toolName`, `workflowId`, and `agentId` so slow tools are visible without inspecting provider traces.
 
-```typescript
+```typescript partial
 import { AgentToolReturnedEvent } from 'weft';
 
 events.addEventListener(AgentToolReturnedEvent.type, (event) => {
@@ -142,7 +142,7 @@ events.addEventListener(AgentToolReturnedEvent.type, (event) => {
 
 **Checkpoint resume monitoring:** Count `AgentCheckpointResumedEvent` occurrences and `duplicatesPrevented`. A nonzero count is usually good news: recovery happened and committed effects were not duplicated.
 
-```typescript
+```typescript partial
 import { AgentCheckpointResumedEvent } from 'weft';
 
 events.addEventListener(AgentCheckpointResumedEvent.type, (event) => {

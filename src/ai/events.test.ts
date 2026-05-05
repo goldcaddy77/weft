@@ -32,15 +32,10 @@ describe('AgentTurnCompletedEvent', () => {
       'agent-2',
       1,
       'claude-3-opus',
-      'claude-3-haiku',
       500,
       200,
-      0,
-      0,
       1200,
       3,
-      0,
-      'thinking step by step',
       [],
     );
 
@@ -49,15 +44,10 @@ describe('AgentTurnCompletedEvent', () => {
     expect(event.agentId).toBe('agent-2');
     expect(event.turnIndex).toBe(1);
     expect(event.model).toBe('claude-3-opus');
-    expect(event.selectedModel).toBe('claude-3-haiku');
     expect(event.inputTokens).toBe(500);
     expect(event.outputTokens).toBe(200);
-    expect(event.cost).toBe(0);
-    expect(event.cumulativeCost).toBe(0);
     expect(event.duration).toBe(1200);
     expect(event.toolCallCount).toBe(3);
-    expect(event.fallbackAttempts).toBe(0);
-    expect(event.reasoningTrace).toBe('thinking step by step');
   });
 });
 

@@ -2,20 +2,17 @@ import type {
   AgentOptions,
   AgentResult,
   AgentTool,
+  AgentToolCalledEvent,
+  AgentToolReturnedEvent,
+  AgentTurnCompletedEvent,
+  AgentTurnStartedEvent,
   ChatResponse,
   LLMProvider,
   Message,
   PersistedAgentLoopState,
   TurnUsageEntry,
-} from '../../agent/index.ts';
-import { AgentLoopSuspendedError } from '../../agent/index.ts';
-import { defineAgent, isAgentDefinition } from '../../declaration.ts';
-import type {
-  AgentToolCalledEvent,
-  AgentToolReturnedEvent,
-  AgentTurnCompletedEvent,
-  AgentTurnStartedEvent,
-} from '../../events/index.ts';
+} from '../../../index.ts';
+import { AgentLoopSuspendedError, defineAgent, isAgentDefinition } from '../../../index.ts';
 
 const agentOptions: AgentOptions = {} as AgentOptions;
 const agentResult: AgentResult = {} as AgentResult;
@@ -45,3 +42,17 @@ void toolReturnedEvent;
 void AgentLoopSuspendedError;
 void defineAgent;
 void isAgentDefinition;
+
+// @ts-expect-error Removed budget API must not be exported from the public surface.
+const removedBudgetTracker = null as unknown as import('../../../index.ts').BudgetTracker;
+// @ts-expect-error Removed MCP source descriptors must not be exported from the public surface.
+const removedMcpToolSource = null as unknown as import('../../../index.ts').MCPToolSource;
+// @ts-expect-error Removed model-routing context must not be exported from the public surface.
+const removedRoutingContext = null as unknown as import('../../../index.ts').RoutingContext;
+// @ts-expect-error Removed streaming chunks must not be exported from the public surface.
+const removedStreamChunk = null as unknown as import('../../../index.ts').StreamChunk;
+
+void removedBudgetTracker;
+void removedMcpToolSource;
+void removedRoutingContext;
+void removedStreamChunk;

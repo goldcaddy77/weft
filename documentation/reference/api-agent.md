@@ -10,7 +10,7 @@ For guided documentation, start with the [agent overview](../agents/agent-overvi
 
 Drives a multi-turn conversation where the model can call tools, receive results, and continue until it returns a final answer or reaches `maxTurns`.
 
-```ts
+```ts partial
 function executeAgentLoop(options: AgentOptions, input: string): Promise<AgentResult>;
 ```
 
@@ -26,7 +26,7 @@ Thrown internally when the provider supplies a resume hint and the loop suspends
 
 ## Agent Options
 
-```ts
+```ts partial
 interface AgentOptions {
   model: string;
   provider: LLMProvider;
@@ -60,7 +60,7 @@ interface AgentOptions {
 
 ## Agent Result
 
-```ts
+```ts partial
 interface AgentResult {
   content: string;
   conversation: Message[];
@@ -70,15 +70,22 @@ interface AgentResult {
   turnUsage: TurnUsageEntry[];
 }
 
-interface TurnUsageEntry {
-  turnNumber: number;
-  inputTokens: number | null;
-  outputTokens: number | null;
-  source: 'provider' | 'unavailable';
-}
+type TurnUsageEntry =
+  | {
+      turnNumber: number;
+      source: 'provider';
+      inputTokens: number;
+      outputTokens: number;
+    }
+  | {
+      turnNumber: number;
+      source: 'unavailable';
+      inputTokens: null;
+      outputTokens: null;
+    };
 ```
 
-`turnUsage` records provider-reported token usage when available and marks unavailable usage explicitly.
+`turnUsage` records provider-reported token usage. The built-in loop records `source: 'provider'`; the `source: 'unavailable'` variant exists for downstream wrappers or aggregators that need to represent turns without usage data.
 
 ## Declaration
 
@@ -86,7 +93,7 @@ interface TurnUsageEntry {
 
 Declares a reusable agent definition.
 
-```ts
+```ts partial
 function defineAgent<TInput = unknown, TOutput = unknown>(
   options: AgentDefinitionOptions<TInput, TOutput>,
 ): AgentDefinition<TInput, TOutput>;
@@ -94,7 +101,7 @@ function defineAgent<TInput = unknown, TOutput = unknown>(
 
 ### `AgentDefinition`
 
-```ts
+```ts partial
 interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   name: string;
   model: string;
@@ -110,7 +117,7 @@ The runtime value also carries internal brand and phantom type fields.
 
 ### `AgentToolDefinition`
 
-```ts
+```ts partial
 interface AgentToolDefinition {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
@@ -124,7 +131,7 @@ interface AgentToolDefinition {
 
 ### `AgentTool`
 
-```ts
+```ts partial
 interface AgentTool {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
@@ -135,7 +142,7 @@ interface AgentTool {
 
 ### `ToolIdentityResult`
 
-```ts
+```ts partial
 interface ToolIdentityResult {
   semanticHash: string;
   intentCriticalFields: string[];
@@ -146,7 +153,7 @@ interface ToolIdentityResult {
 
 Computes a stable semantic hash for the input fields that determine a tool call's observable effect.
 
-```ts
+```ts partial
 function computeSemanticHash(input: unknown, fields: string[]): ToolIdentityResult;
 ```
 
@@ -154,7 +161,7 @@ function computeSemanticHash(input: unknown, fields: string[]): ToolIdentityResu
 
 Records committed tool results and replays them on recovery when a provider emits the same semantic tool call again.
 
-```ts
+```ts partial
 class ToolEffectLog {
   constructor(storage: WeftStorage, workflowId: string);
 }
@@ -164,7 +171,7 @@ class ToolEffectLog {
 
 ### `LLMProvider`
 
-```ts
+```ts partial
 interface LLMProvider {
   readonly name: string;
   chat(messages: Message[], options: ChatOptions): Promise<ChatResponse>;
@@ -180,7 +187,7 @@ Only `chat()` is required.
 
 ### `ChatOptions`
 
-```ts
+```ts partial
 interface ChatOptions {
   model: string;
   tools?: ToolDefinition[];
@@ -195,7 +202,7 @@ interface ChatOptions {
 
 ### `ChatResponse`
 
-```ts
+```ts partial
 interface ChatResponse {
   content: string;
   toolCalls: ToolCall[];
@@ -208,7 +215,7 @@ interface ChatResponse {
 
 ### `Message`
 
-```ts
+```ts partial
 interface Message {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
@@ -224,7 +231,7 @@ interface Message {
 
 Runs one agent after another and optionally forwards conversation context.
 
-```ts
+```ts partial
 function handoff(options: HandoffOptions): Promise<HandoffResult>;
 ```
 
@@ -232,7 +239,7 @@ function handoff(options: HandoffOptions): Promise<HandoffResult>;
 
 Runs advocate and critic agents for a fixed number of rounds, then asks a judge agent to decide.
 
-```ts
+```ts partial
 function debate(options: DebateOptions): Promise<DebateResult>;
 ```
 
@@ -240,7 +247,7 @@ function debate(options: DebateOptions): Promise<DebateResult>;
 
 Runs worker agents in parallel and asks a supervisor agent to synthesize their outputs.
 
-```ts
+```ts partial
 function supervise(options: SuperviseOptions): Promise<SuperviseResult>;
 ```
 
@@ -250,7 +257,7 @@ function supervise(options: SuperviseOptions): Promise<SuperviseResult>;
 
 Persists review requests and decisions so a workflow can pause for a human decision and resume durably.
 
-```ts
+```ts partial
 class ReviewCoordinator {
   constructor(storage: WeftStorage, options?: ReviewCoordinatorOptions);
 }
@@ -258,7 +265,7 @@ class ReviewCoordinator {
 
 ### `ReviewOptions`
 
-```ts
+```ts partial
 interface ReviewOptions {
   type: string;
   reviewers: string[];

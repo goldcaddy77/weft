@@ -1,14 +1,13 @@
 /**
  * Tests for `splitNewlineDelimitedBuffer` — the shared newline-delimited
- * framing helper that both the MCP stdio transport
- * (`src/ai/mcp/transport-stdio.ts`) and the runtime stdio subcommand
- * (`src/server/stdio-session.ts`, Phase 13) consume.
+ * framing helper consumed by the runtime stdio subcommand
+ * (`src/server/stdio-session.ts`, Phase 13).
  *
  * Phase 6 locked in a character-table of framing behavior against the
  * inline buffer logic inside `StdioTransport.#startReadLoop`. Phase 7
  * extracts that logic into this pure function — the tests below cover
  * the same character table at the unit level so a regression in the
- * shared helper breaks here BEFORE it reaches either transport.
+ * shared helper breaks here BEFORE it reaches the runtime stdio session.
  */
 
 import { describe, expect, it } from 'bun:test';

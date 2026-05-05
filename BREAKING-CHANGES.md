@@ -6,9 +6,9 @@ This document covers the breaking changes introduced by the AI Surface Shrinkage
 
 Weft's `src/ai/*` surface has been narrowed to the durability-essential primitives. The narrow agent pitch is: _"Weft adds durability to your agent loop. Bring your provider; bring your tools. Weft drives the loop, checkpoints at every tool-call boundary, survives crashes mid-conversation."_
 
-## 1. Removed public exports
+## Removed Public Exports
 
-The following symbols are no longer exported from `weft`. Callers must supply their own implementations or use upstream libraries (`armorer`, `conversationalist`, the official `@modelcontextprotocol/sdk`, etc.).
+The following symbols are no longer exported from `weft`. Callers must supply their own implementations or use upstream libraries ([armorer](https://github.com/stevekinney/armorer), [conversationalist](https://github.com/stevekinney/conversationalist), the official [`@modelcontextprotocol/sdk`](https://www.npmjs.com/package/@modelcontextprotocol/sdk), etc.).
 
 **Built-in providers (now bring-your-own):**
 
@@ -47,7 +47,7 @@ The following symbols are no longer exported from `weft`. Callers must supply th
 - `TurnCostEntry`
 - Agent-shape events: `AgentBudgetExceededEvent`, `AgentBudgetWarningEvent`, `AgentContextCompactedEvent`, `AgentModelFallbackEvent`, `AgentProviderCircuitOpenEvent`
 
-## 2. Shape changes to surviving exports
+## Shape Changes to Surviving Exports
 
 ### `AgentDefinition` / `defineAgent`
 
@@ -75,15 +75,22 @@ Drops `budget`, `modelRouter`, `contextManager`, `healthTracker`, `toolCacheTTL`
 `turnCosts: TurnCostEntry[]` → `turnUsage: TurnUsageEntry[]`. Drops `totalCost` and `confidence`. The new entry shape is:
 
 ```ts
-type TurnUsageEntry = {
-  turnNumber: number;
-  inputTokens: number | null;
-  outputTokens: number | null;
-  source: 'provider' | 'unavailable';
-};
+type TurnUsageEntry =
+  | {
+      turnNumber: number;
+      source: 'provider';
+      inputTokens: number;
+      outputTokens: number;
+    }
+  | {
+      turnNumber: number;
+      source: 'unavailable';
+      inputTokens: null;
+      outputTokens: null;
+    };
 ```
 
-Exactly one entry per completed turn. `null` token counts when the provider does not report usage; the `source` field discriminates.
+Exactly one entry per completed turn. The built-in loop records `source: 'provider'` because `LLMProvider.chat()` returns a required `TokenUsage` block. The `source: 'unavailable'` variant exists for wrappers or downstream result aggregation that must represent providers without usage data.
 
 ### `LLMProvider` (the structural interface Weft owns)
 
@@ -97,15 +104,15 @@ Adds `schemaVersion: 2` (required). Drops `toolCacheEntries`, `previousModels`, 
 
 Now `{ provider }` only. Drops `budget`, `budgetPolicy`, and other previously-accepted compute fields.
 
-## 3. Removed `package.json` subpath export
+## Removed `package.json` Subpath Export
 
 - `"./mcp/stdio"` removed (the MCP transport module is gone)
 
-## 4. Internal re-export shim removal
+## Internal Re-Export Shim Removal
 
 The thin internal shims `src/ai/agent.ts`, `src/ai/coordination.ts`, `src/ai/events.ts` are deleted. Public consumers were never affected — `src/index.ts` imports from the directory paths directly. No external API impact.
 
-## 5. Tenant isolation — explicit responsibility shift
+## Tenant Isolation
 
 Pre-shrinkage, `AgentDefinition.toolsForTenant` and `AgentDefinition.validateInput` let the engine enforce tool scoping centrally. **Post-shrinkage, this responsibility moves to the workflow author**: callers compose tools per tenant before invoking `ctx.agent({ tools: pickToolsForTenant(ctx.tenant) })`. The engine no longer enforces it. See `documentation/agents/what-weft-owns.md` for the worked example.
 
@@ -117,7 +124,7 @@ Most callers will:
 
 1. Replace `new AnthropicProvider(...)` with their own provider object satisfying the structural `LLMProvider` interface (only `chat()` is required). See `documentation/agents/what-weft-owns.md` for a 15-line canonical example.
 2. Drop any `BudgetTracker`, `ModelRouter`, `ContextStrategy`, or `AgentHooks` configuration. If budget tracking is needed, wrap your provider with cost accounting before passing it to `executeAgentLoop` or `engine.register(agentDefinition, { provider })`.
-3. Replace MCP client usage with `@modelcontextprotocol/sdk` (or `armorer` once it ships) and adapt the resulting tool list to the structural `AgentTool` shape.
+3. Replace MCP client usage with [`@modelcontextprotocol/sdk`](https://www.npmjs.com/package/@modelcontextprotocol/sdk) (or [armorer](https://github.com/stevekinney/armorer) once it ships) and adapt the resulting tool list to the structural `AgentTool` shape.
 4. If reading `AgentResult.turnCosts`, switch to `AgentResult.turnUsage` and handle `null` token counts and the `source` discriminator.
 5. Replace any `event.cost` reads on agent events with `event.usage` (if usage is exposed) or remove cost-tracking from the consumer.
 6. Move tenant-scoped tool selection out of `AgentDefinition.toolsForTenant` and into the workflow body, before the `ctx.agent(...)` call.

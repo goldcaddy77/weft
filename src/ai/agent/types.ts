@@ -310,6 +310,13 @@ export interface VerificationRecorder {
  * 'unavailable'` carries `null` token counts (the provider did not
  * report usage).
  *
+ * The built-in `executeAgentLoop` always emits `source: 'provider'`
+ * because `LLMProvider.chat` returns a required `TokenUsage` block. The
+ * `'unavailable'` variant exists for downstream consumers that wrap the
+ * loop or extend the result shape — for example, a wrapper that aggregates
+ * usage across providers where some providers omit token counts. Consumers
+ * should always check the discriminator before reading the token fields.
+ *
  * @example Sum input tokens across the run, ignoring unavailable turns
  * ```ts
  * import type { TurnUsageEntry } from 'weft';
@@ -528,9 +535,8 @@ export interface AgentRuntime {
 /** Metadata returned after one provider chat turn. */
 export interface ChatTurnResult {
   response: ChatResponse;
-  currentModel: string;
+  /** The model the loop requested (always equal to options.model post-shrinkage; kept for caller event payloads). */
   originalModel: string;
-  fallbackAttempts: number;
   turnDuration: number;
 }
 

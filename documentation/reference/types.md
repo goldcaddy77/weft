@@ -8,7 +8,7 @@ Complete type reference for Weft, organized by category. All types are exported 
 
 ### `WorkflowId`
 
-```ts
+```ts partial
 type WorkflowId = string;
 ```
 
@@ -148,7 +148,7 @@ interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
 
 Type-level registry for `Engine<TRegistry>`.
 
-```ts
+```ts partial
 type WorkflowRegistry = Record<string, { input: unknown; output: unknown }>;
 ```
 
@@ -192,7 +192,7 @@ See [Configuration](./configuration.md) for default values.
 
 ### `ActivityFunction`
 
-```ts
+```ts partial
 type ActivityFunction<TInput = unknown, TOutput = unknown> = (
   input: TInput,
   context?: ActivityContext,
@@ -201,7 +201,7 @@ type ActivityFunction<TInput = unknown, TOutput = unknown> = (
 
 ### `ActivityContext`
 
-```ts
+```ts partial
 interface ActivityContext {
   signal: AbortSignal;
   heartbeat(details?: unknown): void;
@@ -273,7 +273,7 @@ interface StartOptions {
 
 Pluggable serialization interface.
 
-```ts
+```ts partial
 interface Serializer {
   serialize(value: unknown): Uint8Array;
   deserialize(bytes: Uint8Array): unknown;
@@ -288,7 +288,7 @@ type SearchAttributeValue = string | number | boolean | Date | string[];
 
 ### `SearchAttributeSchema`
 
-```ts
+```ts partial
 type SearchAttributeSchema = Record<string, SearchAttributeDefinition>;
 
 interface SearchAttributeDefinition {
@@ -319,7 +319,7 @@ interface AttributeFilter {
 
 ### `PaginatedResult`
 
-```ts
+```ts partial
 interface PaginatedResult<T> {
   items: T[];
   total: number;
@@ -382,7 +382,7 @@ interface WeftEventMap {
 
 A type-safe overlay for `EventTarget` that narrows listener signatures based on event type.
 
-```ts
+```ts partial
 interface TypedEventTarget<TEventMap extends Record<string, Event>> {
   addEventListener<K extends keyof TEventMap & string>(
     type: K,
@@ -458,7 +458,7 @@ interface ContextOptions {
 
 Returned by `ctx.offload()`, consumed by `ctx.load()`.
 
-```ts
+```ts partial
 interface OffloadReference {
   key: string;
   workflowId: string;
@@ -472,7 +472,7 @@ interface OffloadReference {
 
 ### `WorkflowInterceptor`
 
-```ts
+```ts partial
 interface WorkflowInterceptor {
   activity?(
     interception: ActivityInterception,
@@ -498,7 +498,7 @@ interface WorkflowInterceptor {
 
 ### `ActivityInterceptor`
 
-```ts
+```ts partial
 interface ActivityInterceptor {
   execute?(
     interception: ActivityExecutionInterception,
@@ -509,7 +509,7 @@ interface ActivityInterceptor {
 
 ### `WorkflowStartInterception`
 
-```ts
+```ts partial
 interface WorkflowStartInterception {
   workflowId: string;
   workflowType: string;
@@ -520,7 +520,7 @@ interface WorkflowStartInterception {
 
 ### `ActivityInterception`
 
-```ts
+```ts partial
 interface ActivityInterception {
   activityName: string;
   input: unknown;
@@ -531,7 +531,7 @@ interface ActivityInterception {
 
 ### `SleepInterception`
 
-```ts
+```ts partial
 interface SleepInterception {
   duration: number;
   headers: Map<string, string>;
@@ -540,7 +540,7 @@ interface SleepInterception {
 
 ### `SignalInterception`
 
-```ts
+```ts partial
 interface SignalInterception {
   signalName: string;
   payload: unknown;
@@ -550,7 +550,7 @@ interface SignalInterception {
 
 ### `ActivityExecutionInterception`
 
-```ts
+```ts partial
 interface ActivityExecutionInterception {
   activityName: string;
   input: unknown;
@@ -588,7 +588,7 @@ type BatchOperation =
 
 ### `ScanOptions`
 
-```ts
+```ts partial
 interface ScanOptions {
   limit?: number;
   reverse?: boolean;
@@ -615,7 +615,7 @@ interface ServeOptions {
 
 ### `WeftServer`
 
-```ts
+```ts partial
 interface WeftServer extends AsyncDisposable {
   readonly port: number;
   readonly hostname: string;
@@ -630,7 +630,7 @@ interface WeftServer extends AsyncDisposable {
 
 ### `MockHandle`
 
-```ts
+```ts partial
 interface MockHandle<TArgs extends unknown[], TResult> {
   readonly calls: ReadonlyArray<MockCall<TArgs, TResult>>;
   readonly callCount: number;
@@ -645,7 +645,7 @@ interface MockHandle<TArgs extends unknown[], TResult> {
 
 ### `MockCall`
 
-```ts
+```ts partial
 interface MockCall<TArgs extends unknown[], TResult> {
   readonly args: TArgs;
   readonly result: TResult | undefined;
@@ -660,7 +660,7 @@ interface MockCall<TArgs extends unknown[], TResult> {
 
 ### `AgentOptions`
 
-```ts
+```ts partial
 interface AgentOptions {
   model: string;
   provider: LLMProvider;
@@ -679,7 +679,7 @@ interface AgentOptions {
 
 ### `AgentResult`
 
-```ts
+```ts partial
 interface AgentResult {
   content: string;
   conversation: Message[];
@@ -689,17 +689,24 @@ interface AgentResult {
   turnUsage: TurnUsageEntry[];
 }
 
-interface TurnUsageEntry {
-  turnNumber: number;
-  inputTokens: number | null;
-  outputTokens: number | null;
-  source: 'provider' | 'unavailable';
-}
+type TurnUsageEntry =
+  | {
+      turnNumber: number;
+      source: 'provider';
+      inputTokens: number;
+      outputTokens: number;
+    }
+  | {
+      turnNumber: number;
+      source: 'unavailable';
+      inputTokens: null;
+      outputTokens: null;
+    };
 ```
 
 ### `AgentTool`
 
-```ts
+```ts partial
 interface AgentTool {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
@@ -710,7 +717,7 @@ interface AgentTool {
 
 ### `AgentDefinition`
 
-```ts
+```ts partial
 interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   name: string;
   model: string;
@@ -724,7 +731,7 @@ interface AgentDefinition<TInput = unknown, TOutput = unknown> {
 
 ### `AgentToolDefinition`
 
-```ts
+```ts partial
 interface AgentToolDefinition {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
@@ -736,7 +743,7 @@ interface AgentToolDefinition {
 
 ### `ToolIdentityResult`
 
-```ts
+```ts partial
 interface ToolIdentityResult {
   semanticHash: string;
   intentCriticalFields: string[];
@@ -745,7 +752,7 @@ interface ToolIdentityResult {
 
 ### `LLMProvider`
 
-```ts
+```ts partial
 interface LLMProvider {
   readonly name: string;
   chat(messages: Message[], options: ChatOptions): Promise<ChatResponse>;
@@ -759,7 +766,7 @@ interface LLMProvider {
 
 ### `ChatOptions`
 
-```ts
+```ts partial
 interface ChatOptions {
   model: string;
   tools?: ToolDefinition[];
@@ -774,7 +781,7 @@ interface ChatOptions {
 
 ### `ChatResponse`
 
-```ts
+```ts partial
 interface ChatResponse {
   content: string;
   toolCalls: ToolCall[];
@@ -787,7 +794,7 @@ interface ChatResponse {
 
 ### `Message`
 
-```ts
+```ts partial
 interface Message {
   role: MessageRole;
   content: string;
@@ -801,7 +808,7 @@ type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
 
 ### `ToolCall`
 
-```ts
+```ts partial
 interface ToolCall {
   id: string;
   name: string;
@@ -811,7 +818,7 @@ interface ToolCall {
 
 ### `ToolResult`
 
-```ts
+```ts partial
 interface ToolResult {
   toolCallId: string;
   output: string;
@@ -821,7 +828,7 @@ interface ToolResult {
 
 ### `ToolDefinition`
 
-```ts
+```ts partial
 interface ToolDefinition {
   name: string;
   description: string;
@@ -831,7 +838,7 @@ interface ToolDefinition {
 
 ### `TokenUsage`
 
-```ts
+```ts partial
 interface TokenUsage {
   inputTokens: number;
   outputTokens: number;

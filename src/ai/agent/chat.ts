@@ -66,9 +66,7 @@ export async function executeChatWithFallbacks(
 
   return {
     response,
-    currentModel: model,
     originalModel: model,
-    fallbackAttempts: 0,
     turnDuration,
   };
 }

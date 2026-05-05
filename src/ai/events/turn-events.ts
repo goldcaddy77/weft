@@ -45,11 +45,13 @@ export class AgentTurnStartedEvent extends Event {
 }
 
 /**
- * Fired after each LLM turn completes, carrying token usage, duration, tool
- * call count, and a snapshot of the conversation. Cost fields are retained as
- * zero-valued event fields until the event surface is narrowed further.
+ * Fired after each LLM turn completes. Carries the model name, raw token
+ * usage, wall-clock duration, tool-call count, and a size-bounded snapshot
+ * of the conversation. Cost is the caller's concern post-shrinkage —
+ * subscribers compute it from `inputTokens` / `outputTokens` against
+ * whatever pricing they care about.
  *
- * @example Track cumulative cost across turns
+ * @example Log per-turn duration and tool-call count
  * ```ts
  * import { AgentTurnCompletedEvent } from 'weft';
  *
@@ -58,7 +60,7 @@ export class AgentTurnStartedEvent extends Event {
  * target.addEventListener(AgentTurnCompletedEvent.type, (e) => {
  *   const event = e as AgentTurnCompletedEvent;
  *   console.log(
- *     `Turn ${event.turnIndex}: ${event.cost.toFixed(4)} (cumulative: ${event.cumulativeCost.toFixed(4)})`,
+ *     `Turn ${event.turnIndex} (${event.model}): ${event.duration}ms, ${event.toolCallCount} tools`,
  *   );
  * });
  * ```
@@ -69,18 +71,13 @@ export class AgentTurnCompletedEvent extends Event {
   readonly agentId: string;
   readonly turnIndex: number;
   readonly model: string;
-  readonly selectedModel: string;
   readonly inputTokens: number;
   readonly outputTokens: number;
-  readonly cost: number;
-  readonly cumulativeCost: number;
   readonly duration: number;
   readonly toolCallCount: number;
-  readonly fallbackAttempts: number;
-  readonly reasoningTrace: string | undefined;
   /**
    * Size-bounded snapshot of the agent's conversation at the moment this
-   * turn completed. Truncated per the caps in `event-message-snapshot.ts`
+   * turn completed. Truncated per the caps in `agent/event-message-snapshot.ts`
    * (`MAX_MESSAGE_CHARS`, `MAX_TOOL_RESULT_CHARS`, `MAX_SNAPSHOT_MESSAGES`)
    * so that long-running agents cannot blow up the event stream.
    */
@@ -91,15 +88,10 @@ export class AgentTurnCompletedEvent extends Event {
     agentId: string,
     turnIndex: number,
     model: string,
-    selectedModel: string,
     inputTokens: number,
     outputTokens: number,
-    cost: number,
-    cumulativeCost: number,
     duration: number,
     toolCallCount: number,
-    fallbackAttempts: number,
-    reasoningTrace: string | undefined,
     messages: readonly Message[],
   ) {
     super(AgentTurnCompletedEvent.type);
@@ -107,15 +99,10 @@ export class AgentTurnCompletedEvent extends Event {
     this.agentId = agentId;
     this.turnIndex = turnIndex;
     this.model = model;
-    this.selectedModel = selectedModel;
     this.inputTokens = inputTokens;
     this.outputTokens = outputTokens;
-    this.cost = cost;
-    this.cumulativeCost = cumulativeCost;
     this.duration = duration;
     this.toolCallCount = toolCallCount;
-    this.fallbackAttempts = fallbackAttempts;
-    this.reasoningTrace = reasoningTrace;
     this.messages = messages;
   }
 }

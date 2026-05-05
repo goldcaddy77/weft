@@ -6,7 +6,7 @@ Your agent is only as useful as the tools it can call.
 
 ## `AgentTool`
 
-```typescript
+```typescript partial
 import type { AgentTool } from 'weft';
 
 type SearchInput = {
@@ -54,7 +54,7 @@ export const webSearch: AgentTool = {
 
 `AgentToolDefinition` is structurally the same shape used by `defineAgent()`:
 
-```typescript
+```typescript partial
 interface AgentToolDefinition {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
@@ -70,7 +70,7 @@ Use `version` when a tool's behavior changes in a way that matters for workflow 
 
 **Semantic hash:** `computeSemanticHash()` creates a stable identity for the fields that determine a tool call's observable effect. This matters because provider-generated input often includes incidental fields: formatting hints, request IDs, or timestamps that should not force a second side effect.
 
-```typescript
+```typescript partial
 import { computeSemanticHash, type AgentToolDefinition } from 'weft';
 
 const createTicket: AgentToolDefinition = {
@@ -108,7 +108,7 @@ That is the protection you need after a crash. The process may disappear after t
 
 Attach default tools to an agent definition:
 
-```typescript
+```typescript partial
 import { defineAgent } from 'weft';
 
 const researcher = defineAgent({
@@ -120,7 +120,7 @@ const researcher = defineAgent({
 
 Or pass tools at invocation time:
 
-```typescript
+```typescript partial
 async function* workflow(ctx: WorkflowContext, topic: string) {
   const tools = [webSearch, factCheck];
 
@@ -137,9 +137,9 @@ Invocation-time tools are the right place for request-specific authorization, te
 
 ## MCP tools
 
-**MCP integration:** Weft no longer ships an MCP client. To use MCP servers as agent tools, instantiate any third-party MCP client, such as `@modelcontextprotocol/sdk`, and adapt its tool list to the structural `AgentTool` shape.
+**MCP integration:** Weft no longer ships an MCP client. To use MCP servers as agent tools, instantiate any third-party MCP client, such as [`@modelcontextprotocol/sdk`](https://www.npmjs.com/package/@modelcontextprotocol/sdk), and adapt its tool list to the structural `AgentTool` shape.
 
-```typescript
+```typescript partial
 import type { AgentTool } from 'weft';
 
 async function toolsFromMcp(client: ThirdPartyMcpClient): Promise<AgentTool[]> {
