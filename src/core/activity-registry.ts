@@ -12,7 +12,6 @@
  */
 
 import {
-  isDefinitionSchema,
   validateDefinitionSchemaMetadata,
   type DefinitionSchema,
   type Duration,
@@ -107,7 +106,7 @@ export interface ActivityRegistrationOptions {
  * metadata as own properties on the returned function.
  */
 // oxlint-disable-next-line complexity -- ID:core-activity-registry-extract-definition-metadata-complexity
-function extractDefinitionMetadata(fn: object): Partial<ActivityRegistrationOptions> {
+function extractDefinitionMetadata(name: string, fn: object): Partial<ActivityRegistrationOptions> {
   const result: Partial<ActivityRegistrationOptions> = {};
   const record = fn as Record<string, unknown>;
 
@@ -121,11 +120,17 @@ function extractDefinitionMetadata(fn: object): Partial<ActivityRegistrationOpti
   ) {
     result.tags = [...record['tags']];
   }
-  if ('inputSchema' in fn && isDefinitionSchema(record['inputSchema'])) {
-    result.inputSchema = record['inputSchema'];
+  if ('inputSchema' in fn) {
+    result.inputSchema = validateDefinitionSchemaMetadata(
+      record['inputSchema'],
+      `activity definition "${name}".inputSchema`,
+    );
   }
-  if ('outputSchema' in fn && isDefinitionSchema(record['outputSchema'])) {
-    result.outputSchema = record['outputSchema'];
+  if ('outputSchema' in fn) {
+    result.outputSchema = validateDefinitionSchemaMetadata(
+      record['outputSchema'],
+      `activity definition "${name}".outputSchema`,
+    );
   }
   if ('queue' in fn && typeof record['queue'] === 'string') {
     result.queue = record['queue'];
@@ -250,7 +255,7 @@ export class ActivityRegistry {
       this.#retargetFunctionMetadata(existingFn, name);
     }
 
-    const extracted = extractDefinitionMetadata(fn);
+    const extracted = extractDefinitionMetadata(name, fn);
 
     const metadata: ActivityMetadata = {
       name,

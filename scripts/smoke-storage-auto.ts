@@ -20,6 +20,19 @@ const tempDir = join(tmpdir(), `weft-smoke-${Date.now()}`);
 const storagePath = join(tempDir, 'weft.db');
 process.env['WEFT_DEFAULT_STORAGE_PATH'] = storagePath;
 
+function formatSmokeValue(value: unknown): string {
+  try {
+    const json = JSON.stringify(value);
+    if (json !== undefined) return json;
+  } catch {}
+
+  try {
+    return String(value);
+  } catch {
+    return Object.prototype.toString.call(value);
+  }
+}
+
 try {
   const storage = await resolveDefaultStorage();
   if (storage === null || storage === undefined) {
@@ -29,14 +42,12 @@ try {
   if (!(engine instanceof Engine)) {
     throw new Error('smoke-storage-auto: new Engine did not return an Engine instance');
   }
-  engine.register('hello', async function* hello() {
-    yield;
-    return 'world';
-  });
+  engine.register('hello', async () => 'world');
   const handle = await engine.start('hello');
   const result = await handle.result();
   if (result !== 'world') {
-    throw new Error(`smoke-storage-auto: expected 'world', got ${String(result)}`);
+    const actual = formatSmokeValue(result);
+    throw new Error(`smoke-storage-auto: expected 'world', got ${actual}`);
   }
   engine[Symbol.dispose]();
   if (typeof (storage as { [Symbol.dispose]?: () => void })[Symbol.dispose] === 'function') {

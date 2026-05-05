@@ -9,7 +9,6 @@ import {
 } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { BULK_WORKFLOW_FILTER_ERROR_MESSAGE } from './bulk-workflow-filter.ts';
-import { Context } from './context.ts';
 import { BulkDeleteRequiresTerminalWorkflowsError, Engine } from './engine.ts';
 import type { WorkflowContext, WorkflowState } from './types.ts';
 
@@ -18,7 +17,7 @@ async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
 }
 
 async function* waitForSignalWorkflow(ctx: WorkflowContext, input: unknown) {
-  const signal = yield* (ctx as Context).waitForSignal<string>('continue');
+  const signal = yield* ctx.waitForSignal<string>('continue');
   return `${String(input)}:${signal}`;
 }
 

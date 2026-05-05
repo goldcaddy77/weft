@@ -107,10 +107,16 @@ Return read-only metadata for all registered activity names. Activity definition
 ### `start()`
 
 ```ts partial
-async start(type: string, input: unknown, options?: StartOptions): Promise<WorkflowHandle>
+async start<TName extends keyof WorkflowRegistry & string>(
+  type: TName,
+  input: WorkflowInput<WorkflowRegistry, TName>,
+  options?: StartOptions,
+): Promise<WorkflowHandle<WorkflowOutput<WorkflowRegistry, TName>>>
+
+async start(type: string, input: unknown, options?: StartOptions): Promise<WorkflowHandle<unknown>>
 ```
 
-Start a new workflow execution. Throws if `type` is not registered or a workflow with the given `id` already exists.
+Start a new workflow execution. Names declared in the augmentable `WorkflowRegistry` get typed input and typed `handle.result()` output; dynamic names keep the `unknown` fallback. Throws if `type` is not registered or a workflow with the given `id` already exists.
 
 | Parameter | Type           | Description                                 |
 | --------- | -------------- | ------------------------------------------- |

@@ -299,6 +299,41 @@ describe('ActivityRegistry', () => {
         }),
       ).toThrow('activity registration "greet".outputSchema');
     });
+
+    it('rejects malformed activity definition schema metadata', () => {
+      const registry = new ActivityRegistry();
+
+      const malformedInputSchemaActivity = activity({
+        name: 'greet',
+        inputSchema: {
+          '~standard': {
+            version: 1,
+            validate: (value: unknown) => ({ value }),
+          },
+        } as unknown as DefinitionSchema<unknown, string>,
+        execute: (input: string) => `Hello, ${input}!`,
+      });
+
+      expect(() => registry.register('greet', malformedInputSchemaActivity)).toThrow(
+        'activity definition "greet".inputSchema',
+      );
+
+      const malformedOutputSchemaActivity = activity({
+        name: 'format',
+        outputSchema: {
+          '~standard': {
+            version: 1,
+            vendor: '',
+            validate: (value: unknown) => ({ value }),
+          },
+        } as unknown as DefinitionSchema<unknown, string>,
+        execute: (input: string) => `Hello, ${input}!`,
+      });
+
+      expect(() => registry.register('format', malformedOutputSchemaActivity)).toThrow(
+        'activity definition "format".outputSchema',
+      );
+    });
   });
 
   describe('unregister()', () => {

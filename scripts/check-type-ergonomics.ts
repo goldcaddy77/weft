@@ -1,0 +1,79 @@
+#!/usr/bin/env bun
+/**
+ * Guard the public workflow authoring examples against two cast-heavy
+ * anti-patterns that the type surface now makes unnecessary.
+ */
+
+import { Glob, file } from 'bun';
+import { join } from 'node:path';
+
+const repoRoot = join(import.meta.dir, '..');
+
+interface Violation {
+  file: string;
+  line: number;
+  message: string;
+  text: string;
+}
+
+const violations: Violation[] = [];
+
+async function scanFile(relPath: string): Promise<void> {
+  const source = await file(join(repoRoot, relPath)).text();
+  const lines = source.split('\n');
+
+  for (const [index, line] of lines.entries()) {
+    if (/\bas\s+(?:Context\b|import\([^)]+\)\.Context\b)/.test(line)) {
+      violations.push({
+        file: relPath,
+        line: index + 1,
+        message: 'Workflow handlers should use WorkflowContext directly instead of casting.',
+        text: line.trim(),
+      });
+    }
+
+    if (!/\binput:\s*unknown\b/.test(line)) continue;
+
+    const followingLines = lines.slice(index, index + 9);
+    const castLineOffset = followingLines.findIndex((candidate) =>
+      /\binput\s+as\s+(?:\{|[A-Z][A-Za-z0-9_$]*)/.test(candidate),
+    );
+    if (castLineOffset === -1) continue;
+
+    violations.push({
+      file: relPath,
+      line: index + castLineOffset + 1,
+      message: 'Payload examples should use inline parameter annotations instead of input casts.',
+      text: lines[index + castLineOffset]?.trim() ?? '',
+    });
+  }
+}
+
+const globs = ['README.md', 'documentation/**/*.md', 'examples/**/*.ts', 'src/**/*.ts'];
+
+for (const pattern of globs) {
+  const glob = new Glob(pattern);
+  for await (const relPath of glob.scan({ cwd: repoRoot })) {
+    if (
+      relPath.endsWith('.test.ts') ||
+      relPath.endsWith('.spec.ts') ||
+      relPath.endsWith('.test-d.ts') ||
+      relPath.includes('/__tests__/') ||
+      relPath.startsWith('documentation/engine-split-log/')
+    ) {
+      continue;
+    }
+    await scanFile(relPath);
+  }
+}
+
+if (violations.length > 0) {
+  console.error('Found workflow type-ergonomics regressions:');
+  for (const violation of violations) {
+    console.error(`  ${violation.file}:${violation.line}  ${violation.message}`);
+    console.error(`    ${violation.text}`);
+  }
+  process.exit(1);
+}
+
+console.log('OK: workflow examples avoid Context casts and input-cast payload anti-patterns.');

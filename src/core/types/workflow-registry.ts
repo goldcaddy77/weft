@@ -27,24 +27,3 @@ export interface WorkflowDefinition<TInput = unknown, TOutput = unknown> {
   /** Optional output schema metadata for introspection; core execution does not validate output against it. */
   outputSchema?: DefinitionSchema<unknown, TOutput>;
 }
-
-/**
- * Type-level map of workflow names to their input and output shapes. This
- * shape is consumed by code generation and future typed wrappers; the current
- * `Engine` class does not accept a registry generic. Each key is a workflow
- * name; each value declares the `input` type and `output` type.
- *
- * @example
- * ```ts
- * import type { WorkflowRegistry } from 'weft';
- *
- * type MyRegistry = WorkflowRegistry & {
- *   greet: { input: string; output: string };
- * };
- *
- * // WorkflowRegistry documents the shape contract for generated wrappers.
- * const _registry: MyRegistry = { greet: { input: '', output: '' } };
- * void _registry;
- * ```
- */
-export type WorkflowRegistry = Record<string, { input: unknown; output: unknown }>;

@@ -8,7 +8,6 @@
 
 import { afterEach, describe, expect, it, test } from 'bun:test';
 
-import type { Context } from '../../src/core/context.ts';
 import { Engine } from '../../src/core/engine.ts';
 import type {
   ActivityDefinition,
@@ -155,17 +154,14 @@ async function pipeStageThree(_ctx: StepWorkflowContext, input: unknown): Promis
 
 function registerSimpleSequential(engine: Engine): void {
   engine.register('simple-sequential', async function* (ctx: WorkflowContext, input: unknown) {
-    const result = yield* (ctx as Context).run(
-      async (value: unknown) => `processed:${String(value)}`,
-      input,
-    );
+    const result = yield* ctx.run(async (value: unknown) => `processed:${String(value)}`, input);
     return result;
   });
 }
 
 function registerTwoParallel(engine: Engine): void {
   engine.register('two-parallel', async function* (ctx: WorkflowContext, input: unknown) {
-    const context = ctx as Context;
+    const context = ctx;
     const [left, right] = yield* context.all([
       context.run(async (value: unknown) => `left:${String(value)}`, input),
       context.run(async (value: unknown) => `right:${String(value)}`, input),
@@ -177,7 +173,7 @@ function registerTwoParallel(engine: Engine): void {
 
 function registerRaceTakesFirst(engine: Engine): void {
   engine.register('race-takes-first', async function* (ctx: WorkflowContext) {
-    const context = ctx as Context;
+    const context = ctx;
     const result = yield* context.race([
       context.run(async () => 'fast'),
       context.run(async () => {
@@ -192,14 +188,14 @@ function registerRaceTakesFirst(engine: Engine): void {
 
 function registerSignalAndWait(engine: Engine): void {
   engine.register('signal-and-wait', async function* (ctx: WorkflowContext) {
-    const payload = yield* (ctx as Context).waitForSignal('go');
+    const payload = yield* ctx.waitForSignal('go');
     return { received: payload };
   });
 }
 
 function registerSleepAndResume(engine: Engine): void {
   engine.register('sleep-and-resume', async function* (ctx: WorkflowContext) {
-    yield* (ctx as Context).sleep(100);
+    yield* ctx.sleep(100);
     return 'awake';
   });
 }
@@ -213,7 +209,7 @@ function registerChildWorkflow(engine: Engine): void {
   );
 
   engine.register('child-workflow', async function* (ctx: WorkflowContext, input: unknown) {
-    const childResult = yield* (ctx as Context).startChild('child-workflow-child', input);
+    const childResult = yield* ctx.startChild('child-workflow-child', input);
     return { parent: String(input), child: childResult };
   });
 }
@@ -237,7 +233,7 @@ function registerSagaWithCompensation(engine: Engine): void {
     };
 
     try {
-      yield* (ctx as Context).saga([
+      yield* ctx.saga([
         { definition: stepOne, input: 'a' },
         { definition: stepTwo, input: 'b' },
       ]);
@@ -259,7 +255,7 @@ function registerPipeThreeStages(engine: Engine): void {
 
 function registerForkFromCheckpoint(engine: Engine): void {
   engine.register('fork-from-checkpoint', async function* (ctx: WorkflowContext) {
-    const context = ctx as Context;
+    const context = ctx;
     const phaseOne = yield* context.run(async () => 'phase-one');
     const branch = yield* context.waitForSignal('branch');
     return `${String(phaseOne)}:${String(branch)}`;
@@ -268,7 +264,7 @@ function registerForkFromCheckpoint(engine: Engine): void {
 
 function registerRecoveryAfterCrash(engine: Engine): void {
   engine.register('recovery-after-crash', async function* (ctx: WorkflowContext) {
-    const context = ctx as Context;
+    const context = ctx;
     const stepOne = yield* context.run(async () => 'checkpoint-me');
     const stepTwo = yield* context.run(async () => `resumed:${String(stepOne)}`);
     return stepTwo;

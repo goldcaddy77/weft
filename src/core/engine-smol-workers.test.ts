@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'bun:test';
 
-import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import type { WorkflowContext } from './types.ts';
 import { activity } from './types.ts';
@@ -36,7 +35,7 @@ describe('Engine with smol: true workers', () => {
       });
 
       engine.register('smol-greet', async function* (ctx: WorkflowContext, input: unknown) {
-        const result = yield* (ctx as Context).run(greet, input);
+        const result = yield* ctx.run(greet, input);
         return result;
       });
 
@@ -62,7 +61,7 @@ describe('Engine with smol: true workers', () => {
       });
 
       engine.register('smol-double', async function* (ctx: WorkflowContext, input: unknown) {
-        const result = yield* (ctx as Context).run(double, input);
+        const result = yield* ctx.run(double, input);
         return result;
       });
 
@@ -95,7 +94,7 @@ describe('Engine with smol: true workers', () => {
       });
 
       engine.register('smol-failing', async function* (ctx: WorkflowContext) {
-        const result = yield* (ctx as Context).run(failing);
+        const result = yield* ctx.run(failing);
         return result;
       });
 
@@ -126,7 +125,7 @@ describe('Engine with smol: true workers', () => {
       });
 
       engine.register('no-smol-greet', async function* (ctx: WorkflowContext, input: unknown) {
-        const result = yield* (ctx as Context).run(greet, input);
+        const result = yield* ctx.run(greet, input);
         return result;
       });
 
@@ -152,7 +151,7 @@ describe('Engine with smol: true workers', () => {
       });
 
       engine.register('explicit-no-smol', async function* (ctx: WorkflowContext, input: unknown) {
-        const result = yield* (ctx as Context).run(greet, input);
+        const result = yield* ctx.run(greet, input);
         return result;
       });
 

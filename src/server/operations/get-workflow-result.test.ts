@@ -6,7 +6,6 @@ import { sleepForTesting } from '../../testing/fake-timers.ts';
 import { describe, expect, it } from 'bun:test';
 
 import { encode } from '../../core/codec.ts';
-import type { Context } from '../../core/context.ts';
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
 import { KEYS } from '../../storage/interface.ts';
@@ -23,7 +22,7 @@ function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
     return input;
   });
   engine.register('hold', async function* (ctx: WorkflowContext) {
-    return yield* (ctx as Context).waitForSignal<string>('release');
+    return yield* ctx.waitForSignal<string>('release');
   });
   engine.register('failing', async function* () {
     throw new Error('workflow failed');

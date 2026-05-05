@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'bun:test';
 
-import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import type { WorkflowContext } from './types.ts';
 import { activity } from './types.ts';
@@ -36,7 +35,7 @@ describe('Engine with activity worker execution', () => {
       });
 
       engine.register('greet-workflow', async function* (ctx: WorkflowContext, input: unknown) {
-        const result = yield* (ctx as Context).run(greet, input);
+        const result = yield* ctx.run(greet, input);
         return result;
       });
 
@@ -61,7 +60,7 @@ describe('Engine with activity worker execution', () => {
       });
 
       engine.register('async-double', async function* (ctx: WorkflowContext, input: unknown) {
-        const result = yield* (ctx as Context).run(asyncDouble, input);
+        const result = yield* ctx.run(asyncDouble, input);
         return result;
       });
 
@@ -98,8 +97,8 @@ describe('Engine with activity worker execution', () => {
 
       engine.register('multi-step', async function* (ctx: WorkflowContext, input: unknown) {
         const data = input as { name: string; value: number };
-        const greeting = yield* (ctx as Context).run(greet, data.name);
-        const doubled = yield* (ctx as Context).run(double, data.value);
+        const greeting = yield* ctx.run(greet, data.name);
+        const doubled = yield* ctx.run(double, data.value);
         return { greeting, doubled };
       });
 
@@ -132,7 +131,7 @@ describe('Engine with activity worker execution', () => {
       });
 
       engine.register('failing-workflow', async function* (ctx: WorkflowContext) {
-        const result = yield* (ctx as Context).run(failing);
+        const result = yield* ctx.run(failing);
         return result;
       });
 
@@ -157,7 +156,7 @@ describe('Engine with activity worker execution', () => {
       });
 
       engine.register('unknown-activity-workflow', async function* (ctx: WorkflowContext) {
-        const result = yield* (ctx as Context).run(unknown);
+        const result = yield* ctx.run(unknown);
         return result;
       });
 
@@ -187,7 +186,7 @@ describe('Engine with activity worker execution', () => {
       });
 
       engine.register('default-pool', async function* (ctx: WorkflowContext, input: unknown) {
-        const result = yield* (ctx as Context).run(greet, input);
+        const result = yield* ctx.run(greet, input);
         return result;
       });
 
@@ -212,7 +211,7 @@ describe('Engine with activity worker execution', () => {
       });
 
       engine.register('pool-1', async function* (ctx: WorkflowContext, input: unknown) {
-        const result = yield* (ctx as Context).run(double, input);
+        const result = yield* ctx.run(double, input);
         return result;
       });
 
@@ -237,7 +236,7 @@ describe('Engine with activity worker execution', () => {
       });
 
       engine.register('concurrent', async function* (ctx: WorkflowContext, input: unknown) {
-        const result = yield* (ctx as Context).run(double, input);
+        const result = yield* ctx.run(double, input);
         return result;
       });
 
@@ -267,7 +266,7 @@ describe('Engine with activity worker execution', () => {
       const doubleInline = async (...args: unknown[]) => (args[0] as number) * 2;
 
       engine.register('inline', async function* (ctx: WorkflowContext, input: unknown) {
-        const result = yield* (ctx as Context).run(doubleInline, input);
+        const result = yield* ctx.run(doubleInline, input);
         return result;
       });
 

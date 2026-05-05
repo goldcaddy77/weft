@@ -11,7 +11,6 @@ import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { describe, expect, it } from 'bun:test';
 
-import type { Context } from '../core/context.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { TestEngine } from '../testing/test-engine.ts';
 import type { ChatResponse, LLMProvider } from './agent/types.ts';
@@ -68,7 +67,7 @@ describe('ctx.handoff() — durable handoff', () => {
     });
 
     engine.register('handoff-workflow', async function* (ctx: WorkflowContext) {
-      const result = yield* (ctx as Context).handoff({
+      const result = yield* ctx.handoff({
         agent: childAgent,
         input: 'Do the thing',
         provider,
@@ -101,7 +100,7 @@ describe('ctx.handoff() — durable handoff', () => {
     const engine = new TestEngine();
 
     engine.register('summary-handoff', async function* (ctx: WorkflowContext) {
-      const result = yield* (ctx as Context).handoff({
+      const result = yield* ctx.handoff({
         agent: childAgent,
         input: 'Summarize the conversation',
         provider,
@@ -126,7 +125,7 @@ describe('ctx.handoff() — durable handoff', () => {
     const engine = new TestEngine();
 
     engine.register('none-handoff', async function* (ctx: WorkflowContext) {
-      const result = yield* (ctx as Context).handoff({
+      const result = yield* ctx.handoff({
         agent: childAgent,
         input: 'Just the input',
         provider,
@@ -162,9 +161,9 @@ describe('ctx.handoff() — durable handoff', () => {
 
     engine.register('resilient-handoff', async function* (ctx: WorkflowContext) {
       // First activity creates a checkpoint
-      const step1 = yield* (ctx as Context).run(async () => 'step-1-done');
+      const step1 = yield* ctx.run(async () => 'step-1-done');
       // Then the handoff operation creates another checkpoint
-      const handoffResult = yield* (ctx as Context).handoff({
+      const handoffResult = yield* ctx.handoff({
         agent: childAgent,
         input: 'do work',
         provider,
@@ -203,7 +202,7 @@ describe('ctx.debate() — durable debate', () => {
     const engine = new TestEngine();
 
     engine.register('debate-workflow', async function* (ctx: WorkflowContext) {
-      const result = yield* (ctx as Context).debate({
+      const result = yield* ctx.debate({
         advocate: createAgentDefinition({ name: 'advocate', systemPrompt: 'Argue for' }),
         critic: createAgentDefinition({ name: 'critic', systemPrompt: 'Argue against' }),
         judge: createAgentDefinition({ name: 'judge', systemPrompt: 'Judge the debate' }),
@@ -241,7 +240,7 @@ describe('ctx.debate() — durable debate', () => {
     const engine = new TestEngine();
 
     engine.register('debate-checkpoint', async function* (ctx: WorkflowContext) {
-      const result = yield* (ctx as Context).debate({
+      const result = yield* ctx.debate({
         advocate: createAgentDefinition({ name: 'advocate' }),
         critic: createAgentDefinition({ name: 'critic' }),
         judge: createAgentDefinition({ name: 'judge' }),
@@ -279,7 +278,7 @@ describe('ctx.debate() — durable debate', () => {
     const engine = new TestEngine();
 
     engine.register('debate-structure', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).debate({
+      return yield* ctx.debate({
         advocate: createAgentDefinition({ name: 'advocate' }),
         critic: createAgentDefinition({ name: 'critic' }),
         judge: createAgentDefinition({ name: 'judge' }),
@@ -322,7 +321,7 @@ describe('ctx.supervise() — durable supervision', () => {
     const engine = new TestEngine();
 
     engine.register('supervise-consensus', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).supervise({
+      return yield* ctx.supervise({
         workers: [
           createAgentDefinition({ name: 'worker-1' }),
           createAgentDefinition({ name: 'worker-2' }),
@@ -361,7 +360,7 @@ describe('ctx.supervise() — durable supervision', () => {
     const engine = new TestEngine();
 
     engine.register('supervise-best-of-n', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).supervise({
+      return yield* ctx.supervise({
         workers: [
           createAgentDefinition({ name: 'worker-1' }),
           createAgentDefinition({ name: 'worker-2' }),
@@ -400,7 +399,7 @@ describe('ctx.supervise() — durable supervision', () => {
     const engine = new TestEngine();
 
     engine.register('supervise-merge', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).supervise({
+      return yield* ctx.supervise({
         workers: [
           createAgentDefinition({ name: 'worker-1' }),
           createAgentDefinition({ name: 'worker-2' }),
@@ -443,18 +442,18 @@ describe('ctx.all() with agent branches and budget sharing', () => {
     const engine = new TestEngine();
 
     engine.register('parallel-agents', async function* (ctx: WorkflowContext) {
-      const results = yield* (ctx as Context).all([
-        (ctx as Context).agent({
+      const results = yield* ctx.all([
+        ctx.agent({
           model: 'test-model',
           prompt: 'Task 1',
           provider,
         }),
-        (ctx as Context).agent({
+        ctx.agent({
           model: 'test-model',
           prompt: 'Task 2',
           provider,
         }),
-        (ctx as Context).agent({
+        ctx.agent({
           model: 'test-model',
           prompt: 'Task 3',
           provider,
@@ -487,7 +486,7 @@ describe('agent-to-agent signals within workflow', () => {
     });
 
     engine.register('signal-receiver', async function* (ctx: WorkflowContext) {
-      const signal = yield* (ctx as Context).waitForSignal<{ data: string }>('agent-message');
+      const signal = yield* ctx.waitForSignal<{ data: string }>('agent-message');
       return signal;
     });
 
@@ -524,9 +523,9 @@ describe('agent-to-agent signals within workflow', () => {
 
     engine.register('coordinator', async function* (ctx: WorkflowContext) {
       // Start child A, get result
-      const resultA = yield* (ctx as Context).startChild('worker-a', null);
+      const resultA = yield* ctx.startChild('worker-a', null);
       // Pass A's result to child B
-      const resultB = yield* (ctx as Context).startChild('worker-b', resultA);
+      const resultB = yield* ctx.startChild('worker-b', resultA);
       return resultB;
     });
 
