@@ -12,6 +12,7 @@ import {
 } from '../../storage/interface.ts';
 import { scopedStorage } from '../../storage/scoped-storage.ts';
 import type { AccessPolicy } from '../authorization.ts';
+import type { AuthorizationDecision } from '../operation-catalog.ts';
 import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import { isAuthenticated, type Principal } from '../principal.ts';
@@ -27,6 +28,25 @@ const storageWriteAccess: AccessPolicy = {
   kind: 'scoped',
   scopes: { kind: 'anyOf', scopes: ['storage:write', 'storage:admin'] },
 };
+
+async function authorizeStorageConditionalBatch({
+  principal,
+}: {
+  principal: Principal;
+}): Promise<AuthorizationDecision> {
+  if (!isAuthenticated(principal)) {
+    return { allowed: false, reason: 'authentication required' };
+  }
+  if (principal.hasScope('storage:admin')) return { allowed: true };
+  if (principal.hasScope('storage:read') && principal.hasScope('storage:write')) {
+    return { allowed: true };
+  }
+  return {
+    allowed: false,
+    reason:
+      'Storage conditional batch requires storage:admin or both storage:read and storage:write.',
+  };
+}
 
 const binaryValueSchema = z.instanceof(Uint8Array);
 
@@ -348,6 +368,7 @@ export const storageConditionalBatchOperation = defineOperation<
   inputSchema: storageConditionalBatchInput,
   outputSchema: storageConditionalBatchOutput,
   access: storageWriteAccess,
+  authorize: authorizeStorageConditionalBatch,
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }) => {

@@ -30,6 +30,19 @@ function tenantStorageOptions() {
   };
 }
 
+function writeOnlyTenantStorageOptions() {
+  return {
+    authContext: {
+      method: 'api-key' as const,
+      principal: principalFromApiKey({
+        subject: 'write-only-tenant-caller',
+        tenantId: 'acme',
+        scopes: ['storage:write'],
+      }),
+    },
+  };
+}
+
 function adminStorageOptions() {
   return {
     authContext: {
@@ -162,6 +175,32 @@ describe('storage REST operations', () => {
     expect(decode(await rawStorage.get('tenant:acme:wf:key'))).toBe('tenant');
     expect(decode(await rawStorage.get('tenant:other:wf:key'))).toBe('other');
     expect(decode(await rawStorage.get('wf:key'))).toBe('raw');
+  });
+
+  it('denies conditional batches for write-only callers because conditions reveal stored values', async () => {
+    const rawStorage = new MemoryStorage();
+    await rawStorage.put('tenant:acme:wf:key', encode('existing'));
+    const engine = new Engine({ storage: rawStorage });
+
+    const response = await handleRequest(
+      request('/v1/storage/conditional-batch', {
+        method: 'POST',
+        body: JSON.stringify({
+          conditions: [{ key: 'wf:key', expectedValue: btoa('existing') }],
+          operations: [{ type: 'put', key: 'wf:key', value: btoa('changed') }],
+        }),
+        headers: { 'content-type': 'application/json' },
+      }),
+      engine,
+      writeOnlyTenantStorageOptions(),
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error:
+        'Storage conditional batch requires storage:admin or both storage:read and storage:write.',
+    });
+    expect(decode(await rawStorage.get('tenant:acme:wf:key'))).toBe('existing');
   });
 
   it('applies conditional batches atomically through the server route', async () => {
