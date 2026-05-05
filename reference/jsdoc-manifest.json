@@ -2,6 +2,7 @@
   "publicEntryPoints": {
     "weft": "src/index.ts",
     "weft/service-worker": "src/service-worker/index.ts",
+    "weft/testing": "src/testing/index.ts",
     "weft/storage": "src/storage/index.ts",
     "weft/storage/interface": "src/storage/interface.ts",
     "weft/storage/memory": "src/storage/memory.ts",
@@ -7232,7 +7233,7 @@
       "subKind": "class",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "ChaosNonRetryableError",
           "kind": "value"
         }
@@ -7246,7 +7247,7 @@
       "subKind": "interface",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "ChaosScenario",
           "kind": "type"
         }
@@ -7260,7 +7261,7 @@
       "subKind": "class",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "ChaosTimeoutError",
           "kind": "value"
         }
@@ -7274,7 +7275,7 @@
       "subKind": "class",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "ChaosTransientError",
           "kind": "value"
         }
@@ -7288,7 +7289,7 @@
       "subKind": "type-alias",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "FaultClass",
           "kind": "type"
         }
@@ -7302,7 +7303,7 @@
       "subKind": "function",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "withChaos",
           "kind": "value"
         }
@@ -7316,7 +7317,7 @@
       "subKind": "class",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "ActivityMockRegistry",
           "kind": "value"
         }
@@ -7330,7 +7331,7 @@
       "subKind": "interface",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "MockCall",
           "kind": "type"
         }
@@ -7344,7 +7345,7 @@
       "subKind": "interface",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "MockHandle",
           "kind": "type"
         }
@@ -7358,7 +7359,7 @@
       "subKind": "interface",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "MockedActivity",
           "kind": "type"
         }
@@ -7372,7 +7373,7 @@
       "subKind": "interface",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "RunNOptions",
           "kind": "type"
         }
@@ -7386,7 +7387,7 @@
       "subKind": "interface",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "RunNResult",
           "kind": "type"
         }
@@ -7400,7 +7401,7 @@
       "subKind": "class",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "TestEngine",
           "kind": "value"
         }
@@ -7414,7 +7415,7 @@
       "subKind": "class",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "TimeControl",
           "kind": "value"
         }

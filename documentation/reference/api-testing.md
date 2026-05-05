@@ -21,7 +21,7 @@ new TestEngine(options?: { startTime?: number })
 Creates an engine backed by `MemoryStorage` and a `TimeControl` virtual clock. The engine's `getNow` function is wired to the virtual clock, so all timers and timestamps use virtual time.
 
 ```ts
-import { TestEngine } from 'weft';
+import { TestEngine } from 'weft/testing';
 
 const engine = new TestEngine({ startTime: 0 });
 ```
@@ -316,7 +316,7 @@ A single recorded call to a mocked activity.
 
 ```ts partial
 import { describe, it, expect } from 'bun:test';
-import { TestEngine } from 'weft';
+import { TestEngine } from 'weft/testing';
 
 // Activities
 async function fetchPrice(symbol: string): Promise<number> {

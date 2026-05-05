@@ -18,11 +18,131 @@
  *
  * @module weft/storage
  */
-export { KEYS, storageConditionalBatch, storageValuesEqual } from './interface';
+// Bun 1.3.13 minifier workaround: pure re-export barrels
+// (`export { X } from './m'`) emit invalid JavaScript with undeclared
+// identifiers in `dist/`. Loading the bundle from Node throws
+// `Export 'B' is not defined in module`. Rebinding each value to a
+// local const before re-exporting forces the bundler to keep the
+// reference live. Mirrors the same workaround in `src/testing/index.ts`.
+// Remove this workaround once Bun ships the fix and CI proves a clean
+// build with direct re-exports.
+import { KEYS, storageConditionalBatch, storageValuesEqual } from './interface';
+import { MemoryStorage } from './memory';
+import { ScopedStorage, scopedStorage } from './scoped-storage';
+import { jsonCodec, msgpackCodec, withCodec } from './typed-storage';
+
+/**
+ * Re-exported {@link jsonCodec}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { jsonCodec } from 'weft/storage';
+ * const codec = jsonCodec();
+ * void codec;
+ * ```
+ */
+const exportedJsonCodec = jsonCodec;
+
+/**
+ * Re-exported {@link KEYS}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { KEYS } from 'weft/storage';
+ * const key = KEYS.workflow('wf-1');
+ * void key;
+ * ```
+ */
+const exportedKeys = KEYS;
+
+/**
+ * Re-exported {@link MemoryStorage}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage } from 'weft/storage';
+ * await using storage = new MemoryStorage();
+ * void storage;
+ * ```
+ */
+const exportedMemoryStorage = MemoryStorage;
+
+/**
+ * Re-exported {@link msgpackCodec}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { msgpackCodec } from 'weft/storage';
+ * const codec = msgpackCodec();
+ * void codec;
+ * ```
+ */
+const exportedMsgpackCodec = msgpackCodec;
+
+/**
+ * Re-exported {@link ScopedStorage}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, ScopedStorage } from 'weft/storage';
+ * await using base = new MemoryStorage();
+ * const scoped = new ScopedStorage(base, 'tenant:');
+ * void scoped;
+ * ```
+ */
+const exportedScopedStorage = ScopedStorage;
+
+/**
+ * Re-exported {@link scopedStorage}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, scopedStorage } from 'weft/storage';
+ * await using base = new MemoryStorage();
+ * const scoped = scopedStorage(base, 'tenant:');
+ * void scoped;
+ * ```
+ */
+const exportedScopedStorageFactory = scopedStorage;
+
+/**
+ * Re-exported {@link storageConditionalBatch}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, storageConditionalBatch } from 'weft/storage';
+ * await using storage = new MemoryStorage();
+ * await storageConditionalBatch(storage, [], []);
+ * ```
+ */
+const exportedStorageConditionalBatch = storageConditionalBatch;
+
+/**
+ * Re-exported {@link storageValuesEqual}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { storageValuesEqual } from 'weft/storage';
+ * const equal = storageValuesEqual(new Uint8Array([1]), new Uint8Array([1]));
+ * void equal;
+ * ```
+ */
+const exportedStorageValuesEqual = storageValuesEqual;
+
+/**
+ * Re-exported {@link withCodec}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { jsonCodec, MemoryStorage, withCodec } from 'weft/storage';
+ * await using base = new MemoryStorage();
+ * const typed = withCodec(base, jsonCodec());
+ * void typed;
+ * ```
+ */
+const exportedWithCodec = withCodec;
+
 export type { BatchOperation, ConditionalBatchCondition, ScanOptions, Storage } from './interface';
-export { MemoryStorage } from './memory';
-export { ScopedStorage, scopedStorage } from './scoped-storage';
-export { jsonCodec, msgpackCodec, withCodec } from './typed-storage';
 export type {
   JsonValue,
   MessagePackValue,
@@ -31,3 +151,14 @@ export type {
   TypedBatchOperation,
   TypedStorage,
 } from './typed-storage';
+export {
+  exportedJsonCodec as jsonCodec,
+  exportedKeys as KEYS,
+  exportedMemoryStorage as MemoryStorage,
+  exportedMsgpackCodec as msgpackCodec,
+  exportedScopedStorage as ScopedStorage,
+  exportedScopedStorageFactory as scopedStorage,
+  exportedStorageConditionalBatch as storageConditionalBatch,
+  exportedStorageValuesEqual as storageValuesEqual,
+  exportedWithCodec as withCodec,
+};

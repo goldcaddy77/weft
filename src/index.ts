@@ -289,20 +289,6 @@ export type {
   MTLSConfig,
 } from './server/authentication';
 
-// Testing
-export {
-  ChaosNonRetryableError,
-  ChaosTimeoutError,
-  ChaosTransientError,
-  withChaos,
-} from './testing/chaos';
-export type { ChaosScenario, FaultClass } from './testing/chaos';
-export { ActivityMockRegistry } from './testing/mocks';
-export type { MockCall, MockHandle, MockedActivity } from './testing/mocks';
-export { TestEngine } from './testing/test-engine';
-export type { RunNOptions, RunNResult } from './testing/test-engine';
-export { TimeControl } from './testing/time-control';
-
 // AI / Agent
 export { AgentLoopSuspendedError, executeAgentLoop } from './ai/agent';
 export type {
