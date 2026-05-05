@@ -51,6 +51,7 @@ export type {
   ActivityContext,
   ActivityDefinition,
   ActivityFunction,
+  ActivityTypes,
   BulkCancelResult,
   BulkDeleteResult,
   BulkOperationError,

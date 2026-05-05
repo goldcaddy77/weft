@@ -3106,7 +3106,39 @@
       "sourceFile": "src/core/types/options.ts",
       "sourceName": "AttributeFilter",
       "kind": "type",
-      "subKind": "interface",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/options.ts",
+      "sourceName": "AttributeFilterKey",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/options.ts",
+      "sourceName": "AttributeFilterList",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/options.ts",
+      "sourceName": "AttributeFilterValue",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/options.ts",
+      "sourceName": "AttributeRangeValue",
+      "kind": "type",
+      "subKind": "type-alias",
       "publicFaces": [],
       "classification": "not-public"
     },
@@ -3179,6 +3211,14 @@
         }
       ],
       "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/options.ts",
+      "sourceName": "TypedListFilter",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/types/retry-retention.ts",
@@ -3448,7 +3488,23 @@
     },
     {
       "sourceFile": "src/core/types/search-attributes.ts",
+      "sourceName": "BooleanSearchAttributeDefinition",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/search-attributes.ts",
       "sourceName": "JsonSchemaPrimitiveType",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/search-attributes.ts",
+      "sourceName": "NumberSearchAttributeDefinition",
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
@@ -3458,7 +3514,7 @@
       "sourceFile": "src/core/types/search-attributes.ts",
       "sourceName": "SearchAttributeDefinition",
       "kind": "type",
-      "subKind": "interface",
+      "subKind": "type-alias",
       "publicFaces": [
         {
           "importPath": "weft",
@@ -3481,6 +3537,14 @@
         }
       ],
       "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/search-attributes.ts",
+      "sourceName": "SearchAttributePrimitiveValueMap",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/types/search-attributes.ts",
@@ -3509,6 +3573,30 @@
         }
       ],
       "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/search-attributes.ts",
+      "sourceName": "SearchAttributeValueForDefinition",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/search-attributes.ts",
+      "sourceName": "StringArraySearchAttributeDefinition",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/search-attributes.ts",
+      "sourceName": "StringSearchAttributeDefinition",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/types/search-attributes.ts",
@@ -3729,6 +3817,20 @@
       "classification": "prose-only"
     },
     {
+      "sourceFile": "src/core/types/workflow-context.ts",
+      "sourceName": "WorkflowContext",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "WorkflowContext",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
       "sourceFile": "src/core/types/workflow-function.ts",
       "sourceName": "ChildWorkflowOptions",
       "kind": "type",
@@ -3779,20 +3881,6 @@
         {
           "importPath": "weft",
           "exportName": "StepWorkflowFunction",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/core/types/workflow-function.ts",
-      "sourceName": "WorkflowContext",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "WorkflowContext",
           "kind": "type"
         }
       ],
@@ -3934,20 +4022,6 @@
     },
     {
       "sourceFile": "src/core/types/workflow-function.ts",
-      "sourceName": "WorkflowRegistry",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "WorkflowRegistry",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/core/types/workflow-function.ts",
       "sourceName": "workflow",
       "kind": "value",
       "subKind": "function",
@@ -3959,6 +4033,90 @@
         }
       ],
       "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/workflow-registries.ts",
+      "sourceName": "ActivityArguments",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/workflow-registries.ts",
+      "sourceName": "ActivityResult",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/workflow-registries.ts",
+      "sourceName": "ActivityTypes",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "ActivityTypes",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/workflow-registries.ts",
+      "sourceName": "RegisteredActivityFunction",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/workflow-registries.ts",
+      "sourceName": "UnregisteredName",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/workflow-registries.ts",
+      "sourceName": "WorkflowInput",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/workflow-registries.ts",
+      "sourceName": "WorkflowOutput",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/workflow-registries.ts",
+      "sourceName": "WorkflowRegistry",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "WorkflowRegistry",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/workflow-registries.ts",
+      "sourceName": "WorkflowRegistryEntry",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/updates.ts",

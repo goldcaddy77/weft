@@ -16,7 +16,10 @@ describe('bundled examples', () => {
   it('runs the hello-world workflow through its activity', async () => {
     const iterator = helloWorldWorkflow.handler(
       {
-        run: async function* (activity: typeof formatGreetingActivity, input: unknown) {
+        run: async function* (
+          activity: typeof formatGreetingActivity,
+          input: Parameters<typeof formatGreetingActivity.execute>[0],
+        ) {
           return await activity.execute(input);
         },
       } as never,
@@ -30,18 +33,21 @@ describe('bundled examples', () => {
   });
 
   it('loads a customer profile through the bundled customer-profile activity', async () => {
-    await expect(loadCustomerProfileActivity.execute(42)).resolves.toEqual({
+    await expect(loadCustomerProfileActivity.execute({ customerId: '42' })).resolves.toEqual({
       customerId: '42',
       loyaltyTier: 'gold',
     });
 
     const iterator = customerProfileWorkflow.handler(
       {
-        run: async function* (activity: typeof loadCustomerProfileActivity, input: unknown) {
+        run: async function* (
+          activity: typeof loadCustomerProfileActivity,
+          input: Parameters<typeof loadCustomerProfileActivity.execute>[0],
+        ) {
           return await activity.execute(input);
         },
       } as never,
-      42,
+      { customerId: '42' },
     );
 
     await expect(iterator.next()).resolves.toEqual({

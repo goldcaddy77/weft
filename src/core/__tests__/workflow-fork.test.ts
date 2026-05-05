@@ -7,7 +7,6 @@ import { KEYS } from '../../storage/interface.ts';
 import { TestEngine } from '../../testing/test-engine.ts';
 import { deserializeCheckpoint } from '../checkpoint.ts';
 import { decode } from '../codec.ts';
-import type { Context } from '../context.ts';
 import { WorkflowCompletedEvent, WorkflowStartedEvent } from '../events.ts';
 import { activity, type WorkflowContext } from '../types.ts';
 
@@ -42,7 +41,7 @@ describe('workflow forking', () => {
     const engine = new TestEngine();
 
     engine.register('choose-branch', async function* (ctx: WorkflowContext, input: unknown) {
-      const durableContext = ctx as Context;
+      const durableContext = ctx;
       const branch = yield* durableContext.waitForSignal('branch');
       const typedInput = input as { label: string };
       return `${typedInput.label}:${String(branch)}`;
@@ -88,7 +87,7 @@ describe('workflow forking', () => {
     });
 
     engine.register('historical-fork', async function* (ctx: WorkflowContext) {
-      const durableContext = ctx as Context;
+      const durableContext = ctx;
       const first = yield* durableContext.run(recordStage, 'first');
       const second = yield* durableContext.run(recordStage, 'second');
       yield* durableContext.waitForSignal('hold');
@@ -126,7 +125,7 @@ describe('workflow forking', () => {
     const engine = new TestEngine({ startTime: 1_000 });
 
     engine.register('fork-sleep-reference', async function* (ctx: WorkflowContext) {
-      const durableContext = ctx as Context;
+      const durableContext = ctx;
       yield* durableContext.waitForSignal('continue');
       yield* durableContext.sleep('1 hour');
       return 'done';
@@ -181,7 +180,7 @@ describe('workflow forking', () => {
     });
 
     engine.register('completed-fork', async function* (ctx: WorkflowContext, input: unknown) {
-      const durableContext = ctx as Context;
+      const durableContext = ctx;
       const stage = yield* durableContext.run(recordStage, 'prepare');
       const typedInput = String(input);
       return yield* durableContext.memo('terminal-summary', () => {
@@ -285,7 +284,7 @@ describe('workflow forking', () => {
     const engine = new TestEngine();
 
     engine.register('cancelled-fork', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('continue');
+      yield* ctx.waitForSignal('continue');
       return 'done';
     });
 
@@ -332,7 +331,7 @@ describe('workflow forking', () => {
     });
 
     engine.register('parent-with-headers', async function* (ctx: WorkflowContext) {
-      const durableContext = ctx as Context;
+      const durableContext = ctx;
       yield* durableContext.waitForSignal('continue');
       return yield* durableContext.startChild<string>('child', null);
     });
@@ -373,7 +372,7 @@ describe('workflow forking', () => {
 
     engine.register('fork-child-function', childWorkflow);
     engine.register('fork-parent-composition', async function* (ctx: WorkflowContext) {
-      const durableContext = ctx as Context;
+      const durableContext = ctx;
       yield* durableContext.waitForSignal('continue');
       return yield* durableContext.map([1, 2], childWorkflow);
     });

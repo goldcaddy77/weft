@@ -10,7 +10,6 @@ import {
   teardown,
 } from '../testing/storage-backends.ts';
 import { decode } from './codec.ts';
-import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import { searchAttribute } from './search-attributes.ts';
 import type { SearchAttributeValue, WorkflowContext } from './types.ts';
@@ -79,7 +78,7 @@ for (const backend of storageBackends) {
       const setAttributeActivity = async () => 'done';
 
       engine.register('set-attrs-running', async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
+        const context = ctx;
         context.setAttribute('region', 'us-east');
         // Run an activity to trigger a checkpoint persist
         yield* context.run(setAttributeActivity);
@@ -108,7 +107,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('stay-running', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('stop');
+        yield* ctx.waitForSignal('stop');
         return 'done';
       });
 
@@ -146,7 +145,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('stay-running', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('stop');
+        yield* ctx.waitForSignal('stop');
         return 'done';
       });
 
@@ -197,7 +196,7 @@ for (const backend of storageBackends) {
           labels,
         },
         handler: async function* (ctx: WorkflowContext) {
-          yield* (ctx as Context).waitForSignal('stop');
+          yield* ctx.waitForSignal('stop');
           return 'done';
         },
       });
@@ -317,7 +316,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('stay-running', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('stop');
+        yield* ctx.waitForSignal('stop');
         return 'done';
       });
 
@@ -348,7 +347,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('stay-running', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('stop');
+        yield* ctx.waitForSignal('stop');
         return 'done';
       });
 
@@ -399,7 +398,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('stay-running', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('stop');
+        yield* ctx.waitForSignal('stop');
         return 'done';
       });
 
@@ -420,7 +419,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('stay-running', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('stop');
+        yield* ctx.waitForSignal('stop');
         return 'done';
       });
 
@@ -442,7 +441,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('stay-running', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('stop');
+        yield* ctx.waitForSignal('stop');
         return 'done';
       });
 
@@ -479,7 +478,7 @@ for (const backend of storageBackends) {
 
       engine.register('schema-wf', {
         handler: async function* (ctx: WorkflowContext) {
-          const context = ctx as Context;
+          const context = ctx;
           context.setAttribute('region', 'us-east');
           yield* context.run(async () => 'done');
           yield* context.waitForSignal('stop');
@@ -506,7 +505,7 @@ for (const backend of storageBackends) {
 
       engine.register('schema-strict', {
         handler: async function* (ctx: WorkflowContext) {
-          const context = ctx as Context;
+          const context = ctx;
           context.setAttribute('unknownKey', 'value');
           yield* context.run(async () => 'done');
           return 'done';
@@ -538,7 +537,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('no-schema', async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
+        const context = ctx;
         context.setAttribute('anything', 'goes');
         context.setAttribute('random', 123);
         yield* context.run(async () => 'done');
@@ -562,7 +561,7 @@ for (const backend of storageBackends) {
 
       engine.register('schema-ext', {
         handler: async function* (ctx: WorkflowContext) {
-          yield* (ctx as Context).waitForSignal('stop');
+          yield* ctx.waitForSignal('stop');
           return 'done';
         },
         searchAttributes: {
@@ -596,7 +595,7 @@ for (const backend of storageBackends) {
 
       engine.register('schema-batch', {
         handler: async function* (ctx: WorkflowContext) {
-          const context = ctx as Context;
+          const context = ctx;
           context.setAttributes({ region: 'us-east', badKey: 'oops' });
           yield* context.run(async () => 'done');
           return 'done';
@@ -624,7 +623,7 @@ for (const backend of storageBackends) {
 
       engine.register('schema-type-mismatch', {
         handler: async function* (ctx: WorkflowContext) {
-          yield* (ctx as Context).waitForSignal('stop');
+          yield* ctx.waitForSignal('stop');
           return 'done';
         },
         searchAttributes: {
@@ -654,7 +653,7 @@ for (const backend of storageBackends) {
 
       engine.register('schema-type-mismatch-num', {
         handler: async function* (ctx: WorkflowContext) {
-          yield* (ctx as Context).waitForSignal('stop');
+          yield* ctx.waitForSignal('stop');
           return 'done';
         },
         searchAttributes: {
@@ -682,7 +681,7 @@ for (const backend of storageBackends) {
 
       engine.register('schema-type-ok', {
         handler: async function* (ctx: WorkflowContext) {
-          yield* (ctx as Context).waitForSignal('stop');
+          yield* ctx.waitForSignal('stop');
           return 'done';
         },
         searchAttributes: {
@@ -728,7 +727,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('stay-running', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('stop');
+        yield* ctx.waitForSignal('stop');
         return 'done';
       });
 
@@ -766,7 +765,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('stay-running', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('stop');
+        yield* ctx.waitForSignal('stop');
         return 'done';
       });
 
@@ -800,7 +799,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('stay-running', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('stop');
+        yield* ctx.waitForSignal('stop');
         return 'done';
       });
 
@@ -849,7 +848,7 @@ for (const backend of storageBackends) {
         engine = new Engine({ storage: result.storage });
 
         engine.register('wait-for-update', async function* (ctx: WorkflowContext) {
-          const context = ctx as Context;
+          const context = ctx;
           const { payload, respond } = yield* context.waitForUpdate<{ value: number }>('my-update');
           respond({ accepted: true, value: payload.value });
           return payload;
@@ -885,7 +884,7 @@ for (const backend of storageBackends) {
         engine = new Engine({ storage: result.storage });
 
         engine.register('multi-update', async function* (ctx: WorkflowContext) {
-          const context = ctx as Context;
+          const context = ctx;
           const { payload: firstPayload, respond: respond1 } =
             yield* context.waitForUpdate<string>('update-a');
           respond1(firstPayload);
@@ -923,7 +922,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('pending-update', async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
+        const context = ctx;
         // Run an activity first to give time for the update to be queued
         yield* context.run(async () => {
           // This gives the engine time to process the update request
@@ -967,7 +966,7 @@ for (const backend of storageBackends) {
         engine.addEventListener('update:completed', () => events.push('completed'));
 
         engine.register('events-update', async function* (ctx: WorkflowContext) {
-          const context = ctx as Context;
+          const context = ctx;
           const { payload, respond } = yield* context.waitForUpdate('my-update');
           respond(payload);
           return payload;

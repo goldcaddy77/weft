@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { restoreRealTimers, sleepForTesting, useFakeTimers } from './fake-timers.ts';
 
-import type { Context } from '../core/context.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { TestEngine } from './test-engine.ts';
@@ -33,7 +32,7 @@ describe('TestEngine', () => {
     const engine = new TestEngine({ startTime: 0 });
 
     engine.register('sleeper', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).sleep(5000);
+      yield* ctx.sleep(5000);
       return 'awake';
     });
 
@@ -83,7 +82,7 @@ describe('TestEngine', () => {
       // Use the mock-aware version: check if mocked
       const mockedActivity = engine.mocks.get(fetchUser);
       const fn = mockedActivity ? mockedActivity.implementation : fetchUser;
-      const user = yield* (ctx as Context).run(fn, input);
+      const user = yield* ctx.run(fn, input);
       return user;
     });
 
@@ -126,7 +125,7 @@ describe('TestEngine', () => {
     };
 
     engine.register('recoverable', async function* (ctx: WorkflowContext, input: unknown) {
-      const result = yield* (ctx as Context).run(expensiveComputation, input);
+      const result = yield* ctx.run(expensiveComputation, input);
       return result;
     });
 

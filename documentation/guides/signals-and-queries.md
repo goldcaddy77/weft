@@ -9,19 +9,17 @@ Inside a workflow, `yield* ctx.waitForSignal(handle)` pauses execution until a s
 ```typescript partial
 const approvalSignal = signal<{ approved: boolean }>('approval');
 
-engine.register('approval', async function* (ctx, input) {
-  const { orderId } = input as { orderId: string };
-
+engine.register('approval', async function* (ctx, input: { orderId: string }) {
   // Pauses here until 'approval' signal arrives
   const approval = yield* ctx.waitForSignal(approvalSignal);
 
   if (approval.approved) {
-    yield* ctx.run(fulfillOrder, { orderId });
+    yield* ctx.run(fulfillOrder, { orderId: input.orderId });
   } else {
-    yield* ctx.run(cancelOrder, { orderId });
+    yield* ctx.run(cancelOrder, { orderId: input.orderId });
   }
 
-  return { orderId, approved: approval.approved };
+  return { orderId: input.orderId, approved: approval.approved };
 });
 ```
 
@@ -64,22 +62,20 @@ This durability guarantee is what makes signals safe for human-in-the-loop workf
 A workflow can wait for multiple signals, either sequentially or with different names.
 
 ```typescript partial
-engine.register('multi-step-approval', async function* (ctx, input) {
-  const { orderId } = input as { orderId: string };
+const managerApproval = signal<{ approved: boolean }>('manager-approval');
+const financeApproval = signal<{ approved: boolean }>('finance-approval');
 
-  const managerApproval = signal<{ approved: boolean }>('manager-approval');
-  const financeApproval = signal<{ approved: boolean }>('finance-approval');
-
+engine.register('multi-step-approval', async function* (ctx, input: { orderId: string }) {
   // Wait for manager approval
   const manager = yield* ctx.waitForSignal(managerApproval);
-  if (!manager.approved) return { orderId, status: 'rejected-by-manager' };
+  if (!manager.approved) return { orderId: input.orderId, status: 'rejected-by-manager' };
 
   // Then wait for finance approval
   const finance = yield* ctx.waitForSignal(financeApproval);
-  if (!finance.approved) return { orderId, status: 'rejected-by-finance' };
+  if (!finance.approved) return { orderId: input.orderId, status: 'rejected-by-finance' };
 
-  yield* ctx.run(fulfillOrder, { orderId });
-  return { orderId, status: 'approved' };
+  yield* ctx.run(fulfillOrder, { orderId: input.orderId });
+  return { orderId: input.orderId, status: 'approved' };
 });
 ```
 

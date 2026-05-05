@@ -1,10 +1,7 @@
-/* oxlint-disable max-lines -- ID:core-types-workflow-function-public-api-surface */
 import type { ConstraintDefinition } from '../constraint.ts';
-import type { TenantContext } from '../tenant.ts';
-import type { WorkflowId } from './identity.ts';
 import type { RetentionPolicy } from './retry-retention.ts';
 import type { SearchAttributeSchema } from './search-attributes.ts';
-import type { WorkflowSessionState } from './state.ts';
+import type { WorkflowContext } from './workflow-context.ts';
 
 // ---------------------------------------------------------------------------
 // Workflow function signature
@@ -14,22 +11,20 @@ import type { WorkflowSessionState } from './state.ts';
  * Signature of a durable workflow generator function registered via
  * {@link Engine.register}. The engine calls it with a {@link WorkflowContext}
  * and the start `input`, then drives the generator by feeding operation
- * results back via `next`. Cast `ctx` to the concrete {@link Context} class
- * to access `run`, `sleep`, `agent`, and other execution primitives.
- * Use `yield*` (delegated yield) when calling Context methods
- * (`(ctx as Context).run(...)`, `.sleep(...)`, `.agent(...)`); a bare `yield`
- * will not produce the operation results expected by the engine.
+ * results back via `next`. Use `yield*` (delegated yield) when calling
+ * context methods (`ctx.run(...)`, `ctx.sleep(...)`, `ctx.agent(...)`);
+ * a bare `yield` will not produce the operation results expected by the
+ * engine.
  *
  * @example
  * ```ts
- * import { activity, Engine, type WorkflowFunction } from 'weft';
- * import type { Context, WorkflowContext } from 'weft';
+ * import { activity, Engine, type WorkflowContext, type WorkflowFunction } from 'weft';
  *
- * const greet = activity({ name: 'greet', execute: async (i: unknown) => `hello ${i}` });
+ * const greet = activity({ name: 'greet', execute: async (input: string) => `hello ${input}` });
  *
- * const myWorkflow: WorkflowFunction =
- *   async function* (ctx: WorkflowContext, input: unknown) {
- *     return yield* (ctx as Context).run(greet, input);
+ * const myWorkflow: WorkflowFunction<string, string> =
+ *   async function* (ctx: WorkflowContext, input: string) {
+ *     return yield* ctx.run(greet, input);
  *   };
  *
  * const engine = new Engine();
@@ -107,7 +102,6 @@ export type StepWorkflowFunction<TInput = unknown, TOutput = unknown> = (
  * @example
  * ```ts
  * import { Engine, type WorkflowOperation, type WorkflowContext } from 'weft';
- * import type { Context } from 'weft';
  *
  * const engine = new Engine();
  * engine.register('parent', async function* (ctx: WorkflowContext, input: unknown) {
@@ -135,7 +129,6 @@ export type WorkflowOperation<TResult> = Generator<unknown, TResult, unknown>;
  * @example
  * ```ts
  * import { Engine, type ChildWorkflowTarget, type WorkflowContext } from 'weft';
- * import type { Context } from 'weft';
  *
  * const engine = new Engine();
  * engine.register('transform', async function* (_ctx: WorkflowContext, input: unknown) {
@@ -144,7 +137,7 @@ export type WorkflowOperation<TResult> = Generator<unknown, TResult, unknown>;
  *
  * const target: ChildWorkflowTarget<unknown, string> = 'transform';
  * engine.register('parent', async function* (ctx: WorkflowContext, input: unknown) {
- *   return yield* (ctx as Context).map([input], target);
+ *   return yield* ctx.map([input], target);
  * });
  * void engine;
  * ```
@@ -173,7 +166,6 @@ export type ChildWorkflowOptions = Record<string, unknown> & {
  * @example
  * ```ts
  * import { Engine, type WorkflowPipeStage, type WorkflowContext } from 'weft';
- * import type { Context } from 'weft';
  *
  * const engine = new Engine();
  * engine.register('step1', async function* (_ctx: WorkflowContext, i: unknown) { return String(i); });
@@ -203,7 +195,6 @@ export interface WorkflowPipeStage<TInput = unknown, TOutput = unknown> {
  * @example
  * ```ts
  * import { Engine, type WorkflowPipeStageDefinition, type WorkflowContext } from 'weft';
- * import type { Context } from 'weft';
  *
  * const engine = new Engine();
  * engine.register('upper', async function* (_ctx: WorkflowContext, i: unknown) {
@@ -235,7 +226,6 @@ export type WorkflowPipeStageDefinition<TInput = unknown, TOutput = unknown> =
  * @example
  * ```ts
  * import { Engine, type WorkflowMapOptions, type WorkflowContext } from 'weft';
- * import type { Context } from 'weft';
  *
  * const engine = new Engine();
  * engine.register('processItem', async function* (_ctx: WorkflowContext, item: unknown) {
@@ -244,7 +234,7 @@ export type WorkflowPipeStageDefinition<TInput = unknown, TOutput = unknown> =
  * engine.register('batchProcess', async function* (ctx: WorkflowContext, input: unknown) {
  *   const items = input as string[];
  *   const options: WorkflowMapOptions = { concurrency: 3 };
- *   return yield* (ctx as Context).map(items, 'processItem', options);
+ *   return yield* ctx.map(items, 'processItem', options);
  * });
  * void engine;
  * ```
@@ -261,17 +251,19 @@ export interface WorkflowMapOptions {
  * @example
  * ```ts
  * import { Engine, type WorkflowReduceInput, type WorkflowContext } from 'weft';
- * import type { Context } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('sumStep', async function* (_ctx: WorkflowContext, input: unknown) {
- *   const { accumulator, item } = input as WorkflowReduceInput<number, number>;
+ * engine.register('sumStep', async function* (
+ *   _ctx: WorkflowContext,
+ *   input: WorkflowReduceInput<number, number>,
+ * ) {
+ *   const { accumulator, item } = input;
  *   return accumulator + item;
  * });
  *
  * engine.register('sumAll', async function* (ctx: WorkflowContext, input: unknown) {
  *   const items = input as number[];
- *   return yield* (ctx as Context).reduce(items, 'sumStep', 0);
+ *   return yield* ctx.reduce(items, 'sumStep', 0);
  * });
  * void engine;
  * ```
@@ -290,132 +282,25 @@ export interface WorkflowReduceInput<TAccumulator, TItem> {
  * @example
  * ```ts
  * import { Engine, type WorkflowReduceOptions, type WorkflowContext } from 'weft';
- * import type { Context } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('merge', async function* (_ctx: WorkflowContext, input: unknown) {
- *   const { accumulator, item } = input as { accumulator: string[]; item: string };
+ * engine.register('merge', async function* (
+ *   _ctx: WorkflowContext,
+ *   input: { accumulator: string[]; item: string },
+ * ) {
+ *   const { accumulator, item } = input;
  *   return [...accumulator, item];
  * });
  * engine.register('collect', async function* (ctx: WorkflowContext, input: unknown) {
  *   const items = input as string[];
  *   const opts: WorkflowReduceOptions = { idPrefix: 'collect-merge' };
- *   return yield* (ctx as Context).reduce(items, 'merge', [], opts);
+ *   return yield* ctx.reduce(items, 'merge', [], opts);
  * });
  * void engine;
  * ```
  */
 export interface WorkflowReduceOptions extends Record<string, unknown> {
   idPrefix?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Forward-declared WorkflowContext interface (full implementation in context.ts)
-// ---------------------------------------------------------------------------
-
-/**
- * The minimal context contract that every workflow function receives. For
- * most operations — `run`, `sleep`, `waitForSignal`, `setAttribute`,
- * `stream`, `suspendUntil`, `agent`, and the multi-agent primitives — cast
- * to the concrete `Context` class from `src/core/context.ts`:
- *
- * ```ts
- * import type { Context } from 'weft';
- *
- * engine.register('example', async function* (ctx) {
- *   const result = yield* (ctx as Context).run(myActivity, input);
- *   yield* (ctx as Context).suspendUntil('resume-token');
- * });
- * ```
- *
- * Composition operators are available directly on `WorkflowContext`, so
- * `ctx.pipe(...)`, `ctx.map(...)`, and `ctx.reduce(...)` do not require a
- * cast.
- *
- * `tenant` is surfaced directly on this interface (not via the cast) because
- * reading it is a common lightweight path that doesn't need the full method
- * surface.
- *
- * @example
- * ```ts
- * import { Engine, activity, type WorkflowContext } from 'weft';
- * import type { Context } from 'weft';
- *
- * const engine = new Engine();
- * const noop = activity({ name: 'noop', execute: async (i: unknown) => i });
- *
- * engine.register('myWorkflow', async function* (ctx: WorkflowContext, input: unknown) {
- *   const id = ctx.workflowId;
- *   const remaining = ctx.executionTimeRemaining;
- *   // For run/sleep/signal, cast to the concrete Context class:
- *   const result = yield* (ctx as Context).run(noop, input);
- *   return result;
- * });
- * void engine;
- * ```
- */
-export interface WorkflowContext {
-  readonly workflowId: WorkflowId;
-  readonly signal: AbortSignal;
-  readonly executionTimeRemaining: number;
-  readonly startedAt: number;
-  /**
-   * The {@link TenantContext} this workflow is running
-   * on behalf of, populated from the engine's `tenantResolver` at start time
-   * and restored from persisted state on recovery. `undefined` when the
-   * engine has no resolver configured or the resolver returned `undefined`.
-   *
-   * Declared as `T | undefined` rather than `tenant?: T` so the field is
-   * always present on the type — the `Context` class implementation has a
-   * getter that returns `undefined` when absent, and under
-   * `exactOptionalPropertyTypes` the optional-key form would be a stricter
-   * contract that the getter can't satisfy.
-   */
-  readonly tenant: TenantContext | undefined;
-  sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T>;
-  pipe<TInput, TOutput>(
-    stages: [WorkflowPipeStageDefinition<TInput, TOutput>],
-    input: TInput,
-  ): WorkflowOperation<TOutput>;
-  pipe<TInput, TIntermediate, TOutput>(
-    stages: [
-      WorkflowPipeStageDefinition<TInput, TIntermediate>,
-      WorkflowPipeStageDefinition<TIntermediate, TOutput>,
-    ],
-    input: TInput,
-  ): WorkflowOperation<TOutput>;
-  pipe<TInput, TFirst, TSecond, TOutput>(
-    stages: [
-      WorkflowPipeStageDefinition<TInput, TFirst>,
-      WorkflowPipeStageDefinition<TFirst, TSecond>,
-      WorkflowPipeStageDefinition<TSecond, TOutput>,
-    ],
-    input: TInput,
-  ): WorkflowOperation<TOutput>;
-  pipe<TInput, TFirst, TSecond, TThird, TOutput>(
-    stages: [
-      WorkflowPipeStageDefinition<TInput, TFirst>,
-      WorkflowPipeStageDefinition<TFirst, TSecond>,
-      WorkflowPipeStageDefinition<TSecond, TThird>,
-      WorkflowPipeStageDefinition<TThird, TOutput>,
-    ],
-    input: TInput,
-  ): WorkflowOperation<TOutput>;
-  pipe<TResult = unknown>(
-    stages: Array<WorkflowPipeStage | ChildWorkflowTarget>,
-    input: unknown,
-  ): WorkflowOperation<TResult>;
-  map<TItem, TResult>(
-    items: readonly TItem[],
-    workflowType: ChildWorkflowTarget<TItem, TResult>,
-    options?: WorkflowMapOptions,
-  ): WorkflowOperation<TResult[]>;
-  reduce<TItem, TAccumulator>(
-    items: readonly TItem[],
-    workflowType: ChildWorkflowTarget<WorkflowReduceInput<TAccumulator, TItem>, TAccumulator>,
-    initialValue: TAccumulator,
-    options?: WorkflowReduceOptions,
-  ): WorkflowOperation<TAccumulator>;
 }
 
 // ---------------------------------------------------------------------------
@@ -432,14 +317,13 @@ export interface WorkflowContext {
  * @example
  * ```ts
  * import { activity, Engine, type WorkflowRegistration, type WorkflowContext } from 'weft';
- * import type { Context } from 'weft';
  *
  * const noop = activity({ name: 'noop', execute: async (i: unknown) => i });
  * const registration: WorkflowRegistration = {
  *   version: '1.0.0',
  *   retention: { completed: '7d' },
  *   handler: async function* (ctx: WorkflowContext, input: unknown) {
- *     return yield* (ctx as Context).run(noop, input);
+ *     return yield* ctx.run(noop, input);
  *   },
  * };
  * const engine = new Engine();
@@ -464,7 +348,6 @@ export interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
    */
   constraints?: ConstraintDefinition[];
 }
-
 /**
  * Named workflow definition returned by {@link workflow}. The runtime object
  * carries the workflow name plus the same metadata accepted by
@@ -531,28 +414,3 @@ export function workflow<TInput, TOutput>(
 
   return definition;
 }
-
-// ---------------------------------------------------------------------------
-// Workflow registry for typed Engine<TRegistry>
-// ---------------------------------------------------------------------------
-
-/**
- * Type-level map of workflow names to their input and output shapes. Pass as
- * the generic parameter to `Engine<TRegistry>` to get type-safe `start`,
- * `get`, and `getHandle` calls. Each key is a workflow name; each value
- * declares the `input` type and `output` type.
- *
- * @example
- * ```ts
- * import { Engine, type WorkflowRegistry } from 'weft';
- *
- * type MyRegistry = WorkflowRegistry & {
- *   greet: { input: string; output: string };
- * };
- *
- * // WorkflowRegistry documents the shape contract for type-safe engine wrappers
- * const _registry: MyRegistry = { greet: { input: '', output: '' } };
- * void _registry;
- * ```
- */
-export type WorkflowRegistry = Record<string, { input: unknown; output: unknown }>;

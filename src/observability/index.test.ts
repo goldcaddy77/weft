@@ -6,7 +6,6 @@ import {
   AgentTurnCompletedEvent,
   AgentTurnStartedEvent,
 } from '../ai/events/index.ts';
-import type { Context } from '../core/context';
 import { Engine } from '../core/engine';
 import {
   WorkflowCancelledEvent,
@@ -2407,7 +2406,7 @@ describe('createObservabilityInterceptors', () => {
 
       // A workflow that waits on a signal forever — giving us time to cancel.
       engine.register('waiter', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('never-sent');
+        yield* ctx.waitForSignal('never-sent');
         return 'unreached';
       });
 

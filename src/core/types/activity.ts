@@ -67,21 +67,20 @@ export interface ActivityContext {
 
 /**
  * Per-invocation overrides when calling an activity from a workflow via
- * `(ctx as Context).run(activity, input, options)`. Any field overrides the
+ * `ctx.run(activity, input, options)`. Any field overrides the
  * activity's own defaults for that single call. Useful for increasing the
  * timeout on a retried call or routing to a specific queue.
  *
  * @example
  * ```ts
- * import { activity, Engine, type ActivityCallOptions } from 'weft';
- * import type { Context, WorkflowContext } from 'weft';
+ * import { activity, Engine, type ActivityCallOptions, type WorkflowContext } from 'weft';
  *
  * const slowTask = activity({ name: 'slowTask', execute: async (i: unknown) => i });
  * const engine = new Engine();
  *
  * engine.register('example', async function* (ctx: WorkflowContext, input: unknown) {
  *   const options: ActivityCallOptions = { timeout: '5m', queue: 'heavy' };
- *   const result = yield* (ctx as Context).run(slowTask, input, options);
+ *   const result = yield* ctx.run(slowTask, input, options);
  *   return result;
  * });
  * void engine;
@@ -115,8 +114,8 @@ export interface ActivityCallOptions {
  *   name: 'sendEmail',
  *   timeout: '30s',
  *   retry: { maxAttempts: 3, initialBackoff: '1s', backoffMultiplier: 2, maxBackoff: '10s' },
- *   execute: async (input: unknown) => {
- *     const { to, body } = input as { to: string; body: string };
+ *   execute: async (input: { to: string; body: string }) => {
+ *     const { to, body } = input;
  *     console.log(`Sending to ${to}: ${body}`);
  *   },
  * });
@@ -210,7 +209,7 @@ export type ActivityCallable<TInput, TOutput> = ActivityDefinition<TInput, TOutp
  * });
  *
  * // Use in a workflow via ctx.run:
- * // const user = yield* (ctx as Context).run(fetchUser, userId);
+ * // const user = yield* ctx.run(fetchUser, userId);
  * void fetchUser;
  * ```
  */

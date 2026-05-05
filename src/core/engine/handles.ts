@@ -113,7 +113,7 @@ export const HANDLE_RESULT_PROMISE = Symbol('handleResultPromise');
  * const greet = activity({ name: 'greet', execute: async (i: unknown) => `hi ${i}` });
  * const engine = new Engine();
  * engine.register('wave', async function* (ctx: WorkflowContext, input: unknown) {
- *   return yield* (ctx as Context).run(greet, input);
+ *   return yield* ctx.run(greet, input);
  * });
  *
  * const handle = await engine.start('wave', 'world');
@@ -138,10 +138,10 @@ export const HANDLE_RESULT_PROMISE = Symbol('handleResultPromise');
  * void typedHandle;
  * ```
  */
-export class WorkflowHandle extends EventTarget implements AsyncDisposable {
+export class WorkflowHandle<TResult = unknown> extends EventTarget implements AsyncDisposable {
   readonly id: string;
   readonly #engine: Engine;
-  #resultPromise: Promise<unknown> | undefined;
+  #resultPromise: Promise<TResult> | undefined;
 
   constructor(id: string, engine: Engine) {
     super();
@@ -150,8 +150,11 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
     this.#resultPromise = undefined;
   }
 
-  async result(): Promise<unknown> {
-    this.#resultPromise ??= this.#engine[HANDLE_RESULT_PROMISE](this.id);
+  async result(): Promise<TResult> {
+    // The engine stores persisted workflow results as unknown. The typed
+    // handle is created from the registry-backed `Engine.start` overload that
+    // determines TResult at the call site.
+    this.#resultPromise ??= this.#engine[HANDLE_RESULT_PROMISE](this.id) as Promise<TResult>;
     return this.#resultPromise;
   }
 

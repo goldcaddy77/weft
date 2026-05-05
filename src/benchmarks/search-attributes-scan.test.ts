@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import type { SearchAttributeSchema, WorkflowContext } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
@@ -61,7 +60,7 @@ describe('Search attribute index scan', () => {
     // of live in-process timers.
     engine.register('stay-running', {
       handler: async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).sleep(999_999);
+        yield* ctx.sleep(999_999);
         return 'done';
       },
       version: '1',

@@ -38,6 +38,7 @@ describe('partial-failure preservation worker-mode boundary', () => {
     await processParallelOperation(createWorkerModeInternals(), 'wf-worker-all', operation, {
       executeSubOperation: async (_workflowId, subOperation) => {
         if (subOperation.type !== 'activity') throw new Error('unexpected operation');
+        if (subOperation.fn === undefined) throw new Error('missing activity function');
         return subOperation.fn(subOperation.input);
       },
       runOperationWithResult: async (_workflowId, _operation, execute) => {

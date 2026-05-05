@@ -3,7 +3,6 @@ import { unlinkSync } from 'node:fs';
 import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
-import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import { tenantFromInputField, type TenantContext, type TenantResolver } from './tenant.ts';
 import type { WorkflowContext } from './types.ts';
@@ -192,7 +191,7 @@ describe('Engine with tenantResolver', () => {
     const firstEngine = new Engine({ storage: firstStorage, tenantResolver: resolver });
 
     firstEngine.register('park-and-capture', async function* (ctx: WorkflowContext) {
-      const payload = yield* (ctx as Context).waitForSignal<{ ok: true }>('go');
+      const payload = yield* ctx.waitForSignal<{ ok: true }>('go');
       return { tenant: ctx.tenant, payload };
     });
 
@@ -209,7 +208,7 @@ describe('Engine with tenantResolver', () => {
     const secondEngine = new Engine({ storage: secondStorage });
 
     secondEngine.register('park-and-capture', async function* (ctx: WorkflowContext) {
-      const payload = yield* (ctx as Context).waitForSignal<{ ok: true }>('go');
+      const payload = yield* ctx.waitForSignal<{ ok: true }>('go');
       return { tenant: ctx.tenant, payload };
     });
 

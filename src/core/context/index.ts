@@ -14,8 +14,11 @@ import {
   SESSION_STATE_LOCAL_KEY,
 } from '../session-state.ts';
 import type {
+  ActivityArguments,
   ActivityCallable,
   ActivityCallOptions,
+  ActivityResult,
+  ActivityTypes,
   ChildWorkflowOptions,
   ChildWorkflowTarget,
   Duration,
@@ -24,6 +27,7 @@ import type {
   SearchAttributeHandle,
   SearchAttributeValue,
   SignalDefinition,
+  UnregisteredName,
   UpdateDefinition,
   WorkflowContext,
   WorkflowMapOptions,
@@ -244,6 +248,19 @@ export class Context implements WorkflowContext {
   sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T> {
     return sessionStateHelpers.sessionState(this, getInternals(this), key, initialValue);
   }
+  run<TName extends Extract<keyof ActivityTypes, string>>(
+    name: TName,
+    ...rest: ActivityArguments<ActivityTypes, TName>
+  ): Generator<ContextOperationRequest, ActivityResult<ActivityTypes, TName>, unknown>;
+  run<TName extends Extract<keyof ActivityTypes, string>>(
+    name: TName,
+    ...rest: [...ActivityArguments<ActivityTypes, TName>, ActivityCallOptions]
+  ): Generator<ContextOperationRequest, ActivityResult<ActivityTypes, TName>, unknown>;
+  run<TName extends string>(
+    name: UnregisteredName<TName, Extract<keyof ActivityTypes, string>>,
+    input?: unknown,
+    options?: ActivityCallOptions,
+  ): Generator<ContextOperationRequest, unknown, unknown>;
   run<TResult>(
     fn: ActivityCallable<void, TResult>,
     options?: ActivityCallOptions,
@@ -264,7 +281,8 @@ export class Context implements WorkflowContext {
   ): Generator<ContextOperationRequest, TResult, unknown>;
   // oxlint-disable-next-line complexity -- ID:core-context-fn-complexity
   *run<TInput, TResult>(
-    fn:
+    activity:
+      | string
       | ActivityCallable<void, TResult>
       | ((() => Promise<TResult> | TResult) & { execute?: never })
       | ActivityCallable<TInput, TResult>
@@ -275,7 +293,7 @@ export class Context implements WorkflowContext {
     if (
       rest.length > 0 &&
       sessionStateHelpers.isActivityCallOptions(rest[rest.length - 1]) &&
-      (rest.length > 1 || acceptsNoActivityInput(fn))
+      (rest.length > 1 || (typeof activity !== 'string' && acceptsNoActivityInput(activity)))
     ) {
       options = rest.pop() as ActivityCallOptions;
     }
@@ -285,30 +303,32 @@ export class Context implements WorkflowContext {
       );
     }
     const input = rest[0];
+    const activityName = typeof activity === 'string' ? activity : activity.name || 'anonymous';
+    const activityFunction = typeof activity === 'function' ? activity : undefined;
     const internals = getInternals(this);
     const step = internals.stepIndex++;
     if (internals.accumulatedResults?.has(step)) {
       if (internals.explainMode) {
-        console.log(
-          `[weft] ctx.run(${fn.name || 'anonymous'}) → Returning cached result from step ${step}`,
-        );
+        console.log(`[weft] ctx.run(${activityName}) → Returning cached result from step ${step}`);
       }
       return internals.accumulatedResults.get(step) as TResult;
     }
     const queue = options?.queue ?? 'default';
     if (internals.explainMode) {
-      console.log(`[weft] ctx.run(${fn.name || 'anonymous'}, ${JSON.stringify(input)})`);
+      console.log(`[weft] ctx.run(${activityName}, ${JSON.stringify(input)})`);
       console.log(`  → Creating checkpoint at step ${step}`);
-      console.log(`  → Dispatching activity "${fn.name || 'anonymous'}" to queue "${queue}"`);
+      console.log(`  → Dispatching activity "${activityName}" to queue "${queue}"`);
     }
     const operationId = crypto.randomUUID();
     const callerStack = contextValidation.captureCallerStack();
-    const executeActivity = fn as (input: unknown, context?: unknown) => unknown;
+    const executeActivity = activityFunction as
+      | ((input: unknown, context?: unknown) => unknown)
+      | undefined;
     const result = yield {
       type: 'activity',
       operationId,
-      activityName: fn.name || 'anonymous',
-      fn: executeActivity,
+      activityName,
+      ...(executeActivity !== undefined ? { fn: executeActivity } : {}),
       input,
       callerStack,
       ...(options !== undefined ? { options: options as Record<string, unknown> } : {}),

@@ -7,7 +7,7 @@ export function createWorkflowHandleWithResultPromise(
   internals: EngineInternals,
   workflowId: string,
 ): WorkflowHandle {
-  const handle = new WorkflowHandle(workflowId, internals.engine);
+  const handle = new WorkflowHandle<unknown>(workflowId, internals.engine);
   cacheHandle(internals, workflowId, handle);
   return handle;
 }

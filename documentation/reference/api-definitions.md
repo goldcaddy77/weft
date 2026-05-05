@@ -32,7 +32,7 @@ Bare activity functions must be named. Workflow calls use one input value plus o
 
 ```ts
 import { activity } from 'weft';
-import type { Context, WorkflowContext } from 'weft';
+import type { WorkflowContext } from 'weft';
 
 const sendEmail = activity({
   name: 'sendEmail',
@@ -42,7 +42,7 @@ const sendEmail = activity({
 });
 
 async function* notify(ctx: WorkflowContext, input: { email: string; body: string }) {
-  yield* (ctx as Context).run(sendEmail, input, { queue: 'messages' });
+  yield* ctx.run(sendEmail, input, { queue: 'messages' });
 }
 
 void notify;
@@ -52,7 +52,7 @@ void notify;
 
 ```ts
 import { activity, Engine, searchAttribute, workflow } from 'weft';
-import type { Context, WorkflowContext } from 'weft';
+import type { WorkflowContext } from 'weft';
 
 const loadOrder = activity({
   name: 'loadOrder',
@@ -69,7 +69,7 @@ const checkout = workflow({
     customerId: searchAttribute('customerId', 'string'),
   },
   handler: async function* checkout(ctx: WorkflowContext, input: { orderId: string }) {
-    const order = yield* (ctx as Context).run(loadOrder, input);
+    const order = yield* ctx.run(loadOrder, input);
     return order;
   },
 });
@@ -84,23 +84,16 @@ engine.register(checkout);
 
 ```ts
 import { query, signal, update } from 'weft';
-import type {
-  Context,
-  QueryDefinition,
-  SignalDefinition,
-  UpdateDefinition,
-  WorkflowContext,
-} from 'weft';
+import type { QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowContext } from 'weft';
 
 const approval = signal<{ approved: boolean }>('approval');
 const approve = update<{ reviewer: string }, { accepted: boolean }>('approve');
 const orderStatus = query<{ verbose: boolean }, { state: string }>('status');
 
 async function* approvalWorkflow(ctx: WorkflowContext) {
-  const context = ctx as Context;
-  const payload = yield* context.waitForSignal(approval);
-  context.onUpdate(approve, (input) => ({ accepted: input.reviewer.length > 0 }));
-  context.onQuery(orderStatus, (input) => ({ state: input.verbose ? 'full' : 'summary' }));
+  const payload = yield* ctx.waitForSignal(approval);
+  ctx.onUpdate(approve, (input) => ({ accepted: input.reviewer.length > 0 }));
+  ctx.onQuery(orderStatus, (input) => ({ state: input.verbose ? 'full' : 'summary' }));
   return payload;
 }
 

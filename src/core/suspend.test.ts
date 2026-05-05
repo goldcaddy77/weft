@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { sleepForTesting } from '../testing/fake-timers.ts';
 
-import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import type { WorkflowContext } from './types.ts';
 
@@ -15,7 +14,7 @@ describe('ctx.suspendUntil', () => {
     const token = 'resume-token-abc';
 
     engine.register('await-webhook', async function* (ctx: WorkflowContext) {
-      const payload = yield* (ctx as Context).suspendUntil<{ status: string }>(token);
+      const payload = yield* ctx.suspendUntil<{ status: string }>(token);
       return payload.status;
     });
 
@@ -39,7 +38,7 @@ describe('ctx.suspendUntil', () => {
     const engine = new Engine();
 
     engine.register('multi-suspend', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
       const first = yield* context.suspendUntil<{ value: number }>('token-one');
       const second = yield* context.suspendUntil<{ value: number }>('token-two');
       return first.value + second.value;

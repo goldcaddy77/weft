@@ -172,13 +172,6 @@ naming the alternative that was rejected.
 - **Symbol**: `(whole file)`
 - **Reason**: Context is the workflow authoring surface. The definition-vocabulary cleanup keeps activity, signal, update, query, and search-attribute overloads together so the public workflow contract stays inspectable in one place.
 
-## `core-types-workflow-function-public-api-surface`
-
-- **File**: `src/core/types/workflow-function.ts`
-- **Rule**: `max-lines`
-- **Symbol**: `(whole file)`
-- **Reason**: Workflow function, workflow definition, and typed registry declarations form one public API surface. The workflow() helper overloads live here to keep inference and registry types colocated instead of splitting dependent type aliases across files.
-
 ## `core-debug-output-sanitize-object-complexity`
 
 - **File**: `src/core/debug-output.ts`

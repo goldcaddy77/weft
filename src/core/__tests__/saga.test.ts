@@ -11,7 +11,6 @@ import { sleepForTesting } from '../../testing/fake-timers.ts';
 import { describe, expect, it } from 'bun:test';
 
 import { MemoryStorage } from '../../storage/memory.ts';
-import type { Context } from '../context.ts';
 import { Engine } from '../engine.ts';
 import type { WorkflowInterceptor } from '../interceptor.ts';
 import type { ActivityContext, ActivityDefinition, WorkflowContext } from '../types.ts';
@@ -74,7 +73,7 @@ describe('ctx.saga()', () => {
     });
 
     engine.register('saga-reverse', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       yield* c.saga([
         { definition: step1, input: 'a' },
         { definition: step2, input: 'b' },
@@ -116,7 +115,7 @@ describe('ctx.saga()', () => {
     });
 
     engine.register('no-compensate-failing-step', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       yield* c.saga([
         { definition: passing, input: 'x' },
         { definition: failing, input: 'y' },
@@ -148,7 +147,7 @@ describe('ctx.saga()', () => {
     });
 
     engine.register('happy-saga', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const result = yield* c.saga<number>([
         { definition: step, input: 1 },
         { definition: step, input: 2 },
@@ -213,7 +212,7 @@ describe('ctx.saga()', () => {
     function registerWorkflow(engine: Engine): void {
       const { activityOne, activityTwo, activityThree } = buildActivities();
       engine.register('three-step-saga', async function* (ctx: WorkflowContext) {
-        const c = ctx as Context;
+        const c = ctx;
         yield* c.saga([
           { definition: activityOne, input: 'in-1' },
           { definition: activityTwo, input: 'in-2' },
@@ -282,7 +281,7 @@ describe('ctx.saga()', () => {
     });
 
     engine.register('arg-check-saga', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       yield* c.saga([
         { definition: trackingActivity, input: 'alpha' },
         { definition: trackingActivity, input: 'beta' },
@@ -327,7 +326,7 @@ describe('ctx.saga()', () => {
     });
 
     engine.register('compensator-failure-saga', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       yield* c.saga([
         { definition: passing, input: 'x' },
         { definition: failing, input: 'y' },
@@ -352,7 +351,7 @@ describe('ctx.saga()', () => {
     const engine = new Engine();
 
     engine.register('empty-saga', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const result = yield* c.saga([]);
       return result;
     });
@@ -387,7 +386,7 @@ describe('ctx.saga()', () => {
     });
 
     engine.register('name-check-saga', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
 
       // Patch ctx.run to record the function name it receives.
       const originalRun = c.run.bind(c);
@@ -433,7 +432,7 @@ describe('ctx.saga()', () => {
     });
 
     engine.register('options-like-saga', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       // This input has a 'queue' key, which is a DISCRIMINATOR_KEYS member.
       // If ctx.run() classified every final { queue } object as options, this
       // would be stripped and the activity would receive undefined.
@@ -468,8 +467,7 @@ describe('ctx.saga()', () => {
     });
 
     engine.register('intercepted-saga', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
-      return yield* c.saga([
+      return yield* ctx.saga([
         { definition: activity as ActivityDefinition, input: { queue: 'orders' } },
       ]);
     });
@@ -504,7 +502,7 @@ describe('ctx.saga()', () => {
     };
 
     engine.register('context-forwarding-saga', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       yield* c.saga([{ definition: activity, input: 'hello' }]);
     });
 

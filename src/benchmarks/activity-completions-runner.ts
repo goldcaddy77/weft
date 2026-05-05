@@ -1,4 +1,3 @@
-import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
@@ -27,7 +26,7 @@ async function measureActivityCompletionRound(
     engine.register('with-activity', async function* (ctx: WorkflowContext) {
       let result: unknown = 0;
       for (let index = 0; index < activitiesPerWorkflow; index += 1) {
-        result = yield* (ctx as Context).run(echo, index);
+        result = yield* ctx.run(echo, index);
       }
       return result;
     });

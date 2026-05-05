@@ -91,7 +91,7 @@ export type EscalationAction =
  *
  * const engine = new TestEngine({ startTime: 0 });
  * engine.register('needs-review', async function* (ctx: WorkflowContext) {
- *   return yield* (ctx as Context).humanReview({
+ *   return yield* ctx.humanReview({
  *     artifact: 'release plan',
  *     reviewers: ['alice@example.com'],
  *     timeout: 5_000,

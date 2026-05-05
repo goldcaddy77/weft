@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { waitForRealTimersForTesting } from '../testing/fake-timers.ts';
 
-import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
@@ -42,7 +41,7 @@ async function measureRecoverAll(totalWorkflows: number): Promise<RecoveryMeasur
     // A workflow that waits for a signal so it stays in 'running' state
     // after checkpointing.
     creationEngine.register('waiter', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('go');
+      yield* ctx.waitForSignal('go');
       return 'done';
     });
 
@@ -62,7 +61,7 @@ async function measureRecoverAll(totalWorkflows: number): Promise<RecoveryMeasur
     recoveryEngine = new Engine({ storage });
 
     recoveryEngine.register('waiter', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('go');
+      yield* ctx.waitForSignal('go');
       return 'done';
     });
 
@@ -127,7 +126,7 @@ describe('Workflow recovery', () => {
       const engine1 = new Engine({ storage });
 
       engine1.register('waiter', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('go');
+        yield* ctx.waitForSignal('go');
         return 'done';
       });
 
@@ -142,7 +141,7 @@ describe('Workflow recovery', () => {
       // Measure shallow recovery.
       const engine2 = new Engine({ storage });
       engine2.register('waiter', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('go');
+        yield* ctx.waitForSignal('go');
         return 'done';
       });
 
@@ -160,7 +159,7 @@ describe('Workflow recovery', () => {
       const engine3 = new Engine({ storage });
 
       engine3.register('waiter', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('go');
+        yield* ctx.waitForSignal('go');
         return 'done';
       });
 
@@ -185,7 +184,7 @@ describe('Workflow recovery', () => {
       // Measure deep recovery.
       const engine4 = new Engine({ storage });
       engine4.register('waiter', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('go');
+        yield* ctx.waitForSignal('go');
         return 'done';
       });
 

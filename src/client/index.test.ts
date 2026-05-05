@@ -1,5 +1,4 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
-import { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import { tenantFromInputField } from '../core/tenant.ts';
 import type { WorkflowContext } from '../core/types.ts';
@@ -20,10 +19,9 @@ async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
 }
 
 async function* waitForSignalWorkflow(ctx: WorkflowContext, input: unknown) {
-  const context = ctx as Context;
-  context.expose({ ready: () => true });
-  context.onQuery('echoInput', (queryInput) => queryInput);
-  const signal = yield* context.waitForSignal<string>('continue');
+  ctx.expose({ ready: () => true });
+  ctx.onQuery('echoInput', (queryInput) => queryInput);
+  const signal = yield* ctx.waitForSignal<string>('continue');
   return `${String(input)}:${signal}`;
 }
 
@@ -710,8 +708,8 @@ describe('HttpClient', () => {
       engine.register('http-timeline', {
         version: '6.0.0',
         handler: async function* (ctx: WorkflowContext) {
-          yield* (ctx as import('../core/context.ts').Context).run(firstHttpStep);
-          return yield* (ctx as import('../core/context.ts').Context).run(secondHttpStep);
+          yield* ctx.run(firstHttpStep);
+          return yield* ctx.run(secondHttpStep);
         },
       });
 

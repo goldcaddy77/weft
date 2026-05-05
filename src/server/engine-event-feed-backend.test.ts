@@ -14,7 +14,6 @@ import { sleepForTesting, waitForCondition } from '../testing/fake-timers.ts';
 
 import { describe, expect, it } from 'bun:test';
 
-import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -29,7 +28,7 @@ function createEngineWithSignalWorkflow(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
   engine.register('hold', async function* (ctx: WorkflowContext, _input: unknown) {
-    const context = ctx as Context;
+    const context = ctx;
     const value = yield* context.waitForSignal<string>('release');
     // After the signal unblocks the workflow, run durable activities
     // so the engine commits additional event log entries. A bare
@@ -359,7 +358,7 @@ describe('createEngineEventFeedBackend — tokens selector', () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
     engine.register('streamer', async function* (ctx: WorkflowContext, _input: unknown) {
-      const context = ctx as Context;
+      const context = ctx;
       yield* context.stream('tokens', async function* () {
         for (const chunk of chunks) {
           yield chunk;
@@ -462,7 +461,7 @@ describe('createEngineEventFeedBackend — tokens selector', () => {
     chunks: ReadonlyArray<unknown>,
   ): void {
     engine.register(name, async function* (ctx: WorkflowContext, _input: unknown) {
-      const context = ctx as Context;
+      const context = ctx;
       yield* context.waitForSignal<string>('start');
       yield* context.stream('tokens', async function* () {
         for (const chunk of chunks) {

@@ -10,7 +10,6 @@ import { describe, expect, it } from 'bun:test';
 
 import type { ConstraintCheckState } from '../constraint.ts';
 import { constraint } from '../constraint.ts';
-import type { Context } from '../context.ts';
 import { Engine } from '../engine.ts';
 import { ConstraintViolatedEvent } from '../events.ts';
 import type { ActivityDefinition, WorkflowContext } from '../types.ts';
@@ -87,7 +86,7 @@ describe('constraint primitive', () => {
 
     engine.register('constrained-saga', {
       handler: async function* (ctx: WorkflowContext) {
-        const c = ctx as Context;
+        const c = ctx;
         yield* c.saga([
           { definition: stepOne, input: 'a' },
           { definition: stepTwo, input: 'b' },
@@ -155,7 +154,7 @@ describe('constraint primitive', () => {
 
     engine.register('fail-fast', {
       handler: async function* (ctx: WorkflowContext) {
-        const c = ctx as Context;
+        const c = ctx;
         yield* c.saga([
           { definition: step, input: 'x' },
           { definition: step, input: 'y' },
@@ -217,7 +216,7 @@ describe('constraint primitive', () => {
 
       engine.register('wf', {
         handler: async function* (ctx: WorkflowContext) {
-          const cx = ctx as Context;
+          const cx = ctx;
           yield* cx.saga([
             { definition: step, input: 'x' },
             { definition: step, input: 'y' },
@@ -273,7 +272,7 @@ describe('constraint primitive', () => {
 
     engine.register('warn-only', {
       handler: async function* (ctx: WorkflowContext) {
-        const c = ctx as Context;
+        const c = ctx;
         return yield* c.saga([
           { definition: step, input: 1 },
           { definition: step, input: 2 },
@@ -324,7 +323,7 @@ describe('constraint primitive', () => {
 
     engine.register('count-checkpoints', {
       handler: async function* (ctx: WorkflowContext) {
-        const c = ctx as Context;
+        const c = ctx;
         yield* c.saga([
           { definition: step, input: 1 },
           { definition: step, input: 2 },
@@ -395,7 +394,7 @@ describe('constraint primitive', () => {
 
     engine.register('event-type-check', {
       handler: async function* (ctx: WorkflowContext) {
-        const c = ctx as Context;
+        const c = ctx;
         yield* c.saga([
           { definition: step, input: 'a' },
           { definition: step, input: 'b' },

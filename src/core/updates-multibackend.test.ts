@@ -9,7 +9,6 @@ import {
   waitForWorkflowStatus,
 } from '../testing/storage-backends.ts';
 import { encode } from './codec.ts';
-import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import type { WorkflowContext } from './types.ts';
 import { WorkflowTerminalError } from './updates.ts';
@@ -41,7 +40,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('echo', async function* (ctx: WorkflowContext) {
-        (ctx as Context).onUpdate('echo', (payload) => `echo: ${String(payload)}`);
+        ctx.onUpdate('echo', (payload) => `echo: ${String(payload)}`);
         await waitForever();
         return 'done';
       });
@@ -64,7 +63,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('waiter', async function* (ctx: WorkflowContext) {
-        const { payload, respond } = yield* (ctx as Context).waitForUpdate<string>('review');
+        const { payload, respond } = yield* ctx.waitForUpdate<string>('review');
         respond({ accepted: true, data: payload });
         return `processed: ${payload}`;
       });
@@ -142,7 +141,7 @@ for (const backend of storageBackends) {
 
       let counter = 0;
       engine.register('counter', async function* (ctx: WorkflowContext) {
-        (ctx as Context).onUpdate('increment', () => {
+        ctx.onUpdate('increment', () => {
           counter += 1;
           return counter;
         });
@@ -195,7 +194,7 @@ for (const backend of storageBackends) {
       await result.storage.put(KEYS.update(workflowId, 'upd-old'), encode(older));
 
       engine.register('fifo', async function* (ctx: WorkflowContext) {
-        const { payload, respond } = yield* (ctx as Context).waitForUpdate<string>('data');
+        const { payload, respond } = yield* ctx.waitForUpdate<string>('data');
         respond(payload);
         return payload;
       });
@@ -217,7 +216,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('cancelable', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).sleep('1 hour');
+        yield* ctx.sleep('1 hour');
         return 'done';
       });
 

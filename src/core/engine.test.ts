@@ -83,7 +83,7 @@ describe('Engine', () => {
 
     engine.registerActivity('double', double);
     engine.register('double-via-registered-activity', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).run(dispatchedDouble, 21);
+      return yield* ctx.run(dispatchedDouble, 21);
     });
 
     const handle = await engine.start('double-via-registered-activity', undefined);
@@ -93,12 +93,43 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('ctx.run(name, input) dispatches through the registered activity table', async () => {
+    const engine = new Engine();
+
+    engine.registerActivity('formatGreeting', async (input: { name: string }) => {
+      return `Hello, ${input.name}`;
+    });
+    engine.register('welcome', async function* (ctx: WorkflowContext, input: { name: string }) {
+      return yield* ctx.run('formatGreeting', input);
+    });
+
+    const handle = await engine.start('welcome', { name: 'Steve' });
+    const result = await handle.result();
+
+    expect(result).toBe('Hello, Steve');
+    engine[Symbol.dispose]();
+  });
+
+  it('ctx.run(name, input) keeps unknown activity names on the existing error path', async () => {
+    const engine = new Engine();
+
+    engine.register('missing-activity', async function* (ctx: WorkflowContext) {
+      return yield* ctx.run('missingActivity', { name: 'Steve' });
+    });
+
+    const handle = await engine.start('missing-activity', undefined);
+    await expect(handle.result()).rejects.toThrow(
+      'No activity registered with name "missingActivity"',
+    );
+    engine[Symbol.dispose]();
+  });
+
   it('simple workflow completes with ctx.run', async () => {
     const engine = new Engine();
     const doubleActivity = async (input: unknown) => (input as number) * 2;
 
     engine.register('double', async function* (ctx: WorkflowContext, input: unknown) {
-      const result = yield* (ctx as Context).run(doubleActivity, input);
+      const result = yield* ctx.run(doubleActivity, input);
       return result;
     });
 
@@ -114,8 +145,8 @@ describe('Engine', () => {
     const multiply = async (input: { left: number; right: number }) => input.left * input.right;
 
     engine.register('math', async function* (ctx: WorkflowContext, input: unknown) {
-      const sum = yield* (ctx as Context).run(add, { left: input as number, right: 3 });
-      const product = yield* (ctx as Context).run(multiply, { left: sum, right: 2 });
+      const sum = yield* ctx.run(add, { left: input as number, right: 3 });
+      const product = yield* ctx.run(multiply, { left: sum, right: 2 });
       return product;
     });
 
@@ -162,7 +193,7 @@ describe('Engine', () => {
     const engine = new Engine();
 
     engine.register('wait-for-go', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).waitForSignal('go');
+      return yield* ctx.waitForSignal('go');
     });
 
     const handle = await engine.start('wait-for-go', null);
@@ -176,7 +207,7 @@ describe('Engine', () => {
     const engine = new Engine();
 
     engine.register('wait-forever', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).waitForSignal('never');
+      return yield* ctx.waitForSignal('never');
     });
 
     const handle = await engine.start('wait-forever', null);
@@ -192,7 +223,7 @@ describe('Engine', () => {
 
     engine.register('queued-resume', async function* (ctx: WorkflowContext) {
       runCount += 1;
-      return yield* (ctx as Context).waitForSignal('go');
+      return yield* ctx.waitForSignal('go');
     });
 
     const handle = await engine.start('queued-resume', null);
@@ -213,7 +244,7 @@ describe('Engine', () => {
 
     engine.register('queued-recover', async function* (ctx: WorkflowContext) {
       runCount += 1;
-      return yield* (ctx as Context).waitForSignal('go');
+      return yield* ctx.waitForSignal('go');
     });
 
     const handle = await engine.start('queued-recover', null);
@@ -253,7 +284,7 @@ describe('Engine', () => {
     const engine = new Engine({ storage });
     engine.register('queued-running-status', async function* (ctx: WorkflowContext) {
       started = true;
-      yield* (ctx as Context).waitForSignal('go');
+      yield* ctx.waitForSignal('go');
       return 'done';
     });
 
@@ -277,7 +308,7 @@ describe('Engine', () => {
 
     engine.register('active-resume', async function* (ctx: WorkflowContext) {
       runCount += 1;
-      return yield* (ctx as Context).waitForSignal('go');
+      return yield* ctx.waitForSignal('go');
     });
 
     const handle = await engine.start('active-resume', null);
@@ -299,7 +330,7 @@ describe('Engine', () => {
 
     engine.register('active-recover', async function* (ctx: WorkflowContext) {
       runCount += 1;
-      return yield* (ctx as Context).waitForSignal('go');
+      return yield* ctx.waitForSignal('go');
     });
 
     const handle = await engine.start('active-recover', null);
@@ -346,7 +377,7 @@ describe('Engine', () => {
     };
 
     engine.register('cancelled-parked-inline-workflow', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).waitForSignal('go');
+      return yield* ctx.waitForSignal('go');
     });
 
     const handle = await engine.start('cancelled-parked-inline-workflow', null, { id: workflowId });
@@ -438,7 +469,7 @@ describe('Engine', () => {
     });
 
     engine.register('cleanup-throw', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('finish');
+      yield* ctx.waitForSignal('finish');
       return 'expected-result';
     });
 
@@ -514,7 +545,7 @@ describe('Engine', () => {
     const originalDispatchEvent = engine.dispatchEvent.bind(engine);
 
     engine.register('dispatch-throws-on-complete', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('finish');
+      yield* ctx.waitForSignal('finish');
       return 'expected-result';
     });
 
@@ -567,7 +598,7 @@ describe('Engine', () => {
     const storage = engine.storage as MemoryStorage;
 
     engine.register('long-running', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('never-arrives');
+      yield* ctx.waitForSignal('never-arrives');
       return 'should not reach';
     });
 
@@ -591,7 +622,7 @@ describe('Engine', () => {
 
     const registerWorkflow = (engine: Engine) => {
       engine.register('dispose-wait-signal', async function* (ctx: WorkflowContext) {
-        const value = yield* (ctx as Context).waitForSignal<string>('go');
+        const value = yield* ctx.waitForSignal<string>('go');
         resumedAfterWait = true;
         return `resumed:${value}`;
       });
@@ -649,7 +680,7 @@ describe('Engine', () => {
 
     const engine = new Engine({ storage });
     engine.register('signal-waiter-cleanup', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('approval');
+      yield* ctx.waitForSignal('approval');
       return 'unreached';
     });
 
@@ -675,7 +706,7 @@ describe('Engine', () => {
     const engine = new Engine();
 
     engine.register('cancellable', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('never');
+      yield* ctx.waitForSignal('never');
       return 'nope';
     });
 
@@ -699,7 +730,7 @@ describe('Engine', () => {
     const engine = new Engine();
 
     engine.register('signal-workflow', async function* (ctx: WorkflowContext) {
-      const payload = yield* (ctx as Context).waitForSignal('my-signal');
+      const payload = yield* ctx.waitForSignal('my-signal');
       return `received: ${payload as string}`;
     });
 
@@ -737,7 +768,7 @@ describe('Engine', () => {
     };
 
     engine.register('parked-pre-park-cancel-race', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('go');
+      yield* ctx.waitForSignal('go');
       return 'should-not-park';
     });
 
@@ -788,7 +819,7 @@ describe('Engine', () => {
     };
 
     engine.register('parked-resume-cancel-race', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('go');
+      yield* ctx.waitForSignal('go');
       resumedAfterSignal = true;
       return 'should-not-complete';
     });
@@ -854,9 +885,9 @@ describe('Engine', () => {
     };
 
     engine.register('parked-resume-termination-race', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('go');
+      yield* ctx.waitForSignal('go');
       resumedAfterCancellationStarted = true;
-      yield* (ctx as Context).waitForSignal('never');
+      yield* ctx.waitForSignal('never');
       return 'should-not-complete';
     });
 
@@ -921,7 +952,7 @@ describe('Engine', () => {
       return 'ok';
     });
     engine.register('waiter', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('block');
+      yield* ctx.waitForSignal('block');
       return 'ok';
     });
 
@@ -967,7 +998,7 @@ describe('Engine', () => {
     const engine = new Engine({ storage: storage as WeftStorage, getNow: () => now });
 
     engine.register('sleepy', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).sleep(5000);
+      yield* ctx.sleep(5000);
       return 'awake';
     });
 
@@ -995,10 +1026,7 @@ describe('Engine', () => {
     const triple = async (...args: unknown[]) => (args[0] as number) * 3;
 
     engine.register('parallel-workflow', async function* (ctx: WorkflowContext) {
-      const results = yield* (ctx as Context).all([
-        (ctx as Context).run(double, 5),
-        (ctx as Context).run(triple, 5),
-      ]);
+      const results = yield* ctx.all([ctx.run(double, 5), ctx.run(triple, 5)]);
       return results;
     });
 
@@ -1017,10 +1045,7 @@ describe('Engine', () => {
     };
 
     engine.register('race-workflow', async function* (ctx: WorkflowContext) {
-      const result = yield* (ctx as Context).race([
-        (ctx as Context).run(fast),
-        (ctx as Context).run(slow),
-      ]);
+      const result = yield* ctx.race([ctx.run(fast), ctx.run(slow)]);
       return result;
     });
 
@@ -1053,13 +1078,13 @@ describe('Engine', () => {
     };
 
     engine.register('race-agent-abort-workflow', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).race([
-        (ctx as Context).agent({
+      return yield* ctx.race([
+        ctx.agent({
           model: 'test-model',
           prompt: 'wait until aborted',
           provider: abortableProvider,
         }),
-        (ctx as Context).run(async () => {
+        ctx.run(async () => {
           await agentStarted.promise;
           return 'fast';
         }),
@@ -1078,11 +1103,11 @@ describe('Engine', () => {
     let callCount = 0;
 
     engine.register('memo-workflow', async function* (ctx: WorkflowContext) {
-      const first = yield* (ctx as Context).memo('expensive', () => {
+      const first = yield* ctx.memo('expensive', () => {
         callCount++;
         return 'computed';
       });
-      const second = yield* (ctx as Context).memo('expensive', () => {
+      const second = yield* ctx.memo('expensive', () => {
         callCount++;
         return 'computed-again';
       });
@@ -1139,7 +1164,7 @@ describe('Engine', () => {
     };
 
     engine.register('activity-fail', async function* (ctx: WorkflowContext) {
-      const result = yield* (ctx as Context).run(failingActivity);
+      const result = yield* ctx.run(failingActivity);
       return result;
     });
 
@@ -1305,7 +1330,7 @@ describe('Engine', () => {
   it('getHandle() for a running workflow chains result promise (resolve path)', async () => {
     const engine = new Engine();
     engine.register('chained', async function* (ctx: WorkflowContext) {
-      const payload = yield* (ctx as Context).waitForSignal('go');
+      const payload = yield* ctx.waitForSignal('go');
       return `chained: ${payload as string}`;
     });
 
@@ -1330,7 +1355,7 @@ describe('Engine', () => {
   it('getHandle() for a running workflow chains result promise (reject path)', async () => {
     const engine = new Engine();
     engine.register('chained-fail', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('go');
+      yield* ctx.waitForSignal('go');
       return 'nope';
     });
 
@@ -1369,7 +1394,7 @@ describe('Engine', () => {
   it('WorkflowHandle cancel delegates to engine.cancel', async () => {
     const engine = new Engine();
     engine.register('handle-cancel', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('never');
+      yield* ctx.waitForSignal('never');
       return 'nope';
     });
 
@@ -1389,7 +1414,7 @@ describe('Engine', () => {
   it('WorkflowHandle signal delegates to engine.signal', async () => {
     const engine = new Engine();
     engine.register('handle-signal', async function* (ctx: WorkflowContext) {
-      const value = yield* (ctx as Context).waitForSignal('my-signal');
+      const value = yield* ctx.waitForSignal('my-signal');
       return `got: ${value as string}`;
     });
 
@@ -1424,7 +1449,7 @@ describe('Engine', () => {
 
     engine.register('catch-failure', async function* (ctx: WorkflowContext) {
       try {
-        yield* (ctx as Context).run(failingActivity);
+        yield* ctx.run(failingActivity);
       } catch {
         return 'caught';
       }
@@ -1443,7 +1468,7 @@ describe('Engine', () => {
     const engine = new Engine({ storage: storage as WeftStorage, getNow: () => now });
 
     engine.register('deadline-test', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('never');
+      yield* ctx.waitForSignal('never');
       return 'should not complete';
     });
 
@@ -1475,7 +1500,7 @@ describe('Engine', () => {
     const engine = new Engine({ storage: storage as WeftStorage, getNow: () => now });
 
     engine.register('timeout-event-test', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('never');
+      yield* ctx.waitForSignal('never');
       return 'unreachable';
     });
 
@@ -1568,7 +1593,7 @@ describe('Engine', () => {
     const engine = new Engine({ storage: storage as WeftStorage, getNow: () => now });
 
     engine.register('deadline-cleanup-timeout', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('never');
+      yield* ctx.waitForSignal('never');
       return 'unreachable';
     });
 
@@ -1609,7 +1634,7 @@ describe('Engine', () => {
     });
 
     engine.register('signal-intercept-test', async function* (ctx: WorkflowContext) {
-      const payload = yield* (ctx as Context).waitForSignal('go');
+      const payload = yield* ctx.waitForSignal('go');
       return payload;
     });
 
@@ -1635,7 +1660,7 @@ describe('Engine', () => {
     });
 
     engine.register('signal-block-test', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('blocked');
+      yield* ctx.waitForSignal('blocked');
       return 'should not reach';
     });
 
@@ -1656,8 +1681,8 @@ describe('Engine', () => {
     const engine = new Engine();
 
     engine.register('signal-direct-test', async function* (ctx: WorkflowContext) {
-      const first = yield* (ctx as Context).waitForSignal<string>('go');
-      const second = yield* (ctx as Context).waitForSignal<{ approved: boolean }>('follow-up');
+      const first = yield* ctx.waitForSignal<string>('go');
+      const second = yield* ctx.waitForSignal<{ approved: boolean }>('follow-up');
       return { first, second };
     });
 
@@ -1682,7 +1707,7 @@ describe('Engine', () => {
       return 'ok';
     });
     engine.register('waiter', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('block');
+      yield* ctx.waitForSignal('block');
       return 'ok';
     });
 
@@ -1699,7 +1724,7 @@ describe('Engine', () => {
     const engine = new Engine();
     engine.register('attr-listable', {
       handler: async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('block');
+        yield* ctx.waitForSignal('block');
         return 'ok';
       },
       version: '1',
@@ -1707,7 +1732,7 @@ describe('Engine', () => {
     });
     engine.register('other-type', {
       handler: async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('block');
+        yield* ctx.waitForSignal('block');
         return 'ok';
       },
       version: '1',
@@ -1770,7 +1795,7 @@ describe('Engine', () => {
     const engine = new Engine();
     engine.register('attr-listable', {
       handler: async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('block');
+        yield* ctx.waitForSignal('block');
         return 'ok';
       },
       version: '1',
@@ -1867,7 +1892,7 @@ describe('Engine', () => {
   it('getHandle for a running workflow with no cached handle creates a chained promise', async () => {
     const engine = new Engine();
     engine.register('chain-test', async function* (ctx: WorkflowContext) {
-      const value = yield* (ctx as Context).waitForSignal('proceed');
+      const value = yield* ctx.waitForSignal('proceed');
       return `chained: ${value as string}`;
     });
 
@@ -1897,7 +1922,7 @@ describe('Engine', () => {
     const double = async (...args: unknown[]) => (args[0] as number) * 2;
 
     engine.register('iterable-workflow', async function* (ctx: WorkflowContext, input: unknown) {
-      const result = yield* (ctx as Context).run(double, input);
+      const result = yield* ctx.run(double, input);
       return result;
     });
 
@@ -2126,7 +2151,7 @@ describe('Engine', () => {
   it('WorkflowHandle Symbol.asyncIterator does not hang when workflow already cancelled', async () => {
     const engine = new Engine();
     engine.register('already-cancelled', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('never');
+      yield* ctx.waitForSignal('never');
       return 'nope';
     });
 
@@ -2159,7 +2184,7 @@ describe('Engine', () => {
     let now = 1000;
     const engine = new Engine({ getNow: () => now });
     engine.register('already-timed-out', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('never');
+      yield* ctx.waitForSignal('never');
       return 'nope';
     });
 
@@ -2278,7 +2303,7 @@ describe('Engine', () => {
   it('WorkflowHandle Symbol.observable does not hang when workflow already cancelled', async () => {
     const engine = new Engine();
     engine.register('observable-already-cancelled', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('never');
+      yield* ctx.waitForSignal('never');
       return 'nope';
     });
 
@@ -2318,7 +2343,7 @@ describe('Engine', () => {
     let now = 1000;
     const engine = new Engine({ getNow: () => now });
     engine.register('observable-already-timed-out', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('never');
+      yield* ctx.waitForSignal('never');
       return 'nope';
     });
 
@@ -2428,7 +2453,7 @@ describe('Engine', () => {
     const greet = async (...args: unknown[]) => `Hello, ${args[0] as string}`;
 
     engine.register('intercepted-workflow', async function* (ctx: WorkflowContext) {
-      const result = yield* (ctx as Context).run(greet, 'world');
+      const result = yield* ctx.run(greet, 'world');
       return result;
     });
 
@@ -2462,7 +2487,7 @@ describe('Engine', () => {
     const compute = async (...args: unknown[]) => (args[0] as number) + 1;
 
     engine.register('activity-intercepted', async function* (ctx: WorkflowContext) {
-      const result = yield* (ctx as Context).run(compute, 10);
+      const result = yield* ctx.run(compute, 10);
       return result;
     });
 
@@ -2482,11 +2507,11 @@ describe('Engine', () => {
     const engine = new Engine();
 
     engine.register('updatable-workflow', async function* (ctx: WorkflowContext) {
-      (ctx as Context).onUpdate('setGreeting', (payload) => {
+      ctx.onUpdate('setGreeting', (payload) => {
         return `Hello, ${payload as string}!`;
       });
       // Wait for a signal so the workflow stays alive long enough for the update
-      const value = yield* (ctx as Context).waitForSignal('finish');
+      const value = yield* ctx.waitForSignal('finish');
       return value;
     });
 
@@ -2511,10 +2536,10 @@ describe('Engine', () => {
     const engine = new Engine();
 
     engine.register('handle-updatable', async function* (ctx: WorkflowContext) {
-      (ctx as Context).onUpdate('increment', (payload) => {
+      ctx.onUpdate('increment', (payload) => {
         return (payload as number) + 1;
       });
-      const value = yield* (ctx as Context).waitForSignal('finish');
+      const value = yield* ctx.waitForSignal('finish');
       return value;
     });
 
@@ -2533,10 +2558,10 @@ describe('Engine', () => {
     const engine = new Engine();
 
     engine.register('handle-immediate-update', async function* (ctx: WorkflowContext) {
-      (ctx as Context).onUpdate('increment', (payload) => {
+      ctx.onUpdate('increment', (payload) => {
         return (payload as number) + 1;
       });
-      return yield* (ctx as Context).waitForSignal('finish');
+      return yield* ctx.waitForSignal('finish');
     });
 
     const handle = await engine.start('handle-immediate-update', null);
@@ -2556,7 +2581,7 @@ describe('Engine', () => {
     const engine = new Engine();
 
     engine.register('step-workflow', async function* (ctx: WorkflowContext) {
-      const result = yield* (ctx as Context).run(async (...args: unknown[]) => {
+      const result = yield* ctx.run(async (...args: unknown[]) => {
         return (args[0] as number) * 3;
       }, 7);
       return result;
@@ -2621,7 +2646,7 @@ describe('Engine', () => {
 
     expect(() => engine.registerActivity(sendEmail.name, sendEmail)).not.toThrow();
     engine.register('send-email', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).run(sendEmail, {
+      return yield* ctx.run(sendEmail, {
         to: 'hello@example.com',
         body: 'Welcome',
       });
@@ -2657,7 +2682,7 @@ describe('Engine', () => {
     });
 
     engine.register('dev-warning-workflow', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
       const result = yield* context.run(async () => {
         return new Map([[{ key: 'alpha' }, 42]]);
       });
@@ -2699,7 +2724,7 @@ describe('Engine', () => {
     };
 
     engine.register('agent-workflow', async function* (ctx: WorkflowContext) {
-      const agentResult = yield* (ctx as Context).agent({
+      const agentResult = yield* ctx.agent({
         model: 'test-model',
         prompt: 'Say hello',
         provider: mockProvider,
@@ -2738,7 +2763,7 @@ describe('Engine', () => {
     };
 
     engine.register('agent-interceptor-workflow', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).agent({
+      return yield* ctx.agent({
         model: 'test-model',
         prompt: 'Intercept me',
         provider,
@@ -2795,7 +2820,7 @@ describe('Engine', () => {
     };
 
     engine.register('agent-interceptor-parked-workflow', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).agent({
+      return yield* ctx.agent({
         model: 'test-model',
         prompt: 'Wait for the provider resume signal',
         provider,
@@ -2853,7 +2878,7 @@ describe('Engine', () => {
     };
 
     engine.register('resume-agent-workflow', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).agent({
+      return yield* ctx.agent({
         model: 'test-model',
         prompt: 'Wait for the provider resume signal',
         provider,
@@ -2935,7 +2960,7 @@ describe('Engine', () => {
     };
 
     engine.register('non-parkable-resume-agent-workflow', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
       context.onUpdate('touch', () => 'ok');
       const agentResult = yield* context.agent({
         model: 'test-model',
@@ -3019,7 +3044,7 @@ describe('Engine', () => {
     };
 
     engine.register('batched-resume-signal-workflow', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
       context.onUpdate('touch', () => 'ok');
       const agentResult = yield* context.agent({
         model: 'test-model',
@@ -3093,7 +3118,7 @@ describe('Engine', () => {
     };
 
     engine.register('no-resume-agent-workflow', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).agent({
+      return yield* ctx.agent({
         model: 'test-model',
         prompt: 'Do not suspend',
         provider,
@@ -3116,7 +3141,7 @@ describe('Engine', () => {
     const engine = new Engine();
 
     engine.register('observable-for-error', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('never');
+      yield* ctx.waitForSignal('never');
       return 'nope';
     });
 
@@ -3162,7 +3187,7 @@ describe('Engine', () => {
     const engine = new Engine();
 
     engine.register('observable-for-timeout', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('never');
+      yield* ctx.waitForSignal('never');
       return 'nope';
     });
 
@@ -3210,7 +3235,7 @@ describe('Engine', () => {
   it('getHandle creates chained resolve callback when WeakRef is cleared', async () => {
     const engine = new Engine();
     engine.register('chain-gc-resolve', async function* (ctx: WorkflowContext) {
-      const payload = yield* (ctx as Context).waitForSignal('go');
+      const payload = yield* ctx.waitForSignal('go');
       return `resolved: ${payload as string}`;
     });
 
@@ -3244,7 +3269,7 @@ describe('Engine', () => {
   it('getHandle creates chained reject callback when WeakRef is cleared', async () => {
     const engine = new Engine();
     engine.register('chain-gc-reject', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('never');
+      yield* ctx.waitForSignal('never');
       return 'nope';
     });
 
@@ -3283,7 +3308,7 @@ describe('Engine', () => {
     const addTen = async (...args: unknown[]) => (args[0] as number) + 10;
 
     engine.register('run-all-workflow', async function* (ctx: WorkflowContext) {
-      const results = yield* (ctx as Context).runAll({
+      const results = yield* ctx.runAll({
         doubled: [double, 5],
         tripled: [triple, 5],
         plusTen: [addTen, 5],
@@ -3311,7 +3336,7 @@ describe('Engine', () => {
     // Block completion with a signal so we can assert chunks exist in storage
     // before terminal-state cleanup removes them.
     engine.register('export', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const reference = yield* c.stream('report', async function* (sink) {
         yield { row: 1, data: 'first' };
         sink.heartbeat({ processed: 1 });
@@ -3356,7 +3381,7 @@ describe('Engine', () => {
     let streamError: Error | undefined;
 
     engine.register('failing-export', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       try {
         yield* c.stream('report', async function* () {
           yield { row: 1 };
@@ -3387,7 +3412,7 @@ describe('Engine', () => {
     const engine = new Engine();
 
     engine.register('empty-stream', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const reference = yield* c.stream('empty', async function* () {
         // No chunks yielded
       });
@@ -3408,7 +3433,7 @@ describe('Engine', () => {
     const { promise: releasePromise, resolve: releaseStream } = Promise.withResolvers<void>();
 
     engine.register('stream-progress', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
       return yield* context.stream('report', async function* (sink) {
         sink.heartbeat({ processed: 1 });
         await releasePromise;
@@ -3445,7 +3470,7 @@ describe('Engine', () => {
 
     const echoActivity = async (...args: unknown[]) => args[0];
     engine.register('big-checkpoint', async function* (ctx: WorkflowContext) {
-      const result = yield* (ctx as Context).run(echoActivity, 'data');
+      const result = yield* ctx.run(echoActivity, 'data');
       return result;
     });
 
@@ -3488,7 +3513,7 @@ describe('Engine', () => {
 
     const echoActivity = async (...args: unknown[]) => args[0];
     engine.register('threshold-test', async function* (ctx: WorkflowContext) {
-      const result = yield* (ctx as Context).run(echoActivity, 'payload');
+      const result = yield* ctx.run(echoActivity, 'payload');
       return result;
     });
 
@@ -3513,7 +3538,7 @@ describe('Engine', () => {
       const echoActivity = async (...args: unknown[]) => args[0];
 
       engine.register('dev-explain', async function* (ctx: WorkflowContext) {
-        const result = yield* (ctx as Context).run(echoActivity, 'test');
+        const result = yield* ctx.run(echoActivity, 'test');
         return result;
       });
 
@@ -3534,8 +3559,8 @@ describe('Engine', () => {
     // First engine: start a workflow that waits for a signal
     const engine1 = new Engine({ storage: storage as WeftStorage });
     engine1.register('dev-resume', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('go');
-      const result = yield* (ctx as Context).run(async () => 42);
+      yield* ctx.waitForSignal('go');
+      const result = yield* ctx.run(async () => 42);
       return result;
     });
 
@@ -3550,8 +3575,8 @@ describe('Engine', () => {
     try {
       const engine2 = new Engine({ development: true, storage: storage as WeftStorage });
       engine2.register('dev-resume', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('go');
-        const result = yield* (ctx as Context).run(async () => 42);
+        yield* ctx.waitForSignal('go');
+        const result = yield* ctx.run(async () => 42);
         return result;
       });
 
@@ -3606,7 +3631,7 @@ describe('Engine', () => {
 
     engine.register('caller-stack-workflow', async function* (ctx: WorkflowContext) {
       try {
-        yield* (ctx as Context).run(failingActivity);
+        yield* ctx.run(failingActivity);
       } catch (error) {
         capturedError = error as Error;
         throw error;
@@ -3721,7 +3746,7 @@ describe('Engine', () => {
 
     engine.register('clean-stack-workflow', async function* (ctx: WorkflowContext) {
       try {
-        yield* (ctx as Context).run(brokenActivity);
+        yield* ctx.run(brokenActivity);
       } catch (error) {
         capturedError = error as Error;
         throw error;
@@ -3753,7 +3778,7 @@ describe('Engine', () => {
 
     engine.register('parent-workflow', async function* (ctx: WorkflowContext) {
       try {
-        yield* (ctx as Context).startChild('failing-child', null);
+        yield* ctx.startChild('failing-child', null);
       } catch (error) {
         capturedError = error as Error;
         throw error;
@@ -4201,7 +4226,7 @@ describe('Engine', () => {
       }
 
       engine.register('progress-workflow', async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
+        const context = ctx;
         const result = yield* context.run(longRunningActivity as any, 'input');
         return result;
       });
@@ -4230,7 +4255,7 @@ describe('Engine', () => {
       const engine = new Engine();
 
       engine.register('no-heartbeat-workflow', async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
+        const context = ctx;
         yield* context.waitForSignal('done');
         return 'ok';
       });
@@ -4296,7 +4321,7 @@ describe('Engine', () => {
       };
 
       engine.register('waterfall-workflow', async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
+        const context = ctx;
         yield* context.agent({
           model: 'test-model',
           prompt: 'Do three turns',
@@ -4359,7 +4384,7 @@ describe('Engine', () => {
       };
 
       engine.register('conversation-workflow', async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
+        const context = ctx;
         yield* context.agent({
           model: 'test-model',
           prompt: 'Say hello',
@@ -4408,7 +4433,7 @@ describe('Engine', () => {
       };
 
       engine.register('token-usage-workflow', async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
+        const context = ctx;
         yield* context.agent({ model: 'test-model', prompt: 'first', provider });
         yield* context.agent({ model: 'test-model', prompt: 'second', provider });
         yield* context.waitForSignal('release');
@@ -4823,7 +4848,7 @@ describe('Engine', () => {
       const engine = new Engine();
 
       engine.register('review-wait', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('never');
+        yield* ctx.waitForSignal('never');
         return 'unreached';
       });
 
@@ -4857,7 +4882,7 @@ describe('Engine', () => {
       const engine = new Engine();
 
       engine.register('review-wait-timeout', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('never');
+        yield* ctx.waitForSignal('never');
         return 'unreached';
       });
 
@@ -4889,7 +4914,7 @@ describe('Engine', () => {
       const engine = new Engine({ storage });
 
       engine.register('cleanup-emitter', async function* (ctx: WorkflowContext) {
-        const c = ctx as Context;
+        const c = ctx;
         yield* c.stream('chunks', async function* () {
           yield { index: 0 };
           yield { index: 1 };
@@ -4981,7 +5006,7 @@ describe('Engine', () => {
       };
 
       engine.register('tool-effect-cleanup-workflow', async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
+        const context = ctx;
         yield* context.agent({
           model: 'test-model',
           prompt: 'Call the tool three times',
@@ -5016,7 +5041,7 @@ describe('Engine', () => {
       const engine = new Engine({ storage });
 
       engine.register('deferred-terminal-cleanup', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('finish');
+        yield* ctx.waitForSignal('finish');
         return 'done';
       });
 
@@ -5054,7 +5079,7 @@ describe('Engine', () => {
       const firstEngine = new Engine({ storage });
 
       firstEngine.register('restart-terminal-cleanup', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('finish');
+        yield* ctx.waitForSignal('finish');
         return 'done';
       });
 
@@ -5099,7 +5124,7 @@ describe('Engine', () => {
       });
 
       engine.register('fractional-terminal-cleanup', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('finish');
+        yield* ctx.waitForSignal('finish');
         return 'done';
       });
 
@@ -5145,7 +5170,7 @@ describe('Engine', () => {
       const engine = new Engine({ storage });
 
       engine.register('fallback-terminal-cleanup', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('finish');
+        yield* ctx.waitForSignal('finish');
         return 'done';
       });
 
@@ -5184,7 +5209,7 @@ describe('Engine', () => {
         getNow: () => fixedNow,
       });
       firstEngine.register('reused-terminal-cleanup', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('finish');
+        yield* ctx.waitForSignal('finish');
         return 'old';
       });
 
@@ -5210,7 +5235,7 @@ describe('Engine', () => {
         getNow: () => fixedNow,
       });
       secondEngine.register('reused-terminal-cleanup', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('finish');
+        yield* ctx.waitForSignal('finish');
         return 'new';
       });
 
@@ -5289,7 +5314,7 @@ describe('Engine', () => {
       const engine = new Engine({ storage });
 
       engine.register('waiter', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('never');
+        yield* ctx.waitForSignal('never');
         return 'unreached';
       });
 
@@ -5368,7 +5393,7 @@ describe('Engine', () => {
       };
 
       engine.register('race-abort-workflow', async function* (ctx: WorkflowContext) {
-        const c = ctx as Context;
+        const c = ctx;
         const result = yield* c.race([
           c.run(winningActivity),
           c.agent({
@@ -5435,7 +5460,7 @@ describe('Engine', () => {
       };
 
       engine.register('nested-race-abort-workflow', async function* (ctx: WorkflowContext) {
-        const c = ctx as Context;
+        const c = ctx;
         const result = yield* c.race([
           c.run(outerWinner),
           c.race([
@@ -5466,7 +5491,7 @@ describe('Engine', () => {
     it('FinalizationRegistry does not evict a freshly-cached handle', async () => {
       const engine = new Engine();
       engine.register('finalize-stable', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('release');
+        yield* ctx.waitForSignal('release');
         return 'ok';
       });
 
@@ -5518,8 +5543,8 @@ describe('Engine', () => {
       const provider = createSimpleMockProvider();
 
       engine.register('parallel-agent-content-workflow', async function* (ctx: WorkflowContext) {
-        const results = yield* (ctx as Context).all([
-          (ctx as Context).agent({
+        const results = yield* ctx.all([
+          ctx.agent({
             model: 'test-model',
             prompt: 'Say hello',
             provider,
@@ -5561,7 +5586,7 @@ describe('Engine speculative execution', () => {
     });
 
     engine.register('speculate-success', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
       context.setAttribute('phase', 'root');
 
       const result = yield* context.speculate(async function* (branch) {
@@ -5616,7 +5641,7 @@ describe('Engine speculative execution', () => {
     });
 
     engine.register('speculate-rollback', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
       context.setAttribute('phase', 'root');
 
       try {
@@ -5689,7 +5714,7 @@ describe('Engine speculative execution', () => {
     });
 
     engine.register('speculate-run-all-rollback', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
       context.setAttribute('phase', 'root');
 
       try {
@@ -5754,7 +5779,7 @@ describe('Engine speculative execution', () => {
     });
 
     engine.register('speculate-compensation-rejection', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
 
       try {
         yield* context.speculate(async function* (branch) {
@@ -5793,7 +5818,7 @@ describe('Engine speculative execution', () => {
     const increment = async (value: unknown) => (value as number) + 1;
 
     engine.register('speculate-parallel-success', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
       const result = (yield* context.speculate(async function* (branch) {
         return yield* branch.all([branch.run(double, 5), branch.run(increment, 5)]);
       })) as [number, number];
@@ -5830,7 +5855,7 @@ describe('Engine speculative execution', () => {
     });
 
     engine.register('speculate-race-abort-workflow', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
       return yield* context.speculate(async function* (branch) {
         return yield* branch.race([
           branch.memo('winner', async () => {
@@ -5868,7 +5893,7 @@ describe('Engine speculative execution', () => {
     });
 
     engine.register('speculate-compensation-failure', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
 
       try {
         yield* context.speculate(async function* (branch) {
@@ -5904,7 +5929,7 @@ describe('Engine speculative execution', () => {
     engine.register(
       'speculate-undefined-verification-rejection',
       async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
+        const context = ctx;
         context.setAttribute('phase', 'root');
 
         try {

@@ -187,8 +187,8 @@ class LocalScheduleHandle implements ClientScheduleHandle {
  * import { Engine, MemoryStorage, LocalClient, type WorkflowContext } from 'weft';
  *
  * await using engine = new Engine({ storage: new MemoryStorage() });
- * engine.register('greet', async function* (ctx: WorkflowContext, input: unknown) {
- *   return `Hello, ${(input as { name: string }).name}!`;
+ * engine.register('greet', async function* (ctx: WorkflowContext, input: { name: string }) {
+ *   return `Hello, ${input.name}!`;
  * });
  *
  * const client = new LocalClient(engine);

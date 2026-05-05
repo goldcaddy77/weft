@@ -36,12 +36,17 @@ import { Engine, type TenantResolver } from 'weft';
 
 const tenantResolver: TenantResolver = {
   async resolve(workflowId, input, workflowType) {
-    const record = input as { organizationSlug?: string };
-    if (!record.organizationSlug) {
+    if (
+      typeof input !== 'object' ||
+      input === null ||
+      !('organizationSlug' in input) ||
+      typeof input.organizationSlug !== 'string'
+    ) {
       throw new Error(`Missing organization for workflow ${workflowId}`);
     }
 
-    const organization = await lookupOrganization(record.organizationSlug);
+    const organizationSlug = input.organizationSlug;
+    const organization = await lookupOrganization(organizationSlug);
     if (!organization || !canStartWorkflowForOrganization(organization.id)) {
       throw new Error(`Unknown organization for workflow ${workflowId}`);
     }
@@ -49,7 +54,7 @@ const tenantResolver: TenantResolver = {
     return {
       id: organization.id,
       attributes: {
-        slug: record.organizationSlug,
+        slug: organizationSlug,
         tier: organization.tier,
         workflowType,
       },
@@ -149,7 +154,7 @@ function pickToolsForTenant(tenant: TenantContext | undefined): AgentToolDefinit
 }
 
 engine.register('support-workflow', async function* (ctx) {
-  const result = yield* (ctx as Context).agent({
+  const result = yield* ctx.agent({
     model: supportAgent.model,
     prompt: 'Resolve the customer ticket.',
     tools: pickToolsForTenant(ctx.tenant),

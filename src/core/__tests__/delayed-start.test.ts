@@ -4,7 +4,6 @@ import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { TestEngine } from '../../testing/test-engine.ts';
 import { decode, encode } from '../codec.ts';
-import type { Context } from '../context.ts';
 import { Engine } from '../engine.ts';
 import type { TimerEntry, WorkflowContext, WorkflowState } from '../types.ts';
 
@@ -280,7 +279,7 @@ describe('delayed workflow start', () => {
       });
 
       engine.register('parent', async function* (ctx: WorkflowContext) {
-        return yield* (ctx as Context).startChild<string>('child', null);
+        return yield* ctx.startChild<string>('child', null);
       });
     };
 

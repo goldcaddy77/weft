@@ -20,6 +20,7 @@ import {
   DEFAULT_RETENTION_SWEEP_INTERVAL_MS,
   messageName,
   type ActivityContext,
+  type ActivityTypes,
   type AttributeFilterKey,
   type BulkCancelResult,
   type BulkDeleteResult,
@@ -35,6 +36,7 @@ import {
   type PaginatedResult,
   type PurgeResult,
   type QueryDefinition,
+  type RegisteredActivityFunction,
   type RetentionOverview,
   type ScheduleAccessOptions,
   type ScheduleDefinition,
@@ -48,12 +50,16 @@ import {
   type SubmitReviewOptions,
   type TenantQuotaUsage,
   type TypedListFilter,
+  type UnregisteredName,
   type UpdateDefinition,
   type WorkerOutboundMessage,
   type WorkflowDefinition,
   type WorkflowEvent,
   type WorkflowFunction,
+  type WorkflowInput,
+  type WorkflowOutput,
   type WorkflowRegistration,
+  type WorkflowRegistry,
   type WorkflowReplay,
   type WorkflowState,
   type WorkflowSummary,
@@ -369,7 +375,7 @@ export const ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING = Symbol('engineSignalWaiter
  * });
  * const engine = new Engine();
  * engine.register('greet', async function* (ctx: WorkflowContext, input: unknown) {
- *   const user = yield* (ctx as Context).run(fetchUser, input);
+ *   const user = yield* ctx.run(fetchUser, input);
  *   return `Hello, ${user.name}`;
  * });
  * const handle = await engine.start('greet', 'user-1');
@@ -568,12 +574,31 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return broadcastFromInternals(getInternals(this), message, this.#createBroadcastCallbacks());
   }
 
-  register<TInput = unknown, TOutput = unknown>(
-    name: string,
+  register<TName extends Extract<keyof WorkflowRegistry, string>>(
+    name: TName,
+    handler:
+      | WorkflowFunction<
+          WorkflowInput<WorkflowRegistry, TName>,
+          WorkflowOutput<WorkflowRegistry, TName>
+        >
+      | StepWorkflowFunction<
+          WorkflowInput<WorkflowRegistry, TName>,
+          WorkflowOutput<WorkflowRegistry, TName>
+        >,
+  ): void;
+  register<TName extends Extract<keyof WorkflowRegistry, string>>(
+    name: TName,
+    registration: WorkflowRegistration<
+      WorkflowInput<WorkflowRegistry, TName>,
+      WorkflowOutput<WorkflowRegistry, TName>
+    >,
+  ): void;
+  register<TName extends string, TInput = unknown, TOutput = unknown>(
+    name: UnregisteredName<TName, Extract<keyof WorkflowRegistry, string>>,
     handler: WorkflowFunction<TInput, TOutput> | StepWorkflowFunction<TInput, TOutput>,
   ): void;
-  register<TInput = unknown, TOutput = unknown>(
-    name: string,
+  register<TName extends string, TInput = unknown, TOutput = unknown>(
+    name: UnregisteredName<TName, Extract<keyof WorkflowRegistry, string>>,
     registration: WorkflowRegistration<TInput, TOutput>,
   ): void;
   register<TInput = unknown, TOutput = unknown>(
@@ -604,19 +629,34 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     getInternals(this).composedWorkflowInterceptor = undefined;
     getInternals(this).composedActivityInterceptor = undefined;
   }
-  registerActivity<TResult>(
-    name: string,
+  registerActivity<TName extends Extract<keyof ActivityTypes, string>>(
+    name: TName,
+    fn: RegisteredActivityFunction<ActivityTypes, TName>,
+    options?: ActivityRegistrationOptions,
+  ): void;
+  registerActivity<TName extends string, TResult>(
+    name: UnregisteredName<TName, Extract<keyof ActivityTypes, string>>,
     fn: () => TResult | Promise<TResult>,
     options?: ActivityRegistrationOptions,
   ): void;
-  registerActivity<TInput, TResult>(
-    name: string,
+  registerActivity<TName extends string, TInput, TResult>(
+    name: UnregisteredName<TName, Extract<keyof ActivityTypes, string>>,
     fn: (input: TInput, context?: ActivityContext) => TResult | Promise<TResult>,
     options?: ActivityRegistrationOptions,
   ): void;
   registerActivity(name: string, fn: Function, options?: ActivityRegistrationOptions): void {
     getInternals(this).activityRegistry.register(name, fn, options);
   }
+  async start<TName extends Extract<keyof WorkflowRegistry, string>>(
+    type: TName,
+    input: WorkflowInput<WorkflowRegistry, TName>,
+    options?: StartOptions,
+  ): Promise<WorkflowHandle<WorkflowOutput<WorkflowRegistry, TName>>>;
+  async start<TName extends string>(
+    type: UnregisteredName<TName, Extract<keyof WorkflowRegistry, string>>,
+    input: unknown,
+    options?: StartOptions,
+  ): Promise<WorkflowHandle>;
   async start(type: string, input: unknown, options?: StartOptions): Promise<WorkflowHandle> {
     return startWorkflowFromLifecycle(
       getInternals(this),
