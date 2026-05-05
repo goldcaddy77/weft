@@ -17,6 +17,7 @@ export type RecoverAllOutput = z.infer<typeof recoverAllOutput>;
 
 export const recoverAllOperation = defineOperation<RecoverAllInput, RecoverAllOutput>({
   name: 'weft.recover.all',
+  mcpExposable: false,
   summary: 'Recover all interrupted workflows',
   tags: ['System'],
   inputSchema: recoverAllInput,

@@ -32,6 +32,7 @@ export const bulkSignalWorkflowsOperation = defineOperation<
   BulkSignalWorkflowsOutput
 >({
   name: 'weft.workflows.bulk.signal',
+  mcpExposable: false,
   summary: 'Signal workflows in bulk',
   tags: ['Workflows'],
   inputSchema: bulkSignalWorkflowsInput,

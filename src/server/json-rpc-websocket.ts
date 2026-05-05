@@ -15,6 +15,7 @@
  *     (or socket disconnect at the transport layer).
  */
 
+import { faultToJsonRpcError } from './fault-to-json-rpc.ts';
 import { dispatchJsonRpc } from './json-rpc-dispatch.ts';
 import { JSON_RPC_ERROR_CODES, JSON_RPC_VERSION, type JsonRpcId } from './json-rpc-protocol.ts';
 import {
@@ -22,14 +23,15 @@ import {
   validateSessionPrimitiveFrame,
   validateSubscribeParams,
 } from './json-rpc-websocket-validation.ts';
-import type { OperationRegistry } from './operation-catalog.ts';
+import {
+  executeSubscription,
+  SubscriptionElementValidationError,
+  type ErasedOperation,
+  type OperationRegistry,
+} from './operation-catalog.ts';
+import { workflowEventsSubscriptionOperation } from './operations/workflow-events-subscription.ts';
 import type { Principal } from './principal.ts';
-import type {
-  Cursor,
-  EventEnvelope,
-  EventSelector,
-  WorkflowEventFeed,
-} from './workflow-event-feed.ts';
+import type { EventEnvelope, WorkflowEventFeed } from './workflow-event-feed.ts';
 
 /** Emitter interface: any `send(string)`-shaped object. */
 export type JsonRpcWebSocketEmitter = {
@@ -69,7 +71,6 @@ export type JsonRpcWebSocketSessionOptions = {
 
 const DEFAULT_MAX_SUBSCRIPTIONS = 100;
 const DEFAULT_MAX_FRAME_BYTES = 1 * 1024 * 1024;
-const INITIAL_SUBSCRIPTION_CURSOR: Cursor = '-1';
 
 export type JsonRpcWebSocketSession = {
   /** Process one incoming WS frame (UTF-8 text). */
@@ -103,10 +104,28 @@ const SESSION_METHODS = {
   TERMINATED: 'weft.events.terminated',
 } as const;
 
+const WORKFLOW_EVENTS_OPERATION_NAME = 'weft.workflows.events';
+const WORKFLOW_EVENTS_SUBSCRIPTION_OPERATION =
+  workflowEventsSubscriptionOperation as ErasedOperation;
+
+function withWorkflowEventsSubscriptionOperation(registry: OperationRegistry): OperationRegistry {
+  if (registry.get(WORKFLOW_EVENTS_OPERATION_NAME) !== undefined) return registry;
+  return {
+    get(name) {
+      if (name === WORKFLOW_EVENTS_OPERATION_NAME) return WORKFLOW_EVENTS_SUBSCRIPTION_OPERATION;
+      return registry.get(name);
+    },
+    list() {
+      return [...registry.list(), WORKFLOW_EVENTS_SUBSCRIPTION_OPERATION];
+    },
+  };
+}
+
 export function createJsonRpcWebSocketSession(
   options: JsonRpcWebSocketSessionOptions,
 ): JsonRpcWebSocketSession {
   const { registry, engine, principal, emitter, feed } = options;
+  const subscriptionRegistry = withWorkflowEventsSubscriptionOperation(registry);
   const maxSubscriptions = options.maxSubscriptions ?? DEFAULT_MAX_SUBSCRIPTIONS;
   const maxFrameBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
   const transport = options.transport ?? 'jsonRpcWebSocket';
@@ -119,16 +138,6 @@ export function createJsonRpcWebSocketSession(
   // feed listeners indefinitely, spinning `deliver` → no-op `emit`.
   let emitterBroken = false;
   let disposed = false;
-
-  // Session-scoped monotonic counter. Scoping to the session (rather
-  // than a module-level global) keeps IDs unique within a connection,
-  // eliminates cross-session ID collision possibilities, and avoids
-  // test pollution — each session starts fresh.
-  let subscriptionSequence = 0;
-  function generateSubscriptionId(): string {
-    subscriptionSequence += 1;
-    return `sub_${Date.now().toString(36)}_${subscriptionSequence.toString(36)}`;
-  }
 
   /**
    * Send a frame on the wire. Guards against emitter failures: a
@@ -157,6 +166,11 @@ export function createJsonRpcWebSocketSession(
     if (request.expectsResponse) emit(message);
   }
 
+  // AUDIT-EXEMPT: stateful WebSocket session lifecycle primitive. Listed in
+  // `src/server/operation-catalog/dispatch-allowlist.ts`. The cataloged
+  // `weft.workflows.events` subscription operation (introduced in PR 3) will
+  // route through `executeSubscription`; this handler remains the lifecycle
+  // wrapper.
   async function handleSubscribe(
     request: SessionRequest,
     params: Record<string, unknown> | undefined,
@@ -188,28 +202,51 @@ export function createJsonRpcWebSocketSession(
       return;
     }
 
-    const subscriptionId = generateSubscriptionId();
     const controller = new AbortController();
+    const result = await executeSubscription<
+      EventEnvelope,
+      { subscriptionId: string; cursor: string }
+    >(
+      'weft.workflows.events',
+      {
+        workflowId: validation.workflowId,
+        selector: validation.selector,
+        ...(validation.fromCursor === undefined ? {} : { fromCursor: validation.fromCursor }),
+      },
+      {
+        principal,
+        engine: { feed },
+        // Subscribe is a session primitive, but the transport identity still
+        // needs to reflect the adapter reusing this implementation so
+        // availability checks enforce stdio-only and websocket-only policies.
+        transport,
+        registry: subscriptionRegistry,
+      },
+    );
+    if (!result.ok) {
+      const error = faultToJsonRpcError(result.fault);
+      emitResponse(request, {
+        jsonrpc: JSON_RPC_VERSION,
+        error: { code: error.code, message: error.message, data: error.data },
+        id: request.id ?? null,
+      });
+      return;
+    }
 
-    // The `cursor` field is the "resume here" value a client may pass
-    // back as `fromCursor` on reconnect. A fresh subscription starts
-    // before sequence 0, not at sequence 0: replay uses strict
-    // greater-than semantics, so returning `'0'` would skip the first
-    // event if a client reconnects before receiving any deliveries.
-    const startingCursor: Cursor = validation.fromCursor ?? INITIAL_SUBSCRIPTION_CURSOR;
+    const { envelope, iterable, close: closeSubscription } = result.value;
+    const { subscriptionId, cursor } = envelope;
 
     emitResponse(request, {
       jsonrpc: JSON_RPC_VERSION,
-      result: { subscriptionId, cursor: startingCursor },
+      result: { subscriptionId, cursor },
       id: request.id ?? null,
     });
 
-    const pump = pumpSubscription(
+    const pump = pumpSubscriptionIterable(
       subscriptionId,
-      validation.workflowId,
-      validation.selector,
-      validation.fromCursor,
+      iterable,
       controller.signal,
+      closeSubscription,
     );
     subscriptions.set(subscriptionId, {
       id: subscriptionId,
@@ -219,22 +256,37 @@ export function createJsonRpcWebSocketSession(
     });
   }
 
-  async function pumpSubscription(
+  async function pumpSubscriptionIterable(
     subscriptionId: string,
-    workflowId: string,
-    selector: EventSelector,
-    fromCursor: Cursor | undefined,
+    iterable: AsyncIterable<EventEnvelope>,
     signal: AbortSignal,
+    closeSubscription: () => Promise<void>,
   ): Promise<void> {
+    let closeStarted = false;
+    async function closeOnce(): Promise<void> {
+      if (closeStarted) return;
+      closeStarted = true;
+      await closeSubscription();
+    }
+
+    const abortSubscription = (): void => {
+      void closeOnce().catch(() => {});
+    };
+    signal.addEventListener('abort', abortSubscription, { once: true });
     try {
-      const iterable = feed.subscribe({
-        workflowId,
-        selector,
-        ...(fromCursor === undefined ? {} : { fromCursor }),
-        signal,
-      });
       for await (const envelope of iterable) {
-        if (signal.aborted) break;
+        // Once the controller fires we stop forwarding immediately.
+        // `closeOnce()` is also wired to the abort listener; calling it
+        // here is idempotent and just guarantees teardown has been
+        // requested before we exit the loop. Breaking unconditionally
+        // (instead of skipping one envelope and waiting for a second
+        // iteration) means convergence does not depend on the iterable
+        // yielding again — a producer that pauses or stalls after abort
+        // cannot keep us in the loop.
+        if (signal.aborted) {
+          await closeOnce().catch(() => {});
+          break;
+        }
         deliver(subscriptionId, envelope);
       }
       // Natural termination path. The feed closes the iterable for
@@ -254,24 +306,47 @@ export function createJsonRpcWebSocketSession(
           params: { subscriptionId, reason: 'server-closed' },
         });
       }
-    } catch {
-      // Unexpected error in the subscription pump — surface a
-      // server-closed terminated notification with a generic public
-      // message, then fall through. Error detail is the logger's
-      // domain; the wire must not carry potentially-sensitive data
-      // from a thrown value of unknown origin.
-      if (!shouldSuppressOutput()) {
-        emit({
-          jsonrpc: JSON_RPC_VERSION,
-          method: SESSION_METHODS.TERMINATED,
-          params: {
-            subscriptionId,
-            reason: 'server-closed',
-            fault: { code: 'EngineFailure', message: 'internal error', data: {} },
-          },
-        });
+    } catch (error) {
+      // Per-element schema-contract failures throw SubscriptionElementValidationError
+      // (see stream-pipeline.ts validateElements). Surface them with the
+      // distinct `validation-failed` reason so clients can distinguish a
+      // contract violation from a transient server-side closure. All other
+      // thrown values fall through to the generic `server-closed` path with
+      // a sanitized fault — the wire must not carry potentially-sensitive
+      // data from a thrown value of unknown origin.
+      //
+      // Skip the emission entirely when the controller is aborted: that
+      // path is owned by `handleUnsubscribe`, which has already sent
+      // `client-unsubscribed`. A teardown-induced throw from the iterable
+      // (e.g. when `closeOnce()` aborts the inner controller and the feed
+      // raises during cleanup) must not produce a duplicate `terminated`
+      // frame for the same `subscriptionId`.
+      if (!signal.aborted && !shouldSuppressOutput()) {
+        if (error instanceof SubscriptionElementValidationError) {
+          emit({
+            jsonrpc: JSON_RPC_VERSION,
+            method: SESSION_METHODS.TERMINATED,
+            params: {
+              subscriptionId,
+              reason: 'validation-failed',
+              fault: error.fault,
+            },
+          });
+        } else {
+          emit({
+            jsonrpc: JSON_RPC_VERSION,
+            method: SESSION_METHODS.TERMINATED,
+            params: {
+              subscriptionId,
+              reason: 'server-closed',
+              fault: { code: 'EngineFailure', message: 'internal error', data: {} },
+            },
+          });
+        }
       }
     } finally {
+      signal.removeEventListener('abort', abortSubscription);
+      await closeOnce().catch(() => {});
       subscriptions.delete(subscriptionId);
     }
   }
@@ -284,6 +359,11 @@ export function createJsonRpcWebSocketSession(
     });
   }
 
+  // AUDIT-EXEMPT: stateful WebSocket session lifecycle primitive. Listed in
+  // `src/server/operation-catalog/dispatch-allowlist.ts`. The cataloged
+  // `weft.workflows.events` subscription operation (introduced in PR 3) will
+  // route through `executeSubscription`; this handler remains the lifecycle
+  // wrapper.
   function handleUnsubscribe(
     request: SessionRequest,
     params: Record<string, unknown> | undefined,

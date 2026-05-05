@@ -79,6 +79,7 @@ function buildPrincipalSpy(): {
   const captured: { principal?: Principal } = {};
   const operation = defineOperation({
     name: 'weft.test.principalspy',
+    mcpExposable: false,
     summary: 'spy',
     inputSchema: z.object({ workflowId: z.string() }),
     outputSchema: z.object({ method: z.string() }),
@@ -182,6 +183,7 @@ describe('handler pipeline — streaming binding guard', () => {
 
     const operation = defineOperation({
       name: 'weft.test.streamnoshape',
+      mcpExposable: false,
       summary: 'streaming op without shapeSuccess',
       inputSchema: z.object({ workflowId: z.string() }),
       outputSchema: z.unknown(),
@@ -223,6 +225,7 @@ describe('handler pipeline — streaming binding guard', () => {
 
     const operation = defineOperation({
       name: 'weft.test.extracterror',
+      mcpExposable: false,
       summary: 'extract error',
       inputSchema: z.object({ workflowId: z.string() }),
       outputSchema: z.object({ ok: z.boolean() }),
@@ -261,6 +264,7 @@ describe('handler pipeline — streaming binding guard', () => {
     const registry = createOperationRegistry([
       defineOperation({
         name: 'weft.test.bindingdecode',
+        mcpExposable: false,
         summary: 'binding decode path',
         inputSchema: z.object({ workflowId: z.string() }),
         outputSchema: z.object({ ok: z.boolean() }),
@@ -490,6 +494,7 @@ describe('handler pipeline — authContextToPrincipal branches', () => {
     const registry = createOperationRegistry([
       defineOperation({
         name: 'weft.test.extractinput',
+        mcpExposable: false,
         summary: 'extractInput failure path',
         inputSchema: z.object({ workflowId: z.string() }),
         outputSchema: z.object({ ok: z.boolean() }),

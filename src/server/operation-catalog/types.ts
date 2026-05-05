@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import type { AccessPolicy } from '../authorization.ts';
-import type { OperationFault, TransportKind } from '../operation-fault.ts';
+import type { FaultCode, OperationFault, TransportKind } from '../operation-fault.ts';
 import type { Principal } from '../principal.ts';
 
 /**
@@ -47,12 +47,53 @@ export type UnknownKeyPolicy = {
 };
 
 /**
+ * Runtime shape of an operation. Unary operations return one validated
+ * `outputSchema` value. Stream and subscription operations return long-lived
+ * iterables whose elements are validated against `eventSchema`.
+ */
+export type OperationKind = 'unary' | 'stream' | 'subscription';
+
+/** Invocation result for `kind: 'stream'` operations. */
+export type StreamOperationInvocation<Element> = AsyncIterable<Element>;
+
+/** Invocation result for `kind: 'subscription'` operations. */
+export type SubscriptionOperationInvocation<Element, Envelope> = {
+  readonly envelope: Envelope;
+  readonly iterable: AsyncIterable<Element>;
+  readonly close: () => Promise<void>;
+};
+
+export type OperationInvocationResult<Output> =
+  | Output
+  | StreamOperationInvocation<unknown>
+  | SubscriptionOperationInvocation<unknown, Output>;
+
+/**
  * Result of the parameter-aware `authorize` hook.
  *
  * **`reason` is wire-visible.** Hook authors must not embed secrets or
  * sensitive context in a denial reason.
  */
 export type AuthorizationDecision = { allowed: true } | { allowed: false; reason: string };
+
+/**
+ * Stable audit markers emitted after each successful operation pipeline stage.
+ */
+export type PipelineTraceMarker =
+  | 'looked-up'
+  | 'transport-checked'
+  | 'access-checked'
+  | 'parsed'
+  | 'unknown-key-policy-applied'
+  | 'authorized'
+  | 'invoked'
+  | 'output-validated';
+
+/**
+ * Optional observer hook used by audit tests to prove a transport used the
+ * full `executeOperation` pipeline.
+ */
+export type PipelineTrace = (marker: PipelineTraceMarker) => void;
 
 /**
  * Context passed to both the `authorize` hook and `invoke`.
@@ -64,18 +105,80 @@ export type OperationContext<Input> = {
   readonly transport: TransportKind;
 };
 
-export type OperationDefinition<Input, Output> = {
+/**
+ * Common operation fields shared by unary, stream, and subscription kinds.
+ * The discriminated union below adds `kind` and `eventSchema` per kind.
+ */
+type OperationDefinitionBase<Input, Output> = {
   readonly name: string;
+  readonly mcpExposable: boolean;
   readonly summary: string;
   readonly tags: ReadonlyArray<string>;
   readonly inputSchema: z.ZodType<Input>;
+  /**
+   * For unary operations, validates the returned value. For subscriptions,
+   * validates the subscribe envelope. For streams, describes the start/SSE
+   * metadata while each yielded element is validated by `eventSchema`.
+   */
   readonly outputSchema: z.ZodType<Output>;
   readonly access: AccessPolicy;
+  /** Fault codes this operation can raise in addition to universal pipeline defaults. */
+  readonly producibleFaults?: ReadonlyArray<FaultCode>;
+  /** Whether non-public operations should appear in generated discovery documents. */
+  readonly discoverable?: boolean;
   readonly transports: TransportAvailability;
   readonly unknownKeyPolicy: UnknownKeyPolicy;
   readonly authorize?: (context: OperationContext<Input>) => Promise<AuthorizationDecision>;
-  readonly invoke: (context: OperationContext<Input>) => Promise<Output>;
+  readonly invoke: (context: OperationContext<Input>) => Promise<OperationInvocationResult<Output>>;
 };
+
+/**
+ * Unary (request/response) operation. `kind` may be omitted (defaults to
+ * `'unary'`). `eventSchema` MUST be absent — a unary operation has no
+ * per-element shape to validate. The `eventSchema?: never` constraint
+ * enforces this at the type level: passing `eventSchema` to a unary
+ * operation is a TypeScript error, not a silent runtime mismatch.
+ */
+type UnaryOperationDefinition<Input, Output> = OperationDefinitionBase<Input, Output> & {
+  readonly kind?: 'unary';
+  readonly eventSchema?: never;
+};
+
+/**
+ * Streaming operation (e.g. SSE). `kind: 'stream'` is required and
+ * `eventSchema` MUST be present — the dispatcher validates each yielded
+ * element against this schema. Without it the streaming pipeline would
+ * have no contract to validate per-element output against, which would
+ * silently leak un-validated data to consumers.
+ */
+type StreamOperationDefinition<Input, Output> = OperationDefinitionBase<Input, Output> & {
+  readonly kind: 'stream';
+  readonly eventSchema: z.ZodType;
+};
+
+/**
+ * WebSocket subscription operation. `kind: 'subscription'` is required and
+ * `eventSchema` MUST be present (validates each delivered envelope). Same
+ * rationale as `StreamOperationDefinition` — the type forbids declaring a
+ * subscription without its element schema.
+ */
+type SubscriptionOperationDefinition<Input, Output> = OperationDefinitionBase<Input, Output> & {
+  readonly kind: 'subscription';
+  readonly eventSchema: z.ZodType;
+};
+
+/**
+ * Discriminated union over the three operation kinds. The discriminator
+ * (`kind`) determines whether `eventSchema` is required (`'stream'` /
+ * `'subscription'`) or forbidden (`'unary'` or absent). Streaming
+ * operations declared without `eventSchema` are now a TypeScript error
+ * rather than a runtime EngineFailure; unary operations cannot
+ * accidentally carry an `eventSchema` that the pipeline would never read.
+ */
+export type OperationDefinition<Input, Output> =
+  | UnaryOperationDefinition<Input, Output>
+  | StreamOperationDefinition<Input, Output>
+  | SubscriptionOperationDefinition<Input, Output>;
 
 /**
  * An operation with its Input/Output type parameters erased. The dispatcher
@@ -90,26 +193,58 @@ export type OperationRegistry = {
 };
 
 /**
- * Erased operation shape accepted by `createOperationRegistry`.
+ * Erased operation shape accepted by `createOperationRegistry`. Mirrors
+ * the discriminated union on `OperationDefinition` so registry callers
+ * declaring a stream/subscription without `eventSchema` get a compile-time
+ * error rather than a runtime `EngineFailure` when the pipeline first
+ * attempts per-element validation.
  */
-export type RegistrableOperation = {
+type RegistrableOperationBase = {
   readonly name: string;
+  readonly mcpExposable: boolean;
   readonly summary: string;
   readonly tags: ReadonlyArray<string>;
   readonly inputSchema: z.ZodType;
   readonly outputSchema: z.ZodType;
   readonly access: AccessPolicy;
+  /** Fault codes this operation can raise in addition to universal pipeline defaults. */
+  readonly producibleFaults?: ReadonlyArray<FaultCode>;
+  /** Whether non-public operations should appear in generated discovery documents. */
+  readonly discoverable?: boolean;
   readonly transports: TransportAvailability;
   readonly unknownKeyPolicy: UnknownKeyPolicy;
   readonly authorize?: (context: OperationContext<never>) => Promise<AuthorizationDecision>;
-  readonly invoke: (context: OperationContext<never>) => Promise<unknown>;
+  readonly invoke: (
+    context: OperationContext<never>,
+  ) => Promise<OperationInvocationResult<unknown>>;
 };
+
+type UnaryRegistrableOperation = RegistrableOperationBase & {
+  readonly kind?: 'unary';
+  readonly eventSchema?: never;
+};
+
+type StreamRegistrableOperation = RegistrableOperationBase & {
+  readonly kind: 'stream';
+  readonly eventSchema: z.ZodType;
+};
+
+type SubscriptionRegistrableOperation = RegistrableOperationBase & {
+  readonly kind: 'subscription';
+  readonly eventSchema: z.ZodType;
+};
+
+export type RegistrableOperation =
+  | UnaryRegistrableOperation
+  | StreamRegistrableOperation
+  | SubscriptionRegistrableOperation;
 
 export type DispatchContext = {
   readonly principal: Principal;
   readonly engine: unknown;
   readonly transport: TransportKind;
   readonly registry: OperationRegistry;
+  readonly pipelineTrace?: PipelineTrace;
 };
 
 export type DispatchResult<Output> =

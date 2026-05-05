@@ -38,11 +38,13 @@ export type GetWorkflowOutput = WorkflowState;
 
 export const getWorkflowOperation = defineOperation<GetWorkflowInput, GetWorkflowOutput>({
   name: 'weft.workflows.get',
+  mcpExposable: false,
   summary: 'Get workflow state by id',
   tags: ['Workflows'],
   inputSchema: getWorkflowInput,
   outputSchema: getWorkflowOutput as z.ZodType<GetWorkflowOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   // REST mirrors legacy behavior (legacy silently tolerates extra top-
   // level keys on GET — there's no body to reject). Top-level strip

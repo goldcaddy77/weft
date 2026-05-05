@@ -17,11 +17,13 @@ export type GetReviewOutput = ReviewRequest;
 
 export const getReviewOperation = defineOperation<GetReviewInput, GetReviewOutput>({
   name: 'weft.reviews.get',
+  mcpExposable: false,
   summary: 'Get a specific review for a workflow',
   tags: ['Reviews'],
   inputSchema: getReviewInput,
   outputSchema: getReviewOutput as z.ZodType<GetReviewOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<GetReviewOutput> => {

@@ -15,11 +15,13 @@ export type ResumeScheduleOutput = z.infer<typeof resumeScheduleOutput>;
 
 export const resumeScheduleOperation = defineOperation<ResumeScheduleInput, ResumeScheduleOutput>({
   name: 'weft.schedules.resume',
+  mcpExposable: false,
   summary: 'Resume a recurring schedule',
   tags: ['Schedules'],
   inputSchema: resumeScheduleInput,
   outputSchema: resumeScheduleOutput as z.ZodType<ResumeScheduleOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound', 'Conflict'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<ResumeScheduleOutput> => {

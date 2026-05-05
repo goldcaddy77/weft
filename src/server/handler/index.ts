@@ -97,6 +97,7 @@ export async function handleRequest(
         bindingMatch.pathParams,
         operationRegistry,
         principal,
+        options?.pipelineTrace,
       );
     } catch (error) {
       console.error('Unhandled error in dispatchViaExecuteOperation', {

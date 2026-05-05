@@ -20,6 +20,7 @@ export const listCheckpointsOperation = defineOperation<
   ListCheckpointsOutput
 >({
   name: 'weft.workflows.checkpoints.list',
+  mcpExposable: false,
   summary: 'List checkpoint history for a workflow',
   tags: ['Checkpoints'],
   inputSchema: listCheckpointsInput,

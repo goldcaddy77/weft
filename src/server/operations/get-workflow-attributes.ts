@@ -19,11 +19,13 @@ export const getWorkflowAttributesOperation = defineOperation<
   GetWorkflowAttributesOutput
 >({
   name: 'weft.workflows.attributes.get',
+  mcpExposable: false,
   summary: 'Get workflow attributes by id',
   tags: ['Attributes'],
   inputSchema: getWorkflowAttributesInput,
   outputSchema: getWorkflowAttributesOutput as z.ZodType<GetWorkflowAttributesOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<GetWorkflowAttributesOutput> => {

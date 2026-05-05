@@ -15,11 +15,13 @@ export type CancelScheduleOutput = z.infer<typeof cancelScheduleOutput>;
 
 export const cancelScheduleOperation = defineOperation<CancelScheduleInput, CancelScheduleOutput>({
   name: 'weft.schedules.cancel',
+  mcpExposable: false,
   summary: 'Cancel a recurring schedule',
   tags: ['Schedules'],
   inputSchema: cancelScheduleInput,
   outputSchema: cancelScheduleOutput as z.ZodType<CancelScheduleOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound', 'Conflict'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<CancelScheduleOutput> => {

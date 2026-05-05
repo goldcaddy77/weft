@@ -15,11 +15,13 @@ export type CancelWorkflowOutput = z.infer<typeof cancelWorkflowOutput>;
 
 export const cancelWorkflowOperation = defineOperation<CancelWorkflowInput, CancelWorkflowOutput>({
   name: 'weft.workflows.cancel',
+  mcpExposable: false,
   summary: 'Cancel a running workflow',
   tags: ['Workflows'],
   inputSchema: cancelWorkflowInput,
   outputSchema: cancelWorkflowOutput as z.ZodType<CancelWorkflowOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<CancelWorkflowOutput> => {

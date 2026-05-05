@@ -521,7 +521,17 @@ describe('RemoteWorker', () => {
       });
 
       await worker.connect();
-      await sleepForTesting(50);
+      // Wait for both messages to actually arrive at the server rather
+      // than racing the WebSocket round-trip with a fixed 50ms sleep.
+      // The fake `setInterval` calls back via `queueMicrotask`, so the
+      // heartbeat fires synchronously after the register handshake
+      // completes — but the register itself depends on real socket I/O.
+      await waitForCondition(
+        () =>
+          messages.some((message) => message.type === 'register') &&
+          messages.some((message) => message.type === 'heartbeat'),
+        { timeoutMs: 1_000, label: 'register and heartbeat both received' },
+      );
 
       expect(messages.some((message) => message.type === 'register')).toBe(true);
       expect(messages.some((message) => message.type === 'heartbeat')).toBe(true);

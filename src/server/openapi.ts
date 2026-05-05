@@ -8,6 +8,10 @@
  * @module server/openapi
  */
 
+import { isDiscoverable } from './discovery-filter.ts';
+import { applyDiscoveryInfo, type DiscoveryInfo } from './discovery-info.ts';
+import { buildErrorResponses, ERROR_SCHEMA } from './openapi-error-responses.ts';
+import { extractComponentsSchemas, type OpenApiSchemaHelper } from './openapi-schemas.ts';
 import type { ErasedOperation, OperationRegistry } from './operation-catalog.ts';
 import type { UnknownRestBinding } from './rest-bindings.ts';
 import { createLiveOperationRegistry, createLiveRestBindings } from './rest-bindings.ts';
@@ -25,6 +29,8 @@ export type OpenApiOptions = {
   title?: string;
   /** API version. Defaults to `'0.0.1'`. */
   version?: string;
+  /** Operator-supplied discovery metadata applied to the generated document. */
+  discoveryInfo?: DiscoveryInfo;
   /** Operation registry used to emit migrated REST bindings. */
   registry?: OperationRegistry;
   /**
@@ -62,6 +68,59 @@ function buildPathParameters(paramNames: readonly string[]): Array<Record<string
   }));
 }
 
+const DEFAULT_SCHEMA_HELPER: OpenApiSchemaHelper = {
+  components: {},
+  refFor() {
+    return undefined;
+  },
+};
+
+/**
+ * Build the success-response object for a binding, branching on its
+ * declared `success.kind`. JSON bindings emit `application/json` with
+ * the operation's output schema. Streaming bindings emit the binding's
+ * declared `mediaType` (e.g. `text/event-stream`) and document the
+ * payload as a string — the per-frame envelope's actual contents are
+ * documented separately in `/asyncapi.json`. Empty (204) bindings emit
+ * a no-content response.
+ */
+function buildSuccessResponse(
+  binding: UnknownRestBinding,
+  operation: ErasedOperation,
+  schemaHelper: OpenApiSchemaHelper,
+): Record<string, unknown> {
+  const success = binding.success;
+  if (success.kind === 'empty') {
+    return {
+      [String(success.status)]: {
+        description: 'No content',
+      },
+    };
+  }
+  if (success.kind === 'streaming') {
+    return {
+      '200': {
+        description: 'Streaming response',
+        content: {
+          [success.mediaType]: {
+            schema: { type: 'string' },
+          },
+        },
+      },
+    };
+  }
+  return {
+    [String(success.status)]: {
+      description: 'Successful response',
+      content: {
+        'application/json': {
+          schema: schemaHelper.refFor(operation.name, 'Output') ?? { type: 'object' },
+        },
+      },
+    },
+  };
+}
+
 /**
  * Emit REST bindings into the OpenAPI paths map. Exported for tests;
  * `generateOpenApiDocument` is the production entry point.
@@ -74,21 +133,34 @@ export function emitBindings(
   tagSet: Set<string>,
   bindings: ReadonlyArray<UnknownRestBinding> = createLiveRestBindings(),
   registry: OperationRegistry = createLiveOperationRegistry(),
+  schemaHelper: OpenApiSchemaHelper = DEFAULT_SCHEMA_HELPER,
 ): Set<string> {
   const boundMethodPaths = new Set<string>();
   for (const binding of bindings) {
     const operation: ErasedOperation | undefined = registry.get(binding.operationName);
     if (operation === undefined) continue;
     const openApiPath = toOpenApiPath(binding.path);
+    // Order matters: skipping non-discoverable bindings BEFORE adding to
+    // `boundMethodPaths` is intentional. `boundMethodPaths` suppresses
+    // legacy `ROUTES` entries that share the same path; not adding here
+    // means a non-discoverable binding does NOT shadow its corresponding
+    // legacy route. If a future non-discoverable binding has no legacy
+    // fallback its path is intentionally absent from the doc — that is
+    // what `discoverable: false` means.
+    if (!isDiscoverable(operation)) continue;
     boundMethodPaths.add(`${binding.method} ${openApiPath}`);
     if (!paths[openApiPath]) paths[openApiPath] = {};
 
     const parameters = buildPathParameters(binding.pathParamNames);
+    const successResponse = buildSuccessResponse(binding, operation, schemaHelper);
     const entry: Record<string, unknown> = {
       summary: operation.summary,
       operationId: operation.name,
       tags: operation.tags,
-      responses: { '200': { description: 'Successful response' } },
+      responses: {
+        ...successResponse,
+        ...buildErrorResponses(operation),
+      },
     };
     if (parameters.length > 0) entry['parameters'] = parameters;
 
@@ -97,7 +169,11 @@ export function emitBindings(
     // PATCH operation keeps its `requestBody` entry in the document.
     if (binding.method === 'POST' || binding.method === 'PUT' || binding.method === 'PATCH') {
       entry['requestBody'] = {
-        content: { 'application/json': { schema: { type: 'object' } } },
+        content: {
+          'application/json': {
+            schema: schemaHelper.refFor(operation.name, 'Input') ?? { type: 'object' },
+          },
+        },
       };
     }
 
@@ -140,15 +216,17 @@ function emitRoutes(
 export function generateOpenApiDocument(options?: OpenApiOptions): Record<string, unknown> {
   const title = options?.title ?? 'Weft Workflow Engine';
   const version = options?.version ?? '0.0.1';
+  const infoBlock = applyDiscoveryInfo({ title, version }, options?.discoveryInfo);
   const registry = options?.registry ?? createLiveOperationRegistry();
   const restBindings = options?.restBindings;
 
   const paths: Record<string, Record<string, unknown>> = {};
   const tagSet = new Set<string>();
+  const schemaHelper = extractComponentsSchemas(registry);
 
   // REST_BINDINGS win against any stale ROUTES entry covering the same
   // (method, path) — a migrated operation owns its OpenAPI description.
-  const boundMethodPaths = emitBindings(paths, tagSet, restBindings, registry);
+  const boundMethodPaths = emitBindings(paths, tagSet, restBindings, registry, schemaHelper);
   emitRoutes(paths, tagSet, boundMethodPaths);
 
   const tags = [...tagSet].toSorted().map((name) => ({ name }));
@@ -173,17 +251,24 @@ export function generateOpenApiDocument(options?: OpenApiOptions): Record<string
 
   const document: Record<string, unknown> = {
     openapi: '3.1.0',
-    info: { title, version },
+    info: infoBlock,
     paths,
     tags,
     security,
     components: {
+      schemas: {
+        ...schemaHelper.components,
+        Error: ERROR_SCHEMA,
+      },
       securitySchemes: emittedSecuritySchemes,
     },
   };
 
   if (options?.serverUrl) {
     document['servers'] = [{ url: options.serverUrl }];
+  }
+  if (options?.discoveryInfo?.externalDocs !== undefined) {
+    document['externalDocs'] = { ...options.discoveryInfo.externalDocs };
   }
 
   return document;

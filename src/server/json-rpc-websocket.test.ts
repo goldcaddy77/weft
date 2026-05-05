@@ -24,7 +24,7 @@ import {
   type ErasedOperation,
   type OperationDefinition,
 } from './operation-catalog.ts';
-import { anonymousPrincipal } from './principal.ts';
+import { anonymousPrincipal, principalFromApiKey } from './principal.ts';
 import {
   createInMemoryEventBackend,
   createWorkflowEventFeed,
@@ -33,6 +33,16 @@ import {
 } from './workflow-event-feed.ts';
 
 const fakeEngine = {} as unknown;
+
+/**
+ * Subscribe-tests need an authenticated principal carrying `workflows:read`
+ * because `weft.workflows.events`'s access policy is `scoped: workflows:read`.
+ * Frame-dispatch tests (the first describe block) don't touch the
+ * subscription operation and continue to use `anonymousPrincipal()`.
+ */
+function subscribePrincipal() {
+  return principalFromApiKey({ subject: 'subscribe-test', scopes: ['workflows:read'] });
+}
 
 function makeOp<I, O>(
   overrides: Partial<OperationDefinition<I, O>> & {
@@ -263,7 +273,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -300,7 +310,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session1 = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter: emitter1,
       feed,
     });
@@ -322,7 +332,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session2 = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter: emitter2,
       feed,
     });
@@ -360,7 +370,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -377,6 +387,32 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     await session.close();
   });
 
+  it('rejects subscribe when the shared session is reused for stdio transport', async () => {
+    const emitter = makeEmitter();
+    const feed = createWorkflowEventFeed(createInMemoryEventBackend());
+    const session = createJsonRpcWebSocketSession({
+      registry: createOperationRegistry([]),
+      engine: fakeEngine,
+      principal: subscribePrincipal(),
+      emitter,
+      feed,
+      transport: 'jsonRpcStdio',
+    });
+    await session.handleMessage(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'weft.workflows.subscribe',
+        params: { workflowId: 'wf-1', selector: 'events' },
+        id: 'sub-stdio',
+      }),
+    );
+
+    const response = JSON.parse(emitter.sent[0]!);
+    expect(response.error.code).toBe(-32030);
+    expect(response.error.data.weftCode).toBe('UnsupportedTransport');
+    await session.close();
+  });
+
   it('rejects subscribe / unsubscribe frames missing jsonrpc: "2.0"', async () => {
     // Bugbot regression: session primitives bypassed the version
     // check other methods route through. Every frame must carry
@@ -386,7 +422,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -420,7 +456,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -473,7 +509,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -512,7 +548,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -586,7 +622,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -624,6 +660,98 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     expect(cleanupFinished).toBe(true);
   });
 
+  it('emits exactly one terminated frame when the iterable throws during unsubscribe teardown', async () => {
+    // Regression for the case where `handleUnsubscribe` aborts the
+    // controller and emits `client-unsubscribed`, and the iterable then
+    // throws during teardown (a real possibility once `closeOnce()`
+    // explicitly aborts the internal subscription controller). The pump's
+    // catch block must NOT emit a second `terminated` notification — the
+    // client already received the authoritative `client-unsubscribed`
+    // frame, and a follow-up `server-closed` would be a wire-protocol
+    // duplicate for the same `subscriptionId`.
+    const feed: WorkflowEventFeed = {
+      replay: createWorkflowEventFeed(createInMemoryEventBackend()).replay,
+      subscribe(options) {
+        async function* subscription(): AsyncIterable<ReturnType<typeof makeEnvelope>> {
+          await new Promise<void>((resolve) => {
+            if (options.signal?.aborted) {
+              resolve();
+              return;
+            }
+            options.signal?.addEventListener('abort', () => resolve(), { once: true });
+          });
+          // Simulate the underlying feed raising during teardown — for
+          // example, a real feed whose internal cursor closes while the
+          // pump's `closeOnce()` is still draining. The thrown value
+          // surfaces in the pump's catch block.
+          throw new Error('teardown raced');
+        }
+        return subscription();
+      },
+      dispose() {},
+    };
+
+    const emitter = makeEmitter();
+    const session = createJsonRpcWebSocketSession({
+      registry: createOperationRegistry([]),
+      engine: fakeEngine,
+      principal: subscribePrincipal(),
+      emitter,
+      feed,
+    });
+
+    await session.handleMessage(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'weft.workflows.subscribe',
+        params: { workflowId: 'wf-1', selector: 'events' },
+        id: 'sub-1',
+      }),
+    );
+    await emitter.waitForSentCount(1);
+    const subscribeResponse = JSON.parse(emitter.sent[0]!);
+    const subscriptionId = subscribeResponse.result.subscriptionId;
+
+    await session.handleMessage(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'weft.workflows.unsubscribe',
+        params: { subscriptionId },
+        id: 'unsub-1',
+      }),
+    );
+
+    // Wait for `client-unsubscribed` AND give the pump a chance to land
+    // its catch block — otherwise we'd assert before the (incorrect)
+    // second emission could fire.
+    await emitter.waitForParsedMessage('client-unsubscribed termination', (message) => {
+      return (
+        message['method'] === 'weft.events.terminated' &&
+        (message['params'] as { reason?: unknown }).reason === 'client-unsubscribed'
+      );
+    });
+
+    // Drain microtasks so the pump's try/catch settles BEFORE we close
+    // the session (which would set `disposed=true` and suppress any
+    // erroneous duplicate). Looping `await Promise.resolve()` a handful
+    // of times lets every queued microtask run.
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const terminatedFrames = emitter.sent
+      .map((s) => JSON.parse(s) as Record<string, unknown>)
+      .filter(
+        (m) =>
+          m['method'] === 'weft.events.terminated' &&
+          (m['params'] as { subscriptionId?: unknown }).subscriptionId === subscriptionId,
+      );
+    expect(terminatedFrames).toHaveLength(1);
+    expect((terminatedFrames[0]!['params'] as { reason: string }).reason).toBe(
+      'client-unsubscribed',
+    );
+    await session.close();
+  });
+
   it('close() terminates all active subscriptions', async () => {
     const emitter = makeEmitter();
     const backend = createInMemoryEventBackend();
@@ -631,7 +759,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -659,7 +787,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -682,7 +810,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -706,7 +834,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -729,7 +857,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -752,7 +880,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -775,7 +903,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
       maxSubscriptions: 2,
@@ -815,7 +943,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -862,7 +990,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -901,7 +1029,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
       maxFrameBytes: 100,
@@ -923,33 +1051,37 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     // pump would keep iterating the feed indefinitely. Fix split
     // the concerns: `emitterBroken` suppresses output; `disposed`
     // gates `close()`'s teardown.
-    let releaseSubscription: () => void = () => {};
-    const subscriptionClosed = new Promise<void>((resolve) => {
-      releaseSubscription = resolve;
-    });
+    //
+    // The semantic check is "the subscription's abort signal fired" —
+    // that's what `subscriptionAborted` captures. The generator's
+    // post-await body may not run after `close()` aborts the pump (the
+    // for-await `break`s on the abort, calling `iterator.return()`),
+    // so this test does not assume the generator runs to completion.
     let subscriptionAborted = false;
     const feed: WorkflowEventFeed = {
       replay: async function* () {},
       subscribe(options) {
+        // Mirror the real `WorkflowEventFeed`: register the abort
+        // listener UPFRONT so the feed observes session teardown even
+        // if the pump never pulls another iteration after abort. The
+        // pump is allowed to break immediately on abort — the feed's
+        // teardown path lives behind the abort signal, not behind a
+        // post-yield body that might never run.
+        options.signal?.addEventListener(
+          'abort',
+          () => {
+            subscriptionAborted = true;
+          },
+          { once: true },
+        );
+        if (options.signal?.aborted) subscriptionAborted = true;
         async function* subscription(): AsyncIterable<ReturnType<typeof makeEnvelope>> {
           yield makeEnvelope(0);
+          // Park forever — exit semantics are owned by the abort signal.
           await new Promise<void>((resolve) => {
-            if (options.signal?.aborted) {
-              subscriptionAborted = true;
-              resolve();
-              return;
-            }
-
-            options.signal?.addEventListener(
-              'abort',
-              () => {
-                subscriptionAborted = true;
-                resolve();
-              },
-              { once: true },
-            );
+            options.signal?.addEventListener('abort', () => resolve(), { once: true });
+            if (options.signal?.aborted) resolve();
           });
-          releaseSubscription();
         }
 
         return subscription();
@@ -967,7 +1099,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -981,9 +1113,9 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     );
     await Promise.resolve();
     // `close()` must still abort the subscription pump even though
-    // the emitter is broken.
+    // the emitter is broken. Awaiting `close()` to settle proves the
+    // pump promise resolves (no leaked feed listener).
     await session.close();
-    await subscriptionClosed;
     expect(subscriptionAborted).toBe(true);
   });
 
@@ -996,7 +1128,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
       maxFrameBytes: 100,
@@ -1031,7 +1163,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -1063,7 +1195,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -1120,7 +1252,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -1140,7 +1272,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });

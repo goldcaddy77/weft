@@ -1,0 +1,257 @@
+import { z } from 'zod';
+
+import type { OperationFault } from '../operation-fault.ts';
+import { classifyEngineError, transportToPolicyKey } from './pipeline-helpers.ts';
+import {
+  checkAccess,
+  checkAuthorization,
+  checkTransport,
+  parseAndApplyUnknownKeyPolicy,
+  tracePipeline,
+} from './pipeline-stages.ts';
+import {
+  type DispatchContext,
+  type DispatchResult,
+  type ErasedOperation,
+  type SubscriptionOperationInvocation,
+} from './types.ts';
+
+/**
+ * Error thrown when an element emitted by a subscription or stream fails
+ * per-element schema validation.
+ */
+export class SubscriptionElementValidationError extends Error {
+  constructor(public readonly fault: OperationFault) {
+    super('subscription element failed schema validation');
+    this.name = 'SubscriptionElementValidationError';
+  }
+}
+
+/**
+ * Execute a `kind: 'stream'` operation and return a schema-validating
+ * async iterable for its emitted elements.
+ */
+export async function executeStream<Element>(
+  operationName: string,
+  rawInput: unknown,
+  context: DispatchContext,
+): Promise<DispatchResult<AsyncIterable<Element>>> {
+  const prepared = await prepareLongLivedOperation(operationName, rawInput, context, 'stream');
+  if (!prepared.ok) return prepared;
+  const { operation, input, eventSchema } = prepared.value;
+
+  let invocation: unknown;
+  try {
+    invocation = await operation.invoke({
+      input,
+      principal: context.principal,
+      engine: context.engine,
+      transport: context.transport,
+    });
+  } catch (error) {
+    return failure(classifyEngineError(error, operation));
+  }
+  tracePipeline(context.pipelineTrace, 'invoked');
+
+  if (!isAsyncIterable(invocation)) {
+    return failure({ code: 'EngineFailure', message: 'internal error', data: {} });
+  }
+
+  tracePipeline(context.pipelineTrace, 'output-validated');
+  return {
+    ok: true,
+    value: validateElements<Element>(invocation, eventSchema),
+  };
+}
+
+/**
+ * Execute a `kind: 'subscription'` operation and return its validated
+ * subscribe envelope, schema-validating element iterable, and close hook.
+ */
+export async function executeSubscription<Element, Envelope>(
+  operationName: string,
+  rawInput: unknown,
+  context: DispatchContext,
+): Promise<
+  DispatchResult<{
+    envelope: Envelope;
+    iterable: AsyncIterable<Element>;
+    close: () => Promise<void>;
+  }>
+> {
+  const prepared = await prepareLongLivedOperation(
+    operationName,
+    rawInput,
+    context,
+    'subscription',
+  );
+  if (!prepared.ok) return prepared;
+  const { operation, input, eventSchema } = prepared.value;
+
+  let invocation: unknown;
+  try {
+    invocation = await operation.invoke({
+      input,
+      principal: context.principal,
+      engine: context.engine,
+      transport: context.transport,
+    });
+  } catch (error) {
+    return failure(classifyEngineError(error, operation));
+  }
+  tracePipeline(context.pipelineTrace, 'invoked');
+
+  if (!isSubscriptionInvocation(invocation)) {
+    return failure({ code: 'EngineFailure', message: 'internal error', data: {} });
+  }
+
+  const envelope = validateOutput<Envelope>(operation.outputSchema, invocation.envelope);
+  if (!envelope.ok) return envelope;
+  tracePipeline(context.pipelineTrace, 'output-validated');
+
+  return {
+    ok: true,
+    value: {
+      envelope: envelope.value,
+      iterable: validateElements<Element>(invocation.iterable, eventSchema),
+      close: invocation.close,
+    },
+  };
+}
+
+/**
+ * Result of preparing a long-lived (stream or subscription) operation for
+ * dispatch. The discriminated union on `OperationDefinition` guarantees
+ * `eventSchema` is present on stream/subscription operations, but
+ * `ErasedOperation` (the union of all three kinds) erases that proof at
+ * the function boundary. Returning `eventSchema` directly here carries
+ * the narrowed schema through to the caller without a runtime guard.
+ */
+type PreparedLongLivedOperation = {
+  readonly operation: ErasedOperation;
+  readonly input: unknown;
+  readonly eventSchema: z.ZodType;
+};
+
+async function prepareLongLivedOperation(
+  operationName: string,
+  rawInput: unknown,
+  context: DispatchContext,
+  expectedKind: 'stream' | 'subscription',
+): Promise<DispatchResult<PreparedLongLivedOperation>> {
+  const pipelineTrace = context.pipelineTrace;
+  const operation = context.registry.get(operationName);
+  if (operation === undefined) {
+    return failure({
+      code: 'MethodNotFound',
+      message: `unknown operation: ${operationName}`,
+      data: { method: operationName },
+    });
+  }
+  tracePipeline(pipelineTrace, 'looked-up');
+
+  if ((operation.kind ?? 'unary') !== expectedKind) {
+    return failure({
+      code: 'Unprocessable',
+      message: `operation "${operation.name}" is not ${expectedKind}`,
+      data: { reason: `operation kind is "${operation.kind ?? 'unary'}"` },
+    });
+  }
+
+  // The discriminated union guarantees `eventSchema` is non-undefined on
+  // any operation whose kind is 'stream' or 'subscription'. The kind check
+  // above narrows to one of those two variants; if `eventSchema` is
+  // somehow still missing we fail loudly because that would mean the
+  // registry was assembled from a non-conforming source. A `defineOperation`
+  // caller cannot reach this branch — TypeScript rejects the literal.
+  if (operation.eventSchema === undefined) {
+    return failure({
+      code: 'EngineFailure',
+      message: 'internal error',
+      data: {},
+    });
+  }
+  const eventSchema = operation.eventSchema;
+
+  const transportFailure = checkTransport(operation, context);
+  if (transportFailure !== null) return transportFailure;
+  tracePipeline(pipelineTrace, 'transport-checked');
+
+  const accessFailure = checkAccess(operation, context);
+  if (accessFailure !== null) return accessFailure;
+  tracePipeline(pipelineTrace, 'access-checked');
+
+  const parseOutcome = parseAndApplyUnknownKeyPolicy(
+    operation,
+    rawInput,
+    transportToPolicyKey(context.transport),
+    pipelineTrace,
+  );
+  if (parseOutcome.kind === 'failure') return failure(parseOutcome.fault);
+
+  const authorizationFailure = await checkAuthorization(operation, parseOutcome.input, context);
+  if (authorizationFailure !== null) return authorizationFailure;
+  tracePipeline(pipelineTrace, 'authorized');
+
+  return { ok: true, value: { operation, input: parseOutcome.input, eventSchema } };
+}
+
+async function* validateElements<Element>(
+  iterable: AsyncIterable<unknown>,
+  eventSchema: z.ZodType,
+): AsyncIterable<Element> {
+  for await (const element of iterable) {
+    let parsed: ReturnType<typeof eventSchema.safeParse>;
+    try {
+      parsed = eventSchema.safeParse(element);
+    } catch {
+      throw new SubscriptionElementValidationError(elementValidationFault());
+    }
+    if (!parsed.success) {
+      throw new SubscriptionElementValidationError(elementValidationFault());
+    }
+    yield parsed.data as Element;
+  }
+}
+
+function validateOutput<Output>(outputSchema: z.ZodType, output: unknown): DispatchResult<Output> {
+  let outputParse: ReturnType<typeof outputSchema.safeParse>;
+  try {
+    outputParse = outputSchema.safeParse(output);
+  } catch {
+    return failure({ code: 'EngineFailure', message: 'internal error', data: {} });
+  }
+  if (!outputParse.success) {
+    return failure({ code: 'EngineFailure', message: 'internal error', data: {} });
+  }
+  return { ok: true, value: outputParse.data as Output };
+}
+
+function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    Symbol.asyncIterator in value &&
+    typeof value[Symbol.asyncIterator] === 'function'
+  );
+}
+
+function isSubscriptionInvocation(
+  value: unknown,
+): value is SubscriptionOperationInvocation<unknown, unknown> {
+  if (value === null || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return (
+    Object.hasOwn(record, 'envelope') &&
+    isAsyncIterable(record['iterable']) &&
+    typeof record['close'] === 'function'
+  );
+}
+
+function elementValidationFault(): OperationFault {
+  return { code: 'EngineFailure', message: 'internal error', data: {} };
+}
+
+function failure(fault: OperationFault): DispatchResult<never> {
+  return { ok: false, fault };
+}

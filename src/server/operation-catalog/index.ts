@@ -9,9 +9,17 @@
  * @module server/operation-catalog
  */
 
+export type { FaultCode } from '../operation-fault.ts';
+export { DISPATCH_ALLOWLIST } from './dispatch-allowlist.ts';
 export { classifyEngineError } from './pipeline-helpers.ts';
 export { executeOperation } from './pipeline.ts';
+export { UNIVERSAL_FAULT_DEFAULTS, raiseFault } from './raise-fault.ts';
 export { createOperationRegistry } from './registry.ts';
+export {
+  SubscriptionElementValidationError,
+  executeStream,
+  executeSubscription,
+} from './stream-pipeline.ts';
 export {
   OPERATION_NAME_PATTERN,
   isValidOperationName,
@@ -22,9 +30,17 @@ export {
   type ErasedOperation,
   type OperationContext,
   type OperationDefinition,
+  type OperationInvocationResult,
+  type OperationKind,
   type OperationRegistry,
+  type PipelineTrace,
+  type PipelineTraceMarker,
   type RegistrableOperation,
+  type StreamOperationInvocation,
+  type SubscriptionOperationInvocation,
   type TransportAvailability,
   type UnknownKeyDisposition,
   type UnknownKeyPolicy,
 } from './types.ts';
+export { catalogWorkflow } from './workflow-adapter.ts';
+export type { CatalogWorkflowOptions } from './workflow-adapter.ts';

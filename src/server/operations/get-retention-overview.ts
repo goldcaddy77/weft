@@ -17,6 +17,7 @@ export const getRetentionOverviewOperation = defineOperation<
   GetRetentionOverviewOutput
 >({
   name: 'weft.retention.get',
+  mcpExposable: false,
   summary: 'Get retention policy overview',
   tags: ['System'],
   inputSchema: getRetentionOverviewInput,

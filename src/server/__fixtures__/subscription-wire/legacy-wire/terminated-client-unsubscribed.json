@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "method": "weft.events.terminated",
+  "params": {
+    "subscriptionId": "<subscription-id>",
+    "reason": "client-unsubscribed"
+  }
+}

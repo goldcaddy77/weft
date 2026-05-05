@@ -19,11 +19,13 @@ export type ResumeWorkflowOutput = z.infer<typeof resumeWorkflowOutput>;
 
 export const resumeWorkflowOperation = defineOperation<ResumeWorkflowInput, ResumeWorkflowOutput>({
   name: 'weft.workflows.resume',
+  mcpExposable: false,
   summary: 'Resume a suspended workflow',
   tags: ['Workflows'],
   inputSchema: resumeWorkflowInput,
   outputSchema: resumeWorkflowOutput,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound', 'Conflict'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<ResumeWorkflowOutput> => {

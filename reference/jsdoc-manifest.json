@@ -1514,8 +1514,28 @@
       "sourceName": "WorkflowNotFoundError",
       "kind": "value",
       "subKind": "class",
-      "publicFaces": [],
-      "classification": "not-public"
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "WorkflowNotFoundError",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/engine/errors.ts",
+      "sourceName": "WorkflowNotRegisteredError",
+      "kind": "value",
+      "subKind": "class",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "WorkflowNotRegisteredError",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/engine/handles.ts",

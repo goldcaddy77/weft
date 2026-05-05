@@ -25,11 +25,13 @@ export const addWorkflowTagsOperation = defineOperation<
   AddWorkflowTagsOutput
 >({
   name: 'weft.workflows.tags.add',
+  mcpExposable: false,
   summary: 'Add workflow tags',
   tags: ['Tags'],
   inputSchema: addWorkflowTagsInput,
   outputSchema: addWorkflowTagsOutput as z.ZodType<AddWorkflowTagsOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['Unprocessable', 'NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<AddWorkflowTagsOutput> => {

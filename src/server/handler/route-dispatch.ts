@@ -4,11 +4,18 @@ import {
   type MetricsCollector,
   type PrometheusExporter,
 } from '../../observability/metrics.ts';
+import { generateApiCatalog, originFromRequest, warnIfPublicOriginUnset } from '../api-catalog.ts';
+import { generateAsyncApiDocument } from '../asyncapi.ts';
 import type { AuthContext } from '../authentication.ts';
+import type { DiscoveryInfo } from '../discovery-info.ts';
 import { faultToHttpResponse } from '../fault-to-http.ts';
 import { generateOpenApiDocument, type OpenApiSecuritySchemeName } from '../openapi.ts';
 import { generateOpenRpcDocument } from '../openrpc.ts';
-import { executeOperation, type OperationRegistry } from '../operation-catalog.ts';
+import {
+  executeOperation,
+  type OperationRegistry,
+  type PipelineTrace,
+} from '../operation-catalog.ts';
 import type { OperationFault } from '../operation-fault.ts';
 import { FAULT_CODE_TO_HTTP_STATUS } from '../operation-fault.ts';
 import {
@@ -90,6 +97,39 @@ export interface HandlerOptions {
   restBindings?: ReadonlyArray<UnknownRestBinding>;
   /** OpenAPI security schemes supported by the live server configuration. */
   supportedAuthenticationSchemes?: ReadonlySet<OpenApiSecuritySchemeName>;
+  /**
+   * Operator-supplied metadata applied uniformly to all three discovery
+   * documents (`/openapi.json`, `/openrpc.json`, `/asyncapi.json`).
+   */
+  discoveryInfo?: DiscoveryInfo;
+  /**
+   * Optional explicit public origin used when emitting absolute URLs in
+   * `/.well-known/api-catalog`. Recommended in production to avoid trusting
+   * attacker-controlled `Host` / `X-Forwarded-Proto` headers. Takes
+   * precedence over `trustedHosts`.
+   */
+  publicOrigin?: string;
+  /**
+   * Optional allowlist of `Host` values that are trusted as the source of
+   * absolute service-desc URLs in `/.well-known/api-catalog`. The route
+   * derives the origin from the incoming request and rejects (421
+   * Misdirected Request) if the resolved Host is not in this list.
+   *
+   * Either `publicOrigin` OR `trustedHosts` must be configured in
+   * production deployments — without one, the route returns 503 because
+   * `Bun.serve()` trusts the Host header in `request.url` and an attacker
+   * can otherwise poison the discovery URLs.
+   */
+  trustedHosts?: ReadonlyArray<string>;
+  /**
+   * Optional pipeline-trace observer. **Internal test seam** used by the
+   * dispatch-audit suite to prove every transport drives the full
+   * `executeOperation` pipeline. Production callers should not set this
+   * — the parameter has no other effect on dispatch behavior.
+   *
+   * @internal
+   */
+  pipelineTrace?: PipelineTrace;
 }
 
 async function handleGetMetrics(
@@ -125,6 +165,68 @@ export const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   healthCheck: async ({ request }) => negotiatedResponse(request, { status: 'ok' }),
   getMetrics: async ({ options }) =>
     handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),
+  apiCatalog: async ({ request, options }) => {
+    // Three-tier origin resolution:
+    //   1. publicOrigin explicit → use verbatim (safe, operator-controlled).
+    //   2. trustedHosts allowlist → derive from request, validate Host.
+    //   3. Neither set → 503 in production (Bun.serve trusts the Host
+    //      header in request.url, so header-poisoning is real); warn-and-
+    //      fall-back in dev so `serve({ engine })` quickstarts still work.
+    if (options?.publicOrigin !== undefined) {
+      const body = generateApiCatalog({ origin: options.publicOrigin });
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/linkset+json' },
+      });
+    }
+    const requestOrigin = originFromRequest(request);
+    if (options?.trustedHosts !== undefined) {
+      const requestHost = new URL(requestOrigin).host;
+      if (!options.trustedHosts.includes(requestHost)) {
+        return new Response(
+          JSON.stringify({ error: 'request Host is not in the configured trustedHosts allowlist' }),
+          { status: 421, headers: { 'Content-Type': 'application/json; charset=utf-8' } },
+        );
+      }
+      const body = generateApiCatalog({ origin: requestOrigin });
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/linkset+json' },
+      });
+    }
+    // Neither publicOrigin nor trustedHosts configured. Bun.serve()
+    // resolves `request.url` from the incoming Host header (which an
+    // attacker controls), so deriving absolute service-desc URLs from
+    // the request is unsafe by default.
+    //
+    // We REFUSE the route by default and only fall back to header-
+    // derived origins when the operator has explicitly opted in. The
+    // earlier check (NODE_ENV === 'production' → refuse) was too narrow:
+    // deployments commonly set NODE_ENV=staging / prod / preview or
+    // leave it unset while still being internet-facing. Default-secure
+    // means they all get the refusal. The two opt-in escape hatches are:
+    //
+    //   - NODE_ENV='development' — explicit dev-quickstart signal.
+    //   - WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN=1 — explicit
+    //     "I know what I'm doing" override for testbeds and CI.
+    const isDevelopment = Bun.env['NODE_ENV'] === 'development';
+    const operatorOverride = Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'] === '1';
+    if (!isDevelopment && !operatorOverride) {
+      return new Response(
+        JSON.stringify({
+          error:
+            "/.well-known/api-catalog refuses to emit absolute service-desc URLs without one of `publicOrigin` or `trustedHosts` configured. Set `serve({ publicOrigin: 'https://api.example.com' })` or `serve({ trustedHosts: ['api.example.com'] })`. For local development, set NODE_ENV=development; for CI/test overrides set WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN=1.",
+        }),
+        { status: 503, headers: { 'Content-Type': 'application/json; charset=utf-8' } },
+      );
+    }
+    warnIfPublicOriginUnset();
+    const body = generateApiCatalog({ origin: requestOrigin });
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'Content-Type': 'application/linkset+json' },
+    });
+  },
   openApiDocument: async ({ options }) =>
     jsonResponse(
       generateOpenApiDocument({
@@ -133,6 +235,7 @@ export const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
         ...(options?.supportedAuthenticationSchemes !== undefined
           ? { supportedSchemes: options.supportedAuthenticationSchemes }
           : {}),
+        ...(options?.discoveryInfo !== undefined ? { discoveryInfo: options.discoveryInfo } : {}),
       }),
     ),
   openRpcDocument: async ({ options }) =>
@@ -140,6 +243,15 @@ export const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
       generateOpenRpcDocument({
         registry: options?.operationRegistry ?? defaultOperationRegistry(),
         transports: ['http', 'websocket'],
+        ...(options?.discoveryInfo !== undefined ? { discoveryInfo: options.discoveryInfo } : {}),
+      }),
+    ),
+  asyncApiDocument: async ({ options }) =>
+    jsonResponse(
+      generateAsyncApiDocument({
+        registry: options?.operationRegistry ?? defaultOperationRegistry(),
+        ...(options?.restBindings !== undefined ? { restBindings: options.restBindings } : {}),
+        ...(options?.discoveryInfo !== undefined ? { discoveryInfo: options.discoveryInfo } : {}),
       }),
     ),
 };
@@ -151,6 +263,7 @@ export async function dispatchViaExecuteOperation(
   pathParams: Record<string, string>,
   registry: OperationRegistry,
   principal: Principal,
+  pipelineTrace?: PipelineTrace,
 ): Promise<Response> {
   let input: unknown;
   try {
@@ -167,6 +280,7 @@ export async function dispatchViaExecuteOperation(
     engine,
     transport: 'http-rest',
     registry,
+    ...(pipelineTrace !== undefined ? { pipelineTrace } : {}),
   });
   if (result.ok) {
     return binding.shapeSuccess

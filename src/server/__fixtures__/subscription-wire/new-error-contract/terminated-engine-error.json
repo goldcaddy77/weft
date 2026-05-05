@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "method": "weft.events.terminated",
+  "params": {
+    "subscriptionId": "<subscription-id>",
+    "reason": "server-closed",
+    "fault": {
+      "code": "EngineFailure",
+      "message": "internal error",
+      "data": {}
+    }
+  }
+}

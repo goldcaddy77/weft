@@ -14,11 +14,13 @@ export type TimeoutWorkflowInput = z.infer<typeof timeoutWorkflowInput>;
 
 export const timeoutWorkflowOperation = defineOperation<TimeoutWorkflowInput, null>({
   name: 'weft.workflows.timeout',
+  mcpExposable: false,
   summary: 'Force-timeout a workflow',
   tags: ['Workflows'],
   inputSchema: timeoutWorkflowInput,
   outputSchema: z.null(),
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<null> => {

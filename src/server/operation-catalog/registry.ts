@@ -55,10 +55,41 @@ function assertSafeDeclaredKeys(operation: RegistrableOperation): void {
   }
 }
 
+/**
+ * Mirror the `OperationDefinition` discriminated union at runtime:
+ * `kind: 'stream'` and `kind: 'subscription'` MUST carry an `eventSchema`,
+ * and `kind: 'unary'` (or absent) MUST NOT. The TypeScript discriminated
+ * union enforces this for callers using `defineOperation`, but
+ * `createOperationRegistry` accepts any `RegistrableOperation`-shaped
+ * value — including hand-rolled object literals constructed in test
+ * fixtures or third-party adapters that bypass `defineOperation`. Without
+ * this assertion a malformed registry would produce a runtime
+ * `EngineFailure` only on the first request, not at registry assembly.
+ */
+function assertKindAndEventSchemaAgree(operation: RegistrableOperation): void {
+  const kind = operation.kind ?? 'unary';
+  if (kind === 'unary') {
+    if (operation.eventSchema !== undefined) {
+      throw new Error(
+        `operation "${operation.name}" has kind: 'unary' (or unset) but declares an eventSchema. eventSchema is reserved for kind: 'stream' or kind: 'subscription'.`,
+      );
+    }
+    return;
+  }
+  if (operation.eventSchema === undefined) {
+    throw new Error(
+      `operation "${operation.name}" has kind: '${kind}' but no eventSchema. Stream and subscription operations must declare an eventSchema so the dispatcher can validate each yielded element.`,
+    );
+  }
+}
+
 function freezeOperation(operation: RegistrableOperation): ErasedOperation {
   return Object.freeze({
     ...operation,
     tags: Object.freeze([...operation.tags]),
+    ...(operation.producibleFaults === undefined
+      ? {}
+      : { producibleFaults: Object.freeze([...operation.producibleFaults]) }),
     access: freezeAccessPolicy(operation.access),
     transports: Object.freeze({ ...operation.transports }),
     unknownKeyPolicy: Object.freeze({ ...operation.unknownKeyPolicy }),
@@ -79,6 +110,7 @@ export function createOperationRegistry(
     }
     validateOperationName(operation.name);
     assertSafeDeclaredKeys(operation);
+    assertKindAndEventSchemaAgree(operation);
     byName.set(operation.name, freezeOperation(operation));
   }
   const ordered = Object.freeze([...byName.values()]);
