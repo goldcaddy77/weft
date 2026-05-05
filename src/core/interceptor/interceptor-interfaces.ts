@@ -132,6 +132,23 @@ export interface ActivityInterceptor {
  * Unified interceptor surface accepted by the engine. Implement hooks from
  * either the workflow side, the activity side, or both; each interceptor
  * participates in whichever pipeline has matching hooks.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type Interceptor } from 'weft';
+ *
+ * const tracer: Interceptor = {
+ *   *activity(interception, next) {
+ *     return yield* next(interception);
+ *   },
+ *   async execute(interception, next) {
+ *     return next(interception);
+ *   },
+ * };
+ *
+ * const engine = new Engine({ interceptors: [tracer] });
+ * void engine;
+ * ```
  */
 export interface Interceptor extends WorkflowInterceptor, ActivityInterceptor {}
 
