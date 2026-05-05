@@ -59,20 +59,23 @@ const output = await handle.result();
 ### `signal(name, payload?)`
 
 ```ts partial
+async signal(name: SignalDefinition): Promise<void>;
+async signal<TInput>(name: SignalDefinition<TInput>, payload: TInput): Promise<void>;
 async signal(name: string, payload?: unknown): Promise<void>;
 ```
 
 Send a named signal to the workflow. If the workflow is currently waiting for this signal (via `ctx.waitForSignal(name)`), it resumes immediately. Otherwise, the signal is persisted and delivered when the workflow reaches a `waitForSignal` call for that name.
 
 ```ts partial
-await handle.signal('approve', { approvedBy: 'alice' });
+const approve = signal<{ approvedBy: string }>('approve');
+await handle.signal(approve, { approvedBy: 'alice' });
 ```
 
 ### `update(name, payload?, options?)`
 
 ```ts partial
 async update(
-  name: string,
+  name: UpdateDefinition<TInput, TOutput> | string,
   payload?: unknown,
   options?: { timeout?: number },
 ): Promise<unknown>;
@@ -89,7 +92,8 @@ Send a synchronous update to the workflow and wait for the result. Unlike signal
 Throws if the handler throws or the timeout is exceeded.
 
 ```ts partial
-const count = await handle.update('getProgress');
+const getProgress = update<void, number>('getProgress');
+const count = await handle.update(getProgress);
 ```
 
 ### `cancel()`

@@ -89,12 +89,12 @@ type TurnUsageEntry =
 
 ## Declaration
 
-### `defineAgent(options)`
+### `agent(options)`
 
 Declares a reusable agent definition.
 
 ```ts partial
-function defineAgent<TInput = unknown, TOutput = unknown>(
+function agent<TInput = unknown, TOutput = unknown>(
   options: AgentDefinitionOptions<TInput, TOutput>,
 ): AgentDefinition<TInput, TOutput>;
 ```

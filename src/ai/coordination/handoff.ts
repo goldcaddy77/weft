@@ -7,12 +7,12 @@ import type { HandoffOptions, HandoffResult } from './types.ts';
  *
  * @example Hand off with a conversation summary
  * ```ts
- * import { handoff, defineAgent } from 'weft';
+ * import { handoff, agent } from 'weft';
  * import type { LLMProvider } from 'weft';
  *
  * declare const provider: LLMProvider;
  *
- * const summaryAgent = defineAgent({ name: 'summarizer', model: 'claude-haiku-3-5' });
+ * const summaryAgent = agent({ name: 'summarizer', model: 'claude-haiku-3-5' });
  *
  * const { result } = await handoff({
  *   agent: summaryAgent,

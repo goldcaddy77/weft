@@ -1,5 +1,7 @@
 import {
   Engine,
+  signal,
+  update,
   type WorkflowContext,
   type WorkflowHandle,
   type WorkflowRegistration,
@@ -40,6 +42,7 @@ type RequiredWorkflowContextKeys =
   | 'map'
   | 'memo'
   | 'offload'
+  | 'onQuery'
   | 'onUpdate'
   | 'pipe'
   | 'race'
@@ -65,14 +68,18 @@ const workflowContextDriftGuard: AssertNever<MissingWorkflowContextKeys> = undef
 void workflowContextDriftGuard;
 
 const engine = new Engine();
+const approvalSignal = signal<{ approved: boolean }>('approval');
+const setNameUpdate = update<{ name: string }, string>('set-name');
 
 engine.register('welcome', async function* (ctx: WorkflowContext, input: WelcomeInput) {
   const greeting = yield* ctx.run('formatGreeting', { name: input.name });
   // @ts-expect-error string-name activities must match their augmented input type.
   yield* ctx.run('formatGreeting', { id: 'wrong' });
   const signalPayload = yield* ctx.waitForSignal<{ approved: boolean }>('approval');
+  const typedSignalPayload: { approved: boolean } = yield* ctx.waitForSignal(approvalSignal);
   const updatePayload = yield* ctx.waitForUpdate<{ suffix: string }>('rename');
-  ctx.onUpdate('set-name', (payload: { name: string }) => payload.name);
+  ctx.onUpdate(setNameUpdate, (payload) => payload.name);
+  ctx.onQuery('greeting', () => greeting);
   ctx.expose({ greeting: () => greeting });
   ctx.setAttribute('customer', input.name);
   const customer = ctx.getAttribute<string>('customer');
@@ -95,6 +102,7 @@ engine.register('welcome', async function* (ctx: WorkflowContext, input: Welcome
   const session = ctx.state.session('name', { initial: input.name });
 
   void signalPayload;
+  void typedSignalPayload;
   void updatePayload;
   void customer;
   void attributes;

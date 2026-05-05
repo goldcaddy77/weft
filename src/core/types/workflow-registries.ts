@@ -77,10 +77,12 @@ export type ActivityArguments<
   TActivities extends object,
   TName extends string,
 > = TName extends keyof TActivities
-  ? TActivities[TName] extends (...arguments_: infer TArguments) => unknown
-    ? TArguments
-    : unknown[]
-  : unknown[];
+  ? TActivities[TName] extends () => unknown
+    ? []
+    : TActivities[TName] extends (input: infer TInput) => unknown
+      ? [input: TInput]
+      : [input: unknown]
+  : [input?: unknown];
 
 export type ActivityResult<
   TActivities extends object,
@@ -95,9 +97,11 @@ export type RegisteredActivityFunction<
   TActivities extends object,
   TName extends string,
 > = TName extends keyof TActivities
-  ? TActivities[TName] extends (...arguments_: infer TArguments) => infer TResult
-    ? (...arguments_: TArguments) => TResult
-    : never
+  ? TActivities[TName] extends () => infer TResult
+    ? () => TResult
+    : TActivities[TName] extends (input: infer TInput) => infer TResult
+      ? (input: TInput) => TResult
+      : never
   : never;
 
 export type UnregisteredName<TName extends string, TKnownNames extends string> = TName &

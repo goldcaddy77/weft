@@ -4,24 +4,26 @@ Sometimes a workflow needs to wait for something that is not an activity result 
 
 ## Waiting for a signal
 
-Inside a workflow, `yield* ctx.waitForSignal<T>(name)` pauses execution until a signal with that name arrives. The workflow is checkpointed at the pause point---it costs nothing to wait, even for days.
+Inside a workflow, `yield* ctx.waitForSignal(handle)` pauses execution until a signal with that name arrives. The workflow is checkpointed at the pause point---it costs nothing to wait, even for days.
 
 ```typescript partial
+const approvalSignal = signal<{ approved: boolean }>('approval');
+
 engine.register('approval', async function* (ctx, input: { orderId: string }) {
   // Pauses here until 'approval' signal arrives
-  const approval = yield* ctx.waitForSignal<{ approved: boolean }>('approval');
+  const approval = yield* ctx.waitForSignal(approvalSignal);
 
   if (approval.approved) {
-    yield* ctx.run(fulfillOrder, input.orderId);
+    yield* ctx.run(fulfillOrder, { orderId: input.orderId });
   } else {
-    yield* ctx.run(cancelOrder, input.orderId);
+    yield* ctx.run(cancelOrder, { orderId: input.orderId });
   }
 
   return { orderId: input.orderId, approved: approval.approved };
 });
 ```
 
-The generic type parameter `<{ approved: boolean }>` is purely for TypeScript---it gives you type safety on the returned payload.
+The typed handle is a runtime `{ name }` value with phantom TypeScript payload information, so the received payload is inferred without repeating a generic at the wait site.
 
 ## Sending a signal
 
@@ -31,7 +33,7 @@ From outside the workflow, use `engine.signal()` or `handle.signal()` to deliver
 const handle = await engine.start('approval', { orderId: 'order-1' });
 
 // Some time later, when the human clicks "Approve":
-await engine.signal(handle.id, 'approval', { approved: true });
+await engine.signal(handle.id, approvalSignal, { approved: true });
 
 const result = await handle.result();
 // { orderId: 'order-1', approved: true }
@@ -40,7 +42,7 @@ const result = await handle.result();
 You can also signal through the handle directly.
 
 ```typescript partial
-await handle.signal('approval', { approved: true });
+await handle.signal(approvalSignal, { approved: true });
 ```
 
 Both forms do the same thing. The handle version is convenient when you already have a reference; the engine version is useful when you only have a workflow ID (for example, from a webhook handler or a message queue consumer).
@@ -60,16 +62,19 @@ This durability guarantee is what makes signals safe for human-in-the-loop workf
 A workflow can wait for multiple signals, either sequentially or with different names.
 
 ```typescript partial
+const managerApproval = signal<{ approved: boolean }>('manager-approval');
+const financeApproval = signal<{ approved: boolean }>('finance-approval');
+
 engine.register('multi-step-approval', async function* (ctx, input: { orderId: string }) {
   // Wait for manager approval
-  const manager = yield* ctx.waitForSignal<{ approved: boolean }>('manager-approval');
+  const manager = yield* ctx.waitForSignal(managerApproval);
   if (!manager.approved) return { orderId: input.orderId, status: 'rejected-by-manager' };
 
   // Then wait for finance approval
-  const finance = yield* ctx.waitForSignal<{ approved: boolean }>('finance-approval');
+  const finance = yield* ctx.waitForSignal(financeApproval);
   if (!finance.approved) return { orderId: input.orderId, status: 'rejected-by-finance' };
 
-  yield* ctx.run(fulfillOrder, input.orderId);
+  yield* ctx.run(fulfillOrder, { orderId: input.orderId });
   return { orderId: input.orderId, status: 'approved' };
 });
 ```

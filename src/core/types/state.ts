@@ -1,6 +1,7 @@
 import type { AtomicStateOptions } from '../atomic-state.ts';
 import type { TenantContext } from '../tenant.ts';
 import type { WorkflowVersionTuple } from '../workflow-version-tuple.ts';
+import type { ActivityCallOptions } from './activity.ts';
 import type { CheckpointState } from './checkpoint.ts';
 import type { FailureCategory, WorkflowId, WorkflowStatus } from './identity.ts';
 import type { WorkflowOperation } from './workflow-function.ts';
@@ -134,7 +135,7 @@ export interface WorkflowSessionStateOptions<T> {
  * `delete()` removes the stored value; subsequent `get()` returns the handle's
  * captured `initial` value if one was provided, otherwise `undefined`.
  * `run` schedules the function as a regular activity routed through sticky
- * worker execution. The function receives only the arguments you pass to
+ * worker execution. The function receives the single input value you pass to
  * `run(...)` — it cannot read the slot from inside. Read `session.get()`
  * before yielding the run if the function needs the current value.
  */
@@ -153,8 +154,13 @@ export interface WorkflowSessionState<T> {
   removeFirst<TItem>(this: WorkflowSessionState<TItem[]>): TItem | undefined;
   removeLast<TItem>(this: WorkflowSessionState<TItem[]>): TItem | undefined;
   run<TResult>(
-    fn: (...args: unknown[]) => Promise<TResult> | TResult,
-    ...rest: unknown[]
+    fn: () => Promise<TResult> | TResult,
+    options?: ActivityCallOptions,
+  ): WorkflowOperation<TResult>;
+  run<TInput, TResult>(
+    fn: (input: TInput) => Promise<TResult> | TResult,
+    input: TInput,
+    options?: ActivityCallOptions,
   ): WorkflowOperation<TResult>;
 }
 

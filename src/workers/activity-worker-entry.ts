@@ -27,7 +27,7 @@ import { executeActivity } from './activity-runner.ts';
  * ```ts
  * import { type ActivityHandlerLookup } from 'weft';
  *
- * const activities = new Map<string, (...args: unknown[]) => unknown>([
+ * const activities = new Map<string, (input: unknown) => unknown>([
  *   ['double', (n: unknown) => (n as number) * 2],
  * ]);
  *
@@ -36,9 +36,7 @@ import { executeActivity } from './activity-runner.ts';
  * console.log(lookup('missing')); // undefined
  * ```
  */
-export type ActivityHandlerLookup = (
-  name: string,
-) => ((...arguments_: unknown[]) => unknown) | undefined;
+export type ActivityHandlerLookup = (name: string) => ((input: unknown) => unknown) | undefined;
 
 // ---------------------------------------------------------------------------
 // Worker bootstrap
@@ -55,7 +53,7 @@ export type ActivityHandlerLookup = (
  * ```ts
  * import { initializeActivityWorkerMessageLoop } from 'weft';
  *
- * const activities = new Map<string, (...args: unknown[]) => unknown>();
+ * const activities = new Map<string, (input: unknown) => unknown>();
  * activities.set('greet', (input: unknown) => {
  *   if (typeof input !== 'object' || input === null || !('name' in input)) {
  *     throw new Error('Expected greeting input');
@@ -181,7 +179,7 @@ function validateHandlerSerializable(
  * ```ts
  * import { createActivityWorkerEntryUrl, revokeActivityWorkerEntryUrl } from 'weft';
  *
- * const registrations = new Map<string, (...args: unknown[]) => unknown>();
+ * const registrations = new Map<string, (input: unknown) => unknown>();
  * registrations.set('double', (n: unknown) => (n as number) * 2);
  *
  * const url = createActivityWorkerEntryUrl(registrations);
@@ -190,7 +188,7 @@ function validateHandlerSerializable(
  * ```
  */
 export function createActivityWorkerEntryUrl(
-  registrations: Map<string, (...arguments_: unknown[]) => unknown>,
+  registrations: Map<string, (input: unknown) => unknown>,
 ): string {
   for (const [name, handler] of registrations) {
     validateHandlerSerializable(name, handler);
@@ -221,7 +219,7 @@ initializeActivityWorkerMessageLoop((name) => activities.get(name));
  * ```ts
  * import { createActivityWorkerEntryUrl, revokeActivityWorkerEntryUrl } from 'weft';
  *
- * const registrations = new Map<string, (...args: unknown[]) => unknown>();
+ * const registrations = new Map<string, (input: unknown) => unknown>();
  * registrations.set('greet', (input: unknown) => 'hello');
  * const url = createActivityWorkerEntryUrl(registrations);
  * // After all workers using this URL have been created:

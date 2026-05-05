@@ -214,7 +214,7 @@ engine.register('process-payment', async function* (ctx, input: { amount: number
 
 engine.register('order', async function* (ctx, input: { total: number; email: string }) {
   const receipt = yield* ctx.startChild('process-payment', { amount: input.total });
-  yield* ctx.run(sendConfirmation, input.email, receipt);
+  yield* ctx.run(sendConfirmation, { email: input.email, receipt });
   return { receipt, confirmed: true };
 });
 ```

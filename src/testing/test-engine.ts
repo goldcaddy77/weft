@@ -15,7 +15,7 @@ import { MemoryStorage } from '../storage/memory.ts';
 import type { ChaosScenario, FailureCategory } from './chaos.ts';
 import { withChaos } from './chaos.ts';
 import { yieldToPortableEventLoop } from './event-loop.ts';
-import type { MockHandle } from './mocks.ts';
+import type { MockActivityFunction, MockHandle } from './mocks.ts';
 import { ActivityMockRegistry } from './mocks.ts';
 import { TimeControl } from './time-control.ts';
 
@@ -184,10 +184,18 @@ export class TestEngine extends Engine {
    * Register a mock implementation for an activity function.
    * When the engine encounters this activity, it will call the mock instead.
    */
-  mock<TArgs extends unknown[], TResult>(
-    activity: (...args: TArgs) => Promise<TResult> | TResult,
-    implementation: (...args: TArgs) => TResult | Promise<TResult>,
-  ): MockHandle<TArgs, TResult> {
+  mock<TResult>(
+    activity: () => Promise<TResult> | TResult,
+    implementation: () => TResult | Promise<TResult>,
+  ): MockHandle<void, TResult>;
+  mock<TInput, TResult>(
+    activity: (input: TInput) => Promise<TResult> | TResult,
+    implementation: (input: TInput) => TResult | Promise<TResult>,
+  ): MockHandle<TInput, TResult>;
+  mock<TInput, TResult>(
+    activity: (() => Promise<TResult> | TResult) | ((input: TInput) => Promise<TResult> | TResult),
+    implementation: MockActivityFunction<TInput, TResult>,
+  ): MockHandle<TInput, TResult> {
     return this.#mocks.mock(activity, implementation);
   }
 
@@ -268,7 +276,7 @@ export class TestEngine extends Engine {
     for (let i = 0; i < runs; i++) {
       // Temporarily wrap all mocks with chaos for this run.
       // Save original base implementations so they can be restored afterward.
-      const savedImplementations = new Map<Function, (...args: unknown[]) => unknown>();
+      const savedImplementations = new Map<Function, MockActivityFunction<unknown, unknown>>();
 
       if (chaos) {
         for (const [activity, mocked] of this.#mocks.entries()) {
@@ -280,11 +288,14 @@ export class TestEngine extends Engine {
           // Using the same seed for all N runs would produce identical fault patterns,
           // making passRate always 0.0 or 1.0 and masking real reliability variance.
           const perRunChaos = chaos.seed !== undefined ? { ...chaos, seed: chaos.seed + i } : chaos;
-          // Build a chaos-wrapped version of the variadic original.
-          const chaosWrapped = withChaos((args: unknown[]) => original(...args), perRunChaos);
+          // Build a chaos-wrapped version of the single-input original.
+          const chaosWrapped = withChaos(
+            (activityInput: unknown) => original(activityInput),
+            perRunChaos,
+          );
 
           // Replace the handle's base implementation for this run.
-          mocked.handle.mockImplementation((...args: unknown[]) => chaosWrapped(args));
+          mocked.handle.mockImplementation((activityInput: unknown) => chaosWrapped(activityInput));
         }
       }
 
@@ -305,7 +316,7 @@ export class TestEngine extends Engine {
           for (const [activity, mocked] of this.#mocks.entries()) {
             const original = savedImplementations.get(activity);
             if (original !== undefined) {
-              mocked.handle.mockImplementation(original as (...args: unknown[]) => unknown);
+              mocked.handle.mockImplementation(original);
             }
           }
         }

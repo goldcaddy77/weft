@@ -447,7 +447,7 @@ For debugging a workflow that has been running for 30 days, being able to see "w
 
 **The Temporal problem.** In the TypeScript SDK, you cannot call activity functions directly. You must create proxy objects via `proxyActivities<T>()` which generate type stubs that know how to schedule activities. This exists because the sandbox cannot import activity code. It creates confusion about what is a real function call versus a scheduled remote operation. "Go to definition" navigates to the proxy type, not the actual implementation.
 
-**The Weft answer.** `yield* ctx.run(myFunction, args)`. You pass the actual function reference. The `yield*` makes the durable boundary explicit — no proxies, no type stubs, no magic. "Go to definition" takes you to the implementation. (See: [Checkpoint, Don't Replay](#1-checkpoint-dont-replay).)
+**The Weft answer.** `yield* ctx.run(myFunction, input)`. You pass the actual function reference and one serializable input value. The `yield*` makes the durable boundary explicit — no proxies, no type stubs, no magic. "Go to definition" takes you to the implementation. (See: [Checkpoint, Don't Replay](#1-checkpoint-dont-replay).)
 
 **Going further: `activity()` helper with colocated configuration.** Instead of configuring retry policies at scattered call sites, activities declare their own operational characteristics:
 
@@ -675,7 +675,7 @@ Today, the agent framework runs inside a Temporal activity. Temporal cannot prov
 
 The alternative—decomposing the agent loop into individual Temporal activities—preserves durability at the right granularity but forces teams to abandon the framework and reimplement the loop in workflow code. A community member authored an extensive analysis of this dilemma ("The Lord of the Loop"), arguing that current integrations force agents to be "extremely narrow in scope—with only a few tools available." Temporal's response was candid: "You would need to find a way of breaking LangGraph up into serializable payloads...Until then, executing your LangGraph agents as one Temporal activity will work."
 
-**How Weft eliminates this.** There is no dilemma because Weft's generator model makes each tool call a `yield*` boundary—independently checkpointed, individually retryable, observable at the right granularity. The agent loop _is_ the workflow. `defineAgent()` provides the durable ReAct loop as a first-class primitive: each LLM turn is a checkpoint, each tool call is a checkpoint, budget enforcement fires at turn boundaries, and token streaming flows through standard `ReadableStream` and `EventTarget`. No framework wrapping, no opaque activities, no forced choice between durability and agent ecosystem compatibility. (See: [Agent-Native Engine](#12-agent-native-engine), [Dynamic Execution Shape](#agent-native-engine-dynamic-execution-shape).)
+**How Weft eliminates this.** There is no dilemma because Weft's generator model makes each tool call a `yield*` boundary—independently checkpointed, individually retryable, observable at the right granularity. The agent loop _is_ the workflow. `agent()` provides the durable ReAct loop as a first-class primitive: each LLM turn is a checkpoint, each tool call is a checkpoint, budget enforcement fires at turn boundaries, and token streaming flows through standard `ReadableStream` and `EventTarget`. No framework wrapping, no opaque activities, no forced choice between durability and agent ecosystem compatibility. (See: [Agent-Native Engine](#12-agent-native-engine), [Dynamic Execution Shape](#agent-native-engine-dynamic-execution-shape).)
 
 ### 3. The Python Sandbox Conflicts with Every Major AI/ML Library
 
@@ -2625,13 +2625,15 @@ const server = serve({
 
     // Agent-Specific Endpoints
     'GET /v1/workflows/:id/conversation': async (req) => {
-      const conversation = await engine.query(req.params.id, 'agentConversation');
+      const agentConversation = query<void, AgentConversation>('agentConversation');
+      const conversation = await engine.query(req.params.id, agentConversation);
       if (!conversation) return new Response('Not found', { status: 404 });
       return Response.json(conversation);
     },
 
     'GET /v1/workflows/:id/cost': async (req) => {
-      const cost = await engine.query(req.params.id, 'agentCostWaterfall');
+      const agentCostWaterfall = query<void, AgentCostWaterfall>('agentCostWaterfall');
+      const cost = await engine.query(req.params.id, agentCostWaterfall);
       if (!cost) return new Response('Not found', { status: 404 });
       return Response.json(cost);
     },
@@ -2918,7 +2920,11 @@ function handleHeartbeat(operationId: string, details?: unknown) {
 }
 ```
 
-Heartbeat details are queryable from the workflow via `handle.query("activityProgress")`, enabling progress UIs without custom plumbing.
+```typescript partial
+const activityProgressQuery = query<void, { timestamp: number }>('activityProgress');
+```
+
+Heartbeat details are queryable from the workflow via `handle.query(activityProgressQuery)`, enabling progress UIs without custom plumbing.
 
 #### Worker Identity and Routing
 
@@ -3758,16 +3764,20 @@ The full event taxonomy:
 **Queryable data.** Agent-specific state is queryable via workflow handles:
 
 ```typescript
+const agentCostWaterfall = query<void, AgentCostWaterfall>('agentCostWaterfall');
+const agentConversation = query<void, AgentConversation>('agentConversation');
+const agentCostProjection = query<void, AgentCostProjection>('agentCostProjection');
+
 // Cost waterfall: per-turn cost breakdown
-const costWaterfall = await handle.query('agentCostWaterfall');
+const costWaterfall = await handle.query(agentCostWaterfall);
 // [{ turn: 0, inputTokens: 1200, outputTokens: 450, cost: 0.0103, model: "claude-sonnet-4-20250514", tools: ["webSearch"] }, ...]
 
 // Full conversation history
-const conversation = await handle.query('agentConversation');
+const conversation = await handle.query(agentConversation);
 // [{ role: "system", content: "..." }, { role: "user", content: "..." }, { role: "assistant", content: "...", toolCalls: [...] }, ...]
 
 // Cost projection
-const projection = await handle.query('agentCostProjection');
+const projection = await handle.query(agentCostProjection);
 // { estimatedTurnsRemaining: 8, estimatedTotalCost: 4.20, confidence: 0.7 }
 ```
 
@@ -4294,9 +4304,10 @@ interface Context {
 type AttributeValue = string | number | boolean | Date;
 type SearchAttributeValue = AttributeValue | string[]; // string[] for multi-value tags
 
-interface SearchAttributeDefinition {
-  type: 'string' | 'number' | 'boolean' | 'datetime' | 'keyword_list';
-}
+type SearchAttributeDefinition =
+  | { type: 'string'; format?: 'date-time' }
+  | { type: 'number' | 'integer' | 'boolean' }
+  | { type: 'array'; items: { type: 'string' } };
 ```
 
 `setAttribute` and `setAttributes` are **synchronous in-workflow calls** — they do not yield. Persistence happens at the next checkpoint boundary, batched with the checkpoint write. This keeps the hot path to a single `batch()` operation.
@@ -4310,7 +4321,7 @@ engine.register('order', orderWorkflow, {
     orderTotal: { type: 'number' },
     region: { type: 'string' },
     priority: { type: 'number' },
-    tags: { type: 'keyword_list' },
+    tags: { type: 'array', items: { type: 'string' } },
   },
 });
 ```
@@ -4394,7 +4405,7 @@ function encodeAttributeValue(value: AttributeValue): string {
 }
 ```
 
-**Multi-value attributes (keyword_list):** Each element gets its own index entry. Setting `tags: ["charged", "processing"]` creates `idx:tags:s:charged:{id}` and `idx:tags:s:processing:{id}`.
+**String-array attributes:** Each element gets its own index entry. Setting `tags: ["charged", "processing"]` creates `idx:tags:s:charged:{id}` and `idx:tags:s:processing:{id}`.
 
 **Atomic updates at checkpoint boundary:** The engine diffs previous vs current attributes, computing add/delete index operations, and writes everything in the same `batch()` call as the checkpoint. No partial index states.
 
@@ -4462,10 +4473,11 @@ async function* approvalWorkflow(ctx: Context, document: Document) {
 
 ```typescript
 const handle = engine.getHandle('wf-cart-abc');
+const validateCoupon = update<{ code: string }, ValidationResult>('validate_coupon');
 
 // Blocks until the workflow processes the update and responds
 const result = await handle.update(
-  'validate_coupon',
+  validateCoupon,
   { code: 'SAVE20' },
   {
     timeout: 5000, // 5 seconds max wait
@@ -5065,7 +5077,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Each `yield*` creates a checkpoint.** Checkpoint contains: step index, local variable snapshot (via `structuredClone` semantics), accumulated results.
 - [x] **Recovery is O(1).** Loading a checkpoint from storage and resuming the generator does not replay previous steps. Verified by benchmark: recovery time is constant regardless of workflow history length.
 - [x] **No determinism requirement.** `Date.now()`, `Math.random()`, `crypto.randomUUID()`, and network calls are permitted inside workflows between checkpoint boundaries.
-- [x] **`ctx.run(fn, ...args)` dispatches a durable activity.** Activity results survive process crashes. Idempotency keys prevent double-execution.
+- [x] **`ctx.run(fn, input?, options?)` dispatches a durable activity.** Activity results survive process crashes. Idempotency keys prevent double-execution.
 - [x] **`ctx.sleep(duration)` is a durable timer.** Survives process restarts. Fires within 1 second of scheduled time after recovery.
 - [x] **`ctx.signal(name)` / `ctx.waitForSignal(name)` support durable signals.** Signals persist in storage and are delivered even if the workflow is not currently loaded in memory.
 - [x] **`ctx.all([...])` runs operations in parallel.** Equivalent to `Promise.all` but each branch is independently checkpointed.
@@ -5166,7 +5178,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Least-loaded routing by default.** Server picks the worker with the lowest `inFlight` count.
 - [x] **Visibility timeout on every in-flight task.** Default 30 seconds, configurable per activity. Stored in database (survives server restart).
 - [x] **Worker heartbeats extend visibility deadline.** `heartbeat` message resets the timeout clock.
-- [x] **Heartbeat details are queryable.** Progress info from heartbeats available via `handle.query("activityProgress")`.
+- [x] **Heartbeat details are queryable.** Progress info from heartbeats available via `handle.query(activityProgressQuery)`.
 - [x] **Worker disconnection triggers task reassignment.** WebSocket `close` event → scan in-flight tasks → requeue with incremented attempt.
 - [x] **Visibility timeout expiry triggers task reassignment.** Scheduler scans `op:inflight:*` for expired deadlines.
 - [x] **Retry policy respected on reassignment.** `maxAttempts` exceeded → permanent failure. Backoff delay applied between attempts.
@@ -5223,7 +5235,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`engine.setBudgetPolicy()` sets organization-level budgets.** Daily and monthly limits per namespace. Stored at `budget:{namespace}:daily:{date}` and `budget:{namespace}:monthly:{month}`.
 - [x] **Organization budget enforcement is real-time.** Token usage written to budget counter atomically with agent turn checkpoint via `batch()`. Exceeding rejects new `ctx.agent()` calls with `OrganizationBudgetExceededError`.
 - [x] **Cost-aware retry skips retries when budget insufficient.** Before retrying, engine checks `ctx.budgetRemaining()`. If estimated retry cost exceeds remaining budget, `BudgetExceededError` thrown instead.
-- [x] **Cost queryable via `handle.query("tokenUsage")`.** Returns cumulative token usage breakdown per agent call and per model.
+- [x] **Cost queryable via `handle.query(tokenUsageQuery)`.** Returns cumulative token usage breakdown per agent call and per model.
 - [x] **`AgentBudgetWarningEvent` dispatched at configurable threshold.** Default: 80% of budget consumed. Dispatched on both `WorkflowHandle` and `Engine`.
 - [x] **`AgentBudgetExceededEvent` dispatched when budget exhausted.** Includes breakdown by model and turn.
 - [x] **Cost observable as search attribute.** `ctx.agent()` automatically updates `weft:tokenCost` search attribute with cumulative USD cost.
@@ -5294,9 +5306,9 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`AgentBudgetWarningEvent` dispatched at configurable threshold.** Default: 80%. Includes `budgetUsedPercent`, `tokensRemaining`, `costRemaining`.
 - [x] **`AgentBudgetExceededEvent` dispatched when budget exhausted.** Includes `tokensUsed`, `costUsed`, `tokenBudget`, `maxCost`.
 - [x] **Reasoning trace captured per turn.** Model `thinking` blocks stored in checkpoint and included in `AgentTurnCompletedEvent`.
-- [x] **Cost waterfall per turn queryable.** `handle.query("agentCostWaterfall")` returns per-turn array: `[{ turn, inputTokens, outputTokens, cost, model, tools }]`.
-- [x] **Conversation history queryable.** `handle.query("agentConversation")` returns full message array including system prompt, user messages, assistant responses, and tool results.
-- [x] **Cost projection based on burn rate.** `handle.query("agentCostProjection")` estimates total cost at completion based on average per-turn cost.
+- [x] **Cost waterfall per turn queryable.** `handle.query(agentCostWaterfall)` returns per-turn array: `[{ turn, inputTokens, outputTokens, cost, model, tools }]`.
+- [x] **Conversation history queryable.** `handle.query(agentConversation)` returns full message array including system prompt, user messages, assistant responses, and tool results.
+- [x] **Cost projection based on burn rate.** `handle.query(agentCostProjection)` estimates total cost at completion based on average per-turn cost.
 - [x] **Dashboard agent view.** Built-in dashboard includes: conversation timeline, tool calls with inputs/outputs, token usage per turn, cumulative cost curve, budget remaining gauge, reasoning trace accordion, real-time streaming output.
 - [x] **`AgentContextCompactedEvent` dispatched on context strategy trigger.** Includes `strategy`, `tokensBefore`, `tokensAfter`, `messagesDropped`.
 - [x] **`HumanReviewRequestedEvent` and `HumanReviewCompletedEvent` dispatched.** Includes `workflowId`, `reviewId`, `type`/`decision`, `reviewer`, `duration`.
@@ -5317,16 +5329,16 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 
 ### Agent-Native Engine: Agent-First Declaration
 
-- [x] **`defineAgent()` top-level declaration API.** Declares a reusable agent definition passable to `engine.register()`, `ctx.agent()`, `ctx.handoff()`, and `ctx.debate()`.
+- [x] **`agent()` top-level declaration API.** Declares a reusable agent definition passable to `engine.register()`, `ctx.agent()`, `ctx.handoff()`, and `ctx.debate()`.
 - [x] **Durable hooks: `beforeTurn`.** Runs before each LLM call within checkpoint boundary. Can modify messages, inject context, or skip turn.
 - [x] **Durable hooks: `afterToolCall`.** Runs after each tool call. Can modify tool result, trigger human review.
 - [x] **Durable hooks: `onBudgetWarning`.** Invoked in the agent loop when budget usage crosses 80% threshold. Fires once per agent execution.
 - [x] **Context strategy declared on agent definition.** Applies to all invocations. Per-call override via `ctx.agent({ contextStrategy })`.
 - [x] **Model router declared on agent definition.** Applies to all invocations. Per-call override available.
 - [x] **Engine optimizes for agent-shaped workflows.** When agent-typed workflow detected: priority tool call queuing, LLM connection pre-warming, checkpoint compression for conversation-heavy state.
-- [x] **Type-safe agent definitions.** `defineAgent<InputType, OutputType>({ ... })` — compile-time type checking on `engine.start()` and `handle.result()`.
+- [x] **Type-safe agent definitions.** `agent<InputType, OutputType>({ ... })` — compile-time type checking on `engine.start()` and `handle.result()`.
 - [x] **Agent definitions compose with workflow registration.** `engine.register(researchAgent)` registers as standalone workflow. Same definition usable as embedded step via `ctx.agent(researchAgent, input)`.
-- [x] **`defineAgent()` and `ctx.agent()` share implementation.** Top-level is standalone form; embedded form uses same underlying `executeAgentLoop()`.
+- [x] **`agent()` and `ctx.agent()` share implementation.** Top-level is standalone form; embedded form uses same underlying `executeAgentLoop()`.
 
 ### Workflow Versioning
 
@@ -5361,7 +5373,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Attribute schema declared at registration time.** `engine.register("type", fn, { searchAttributes: { ... } })`. Unknown attribute keys rejected at set time.
 - [x] **Index entries created atomically with checkpoint.** `idx:{attr}:{value}:{wfId}` keys written in the same `batch()` call as the checkpoint.
 - [x] **Index entries diffed on update.** When an attribute value changes, old index entries deleted and new entries created in the same batch.
-- [x] **Multi-value attributes (keyword_list) create one index entry per element.** Setting `tags: ["a", "b"]` creates two index keys.
+- [x] **String-array attributes create one index entry per element.** Setting `tags: ["a", "b"]` creates two index keys.
 - [x] **Numeric values sort correctly in index keys.** IEEE 754 float-to-sortable-string encoding ensures correct lexicographic order.
 - [x] **Date values sort correctly in index keys.** ISO 8601 encoding preserves chronological order.
 - [x] **`engine.list({ attributes: [...] })` filters by attributes.** Equality: `{ key, value }`. Range: `{ key, gte, lte }`.
@@ -5487,7 +5499,7 @@ The Temporal-derived pain points above are architecturally solved. This section 
 - [x] **Serverless suspension primitive.** `ctx.suspendUntil(resumeToken)` in `src/core/context.ts` yields to `waitForSignal(resumeToken)`, persisting a checkpoint so the engine can drop the in-memory workflow until the resume signal arrives. Resume is via the existing `POST /v1/workflows/:id/signal/:token` endpoint (or `engine.signal(workflowId, resumeToken, payload)`). See tests in `src/core/suspend.test.ts` for multi-suspension flows. **Caveat**: in `WorkerExecutionStrategy` the per-workflow worker is held in `#workersByWorkflowId` until the workflow completes, so the "worker is free to do other work while parked" benefit only applies to inline execution. Releasing the worker on suspend in worker mode is tracked under "Agent-loop suspension integration" below.
 - [x] **Agent-loop suspension integration.** When `EngineOptions.suspendOnLlmWait` is `true` and the provider exposes `createChatResumeHint()`, inline `ctx.agent()` turns persist their loop state, park before the blocking `chat()` / `stream()` fetch begins, and resume the same turn when a matching signal arrives. The shared resume-aware provider wrapper is used by both `src/ai/agent.ts` and `src/ai/streaming-agent.ts`, replaying the resumed call with `options.resumeContext` populated. Non-parkable contexts and worker execution still fall back to in-memory waiting because they cannot currently release the parked execution slot.
 - [x] **Multi-tenant context.** `TenantResolver` interface in `src/core/tenant.ts`; engine option `tenantResolver` populates `ctx.tenant: TenantContext | undefined` at workflow start and persists it on `WorkflowState.tenant` so it survives recovery. `tenantFromInputField(name)` is a convenience resolver for the common case.
-- [x] **Per-tenant agent customization.** `defineAgent()` accepts `toolsForTenant?: (tenant) => AgentToolDefinition[]` and `validateInput?: (input, tenant) => void`. The engine's generated workflow handler calls `validateInput` before the agent loop and substitutes `toolsForTenant(ctx.tenant)` for the static tool set.
+- [x] **Per-tenant agent customization.** `agent()` accepts `toolsForTenant?: (tenant) => AgentToolDefinition[]` and `validateInput?: (input, tenant) => void`. The engine's generated workflow handler calls `validateInput` before the agent loop and substitutes `toolsForTenant(ctx.tenant)` for the static tool set.
 - [x] **Tenant context in worker-execution mode.** `WorkerInboundMessage.run` carries an optional `tenant` field across `postMessage`; `WorkerExecutionStrategy.startWorkflow` forwards the resolved tenant; and `src/workers/workflow-runner.ts` builds a worker-side `WorkerWorkflowContext` (`workflowId`, `tenant`, `signal`, `startedAt`) that is passed as the first argument to registered handlers. The constructor stop-gap is gone — `workerExecution` and `tenantResolver` can be combined. Engine-side fields like `executionTimeRemaining` are stub values inside the worker because the worker has no clock authority; user code that needs them should stay on inline mode. Regression test in `src/ai/agent-worker-tenant-isolation.test.ts` runs three workflows through a real `Worker` and asserts that `tenant-a` sees `toolA`, `tenant-b` sees `toolB`, and an unexpected tenant fails via `validateInput`.
 - [x] **Routing policies.** `RoutingPolicy = 'least-loaded' | 'round-robin' | 'fair-share'` in `src/worker/registry.ts`. `WorkerRegistry` constructor accepts `{ policy }`; `findWorker(activity, { fairShareKey })` consults per-worker per-key counts. All three policies are plumbed end-to-end: `TaskDispatch.fairShareKey` is threaded through `dispatchTaskImpl` → `findWorker` → `assignTask` in `src/server/index.ts`, and a server-level integration test asserts fair-share distributes across keys when dispatched via `serve()`.
 - [x] **Task queue scheduling policies.** `TaskQueueOptions.schedulingPolicy: 'priority' | 'fifo' | 'lifo'` in `src/server/task-queue.ts`, default `'priority'` (current behavior). Plumbed through `serve({ schedulingPolicy })`.

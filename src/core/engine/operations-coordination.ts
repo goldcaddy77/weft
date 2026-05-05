@@ -227,7 +227,7 @@ export async function processRunAllOperation(
     // matching `Promise.all`'s rethrow-as-is contract.
     const { outcomes, hasFirstError, firstError } = await executeRunAllBranchesSettled(
       branchesToRun,
-      (fn, args) => callActivityFunction(fn, args),
+      (fn, input) => callActivityFunction(fn, input),
     );
 
     const slots = mergeRunAllSlots(branchNames, operationIds, resumedSlotsByName, outcomes);
@@ -253,11 +253,11 @@ export async function processRunAllOperation(
 
 /** Drop fulfilled-on-resume branches so we only re-dispatch the rest. */
 function filterBranchesToRun(
-  branches: Record<string, [Function, ...unknown[]]>,
+  branches: Record<string, [Function] | [Function, unknown]>,
   branchNames: string[],
   resumedSlotsByName: Map<string, ParallelBranchSlot> | undefined,
-): Record<string, [Function, ...unknown[]]> {
-  const result: Record<string, [Function, ...unknown[]]> = {};
+): Record<string, [Function] | [Function, unknown]> {
+  const result: Record<string, [Function] | [Function, unknown]> = {};
   for (const name of branchNames) {
     if (resumedSlotsByName?.get(name)?.status !== 'fulfilled') {
       const branch = branches[name];
@@ -360,11 +360,11 @@ export async function executeRunAllOperationResult(
 ): Promise<Record<string, unknown>> {
   return executeRunAllBranches(
     operation.branches as Parameters<typeof executeRunAllBranches>[0],
-    (fn, args) => {
+    (fn, input) => {
       // Only speculative runAll activity branches need the full execution
       // pipeline so verification and compensation tracking are preserved.
       if (!speculativeState || !isConfiguredInlineActivity(fn)) {
-        return callActivityFunction(fn, args);
+        return callActivityFunction(fn, input);
       }
 
       return executeActivityOperationResultFromInternals(
@@ -375,7 +375,7 @@ export async function executeRunAllOperationResult(
           operationId: crypto.randomUUID(),
           activityName: fn.name,
           fn,
-          args,
+          input,
         },
         callbacks.getActivityOperationCallbacks(),
         speculativeState,

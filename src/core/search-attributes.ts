@@ -2,6 +2,8 @@ import type { BatchOperation } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import type { SearchAttributeDefinition, SearchAttributeValue } from './types.ts';
 
+export { searchAttribute, searchAttributeName } from './types.ts';
+
 const SIGN_BIT = 1n << 63n;
 const ALL_BITS = (1n << 64n) - 1n;
 
@@ -134,6 +136,7 @@ export function decodeAttributeValue(encoded: string, type: string): SearchAttri
       return sortableHexToFloat(payload);
     case 'boolean':
       return payload === '1';
+    case 'date-time':
     case 'datetime':
       return new Date(payload);
     default:
@@ -155,9 +158,24 @@ export function validateAttributeType(
 
   switch (declaredType) {
     case 'string':
+      if (definition.format === 'date-time') {
+        if (!(value instanceof Date)) {
+          throw new Error(
+            `Search attribute "${attributeName}" is declared as "string" with format "date-time" but received ${typeof value}.`,
+          );
+        }
+        break;
+      }
       if (typeof value !== 'string') {
         throw new Error(
           `Search attribute "${attributeName}" is declared as "string" but received ${typeof value}.`,
+        );
+      }
+      break;
+    case 'integer':
+      if (typeof value !== 'number' || !Number.isInteger(value)) {
+        throw new Error(
+          `Search attribute "${attributeName}" is declared as "integer" but received ${typeof value}.`,
         );
       }
       break;
@@ -175,22 +193,15 @@ export function validateAttributeType(
         );
       }
       break;
-    case 'datetime':
-      if (!(value instanceof Date)) {
-        throw new Error(
-          `Search attribute "${attributeName}" is declared as "datetime" but received ${typeof value}.`,
-        );
-      }
-      break;
-    case 'keyword_list':
+    case 'array':
       if (!Array.isArray(value)) {
         throw new Error(
-          `Search attribute "${attributeName}" is declared as "keyword_list" but received ${typeof value}.`,
+          `Search attribute "${attributeName}" is declared as "array" but received ${typeof value}.`,
         );
       }
       if (!value.every((element) => typeof element === 'string')) {
         throw new Error(
-          `Search attribute "${attributeName}" is declared as "keyword_list" but array contains non-string elements.`,
+          `Search attribute "${attributeName}" is declared as "array" but array contains non-string elements.`,
         );
       }
       break;
@@ -242,14 +253,41 @@ export function buildIndexOperations(
     const hadOld = attributeName in previous;
     const hasNew = attributeName in current;
 
-    // Handle keyword lists (string[]) element-by-element
-    if ((hadOld && Array.isArray(oldValue)) || (hasNew && Array.isArray(newValue))) {
-      const oldElements = new Set(hadOld ? (oldValue as string[]) : []);
-      const newElements = new Set(hasNew ? (newValue as string[]) : []);
+    const oldIsArray = Array.isArray(oldValue);
+    const newIsArray = Array.isArray(newValue);
 
-      // DELETE removed elements
-      for (const element of oldElements) {
-        if (!newElements.has(element)) {
+    // Handle string arrays element-by-element, while preserving correct index
+    // mutations when a schema-free attribute changes between scalar and array.
+    if (oldIsArray || newIsArray) {
+      if (oldIsArray && newIsArray) {
+        const oldElements = new Set(oldValue);
+        const newElements = new Set(newValue);
+
+        for (const element of oldElements) {
+          if (!newElements.has(element)) {
+            operations.push({
+              type: 'delete',
+              key: KEYS.attributeIndex(attributeName, encodeAttributeValue(element), workflowId),
+            });
+          }
+        }
+
+        for (const element of newElements) {
+          if (!oldElements.has(element)) {
+            operations.push({
+              type: 'put',
+              key: KEYS.attributeIndex(attributeName, encodeAttributeValue(element), workflowId),
+              value: EMPTY_VALUE,
+            });
+          }
+        }
+
+        continue;
+      }
+
+      if (hadOld) {
+        const oldValues = oldIsArray ? oldValue : [oldValue!];
+        for (const element of oldValues) {
           operations.push({
             type: 'delete',
             key: KEYS.attributeIndex(attributeName, encodeAttributeValue(element), workflowId),
@@ -257,9 +295,9 @@ export function buildIndexOperations(
         }
       }
 
-      // PUT added elements
-      for (const element of newElements) {
-        if (!oldElements.has(element)) {
+      if (hasNew) {
+        const newValues = newIsArray ? newValue : [newValue!];
+        for (const element of newValues) {
           operations.push({
             type: 'put',
             key: KEYS.attributeIndex(attributeName, encodeAttributeValue(element), workflowId),

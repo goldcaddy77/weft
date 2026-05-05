@@ -6,11 +6,16 @@ import {
 } from '../events.ts';
 import { WorkflowTimeoutError } from '../timeouts.ts';
 import type {
+  MessageName,
+  QueryDefinition,
   ScheduleAccessOptions,
   ScheduleSummary,
   SearchAttributeValue,
+  SignalDefinition,
+  UpdateDefinition,
   WorkflowState,
 } from '../types.ts';
+import { messageName } from '../types.ts';
 import type { Engine } from './index.ts';
 
 type WorkflowHandleEventQueue = {
@@ -157,16 +162,40 @@ export class WorkflowHandle<TResult = unknown> extends EventTarget implements As
     return this.#engine.cancel(this.id);
   }
 
-  async signal(name: string, payload?: unknown): Promise<void> {
-    return this.#engine.signal(this.id, name, payload);
+  async signal(name: SignalDefinition): Promise<void>;
+  async signal<TInput>(name: SignalDefinition<TInput>, payload: TInput): Promise<void>;
+  async signal(name: string, payload?: unknown): Promise<void>;
+  async signal(nameOrDefinition: MessageName, payload?: unknown): Promise<void> {
+    return this.#engine.signal(this.id, messageName(nameOrDefinition), payload);
   }
 
-  async update(name: string, payload?: unknown, options?: { timeout?: number }): Promise<unknown> {
-    return this.#engine.update(this.id, name, payload, options);
+  async update<TOutput>(
+    name: UpdateDefinition<void, TOutput>,
+    payload?: void,
+    options?: { timeout?: number },
+  ): Promise<TOutput>;
+  async update<TInput, TOutput>(
+    name: UpdateDefinition<TInput, TOutput>,
+    payload: TInput,
+    options?: { timeout?: number },
+  ): Promise<TOutput>;
+  async update(name: string, payload?: unknown, options?: { timeout?: number }): Promise<unknown>;
+  async update(
+    nameOrDefinition: MessageName,
+    payload?: unknown,
+    options?: { timeout?: number },
+  ): Promise<unknown> {
+    return this.#engine.update(this.id, messageName(nameOrDefinition), payload, options);
   }
 
-  async query(name: string): Promise<unknown> {
-    return this.#engine.query(this.id, name);
+  async query<TOutput>(name: QueryDefinition<void, TOutput>): Promise<TOutput>;
+  async query<TInput, TOutput>(
+    name: QueryDefinition<TInput, TOutput>,
+    input: TInput,
+  ): Promise<TOutput>;
+  async query(name: string, input?: unknown): Promise<unknown>;
+  async query(nameOrDefinition: MessageName, input?: unknown): Promise<unknown> {
+    return this.#engine.query(this.id, messageName(nameOrDefinition), input);
   }
 
   async getAttributes(): Promise<Record<string, SearchAttributeValue> | null> {

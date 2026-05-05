@@ -51,7 +51,8 @@ describe('constraint primitive', () => {
     let stepOneComplete = false;
     let constraintViolationAllowed = true; // Only fail once.
 
-    const balanceCheck = constraint('positiveBalance', {
+    const balanceCheck = constraint({
+      name: 'positiveBalance',
       scope: 'transaction',
       check: () => {
         if (!constraintViolationAllowed) return true; // Only violate once.
@@ -126,7 +127,8 @@ describe('constraint primitive', () => {
     let firstStepComplete = false;
     let constraintAllowed = true;
 
-    const hardLimit = constraint('hardLimit', {
+    const hardLimit = constraint({
+      name: 'hardLimit',
       scope: 'budget',
       check: () => {
         if (!constraintAllowed) return true;
@@ -188,7 +190,8 @@ describe('constraint primitive', () => {
       let stepDone = false;
       let allowedOnce = true;
 
-      const c = constraint('test', {
+      const c = constraint({
+        name: 'test',
         scope: 'test',
         check: () => {
           if (stepDone && allowedOnce) {
@@ -251,7 +254,8 @@ describe('constraint primitive', () => {
 
     let checkpointCount = 0;
 
-    const softLimit = constraint('softLimit', {
+    const softLimit = constraint({
+      name: 'softLimit',
       scope: 'advisory',
       check: () => {
         checkpointCount += 1;
@@ -301,7 +305,8 @@ describe('constraint primitive', () => {
 
     let count = 0;
 
-    const counter = constraint('checkpoint-counter', {
+    const counter = constraint({
+      name: 'checkpoint-counter',
       scope: 'test',
       check: () => {
         count += 1;
@@ -344,7 +349,8 @@ describe('constraint primitive', () => {
 
   it('constraint() factory produces the expected ConstraintDefinition', () => {
     const check = (_state: ConstraintCheckState) => true;
-    const defined = constraint('myConstraint', {
+    const defined = constraint({
+      name: 'myConstraint',
       scope: 'domain',
       check,
       onViolation: 'warn',
@@ -370,7 +376,8 @@ describe('constraint primitive', () => {
 
     let fired = false;
 
-    const alwaysFail = constraint('alwaysFail', {
+    const alwaysFail = constraint({
+      name: 'alwaysFail',
       scope: 'test',
       check: () => {
         const first = !fired;
@@ -421,7 +428,8 @@ describe('constraint primitive', () => {
       },
     });
 
-    const alwaysOk = constraint('alwaysOk', {
+    const alwaysOk = constraint({
+      name: 'alwaysOk',
       scope: 'transaction',
       check: () => true,
       onViolation: 'warn',
@@ -442,7 +450,8 @@ describe('constraint primitive', () => {
   it('allows registering a workflow with constraints on the default (inline) engine', () => {
     const engine = new Engine();
 
-    const alwaysOk = constraint('alwaysOk', {
+    const alwaysOk = constraint({
+      name: 'alwaysOk',
       scope: 'transaction',
       check: () => true,
       onViolation: 'warn',

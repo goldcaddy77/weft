@@ -13,6 +13,8 @@
 
 import type { AttributeFilter, SearchAttributeValue } from '../core/types.ts';
 
+type ParsedAttributeFilter = Omit<AttributeFilter, 'key'> & { key: string };
+
 /**
  * Parse `attr.{name}={value}`, `attr.{name}.gt={value}`,
  * `attr.{name}.lt={value}`, `attr.{name}.gte={value}`, and
@@ -25,8 +27,8 @@ import type { AttributeFilter, SearchAttributeValue } from '../core/types.ts';
  * (a 400) would let any client typo escalate into an unconstrained
  * range scan, which is worse than the typo being ignored.
  */
-export function parseAttributeFilters(params: URLSearchParams): AttributeFilter[] {
-  const filterMap = new Map<string, AttributeFilter>();
+export function parseAttributeFilters(params: URLSearchParams): ParsedAttributeFilter[] {
+  const filterMap = new Map<string, ParsedAttributeFilter>();
 
   for (const [key, value] of params) {
     if (!key.startsWith('attr.')) continue;

@@ -45,7 +45,8 @@ export interface ConstraintCheckState {
  * import { constraint, Engine, type ConstraintDefinition } from 'weft';
  *
  * let balance = 0;
- * const positiveBalance: ConstraintDefinition = constraint('positiveBalance', {
+ * const positiveBalance: ConstraintDefinition = constraint({
+ *   name: 'positiveBalance',
  *   scope: 'transaction',
  *   check: () => balance >= 0,
  *   onViolation: 'compensate',
@@ -78,7 +79,8 @@ export interface ConstraintDefinition {
    *
    * ```ts
    * let balance = 0;
-   * const balanceCheck = constraint('positiveBalance', {
+   * const balanceCheck = constraint({
+   *   name: 'positiveBalance',
    *   scope: 'transaction',
    *   check: () => balance >= 0,
    *   onViolation: 'compensate',
@@ -124,7 +126,8 @@ export interface ConstraintDefinition {
  *
  * let balance = 0;
  *
- * const positiveBalance = constraint('positiveBalance', {
+ * const positiveBalance = constraint({
+ *   name: 'positiveBalance',
  *   scope: 'transaction',
  *   check: () => balance >= 0,
  *   onViolation: 'compensate',
@@ -134,9 +137,6 @@ export interface ConstraintDefinition {
  * // engine.register(workflow, { constraints: [positiveBalance] });
  * ```
  */
-export function constraint(
-  name: string,
-  options: Omit<ConstraintDefinition, 'name'>,
-): ConstraintDefinition {
-  return { name, ...options };
+export function constraint(definition: ConstraintDefinition): ConstraintDefinition {
+  return definition;
 }

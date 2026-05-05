@@ -192,8 +192,9 @@ interface WorkflowSessionState<T> {
   removeFirst<TItem>(this: WorkflowSessionState<TItem[]>): TItem | undefined;
   removeLast<TItem>(this: WorkflowSessionState<TItem[]>): TItem | undefined;
   run<TResult>(
-    fn: (...args: unknown[]) => Promise<TResult> | TResult,
-    ...rest: unknown[]
+    fn: (input: unknown) => Promise<TResult> | TResult,
+    input?: unknown,
+    options?: ActivityCallOptions,
   ): WorkflowOperation<TResult>;
 }
 ```
@@ -408,9 +409,11 @@ type SearchAttributeValue = string | number | boolean | Date | string[];
 ```ts partial
 type SearchAttributeSchema = Record<string, SearchAttributeDefinition>;
 
-interface SearchAttributeDefinition {
-  type: 'string' | 'number' | 'boolean' | 'datetime' | 'keyword_list';
-}
+type SearchAttributeDefinition =
+  | { type: 'string'; format?: string }
+  | { type: 'number' | 'integer' }
+  | { type: 'boolean' }
+  | { type: 'array'; items?: { type: 'string'; format?: string } };
 ```
 
 ### `ListFilter`
@@ -528,8 +531,8 @@ type ContextOperationRequest =
       type: 'activity';
       operationId: string;
       activityName: string;
-      fn?: (...args: unknown[]) => unknown;
-      args: unknown[];
+      fn?: (input: unknown, context?: unknown) => unknown;
+      input: unknown;
       callerStack?: string;
       options?: Record<string, unknown>;
     }
@@ -549,7 +552,11 @@ type ContextOperationRequest =
   | { type: 'offload'; operationId: string; key: string; fn: () => Promise<unknown> }
   | { type: 'load'; operationId: string; reference: OffloadReference }
   | { type: 'archive'; operationId: string; key: string; data: unknown }
-  | { type: 'run-all'; operationId: string; branches: Record<string, [Function, ...unknown[]]> }
+  | {
+      type: 'run-all';
+      operationId: string;
+      branches: Record<string, [Function] | [Function, unknown]>;
+    }
   | { type: 'agent'; operationId: string; options: AgentContextOptions };
 ```
 
@@ -748,13 +755,13 @@ interface WeftServer extends AsyncDisposable {
 ### `MockHandle`
 
 ```ts partial
-interface MockHandle<TArgs extends unknown[], TResult> {
-  readonly calls: ReadonlyArray<MockCall<TArgs, TResult>>;
+interface MockHandle<TInput, TResult> {
+  readonly calls: ReadonlyArray<MockCall<TInput, TResult>>;
   readonly callCount: number;
-  readonly lastCall: MockCall<TArgs, TResult> | undefined;
-  mockImplementation(implementation: (...args: TArgs) => TResult | Promise<TResult>): void;
-  mockReturnValueOnce(value: TResult): MockHandle<TArgs, TResult>;
-  mockRejectionOnce(error: Error): MockHandle<TArgs, TResult>;
+  readonly lastCall: MockCall<TInput, TResult> | undefined;
+  mockImplementation(implementation: (input: TInput) => TResult | Promise<TResult>): void;
+  mockReturnValueOnce(value: TResult): MockHandle<TInput, TResult>;
+  mockRejectionOnce(error: Error): MockHandle<TInput, TResult>;
   resetCalls(): void;
   restore(): void;
 }
@@ -763,8 +770,8 @@ interface MockHandle<TArgs extends unknown[], TResult> {
 ### `MockCall`
 
 ```ts partial
-interface MockCall<TArgs extends unknown[], TResult> {
-  readonly args: TArgs;
+interface MockCall<TInput, TResult> {
+  readonly input: TInput;
   readonly result: TResult | undefined;
   readonly error: Error | undefined;
   readonly timestamp: number;

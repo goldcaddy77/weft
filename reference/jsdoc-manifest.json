@@ -459,13 +459,13 @@
     },
     {
       "sourceFile": "src/ai/declaration.ts",
-      "sourceName": "defineAgent",
+      "sourceName": "agent",
       "kind": "value",
       "subKind": "function",
       "publicFaces": [
         {
           "importPath": "weft",
-          "exportName": "defineAgent",
+          "exportName": "agent",
           "kind": "value"
         }
       ],
@@ -1067,6 +1067,14 @@
         }
       ],
       "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/activity-registry.ts",
+      "sourceName": "RegisteredActivityFunction",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/atomic-state-events.ts",
@@ -2231,6 +2239,20 @@
       "classification": "example-required"
     },
     {
+      "sourceFile": "src/core/interceptor/index.ts",
+      "sourceName": "interceptor",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "interceptor",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
       "sourceFile": "src/core/interceptor/interception-contexts.ts",
       "sourceName": "ActivityExecutionInterception",
       "kind": "type",
@@ -2806,6 +2828,20 @@
     },
     {
       "sourceFile": "src/core/types/activity.ts",
+      "sourceName": "ActivityCallable",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "ActivityCallable",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/activity.ts",
       "sourceName": "ActivityContext",
       "kind": "type",
       "subKind": "interface",
@@ -3173,10 +3209,150 @@
       "classification": "prose-only"
     },
     {
+      "sourceFile": "src/core/types/message-handles.ts",
+      "sourceName": "MessageDefinition",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/message-handles.ts",
+      "sourceName": "MessageName",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/message-handles.ts",
+      "sourceName": "QueryDefinition",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "QueryDefinition",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/message-handles.ts",
+      "sourceName": "SignalDefinition",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "SignalDefinition",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/message-handles.ts",
+      "sourceName": "UpdateDefinition",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "UpdateDefinition",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/message-handles.ts",
+      "sourceName": "messageName",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/message-handles.ts",
+      "sourceName": "query",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "query",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/message-handles.ts",
+      "sourceName": "signal",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "signal",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/message-handles.ts",
+      "sourceName": "update",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "update",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
       "sourceFile": "src/core/types/options.ts",
       "sourceName": "AttributeFilter",
       "kind": "type",
-      "subKind": "interface",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/options.ts",
+      "sourceName": "AttributeFilterKey",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/options.ts",
+      "sourceName": "AttributeFilterList",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/options.ts",
+      "sourceName": "AttributeFilterValue",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/options.ts",
+      "sourceName": "AttributeRangeValue",
+      "kind": "type",
+      "subKind": "type-alias",
       "publicFaces": [],
       "classification": "not-public"
     },
@@ -3249,6 +3425,14 @@
         }
       ],
       "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/options.ts",
+      "sourceName": "TypedListFilter",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/types/retry-retention.ts",
@@ -3406,6 +3590,20 @@
     },
     {
       "sourceFile": "src/core/types/schedules.ts",
+      "sourceName": "ScheduleDefinition",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "ScheduleDefinition",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/schedules.ts",
       "sourceName": "ScheduleFilter",
       "kind": "type",
       "subKind": "interface",
@@ -3489,10 +3687,76 @@
       "classification": "prose-only"
     },
     {
+      "sourceFile": "src/core/types/schedules.ts",
+      "sourceName": "schedule",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "schedule",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/search-attributes.ts",
+      "sourceName": "BooleanSearchAttributeDefinition",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/search-attributes.ts",
+      "sourceName": "JsonSchemaPrimitiveType",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/search-attributes.ts",
+      "sourceName": "NumberSearchAttributeDefinition",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
       "sourceFile": "src/core/types/search-attributes.ts",
       "sourceName": "SearchAttributeDefinition",
       "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "SearchAttributeDefinition",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/search-attributes.ts",
+      "sourceName": "SearchAttributeHandle",
+      "kind": "type",
       "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "SearchAttributeHandle",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/search-attributes.ts",
+      "sourceName": "SearchAttributePrimitiveValueMap",
+      "kind": "type",
+      "subKind": "type-alias",
       "publicFaces": [],
       "classification": "not-public"
     },
@@ -3523,6 +3787,52 @@
         }
       ],
       "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/search-attributes.ts",
+      "sourceName": "SearchAttributeValueForDefinition",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/search-attributes.ts",
+      "sourceName": "StringArraySearchAttributeDefinition",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/search-attributes.ts",
+      "sourceName": "StringSearchAttributeDefinition",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/search-attributes.ts",
+      "sourceName": "searchAttribute",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "searchAttribute",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/search-attributes.ts",
+      "sourceName": "searchAttributeName",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [],
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/types/serializer.ts",
@@ -3842,6 +4152,28 @@
     },
     {
       "sourceFile": "src/core/types/workflow-function.ts",
+      "sourceName": "WorkflowDefinition",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "WorkflowDefinition",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/workflow-function.ts",
+      "sourceName": "WorkflowDefinitionOptions",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/workflow-function.ts",
       "sourceName": "WorkflowFunction",
       "kind": "type",
       "subKind": "type-alias",
@@ -3948,6 +4280,20 @@
           "importPath": "weft",
           "exportName": "WorkflowRegistration",
           "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/workflow-function.ts",
+      "sourceName": "workflow",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "workflow",
+          "kind": "value"
         }
       ],
       "classification": "example-required"
@@ -6894,6 +7240,14 @@
         }
       ],
       "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/testing/mocks.ts",
+      "sourceName": "MockActivityFunction",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [],
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/testing/mocks.ts",

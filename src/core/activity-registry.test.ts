@@ -8,7 +8,7 @@ import { activity } from './types.ts';
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeFunction(): (...args: unknown[]) => unknown {
+function makeFunction(): (input: unknown) => unknown {
   return (_input: unknown) => 'result';
 }
 

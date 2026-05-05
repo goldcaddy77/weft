@@ -49,15 +49,16 @@ export interface UpdateRequestOptions {
  *
  * @example
  * ```ts
- * import { Engine, UpdateTimeoutError } from 'weft';
+ * import { Engine, UpdateTimeoutError, update } from 'weft';
  *
  * const engine = new Engine();
  * engine.register('paused', async function* () {
  *   await new Promise(() => {}); // workflow never resolves on its own
  * });
  * const handle = await engine.start('paused', null);
+ * const proceed = update<void, void>('proceed');
  * try {
- *   await handle.update('proceed', null, { timeout: 100 });
+ *   await handle.update(proceed, undefined, { timeout: 100 });
  * } catch (err) {
  *   if (err instanceof UpdateTimeoutError) {
  *     console.error('update timed out:', err.updateId);
@@ -82,15 +83,16 @@ export class UpdateTimeoutError extends Error {
  *
  * @example
  * ```ts
- * import { Engine, WorkflowTerminalError } from 'weft';
+ * import { Engine, WorkflowTerminalError, update } from 'weft';
  *
  * const engine = new Engine();
  * engine.register('quick', async function* () { return 'done'; });
  *
  * const handle = await engine.start('quick', null);
  * await handle.result();
+ * const anything = update<void, void>('anything');
  * try {
- *   await handle.update('anything', null);
+ *   await handle.update(anything);
  * } catch (err) {
  *   if (err instanceof WorkflowTerminalError) {
  *     console.error('workflow', err.workflowId, 'is', err.status);

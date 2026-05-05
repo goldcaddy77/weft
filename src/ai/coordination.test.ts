@@ -9,7 +9,7 @@ import {
   summarizeConversation,
   supervise,
 } from './coordination/index.ts';
-import { defineAgent, type AgentDefinition } from './declaration.ts';
+import { agent, type AgentDefinition } from './declaration.ts';
 
 function createChatResponse(content: string): ChatResponse {
   return {
@@ -34,7 +34,7 @@ function createProvider(responses: ChatResponse[]): LLMProvider {
 }
 
 function createAgentDefinition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
-  return defineAgent({
+  return agent({
     name: 'test-agent',
     model: 'test-model',
     ...overrides,

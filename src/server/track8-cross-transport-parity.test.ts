@@ -296,11 +296,19 @@ async function invokeSignalTransport(
   engines.push(engine);
 
   let callCount = 0;
-  const originalSignal = engine.signal.bind(engine);
-  engine.signal = async (...args: Parameters<Engine['signal']>) => {
+  const originalSignal = engine.signal.bind(engine) as (
+    workflowId: string,
+    name: string | { readonly name: string },
+    payload?: unknown,
+  ) => Promise<void>;
+  engine.signal = (async (
+    workflowId: string,
+    name: string | { readonly name: string },
+    payload?: unknown,
+  ) => {
     callCount += 1;
-    return originalSignal(...args);
-  };
+    return originalSignal(workflowId, name, payload);
+  }) as Engine['signal'];
 
   const handle = await engine.start('hold', null, { id: `track8-signal-${transport}` });
   await waitForStatus(engine, handle.id, 'running');

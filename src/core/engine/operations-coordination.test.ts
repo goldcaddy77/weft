@@ -20,7 +20,7 @@ describe('partial-failure preservation worker-mode boundary', () => {
           operationId: 'parallel:0:0',
           activityName: 'ok',
           fn: async () => 'ok',
-          args: [],
+          input: undefined,
         },
         {
           type: 'activity',
@@ -29,7 +29,7 @@ describe('partial-failure preservation worker-mode boundary', () => {
           fn: async () => {
             throw new Error('boom');
           },
-          args: [],
+          input: undefined,
         },
       ],
     };
@@ -39,7 +39,7 @@ describe('partial-failure preservation worker-mode boundary', () => {
       executeSubOperation: async (_workflowId, subOperation) => {
         if (subOperation.type !== 'activity') throw new Error('unexpected operation');
         if (subOperation.fn === undefined) throw new Error('missing activity function');
-        return subOperation.fn(...subOperation.args);
+        return subOperation.fn(subOperation.input);
       },
       runOperationWithResult: async (_workflowId, _operation, execute) => {
         try {

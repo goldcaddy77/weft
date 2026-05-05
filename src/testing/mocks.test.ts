@@ -2,8 +2,13 @@ import { afterEach, describe, expect, it } from 'bun:test';
 
 import { ActivityMockRegistry } from './mocks';
 
-async function sendEmail(to: string, body: string): Promise<string> {
-  return `sent to ${to}: ${body}`;
+interface EmailInput {
+  to: string;
+  body: string;
+}
+
+async function sendEmail(input: EmailInput): Promise<string> {
+  return `sent to ${input.to}: ${input.body}`;
 }
 
 async function processPayment(amount: number): Promise<{ id: string }> {
@@ -25,25 +30,25 @@ describe('ActivityMockRegistry', () => {
 
   it('calls the mock implementation when executed', async () => {
     registry = new ActivityMockRegistry();
-    const handle = registry.mock(sendEmail, async (_to, _body) => 'fake-result');
+    const handle = registry.mock(sendEmail, async (_input) => 'fake-result');
 
     const mocked = registry.get(sendEmail);
-    const result = await mocked!.implementation('alice@test.com', 'hello');
+    const result = await mocked!.implementation({ to: 'alice@test.com', body: 'hello' });
     expect(result).toBe('fake-result');
     expect(handle.callCount).toBe(1);
   });
 
-  it('records all invocations with args', async () => {
+  it('records all invocations with input', async () => {
     registry = new ActivityMockRegistry();
     const handle = registry.mock(sendEmail, async () => 'ok');
 
     const mocked = registry.get(sendEmail)!;
-    await mocked.implementation('a@test.com', 'first');
-    await mocked.implementation('b@test.com', 'second');
+    await mocked.implementation({ to: 'a@test.com', body: 'first' });
+    await mocked.implementation({ to: 'b@test.com', body: 'second' });
 
     expect(handle.calls).toHaveLength(2);
-    expect(handle.calls[0]!.args).toEqual(['a@test.com', 'first']);
-    expect(handle.calls[1]!.args).toEqual(['b@test.com', 'second']);
+    expect(handle.calls[0]!.input).toEqual({ to: 'a@test.com', body: 'first' });
+    expect(handle.calls[1]!.input).toEqual({ to: 'b@test.com', body: 'second' });
   });
 
   it('records results in call history', async () => {
@@ -51,7 +56,7 @@ describe('ActivityMockRegistry', () => {
     const handle = registry.mock(sendEmail, async () => 'result-value');
 
     const mocked = registry.get(sendEmail)!;
-    await mocked.implementation('a@test.com', 'hi');
+    await mocked.implementation({ to: 'a@test.com', body: 'hi' });
 
     expect(handle.calls[0]!.result).toBe('result-value');
     expect(handle.calls[0]!.error).toBeUndefined();
@@ -62,9 +67,9 @@ describe('ActivityMockRegistry', () => {
     const handle = registry.mock(sendEmail, async () => 'ok');
 
     const mocked = registry.get(sendEmail)!;
-    await mocked.implementation('a', 'b');
-    await mocked.implementation('c', 'd');
-    await mocked.implementation('e', 'f');
+    await mocked.implementation({ to: 'a', body: 'b' });
+    await mocked.implementation({ to: 'c', body: 'd' });
+    await mocked.implementation({ to: 'e', body: 'f' });
 
     expect(handle.callCount).toBe(3);
   });
@@ -76,10 +81,10 @@ describe('ActivityMockRegistry', () => {
     expect(handle.lastCall).toBeUndefined();
 
     const mocked = registry.get(sendEmail)!;
-    await mocked.implementation('first@test.com', 'a');
-    await mocked.implementation('last@test.com', 'b');
+    await mocked.implementation({ to: 'first@test.com', body: 'a' });
+    await mocked.implementation({ to: 'last@test.com', body: 'b' });
 
-    expect(handle.lastCall!.args).toEqual(['last@test.com', 'b']);
+    expect(handle.lastCall!.input).toEqual({ to: 'last@test.com', body: 'b' });
   });
 
   it('replaces the implementation via mockImplementation', async () => {
@@ -87,11 +92,11 @@ describe('ActivityMockRegistry', () => {
     const handle = registry.mock(sendEmail, async () => 'original');
 
     const mocked = registry.get(sendEmail)!;
-    const firstResult = await mocked.implementation('a', 'b');
+    const firstResult = await mocked.implementation({ to: 'a', body: 'b' });
     expect(firstResult).toBe('original');
 
     handle.mockImplementation(async () => 'replaced');
-    const secondResult = await mocked.implementation('a', 'b');
+    const secondResult = await mocked.implementation({ to: 'a', body: 'b' });
     expect(secondResult).toBe('replaced');
   });
 
@@ -102,8 +107,8 @@ describe('ActivityMockRegistry', () => {
     handle.mockReturnValueOnce('once-value');
 
     const mocked = registry.get(sendEmail)!;
-    const first = await mocked.implementation('a', 'b');
-    const second = await mocked.implementation('a', 'b');
+    const first = await mocked.implementation({ to: 'a', body: 'b' });
+    const second = await mocked.implementation({ to: 'a', body: 'b' });
 
     expect(first).toBe('once-value');
     expect(second).toBe('default');
@@ -119,14 +124,14 @@ describe('ActivityMockRegistry', () => {
 
     let thrownError: Error | undefined;
     try {
-      await (mocked.implementation('a', 'b') as Promise<unknown>);
+      await (mocked.implementation({ to: 'a', body: 'b' }) as Promise<unknown>);
     } catch (error) {
       thrownError = error as Error;
     }
     expect(thrownError).toBeDefined();
     expect(thrownError!.message).toBe('boom');
 
-    const second = await mocked.implementation('a', 'b');
+    const second = await mocked.implementation({ to: 'a', body: 'b' });
     expect(second).toBe('default');
   });
 
@@ -135,7 +140,7 @@ describe('ActivityMockRegistry', () => {
     const handle = registry.mock(sendEmail, async () => 'ok');
 
     const mocked = registry.get(sendEmail)!;
-    await mocked.implementation('a', 'b');
+    await mocked.implementation({ to: 'a', body: 'b' });
     expect(handle.callCount).toBe(1);
 
     handle.resetCalls();

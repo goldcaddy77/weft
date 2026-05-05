@@ -53,7 +53,17 @@ try {
   ok = false;
 }
 
-// 3) typecheck
+// 3) definition vocabulary check
+info('Running definition vocabulary check…');
+try {
+  await $`bun run scripts/check-definition-vocabulary.ts`;
+  success('definition vocabulary check passed');
+} catch {
+  error('definition vocabulary check failed');
+  ok = false;
+}
+
+// 4) typecheck
 info('Running typecheck…');
 try {
   await $`bun run typecheck`;
@@ -63,7 +73,7 @@ try {
   ok = false;
 }
 
-// 4) test
+// 5) test
 // Run tests but skip benchmark files. Performance benchmarks are sensitive
 // to system load and fail intermittently when run alongside 3,400+ other
 // tests. They are verified in CI and can be run in isolation via
@@ -104,7 +114,7 @@ try {
   ok = false;
 }
 
-// 5) JSDoc manifest audit (only when source/manifest/package.json changed)
+// 6) JSDoc manifest audit (only when source/manifest/package.json changed)
 const stagedTouchesPublicSurface = staged.some(
   (file) =>
     file.startsWith('src/') ||
@@ -131,7 +141,7 @@ if (stagedTouchesPublicSurface) {
   info('Skipping JSDoc audit (no public surface changes staged)');
 }
 
-// 6) lint-staged (format staged files; always last)
+// 7) lint-staged (format staged files; always last)
 info('Running lint-staged…');
 try {
   await $`bunx lint-staged`;

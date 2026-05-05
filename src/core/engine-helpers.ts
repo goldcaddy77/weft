@@ -98,6 +98,8 @@ export type RunAllSettledResult = {
   firstError: unknown;
 };
 
+export type RunAllBranch = [fn: Function] | [fn: Function, input: unknown];
+
 /**
  * Execute every `ctx.runAll()` branch and return per-branch settled
  * outcomes plus the first rejection captured by settlement timing.
@@ -110,15 +112,15 @@ export type RunAllSettledResult = {
  * to keep both fan-out paths consistent.
  */
 export async function executeRunAllBranchesSettled(
-  branches: Record<string, [fn: Function, ...args: unknown[]]>,
-  callActivity: (fn: Function, args: unknown[]) => unknown,
+  branches: Record<string, RunAllBranch>,
+  callActivity: (fn: Function, input: unknown) => unknown,
 ): Promise<RunAllSettledResult> {
   const entries = Object.entries(branches);
   const capture = createFirstRejectionCapture();
   const outcomes = await Promise.all(
-    entries.map(async ([name, [fn, ...args]]): Promise<RunAllBranchOutcome> => {
+    entries.map(async ([name, [fn, input]]): Promise<RunAllBranchOutcome> => {
       try {
-        const value = await callActivity(fn, args);
+        const value = await callActivity(fn, input);
         return { status: 'fulfilled', name, value };
       } catch (error) {
         captureFirstRejection(capture, error);
@@ -131,14 +133,14 @@ export async function executeRunAllBranchesSettled(
 
 /** Execute the `ctx.runAll()` branches and return a name-keyed result record. */
 export async function executeRunAllBranches(
-  branches: Record<string, [fn: Function, ...args: unknown[]]>,
-  callActivity: (fn: Function, args: unknown[]) => unknown,
+  branches: Record<string, RunAllBranch>,
+  callActivity: (fn: Function, input: unknown) => unknown,
 ): Promise<Record<string, unknown>> {
   const results: Record<string, unknown> = {};
   const entries = Object.entries(branches);
   await Promise.all(
-    entries.map(async ([name, [fn, ...args]]) => {
-      results[name] = await callActivity(fn, args);
+    entries.map(async ([name, [fn, input]]) => {
+      results[name] = await callActivity(fn, input);
     }),
   );
   return results;

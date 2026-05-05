@@ -70,6 +70,29 @@ describe('Engine with activity worker execution', () => {
 
       engine[Symbol.dispose]();
     });
+
+    it('executes saga activity input through a worker-backed operation', async () => {
+      const engine = new Engine({
+        activityExecution: {
+          workerUrl: activityWorkerUrl,
+          poolSize: 2,
+        },
+      });
+
+      const double = activity({
+        name: 'double',
+        execute: async (input: number) => input * 2,
+      });
+
+      engine.register('worker-saga', async function* (ctx: WorkflowContext) {
+        return yield* ctx.saga([{ definition: double, input: 21 }]);
+      });
+
+      const handle = await engine.start('worker-saga', null);
+      await expect(handle.result()).resolves.toBe(42);
+
+      engine[Symbol.dispose]();
+    });
   });
 
   // -------------------------------------------------------------------------

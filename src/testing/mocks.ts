@@ -23,16 +23,20 @@
  * async function sendEmail(input: unknown): Promise<string> { return ''; }
  * const mockHandle = engine.mock(sendEmail, async (input: unknown) => 'sent');
  * await engine.start('notify', { to: 'user@example.com' });
- * const call: MockCall<[unknown], string> = mockHandle.calls[0]!;
- * console.log(call.args[0]); // { to: 'user@example.com' }
+ * const call: MockCall<unknown, string> = mockHandle.calls[0]!;
+ * console.log(call.input); // { to: 'user@example.com' }
  * ```
  */
-export interface MockCall<TArgs extends unknown[], TResult> {
-  readonly args: TArgs;
+export interface MockCall<TInput, TResult> {
+  readonly input: TInput;
   readonly result: TResult | undefined;
   readonly error: Error | undefined;
   readonly timestamp: number;
 }
+
+export type MockActivityFunction<TInput, TResult> = [TInput] extends [void]
+  ? (input?: TInput) => TResult | Promise<TResult>
+  : (input: TInput) => TResult | Promise<TResult>;
 
 /**
  * Handle returned by {@link ActivityMockRegistry.mock} that lets tests inspect
@@ -50,7 +54,7 @@ export interface MockCall<TArgs extends unknown[], TResult> {
  * const engine = new TestEngine();
  * async function sendEmail(input: unknown): Promise<string> { return 'real'; }
  *
- * const handle: MockHandle<[unknown], string> =
+ * const handle: MockHandle<unknown, string> =
  *   engine.mock(sendEmail, async (input: unknown) => 'mocked');
  *
  * handle.mockReturnValueOnce('override');
@@ -58,15 +62,15 @@ export interface MockCall<TArgs extends unknown[], TResult> {
  * await engine.start('notify', { to: 'user@example.com' });
  * ```
  */
-export interface MockHandle<TArgs extends unknown[], TResult> {
-  readonly calls: ReadonlyArray<MockCall<TArgs, TResult>>;
+export interface MockHandle<TInput, TResult> {
+  readonly calls: ReadonlyArray<MockCall<TInput, TResult>>;
   readonly callCount: number;
-  readonly lastCall: MockCall<TArgs, TResult> | undefined;
+  readonly lastCall: MockCall<TInput, TResult> | undefined;
   /** The current base implementation (excludes one-time overrides). */
-  readonly currentImplementation: (...args: TArgs) => TResult | Promise<TResult>;
-  mockImplementation(implementation: (...args: TArgs) => TResult | Promise<TResult>): void;
-  mockReturnValueOnce(value: TResult): MockHandle<TArgs, TResult>;
-  mockRejectionOnce(error: Error): MockHandle<TArgs, TResult>;
+  readonly currentImplementation: MockActivityFunction<TInput, TResult>;
+  mockImplementation(implementation: MockActivityFunction<TInput, TResult>): void;
+  mockReturnValueOnce(value: TResult): MockHandle<TInput, TResult>;
+  mockRejectionOnce(error: Error): MockHandle<TInput, TResult>;
   resetCalls(): void;
   restore(): void;
 }
@@ -97,8 +101,8 @@ export interface MockHandle<TArgs extends unknown[], TResult> {
  * ```
  */
 export interface MockedActivity {
-  implementation: (...args: unknown[]) => unknown;
-  handle: MockHandle<unknown[], unknown>;
+  implementation: (input?: unknown) => unknown;
+  handle: MockHandle<unknown, unknown>;
 }
 
 type OneTimeOverride<TResult> =
@@ -109,24 +113,18 @@ type OneTimeOverride<TResult> =
 // MockHandle implementation
 // ---------------------------------------------------------------------------
 
-class MockHandleImplementation<TArgs extends unknown[], TResult> implements MockHandle<
-  TArgs,
-  TResult
-> {
-  #calls: Array<MockCall<TArgs, TResult>> = [];
-  #baseImplementation: (...args: TArgs) => TResult | Promise<TResult>;
+class MockHandleImplementation<TInput, TResult> implements MockHandle<TInput, TResult> {
+  #calls: Array<MockCall<TInput, TResult>> = [];
+  #baseImplementation: MockActivityFunction<TInput, TResult>;
   #oneTimeOverrides: Array<OneTimeOverride<TResult>> = [];
   readonly #onRestore: () => void;
 
-  constructor(
-    baseImplementation: (...args: TArgs) => TResult | Promise<TResult>,
-    onRestore: () => void,
-  ) {
+  constructor(baseImplementation: MockActivityFunction<TInput, TResult>, onRestore: () => void) {
     this.#baseImplementation = baseImplementation;
     this.#onRestore = onRestore;
   }
 
-  get calls(): ReadonlyArray<MockCall<TArgs, TResult>> {
+  get calls(): ReadonlyArray<MockCall<TInput, TResult>> {
     return this.#calls;
   }
 
@@ -134,24 +132,24 @@ class MockHandleImplementation<TArgs extends unknown[], TResult> implements Mock
     return this.#calls.length;
   }
 
-  get lastCall(): MockCall<TArgs, TResult> | undefined {
+  get lastCall(): MockCall<TInput, TResult> | undefined {
     return this.#calls[this.#calls.length - 1];
   }
 
-  get currentImplementation(): (...args: TArgs) => TResult | Promise<TResult> {
+  get currentImplementation(): MockActivityFunction<TInput, TResult> {
     return this.#baseImplementation;
   }
 
-  mockImplementation(implementation: (...args: TArgs) => TResult | Promise<TResult>): void {
+  mockImplementation(implementation: MockActivityFunction<TInput, TResult>): void {
     this.#baseImplementation = implementation;
   }
 
-  mockReturnValueOnce(value: TResult): MockHandle<TArgs, TResult> {
+  mockReturnValueOnce(value: TResult): MockHandle<TInput, TResult> {
     this.#oneTimeOverrides.push({ type: 'return', value });
     return this;
   }
 
-  mockRejectionOnce(error: Error): MockHandle<TArgs, TResult> {
+  mockRejectionOnce(error: Error): MockHandle<TInput, TResult> {
     this.#oneTimeOverrides.push({ type: 'reject', error });
     return this;
   }
@@ -165,12 +163,13 @@ class MockHandleImplementation<TArgs extends unknown[], TResult> implements Mock
   }
 
   /** Called internally to execute the mock and record the call. */
-  async execute(...args: TArgs): Promise<TResult> {
+  async execute(input?: TInput): Promise<TResult> {
     const override = this.#oneTimeOverrides.shift();
+    const recordedInput = input as TInput;
 
     if (override?.type === 'reject') {
-      const call: MockCall<TArgs, TResult> = {
-        args,
+      const call: MockCall<TInput, TResult> = {
+        input: recordedInput,
         result: undefined,
         error: override.error,
         timestamp: Date.now(),
@@ -180,8 +179,8 @@ class MockHandleImplementation<TArgs extends unknown[], TResult> implements Mock
     }
 
     if (override?.type === 'return') {
-      const call: MockCall<TArgs, TResult> = {
-        args,
+      const call: MockCall<TInput, TResult> = {
+        input: recordedInput,
         result: override.value,
         error: undefined,
         timestamp: Date.now(),
@@ -191,9 +190,9 @@ class MockHandleImplementation<TArgs extends unknown[], TResult> implements Mock
     }
 
     try {
-      const result = await this.#baseImplementation(...args);
-      const call: MockCall<TArgs, TResult> = {
-        args,
+      const result = await this.#baseImplementation(recordedInput);
+      const call: MockCall<TInput, TResult> = {
+        input: recordedInput,
         result,
         error: undefined,
         timestamp: Date.now(),
@@ -202,8 +201,8 @@ class MockHandleImplementation<TArgs extends unknown[], TResult> implements Mock
       return result;
     } catch (thrown) {
       const error = thrown instanceof Error ? thrown : new Error(String(thrown));
-      const call: MockCall<TArgs, TResult> = {
-        args,
+      const call: MockCall<TInput, TResult> = {
+        input: recordedInput,
         result: undefined,
         error,
         timestamp: Date.now(),
@@ -247,18 +246,26 @@ export class ActivityMockRegistry {
     this.#mocks = new Map();
   }
 
-  mock<TArgs extends unknown[], TResult>(
-    activity: (...args: TArgs) => Promise<TResult> | TResult,
-    implementation: (...args: TArgs) => TResult | Promise<TResult>,
-  ): MockHandle<TArgs, TResult> {
-    const handle = new MockHandleImplementation<TArgs, TResult>(
+  mock<TResult>(
+    activity: () => Promise<TResult> | TResult,
+    implementation: () => TResult | Promise<TResult>,
+  ): MockHandle<void, TResult>;
+  mock<TInput, TResult>(
+    activity: (input: TInput) => Promise<TResult> | TResult,
+    implementation: (input: TInput) => TResult | Promise<TResult>,
+  ): MockHandle<TInput, TResult>;
+  mock<TInput, TResult>(
+    activity: (() => Promise<TResult> | TResult) | ((input: TInput) => Promise<TResult> | TResult),
+    implementation: MockActivityFunction<TInput, TResult>,
+  ): MockHandle<TInput, TResult> {
+    const handle = new MockHandleImplementation<TInput, TResult>(
       implementation,
       this.restore.bind(this, activity),
     );
 
     const mocked: MockedActivity = {
-      implementation: handle.execute.bind(handle) as (...args: unknown[]) => unknown,
-      handle: handle as unknown as MockHandle<unknown[], unknown>,
+      implementation: handle.execute.bind(handle) as (input?: unknown) => unknown,
+      handle: handle as unknown as MockHandle<unknown, unknown>,
     };
 
     this.#mocks.set(activity, mocked);
