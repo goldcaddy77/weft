@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { sleepForTesting, waitForCondition } from '../testing/fake-timers.ts';
+import {
+  sleepForTesting,
+  waitForCondition,
+  waitForRealTimersForTesting,
+} from '../testing/fake-timers.ts';
 
 import { encode } from '../core/codec.ts';
 import { Engine } from '../core/engine.ts';
@@ -78,7 +82,14 @@ async function connectAndRegisterWorker(
       concurrency: options.concurrency ?? 10,
     }),
   );
-  await sleepForTesting(50);
+  // The register message is fire-and-forget over WS; the server's
+  // worker registry processes it on the next tick after the frame
+  // arrives. `sleepForTesting` only yields one scheduler turn (the
+  // fake-timer shim), so on a slow CI runner the registry may not
+  // have observed the worker by the time the test's first
+  // `dispatchTask` runs. Wait wall-clock time so real socket I/O can
+  // complete before the test depends on a registered worker.
+  await waitForRealTimersForTesting(50);
   return ws;
 }
 
