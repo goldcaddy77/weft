@@ -68,7 +68,9 @@
     "./storage/sqlite": {
       "types": "./dist/storage/sqlite.d.ts",
       "bun": "./dist/storage/bun-sql.js",
-      "node": "./dist/storage/node-sqlite.js"
+      "node": "./dist/storage/node-sqlite.js",
+      "import": "./dist/storage/node-sqlite.js",
+      "default": "./dist/storage/node-sqlite.js"
     },
     "./storage/sqlite/bun": {
       "types": "./dist/storage/bun-sql.d.ts",

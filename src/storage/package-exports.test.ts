@@ -14,6 +14,8 @@ describe('storage package exports', () => {
       types: './dist/storage/sqlite.d.ts',
       bun: './dist/storage/bun-sql.js',
       node: './dist/storage/node-sqlite.js',
+      import: './dist/storage/node-sqlite.js',
+      default: './dist/storage/node-sqlite.js',
     });
   });
 
