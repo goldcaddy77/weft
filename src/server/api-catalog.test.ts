@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { Engine } from '../core/engine.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import {
+  createPublicOriginWarner,
   generateApiCatalog,
   originFromRequest,
   resetPublicOriginWarningForTesting,
@@ -146,6 +147,35 @@ describe('API catalog linkset', () => {
     );
     // One-shot warning: only the first call should log.
     expect(matching).toHaveLength(1);
+  });
+
+  it('createPublicOriginWarner produces independent one-shot instances', () => {
+    // Bugbot regression: the warning state used to be a module-level
+    // boolean that leaked across test isolation boundaries. Each
+    // factory-built warner now carries its own state — two warners can
+    // each log once without interfering, and `reset` re-arms only the
+    // instance it was called on.
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      const a = createPublicOriginWarner();
+      const b = createPublicOriginWarner();
+      a.warn();
+      a.warn();
+      b.warn();
+      b.warn();
+      // Two warnings (one per warner) — a and b do not share state.
+      expect(warnings).toHaveLength(2);
+      a.reset();
+      a.warn();
+      // a reset, b did not — one more warning total.
+      expect(warnings).toHaveLength(3);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   it('does not warn when publicOrigin is configured', async () => {

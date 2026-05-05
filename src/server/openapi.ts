@@ -76,6 +76,52 @@ const DEFAULT_SCHEMA_HELPER: OpenApiSchemaHelper = {
 };
 
 /**
+ * Build the success-response object for a binding, branching on its
+ * declared `success.kind`. JSON bindings emit `application/json` with
+ * the operation's output schema. Streaming bindings emit the binding's
+ * declared `mediaType` (e.g. `text/event-stream`) and document the
+ * payload as a string — the per-frame envelope's actual contents are
+ * documented separately in `/asyncapi.json`. Empty (204) bindings emit
+ * a no-content response.
+ */
+function buildSuccessResponse(
+  binding: UnknownRestBinding,
+  operation: ErasedOperation,
+  schemaHelper: OpenApiSchemaHelper,
+): Record<string, unknown> {
+  const success = binding.success;
+  if (success.kind === 'empty') {
+    return {
+      [String(success.status)]: {
+        description: 'No content',
+      },
+    };
+  }
+  if (success.kind === 'streaming') {
+    return {
+      '200': {
+        description: 'Streaming response',
+        content: {
+          [success.mediaType]: {
+            schema: { type: 'string' },
+          },
+        },
+      },
+    };
+  }
+  return {
+    [String(success.status)]: {
+      description: 'Successful response',
+      content: {
+        'application/json': {
+          schema: schemaHelper.refFor(operation.name, 'Output') ?? { type: 'object' },
+        },
+      },
+    },
+  };
+}
+
+/**
  * Emit REST bindings into the OpenAPI paths map. Exported for tests;
  * `generateOpenApiDocument` is the production entry point.
  *
@@ -99,19 +145,13 @@ export function emitBindings(
     if (!paths[openApiPath]) paths[openApiPath] = {};
 
     const parameters = buildPathParameters(binding.pathParamNames);
+    const successResponse = buildSuccessResponse(binding, operation, schemaHelper);
     const entry: Record<string, unknown> = {
       summary: operation.summary,
       operationId: operation.name,
       tags: operation.tags,
       responses: {
-        '200': {
-          description: 'Successful response',
-          content: {
-            'application/json': {
-              schema: schemaHelper.refFor(operation.name, 'Output') ?? { type: 'object' },
-            },
-          },
-        },
+        ...successResponse,
         ...buildErrorResponses(operation),
       },
     };

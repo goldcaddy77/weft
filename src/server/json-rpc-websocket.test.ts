@@ -1051,33 +1051,37 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     // pump would keep iterating the feed indefinitely. Fix split
     // the concerns: `emitterBroken` suppresses output; `disposed`
     // gates `close()`'s teardown.
-    let releaseSubscription: () => void = () => {};
-    const subscriptionClosed = new Promise<void>((resolve) => {
-      releaseSubscription = resolve;
-    });
+    //
+    // The semantic check is "the subscription's abort signal fired" —
+    // that's what `subscriptionAborted` captures. The generator's
+    // post-await body may not run after `close()` aborts the pump (the
+    // for-await `break`s on the abort, calling `iterator.return()`),
+    // so this test does not assume the generator runs to completion.
     let subscriptionAborted = false;
     const feed: WorkflowEventFeed = {
       replay: async function* () {},
       subscribe(options) {
+        // Mirror the real `WorkflowEventFeed`: register the abort
+        // listener UPFRONT so the feed observes session teardown even
+        // if the pump never pulls another iteration after abort. The
+        // pump is allowed to break immediately on abort — the feed's
+        // teardown path lives behind the abort signal, not behind a
+        // post-yield body that might never run.
+        options.signal?.addEventListener(
+          'abort',
+          () => {
+            subscriptionAborted = true;
+          },
+          { once: true },
+        );
+        if (options.signal?.aborted) subscriptionAborted = true;
         async function* subscription(): AsyncIterable<ReturnType<typeof makeEnvelope>> {
           yield makeEnvelope(0);
+          // Park forever — exit semantics are owned by the abort signal.
           await new Promise<void>((resolve) => {
-            if (options.signal?.aborted) {
-              subscriptionAborted = true;
-              resolve();
-              return;
-            }
-
-            options.signal?.addEventListener(
-              'abort',
-              () => {
-                subscriptionAborted = true;
-                resolve();
-              },
-              { once: true },
-            );
+            options.signal?.addEventListener('abort', () => resolve(), { once: true });
+            if (options.signal?.aborted) resolve();
           });
-          releaseSubscription();
         }
 
         return subscription();
@@ -1109,9 +1113,9 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     );
     await Promise.resolve();
     // `close()` must still abort the subscription pump even though
-    // the emitter is broken.
+    // the emitter is broken. Awaiting `close()` to settle proves the
+    // pump promise resolves (no leaked feed listener).
     await session.close();
-    await subscriptionClosed;
     expect(subscriptionAborted).toBe(true);
   });
 

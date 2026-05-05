@@ -56,32 +56,60 @@ const ALLOWED_FORWARDED_PROTOCOLS: ReadonlySet<string> = new Set(['http', 'https
 // `javascript:` schemes, the `@` userinfo trick, etc.) is rejected.
 const HOST_HEADER_PATTERN = /^(?:[A-Za-z0-9._-]+(?::\d+)?|\[[0-9A-Fa-f:.]+\](?::\d+)?)$/;
 
-let warnedAboutHeaderFallback = false;
+/**
+ * One-shot "publicOrigin not set" warner with private state. Tests can
+ * construct an isolated warner so they don't depend on a process-wide
+ * boolean — that was a maintainability smell flagged in review (test
+ * order could change, new test files could exercise the route without
+ * resetting, etc.).
+ */
+export type PublicOriginWarner = {
+  /** Emit the warning if it hasn't fired on this warner yet. */
+  warn(): void;
+  /** Re-arm the warner; primarily useful in tests. */
+  reset(): void;
+};
+
+const PUBLIC_ORIGIN_WARNING_TEXT =
+  '[weft] /.well-known/api-catalog: `publicOrigin` is not configured. The ' +
+  'service-desc URLs will be derived from the incoming request, which is ' +
+  'safe for direct connections but vulnerable to Host-header poisoning ' +
+  'when running behind a reverse proxy. Set `serve({ publicOrigin: ' +
+  "'https://api.example.com' })` in production.";
 
 /**
- * Reset the one-shot "publicOrigin not set" warning gate. **Test-only.**
+ * Build a fresh `PublicOriginWarner`. State is captured in the closure;
+ * each instance is independent.
+ */
+export function createPublicOriginWarner(): PublicOriginWarner {
+  let alreadyWarned = false;
+  return {
+    warn(): void {
+      if (alreadyWarned) return;
+      alreadyWarned = true;
+      console.warn(PUBLIC_ORIGIN_WARNING_TEXT);
+    },
+    reset(): void {
+      alreadyWarned = false;
+    },
+  };
+}
+
+/**
+ * Default process-wide warner used by callers that don't construct their
+ * own. Operators running multiple `serve()` instances in the same process
+ * can still rely on the one-shot semantics; tests that want isolation can
+ * either reset this default or instantiate a per-test warner.
+ */
+const DEFAULT_PUBLIC_ORIGIN_WARNER = createPublicOriginWarner();
+
+/**
+ * Reset the default process-wide warning gate. **Test-only.**
  * Production code never calls this; exported so tests can re-arm the
  * warning between cases.
  */
 export function resetPublicOriginWarningForTesting(): void {
-  warnedAboutHeaderFallback = false;
-}
-
-function emitPublicOriginWarning(): void {
-  if (warnedAboutHeaderFallback) return;
-  warnedAboutHeaderFallback = true;
-  // Operators running behind reverse proxies / TLS terminators MUST set
-  // `serve({ publicOrigin: '...' })`. Without it, the `/.well-known/api-catalog`
-  // route falls back to header-derived origins, which an attacker can poison
-  // with crafted `Host` / `X-Forwarded-Proto` headers. The warning fires once
-  // per process so production logs surface the misconfiguration prominently.
-  console.warn(
-    '[weft] /.well-known/api-catalog: `publicOrigin` is not configured. The ' +
-      'service-desc URLs will be derived from the incoming request, which is ' +
-      'safe for direct connections but vulnerable to Host-header poisoning ' +
-      'when running behind a reverse proxy. Set `serve({ publicOrigin: ' +
-      "'https://api.example.com' })` in production.",
-  );
+  DEFAULT_PUBLIC_ORIGIN_WARNER.reset();
 }
 
 /**
@@ -90,7 +118,7 @@ function emitPublicOriginWarning(): void {
  * `publicOrigin` option that bypasses header-derived origins entirely.
  */
 export function warnIfPublicOriginUnset(): void {
-  emitPublicOriginWarning();
+  DEFAULT_PUBLIC_ORIGIN_WARNER.warn();
 }
 
 /**

@@ -273,14 +273,19 @@ export function createJsonRpcWebSocketSession(
       void closeOnce().catch(() => {});
     };
     signal.addEventListener('abort', abortSubscription, { once: true });
-    let skippedEnvelopeAfterAbort = false;
     try {
       for await (const envelope of iterable) {
+        // Once the controller fires we stop forwarding immediately.
+        // `closeOnce()` is also wired to the abort listener; calling it
+        // here is idempotent and just guarantees teardown has been
+        // requested before we exit the loop. Breaking unconditionally
+        // (instead of skipping one envelope and waiting for a second
+        // iteration) means convergence does not depend on the iterable
+        // yielding again — a producer that pauses or stalls after abort
+        // cannot keep us in the loop.
         if (signal.aborted) {
           await closeOnce().catch(() => {});
-          if (skippedEnvelopeAfterAbort) break;
-          skippedEnvelopeAfterAbort = true;
-          continue;
+          break;
         }
         deliver(subscriptionId, envelope);
       }

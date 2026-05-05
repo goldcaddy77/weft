@@ -82,6 +82,30 @@ describe('OpenAPI hydration', () => {
     expect(schemas).toHaveProperty('Error');
   });
 
+  it('streaming bindings document text/event-stream, not application/json', async () => {
+    // Bugbot regression: every binding's 200 response was hardcoded to
+    // `application/json`. SSE bindings declare
+    // `success: { kind: 'streaming', mediaType: 'text/event-stream' }`
+    // and that media type must surface in the OpenAPI document so
+    // generated clients don't try to parse the SSE stream as JSON.
+    const engine = new Engine({ storage: new MemoryStorage() });
+    engines.push(engine);
+    const server = serve({ engine, port: 0 });
+    servers.push(server);
+
+    const response = await fetch(`${server.url}/openapi.json`);
+    const document = (await response.json()) as {
+      paths: Record<string, Record<string, Record<string, unknown>>>;
+    };
+
+    const sseGet = document.paths['/v1/workflows/{id}/sse']?.['get'];
+    expect(sseGet).toBeDefined();
+    const sseResponses = sseGet!['responses'] as Record<string, Record<string, unknown>>;
+    const sseSuccess = sseResponses['200'] as { content: Record<string, unknown> };
+    expect(sseSuccess.content).toHaveProperty('text/event-stream');
+    expect(sseSuccess.content).not.toHaveProperty('application/json');
+  });
+
   it('document is deterministic across two generations', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
     engines.push(engine);

@@ -15,8 +15,14 @@ const JSON_RPC_ID_SCHEMA: Record<string, unknown> = {
   oneOf: [{ type: 'string' }, { type: 'number' }, { type: 'null' }],
 };
 
+// Mirrors the exact reason strings emitted by `json-rpc-websocket.ts`.
+// Adding entries here without an emit site (or removing one without
+// updating the emitter) makes `/asyncapi.json` lie about the wire.
+// `engine-error` and `overflow` were specified speculatively but the
+// session collapses both cases into `server-closed` (with a `fault`
+// payload), so they are intentionally absent from this enum.
 const SUBSCRIPTION_TERMINATION_REASON_SCHEMA: Record<string, unknown> = {
-  enum: ['client-unsubscribed', 'server-closed', 'engine-error', 'overflow', 'validation-failed'],
+  enum: ['client-unsubscribed', 'server-closed', 'validation-failed'],
   type: 'string',
 };
 
@@ -144,26 +150,37 @@ export function buildWebSocketMessages(
 
 /**
  * Build named component messages for an SSE stream operation.
+ *
+ * The token message's `data:` line carries the operation's wire-encoded
+ * token text — for the only SSE operation today (`weft.workflows.streams.sse`)
+ * that is the raw `token` string from `mapTokenChunkToText`, NOT a JSON
+ * encoding of the operation's `eventSchema`. The `eventSchema` describes
+ * the logical per-element type for non-SSE callers (JSON-RPC envelopes
+ * carry the full object); SSE is a separate, plain-text wire.
+ *
+ * The schema below reflects the actual SSE wire. The `x-weft-event-schema`
+ * extension surfaces the logical schema for clients that need it.
  */
 export function buildSseMessages(
   operation: ErasedOperation,
   zodToJsonSchema: (schema: z.ZodType) => Record<string, unknown>,
 ): Record<string, Record<string, unknown>> {
   const names = sseMessageNames(operation);
-  const eventSchema = eventJsonSchema(operation, zodToJsonSchema);
+  const logicalEventSchema = eventJsonSchema(operation, zodToJsonSchema);
 
   return {
     [names.tokenEvent]: {
       name: names.tokenEvent,
       contentType: 'text/event-stream',
-      payload: eventSchema,
-      summary: `SSE token event for ${operation.name}.`,
+      payload: { type: 'string' },
+      summary: `SSE token event for ${operation.name}. The data: line carries the token text.`,
       bindings: {
         http: {
           event: 'token',
         },
       },
-      'x-weft-sse-frame': 'event: token\\nid: <sequence>\\ndata: <JSON>\\n\\n',
+      'x-weft-sse-frame': 'event: token\\nid: <sequence>\\ndata: <token-text>\\n\\n',
+      'x-weft-event-schema': logicalEventSchema,
     },
     [names.doneEvent]: {
       name: names.doneEvent,
