@@ -1,5 +1,6 @@
 import {
   Engine,
+  signal,
   update,
   type WorkflowContext,
   type WorkflowHandle,
@@ -67,6 +68,7 @@ const workflowContextDriftGuard: AssertNever<MissingWorkflowContextKeys> = undef
 void workflowContextDriftGuard;
 
 const engine = new Engine();
+const approvalSignal = signal<{ approved: boolean }>('approval');
 const setNameUpdate = update<{ name: string }, string>('set-name');
 
 engine.register('welcome', async function* (ctx: WorkflowContext, input: WelcomeInput) {
@@ -74,6 +76,7 @@ engine.register('welcome', async function* (ctx: WorkflowContext, input: Welcome
   // @ts-expect-error string-name activities must match their augmented input type.
   yield* ctx.run('formatGreeting', { id: 'wrong' });
   const signalPayload = yield* ctx.waitForSignal<{ approved: boolean }>('approval');
+  const typedSignalPayload: { approved: boolean } = yield* ctx.waitForSignal(approvalSignal);
   const updatePayload = yield* ctx.waitForUpdate<{ suffix: string }>('rename');
   ctx.onUpdate(setNameUpdate, (payload) => payload.name);
   ctx.onQuery('greeting', () => greeting);
@@ -99,6 +102,7 @@ engine.register('welcome', async function* (ctx: WorkflowContext, input: Welcome
   const session = ctx.sessionState('name', input.name);
 
   void signalPayload;
+  void typedSignalPayload;
   void updatePayload;
   void customer;
   void attributes;

@@ -17,12 +17,7 @@ import type {
 import type { TenantContext } from '../tenant.ts';
 import type { ActivityCallable, ActivityCallOptions } from './activity.ts';
 import type { WorkflowId } from './identity.ts';
-import type {
-  MessageName,
-  QueryDefinition,
-  SignalDefinition,
-  UpdateDefinition,
-} from './message-handles.ts';
+import type { QueryDefinition, SignalDefinition, UpdateDefinition } from './message-handles.ts';
 import type { Duration } from './retry-retention.ts';
 import type { SearchAttributeHandle, SearchAttributeValue } from './search-attributes.ts';
 import type { WorkflowSessionState } from './state.ts';
@@ -124,7 +119,6 @@ export interface WorkflowContext {
   suspendUntil<T = unknown>(resumeToken: string): WorkflowOperation<T>;
   waitForSignal<TInput>(definition: SignalDefinition<TInput>): WorkflowOperation<TInput>;
   waitForSignal<T = unknown>(name: string): WorkflowOperation<T>;
-  waitForSignal<T = unknown>(nameOrDefinition: MessageName): WorkflowOperation<T>;
   waitForUpdate<TInput, TOutput>(
     definition: UpdateDefinition<TInput, TOutput>,
   ): WorkflowOperation<{ payload: TInput; respond: (result: TOutput) => void }>;
