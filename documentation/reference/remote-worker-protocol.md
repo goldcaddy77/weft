@@ -76,16 +76,26 @@ Worker                              Server
   |--- WebSocket close ------------>  |
 ```
 
-The connection is the registration. There's no explicit `register` acknowledgement; the worker assumes registration succeeded once the WebSocket is open and the `register` message has been sent. If the server rejects the registration (for instance, a malformed `workerId`), it silently drops the message — the worker stays connected but never receives tasks.
+The connection is the registration. There is **no `register` acknowledgement, no `registerError` reply, and no version handshake** — once the WebSocket is open and the `register` message has been sent, the worker proceeds as if registration succeeded. If the server rejects the registration (for instance, an empty `workerId`), it silently drops the message and the worker stays connected without ever receiving tasks. An idle queue and a rejected registration are indistinguishable from the worker's perspective.
 
 > [!WARNING]
-> The lack of a `register` acknowledgement is a known protocol gap. SDK authors should treat task arrival as the only positive signal that registration succeeded. If no tasks arrive within a reasonable timeout (and tasks are otherwise expected), suspect a registration problem.
+> The protocol does not currently let an SDK observe registration failure. Until `registerAck` / `registerError` exist, treat this as a known limitation rather than a robust contract. SDK authors should:
+>
+> 1. Validate `workerId`, `activities`, `concurrency`, and queue locally before sending `register`. The server enforces `workerId.length > 0`, `concurrency` clamped to `[1, 1000]`, and at least one entry in `activities` if you expect to receive tasks; mirror those validations client-side.
+> 2. Treat task arrival as the only positive runtime signal. For an SDK conformance suite, send a known-good registration and assert that a synthetic task round-trips within a deployment-defined timeout.
+> 3. Configure a worker-side timeout for "no traffic at all" (no tasks _and_ no incoming messages over some interval beyond the heartbeat cadence). On timeout, log, close the WebSocket with a standard close code, and reconnect rather than waiting indefinitely.
+>
+> Adding `registerAck` to the wire protocol is tracked in the roadmap. Until it lands, server- and client-side behavior described in this section is a description of current behavior, not a recommended protocol pattern.
 
 The server tracks the worker by its `workerId` in an in-memory registry. If the WebSocket closes without a graceful shutdown, the server eventually times out the worker's claim on any in-flight tasks (visibility timeout). Those tasks become eligible for redispatch to other workers.
 
 ## Message catalog
 
-All messages are JSON objects with a `type` discriminator. Unknown message types should be ignored on both sides.
+All messages are JSON objects with a `type` discriminator.
+
+**Worker handling of unknown server messages**: ignore. New server-to-worker message types may appear in future `weft` versions; an SDK that ignores unknown ones forward-compatibly survives version skew.
+
+**Server handling of unknown worker messages**: the current TypeScript server silently drops messages whose `type` it doesn't recognize, with no warning logged. SDK authors should treat this as an implementation wart, not a contract: a misspelled message type or a typo'd field name will fail silently. Validate your outgoing messages locally against the message catalog before sending. The drift-prevention test that locks this behavior down is tracked in the roadmap; until then, the cost of a typo is silent task loss.
 
 ### Worker → Server
 
@@ -180,7 +190,9 @@ Sent when an in-flight task completes, fails, or is cancelled.
 | `error`       | string                                   | Yes if `failed`/`cancelled` | Human-readable error message. SDKs should extract from `Error.message`. |
 | `cancelled`   | `true`                                   | Conventional if `cancelled` | Set by the TypeScript implementation. Servers don't depend on it.       |
 
-The server treats `cancelled` as a terminal failure: the inflight record transitions to `resolved` with status `failed`. If `operationId` is missing, the server logs a warning and the inflight tracking record may leak. **Always include `operationId`.**
+The server treats `cancelled` as a terminal failure: the inflight record transitions to `resolved` with status `failed`.
+
+**Contract**: SDKs MUST echo the exact opaque `operationId` from the corresponding `task` message in every `taskResult`. The server does not infer the task identity from the WebSocket connection alone. The current TypeScript server's behavior on a missing `operationId` is to log a warning and decrement only the worker's in-flight counter, leaving the inflight tracking record to leak until the visibility timeout reclaims it; SDK authors should treat that as an implementation wart, not a recovery path. Always send `operationId` exactly as received.
 
 If `status` is anything other than `completed`, `failed`, or `cancelled`, the server logs a warning and treats the result as `failed`.
 

@@ -105,7 +105,7 @@ The difference is architectural, not incremental. Replay _must_ store everything
 
 ## Consequence: workflows are TypeScript-only
 
-The checkpoint model has one strict prerequisite: the in-flight execution state of a workflow must be capturable as a serializable artifact. For JavaScript `AsyncGenerator` functions running under Bun and modern V8, that artifact is the generator's frame — local variables, the suspended source position, and the captured closure. No other language runtime exposes async generator state as a serializable artifact in a stable, public, cross-process way.
+The checkpoint model leans on two language features working together: an async-iterable suspension primitive (`AsyncGenerator` + `yield*`) that gives the engine a clean re-entry point at every checkpoint boundary, and a serialization story (`structuredClone` semantics, via MessagePack) that lets the engine durably persist the workflow's locals at that boundary. JavaScript has both in its standard library. Most other mainstream languages have only one or neither: Python `async def` has no `yield*`-shaped typed return-value plumbing and no public way to round-trip arbitrary live values; Go goroutines and Java continuations don't expose suspension state as a serializable artifact at all.
 
 That means **workflows in Weft are TypeScript-only by design**. Activities — the side-effecting work — can run in any language via the [`RemoteWorker` wire protocol](../reference/remote-worker-protocol.md), but the workflow orchestration code itself is TypeScript.
 

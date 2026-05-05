@@ -78,6 +78,11 @@ type RemoteStorage = ResolvedStorage<HTTPStorageConfiguration>;
 
 `resolveStorage({ type: 'auto' })` is broader than `resolveDefaultStorage()`—it falls through Bun/Node to WebExtension, then IndexedDB, then `MemoryStorage` as a last resort. Use it when you need one configuration object that works across runtimes including browsers.
 
+> [!IMPORTANT]
+> **Bundle vs. runtime safety.** Both `weft/storage` and `weft/storage/resolve` are statically browser-bundle-safe — they only use `import()` (dynamic imports) for backend adapters, so a bundler targeting the browser won't pull in `bun:sqlite` or `node:sqlite` at static-analysis time. But at runtime, calling `resolveStorage({ type: 'sqlite' })` from a browser will throw when the lazy import resolves, because those modules don't load there. `resolveStorage({ type: 'auto' })` handles this by checking runtime globals before picking a backend, but only if the bundler honors dynamic imports correctly (most modern ones do; some legacy webpack configurations require `webpackIgnore` magic comments).
+>
+> If you're targeting browser bundles, prefer importing the specific adapter you need (`weft/storage/indexeddb`, `weft/storage/web-extension`) and skip the resolver entirely. Use `resolveStorage({ type: 'auto' })` only in genuinely cross-runtime code where the workflow author cannot know the deployment target ahead of time.
+
 ## Auto-detection order
 
 `resolveDefaultStorage()` from `weft/storage/auto` checks two globals, in order:
