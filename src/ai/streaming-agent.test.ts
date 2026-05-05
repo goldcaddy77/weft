@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { sleepForTesting } from '../testing/fake-timers.ts';
+import { sleepForTesting, yieldToEventLoop } from '../testing/fake-timers.ts';
 
 import { TokenEvent } from '@/core/events.ts';
 import type { ChatOptions, LLMProvider } from './providers/interface.ts';
@@ -409,7 +409,7 @@ describe('H1: executeStreamingAgent returns ReadableStream', () => {
       'Wait for stream resume',
     );
 
-    await Bun.sleep(0);
+    await yieldToEventLoop();
     expect(streamStarted).toBe(false);
 
     coordinator.resume('stream-ready-token', { ready: true });

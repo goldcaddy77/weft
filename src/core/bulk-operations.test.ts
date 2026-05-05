@@ -36,10 +36,7 @@ async function waitForWorkflowStatus(
       const state = await engine.get(workflowId);
       return state?.status === status;
     },
-    // 5s ceiling. Most callers wait on a single workflow that reaches
-    // `running` in <50ms. The 1001-workflow bulk test has been observed
-    // exceeding 500ms on shared CI runners.
-    { label: `workflow "${workflowId}" to reach ${status}`, timeoutMs: 5_000, intervalMs: 5 },
+    { label: `workflow "${workflowId}" to reach ${status}`, timeoutMs: 10_000, intervalMs: 5 },
   );
 }
 

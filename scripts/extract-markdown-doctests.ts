@@ -466,7 +466,11 @@ function main(): void {
 
   const { blocks, unknownLanguageBlocks } = collectAllBlocks(allowedPaths, allowedReasons);
   reportUnknownFences(unknownLanguageBlocks);
-  enforceSkipRatchet(blocks, baselineCounts);
+  // The skip-count baseline is repository-wide. Path-filtered runs are for
+  // targeted typechecking; the full gate below still enforces the ratchet.
+  if (allowedPaths.length === 0) {
+    enforceSkipRatchet(blocks, baselineCounts);
+  }
 
   const runnableBlocks = blocks.filter((b) => b.classification.kind === 'runnable');
   for (const block of runnableBlocks) writeRunnableBlock(block);

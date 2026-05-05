@@ -1,15 +1,15 @@
 /**
  * Observability interceptors for Weft workflows and activities.
  *
- * Creates {@link WorkflowInterceptor} and {@link ActivityInterceptor}
- * implementations that propagate W3C trace context, emit OpenTelemetry spans,
- * and record metrics. When `@opentelemetry/api` is not installed, all span
- * operations are no-ops with zero overhead.
+ * Creates an {@link Interceptor} implementation that propagates W3C trace
+ * context, emits OpenTelemetry spans, and records metrics. When
+ * `@opentelemetry/api` is not installed, all span operations are no-ops with
+ * zero overhead.
  *
  * @module observability
  */
 
-import type { ActivityInterceptor, WorkflowInterceptor } from '../core/interceptor';
+import type { Interceptor } from '../core/interceptor';
 import { buildActivityInterceptor } from './activity-interceptor';
 import { MetricsCollector as MetricsCollectorClass } from './metrics';
 import { getOpenTelemetryApi } from './no-op-telemetry';
@@ -68,7 +68,7 @@ function createObservabilityState(options?: ObservabilityOptions): Observability
 }
 
 /**
- * Create workflow and activity interceptors for observability.
+ * Create a unified interceptor for workflow and activity observability.
  *
  * Uses `@opentelemetry/api` directly for span creation. When the package is
  * not installed, falls back to no-op implementations with zero overhead.
@@ -77,21 +77,19 @@ function createObservabilityState(options?: ObservabilityOptions): Observability
  * ```ts
  * import { Engine, MemoryStorage, createObservabilityInterceptors } from 'weft';
  *
- * const { workflow, activity, metrics } = createObservabilityInterceptors({
+ * const { interceptor, metrics } = createObservabilityInterceptors({
  *   tracerName: 'my-app',
  *   recordPayloads: false,
  * });
  * await using engine = new Engine({
  *   storage: new MemoryStorage(),
  * });
- * engine.addInterceptor(workflow);
- * void activity;
+ * engine.addInterceptor(interceptor);
  * void metrics;
  * ```
  */
 export function createObservabilityInterceptors(options?: ObservabilityOptions): {
-  workflow: WorkflowInterceptor;
-  activity: ActivityInterceptor;
+  interceptor: Interceptor;
   metrics: MetricsCollectorClass;
   /**
    * End the workflow root span. Usually wired automatically via `eventTarget`,
@@ -112,7 +110,8 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
   const state = createObservabilityState(options);
   const workflow = buildWorkflowInterceptor(state);
   const activity = buildActivityInterceptor(state);
+  const interceptor: Interceptor = { ...workflow, ...activity };
   const lifecycle = createWorkflowLifecycle(state);
 
-  return { workflow, activity, metrics: state.metrics, ...lifecycle };
+  return { interceptor, metrics: state.metrics, ...lifecycle };
 }

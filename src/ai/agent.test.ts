@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
+import { yieldToEventLoop } from '../testing/fake-timers.ts';
+
 import type { LLMProvider } from './providers/interface';
 import type { ChatResponse, Message, ToolDefinition } from './providers/types';
 
@@ -168,7 +170,7 @@ describe('executeAgentLoop', () => {
     );
 
     const resultPromise = executeAgentLoop({ model: 'test-model', provider }, 'Wait for resume');
-    await Bun.sleep(0);
+    await yieldToEventLoop();
 
     expect(chatCalls).toHaveLength(0);
 

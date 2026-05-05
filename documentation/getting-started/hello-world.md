@@ -16,26 +16,53 @@ bun add weft
 
 Create a file called `index.ts` and paste this:
 
-```typescript partial
-import { Engine, MemoryStorage } from 'weft';
+```typescript
+import {
+  Engine,
+  WorkflowAlreadyExistsError,
+  activity,
+  type Context,
+  type WorkflowHandle,
+  type WorkflowContext,
+} from 'weft';
+import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
 
-const engine = new Engine({ storage: new MemoryStorage() });
+const engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
 
-async function greet(name: string) {
-  return `Hello, ${name}!`;
-}
+const formatGreeting = activity({
+  name: 'formatGreeting',
+  execute: async (input: { name: string }) => `Hello, ${input.name}!`,
+});
 
-async function notify(message: string) {
-  return `Notified: ${message}`;
-}
+const sendNotification = activity({
+  name: 'sendNotification',
+  execute: async (input: { message: string }) => `Notified: ${input.message}`,
+});
 
-engine.register('welcome', async function* (ctx, input: { name: string }) {
-  const greeting = yield* ctx.run(greet, input.name);
-  yield* ctx.run(notify, greeting);
+engine.registerActivity(formatGreeting.name, formatGreeting);
+engine.registerActivity(sendNotification.name, sendNotification);
+
+engine.register('welcome', async function* (ctx: WorkflowContext, input: { name: string }) {
+  const context = ctx as Context;
+  const greeting = yield* context.run(formatGreeting, { name: input.name });
+  yield* context.sleep('1s');
+  yield* context.run(sendNotification, { message: greeting });
   return { greeting, notified: true };
 });
 
-const handle = await engine.start('welcome', { name: 'World' });
+await engine.recoverAll();
+
+const workflowId = 'welcome:world';
+const workflowInput = { name: 'World' };
+let handle: WorkflowHandle;
+
+try {
+  handle = await engine.start('welcome', workflowInput, { id: workflowId });
+} catch (error) {
+  if (!(error instanceof WorkflowAlreadyExistsError)) throw error;
+  handle = await engine.resume(workflowId).catch(() => engine.getHandle(workflowId));
+}
+
 const result = await handle.result();
 console.log(result);
 // { greeting: "Hello, World!", notified: true }
@@ -47,16 +74,17 @@ Run it:
 bun run index.ts
 ```
 
-That's a durable workflow. Let's break down what just happened.
+That's a durable workflow with persistent storage and an explicit recovery path. Let's break down what just happened.
 
 ### Step-based alternative
 
 If generators are unfamiliar, you can write the same workflow with plain `async`/`await`:
 
 ```typescript partial
-import { Engine, MemoryStorage } from 'weft';
+import { Engine } from 'weft';
+import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
 
-const engine = new Engine({ storage: new MemoryStorage() });
+const engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
 
 async function greet(name: string) {
   return `Hello, ${name}!`;
@@ -66,14 +94,14 @@ async function notify(message: string) {
   return `Notified: ${message}`;
 }
 
-engine.register('welcome', async (ctx, input) => {
-  const { name } = input as { name: string };
-  const greeting = await ctx.step('greet', () => greet(name));
+engine.register('welcome', async (ctx, input: { name: string }) => {
+  const greeting = await ctx.step('greet', () => greet(input.name));
   await ctx.step('notify', () => notify(greeting));
   return { greeting, notified: true };
 });
 
-const handle = await engine.start('welcome', { name: 'World' });
+const workflowInput = { name: 'World' };
+const handle = await engine.start('welcome', workflowInput, { id: 'welcome:world' });
 const result = await handle.result();
 console.log(result);
 // { greeting: "Hello, World!", notified: true }
@@ -87,9 +115,11 @@ The workflow is a **generator function**---notice the `function*` and the `yield
 
 There's no replay happening here. Weft doesn't re-execute your workflow from the beginning and try to match up results. It literally picks up where it left off. That's why you don't need to worry about determinism---your workflow code can use `Date.now()`, `Math.random()`, or anything else. The only rule is that side effects go inside activities (the functions you pass to `ctx.run()`).
 
-`ctx.run(fn, args)` is how you run an **activity**. An activity is just an async function---nothing special about it. Weft executes it, captures the return value, and checkpoints it. If the activity fails, the engine retries it according to the retry policy (3 attempts with exponential backoff by default, when using the `activity({ ... })` registration helper).
+`ctx.run(activity, input)` is how you run an **activity**. An activity is a named unit of work registered with the engine. The function reference keeps local development ergonomic, but the durable dispatch key is the activity name. That is why the example registers `formatGreeting` and `sendNotification` before the workflow starts: remote workers receive an activity name plus serialized input, not your in-process closure.
 
 `engine.register()` gives your workflow a name so the engine can find it. `engine.start()` kicks off a new execution and returns a handle. `handle.result()` waits for the workflow to finish and gives you the output.
+
+`engine.start()` without `options.id` creates a brand-new workflow ID. If you want a rerun of the same script to pick up an existing execution, pass a stable id and handle the duplicate-start case as shown above. In a long-lived server process, call `engine.recoverAll()` during boot so workflows already stored as running are resumed.
 
 ## Adding a Sleep
 
@@ -97,9 +127,9 @@ Durable sleeps are one of the things that make this interesting. A normal `setTi
 
 ```typescript partial
 engine.register('onboarding', async function* (ctx, input: { name: string }) {
-  const greeting = yield* ctx.run(greet, input.name);
+  const greeting = yield* ctx.run(formatGreeting, { name: input.name });
   yield* ctx.sleep('1h');
-  yield* ctx.run(notify, `${input.name} completed onboarding`);
+  yield* ctx.run(sendNotification, { message: `${input.name} completed onboarding` });
   return { greeting, onboarded: true };
 });
 ```
@@ -133,8 +163,18 @@ console.log(result);
 When you have independent work, run it concurrently with `ctx.all()`:
 
 ```typescript partial
-const double = async (n: number) => n * 2;
-const triple = async (n: number) => n * 3;
+const double = activity({
+  name: 'double',
+  execute: async (input: number) => input * 2,
+});
+
+const triple = activity({
+  name: 'triple',
+  execute: async (input: number) => input * 3,
+});
+
+engine.registerActivity(double.name, double);
+engine.registerActivity(triple.name, triple);
 
 engine.register('parallel', async function* (ctx, input: number) {
   const [doubled, tripled] = yield* ctx.all([ctx.run(double, input), ctx.run(triple, input)]);
@@ -162,7 +202,7 @@ const engine = new Engine({
 });
 ```
 
-Now your checkpoints live in a SQLite database on disk. Crash the process, restart it, and the workflow picks up where it left off. That's the whole point.
+Now your checkpoints live in a SQLite database on disk. Crash the process, restart it, call `engine.recoverAll()` after registering the workflow and activities, and the workflow picks up where it left off. Persistent storage keeps the bytes; recovery tells the new engine process to own the work again.
 
 For quick experiments where you don't want to think about which adapter to pick, `resolveDefaultStorage()` detects Bun or Node and picks the matching SQLite backend (it's not for browsers — use `IndexedDBStorage` directly there). The path goes under the OS temp directory; production deployments should pass `storage` explicitly.
 

@@ -32,29 +32,29 @@ interface ServeOptions {
   port?: number;
   hostname?: string;
   development?: boolean;
-  dashboard?: boolean;
+  dashboard?: unknown;
   auth?: AuthConfig;
   visibilityPollIntervalMs?: number;
   routingPolicy?: RoutingPolicy;
   schedulingPolicy?: SchedulingPolicy;
-  prometheusExporter?: boolean;
+  prometheusExporter?: PrometheusExporter;
   metricsCollector?: MetricsCollector;
 }
 ```
 
-| Field                      | Type               | Default          | Description                                          |
-| -------------------------- | ------------------ | ---------------- | ---------------------------------------------------- |
-| `engine`                   | `Engine`           | (required)       | The engine instance to expose over HTTP              |
-| `port`                     | `number`           | `7233`           | TCP port to listen on                                |
-| `hostname`                 | `string`           | `'0.0.0.0'`      | Hostname/IP to bind to                               |
-| `development`              | `boolean`          | `false`          | Enable development mode with verbose error responses |
-| `dashboard`                | `boolean`          | `true`           | Serve the web dashboard at `/ui`                     |
-| `auth`                     | `AuthConfig`       | `undefined`      | Authentication configuration (JWT, mTLS, or custom)  |
-| `visibilityPollIntervalMs` | `number`           | `1000`           | Polling interval for task visibility timeout checks  |
-| `routingPolicy`            | `RoutingPolicy`    | `'least-loaded'` | Worker routing policy                                |
-| `schedulingPolicy`         | `SchedulingPolicy` | `undefined`      | Scheduling policy for task dispatch                  |
-| `prometheusExporter`       | `boolean`          | `false`          | Expose Prometheus metrics at `/v1/metrics`           |
-| `metricsCollector`         | `MetricsCollector` | `undefined`      | Custom metrics collector instance                    |
+| Field                      | Type                 | Default          | Description                                                |
+| -------------------------- | -------------------- | ---------------- | ---------------------------------------------------------- |
+| `engine`                   | `Engine`             | (required)       | The engine instance to expose over HTTP                    |
+| `port`                     | `number`             | `7233`           | TCP port to listen on                                      |
+| `hostname`                 | `string`             | `'0.0.0.0'`      | Hostname/IP to bind to                                     |
+| `development`              | `boolean`            | `false`          | Enable development mode with verbose error responses       |
+| `dashboard`                | `unknown`            | `undefined`      | Dashboard HTML/module import served at `/ui` when supplied |
+| `auth`                     | `AuthConfig`         | `undefined`      | Authentication configuration (JWT, mTLS, or custom)        |
+| `visibilityPollIntervalMs` | `number`             | `5000`           | Polling interval for task visibility timeout checks        |
+| `routingPolicy`            | `RoutingPolicy`      | `'least-loaded'` | Worker routing policy                                      |
+| `schedulingPolicy`         | `SchedulingPolicy`   | `'priority'`     | Scheduling policy for task dispatch                        |
+| `prometheusExporter`       | `PrometheusExporter` | `undefined`      | Exporter that produces the response body for `/v1/metrics` |
+| `metricsCollector`         | `MetricsCollector`   | `undefined`      | Legacy metrics collector used when no exporter is supplied |
 
 See [configuration.md](./configuration.md) for `AuthConfig`, `RoutingPolicy`, and `SchedulingPolicy` details.
 
@@ -270,9 +270,8 @@ The `weft/service-worker` module provides bootstrap functions for running the We
 ```ts partial
 import {
   createFetchHandler,
-  createPeriodicSyncHandler,
   createLifecycleHandlers,
-  ServiceWorkerScheduler,
+  createPeriodicSyncHandler,
 } from 'weft/service-worker';
 ```
 
@@ -312,20 +311,21 @@ self.addEventListener('fetch', createFetchHandler({ engine, pathPrefix: '/weft/'
 
 ```ts partial
 function createPeriodicSyncHandler(
-  scheduler: ServiceWorkerScheduler,
+  scheduler: { tick(): Promise<void> },
   tag?: string,
-): (event: PeriodicSyncEvent) => void;
+): (event: { tag: string; waitUntil(promise: Promise<unknown>): void }) => void;
 ```
 
-Returns a `periodicsync` event listener. When the event tag matches (default `'weft-timers'`), the listener calls `event.waitUntil()` with the scheduler's timer processing.
-
-| Parameter   | Type                     | Default         | Description                                      |
-| ----------- | ------------------------ | --------------- | ------------------------------------------------ |
-| `scheduler` | `ServiceWorkerScheduler` | (required)      | The scheduler instance that manages timer wakeup |
-| `tag`       | `string`                 | `'weft-timers'` | Periodic sync tag to match against               |
+Returns a `periodicsync` event listener. The default tag is `'weft-timers'`. Matching events call `scheduler.tick()` inside `event.waitUntil(...)`; non-matching events are ignored.
 
 ```ts partial
-self.addEventListener('periodicsync', createPeriodicSyncHandler(scheduler));
+self.addEventListener('periodicsync', createPeriodicSyncHandler(engine.scheduler));
+```
+
+Pass a custom tag when the page registers a non-default Periodic Background Sync tag:
+
+```ts partial
+self.addEventListener('periodicsync', createPeriodicSyncHandler(engine.scheduler, 'custom-timers'));
 ```
 
 ---
@@ -352,45 +352,21 @@ self.addEventListener('activate', activate);
 
 ---
 
-### `ServiceWorkerScheduler`
+### Timer wakeup
+
+Use `createPeriodicSyncHandler()` or the engine's public scheduler from the Service Worker event handler:
 
 ```ts partial
-class ServiceWorkerScheduler
+self.addEventListener('periodicsync', createPeriodicSyncHandler(engine.scheduler));
 ```
 
-Manages timer wakeup in the Service Worker environment. Checks storage for expired timers and fires them via the provided callback.
-
-#### Constructor
+The manual equivalent is:
 
 ```ts partial
-new ServiceWorkerScheduler(options: ServiceWorkerSchedulerOptions)
-```
-
-```ts partial
-interface ServiceWorkerSchedulerOptions {
-  storage: Storage;
-  onTimerFired: (entry: TimerEntry) => void | Promise<void>;
-  registration?: ServiceWorkerRegistration;
-  periodicSyncTag?: string;
-  fallbackIntervalMilliseconds?: number;
-  getNow?: () => number;
-}
-```
-
-| Option                         | Type                                           | Default         | Description                                          |
-| ------------------------------ | ---------------------------------------------- | --------------- | ---------------------------------------------------- |
-| `storage`                      | `Storage`                                      | (required)      | Storage instance for reading timer entries           |
-| `onTimerFired`                 | `(entry: TimerEntry) => void \| Promise<void>` | (required)      | Callback invoked when a timer expires                |
-| `registration`                 | `ServiceWorkerRegistration`                    | `undefined`     | Service Worker registration for periodic sync        |
-| `periodicSyncTag`              | `string`                                       | `'weft-timers'` | Tag used when registering periodic background sync   |
-| `fallbackIntervalMilliseconds` | `number`                                       | `1000`          | Polling interval when periodic sync is not available |
-| `getNow`                       | `() => number`                                 | `Date.now`      | Clock function for testing                           |
-
-When Periodic Background Sync is available, the browser wakes the Service Worker at the registered interval. When it is not available (Firefox, Safari), the scheduler falls back to `setTimeout`-based polling, which only works while a tab is open.
-
-```ts partial
-const scheduler = new ServiceWorkerScheduler({
-  storage,
-  onTimerFired: (entry) => engine.processTimer(entry),
+self.addEventListener('periodicsync', (event) => {
+  if (event.tag !== 'weft-timers') return;
+  event.waitUntil(engine.scheduler.tick());
 });
 ```
+
+Register the matching tag from page code with `registration.periodicSync.register(...)`. See the [Service Worker guide](../guides/service-worker.md) for the full browser setup.

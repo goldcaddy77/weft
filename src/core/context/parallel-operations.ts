@@ -363,10 +363,7 @@ export function* runAll<T extends Record<string, [Function, ...unknown[]]>>(
   // Write a fully-fulfilled v2 entry on success so resume sees a proper
   // cache entry regardless of execution mode.
   const record = result as Record<string, unknown>;
-  context.accumulatedResults.set(
-    step,
-    buildFulfilledRunAllEntry(record, branchNames, operationId),
-  );
+  context.accumulatedResults.set(step, buildFulfilledRunAllEntry(record, branchNames, operationId));
   return result as Record<keyof T, unknown>;
 }
 
