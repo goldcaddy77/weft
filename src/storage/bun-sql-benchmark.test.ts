@@ -28,11 +28,7 @@ function generateCheckpointValue(): Uint8Array {
  * samples so it still catches order-of-magnitude regressions without flaking
  * on an otherwise healthy loaded machine.
  */
-const TARGET_WRITES_PER_SECOND = isConstrainedCodexRunner()
-  ? 5_000
-  : process.env['CI']
-    ? 10_000
-    : 20_000;
+const TARGET_WRITES_PER_SECOND = isConstrainedCodexRunner() ? 5_000 : 20_000;
 const BATCH_WRITE_SAMPLE_SIZE = 3;
 
 function median(values: number[]): number {
