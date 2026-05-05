@@ -65,6 +65,7 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     input: unknown;
     checkpoint: ArrayBuffer;
     nestingDepth?: number;
+    executionStateOwnerId?: string;
     startedAt?: number;
     sleepReferenceTime?: number;
     deadline?: number;
@@ -84,6 +85,7 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
       workflowType: parameters.workflowType,
       checkpoint: parameters.checkpoint,
       input: parameters.input,
+      executionStateOwnerId: parameters.executionStateOwnerId ?? parameters.workflowId,
     };
     if (parameters.deadline !== undefined) {
       message.deadline = parameters.deadline;

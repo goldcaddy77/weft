@@ -15,7 +15,7 @@ const WORKFLOW_OWNED_PREFIXES = [
   'wf-headers:',
   'offload:',
   'archive:',
-  'shared:',
+  'state:execution:',
   'blob:',
   'tool-effect:',
   'upd:',

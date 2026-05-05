@@ -8,7 +8,6 @@ import {
 } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { decode, encode } from './codec.ts';
-import { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import { buildTimerBatchOperations } from './scheduler.ts';
 import { QuotaExceededError, TenantQuotaManager } from './tenant-quotas.ts';
@@ -194,7 +193,7 @@ function createEngine(parameters?: {
       input !== null && typeof input === 'object' && 'payload' in input
         ? (input as { payload?: string }).payload
         : undefined;
-    yield* (context as Context).waitForSignal('release');
+    yield* context.waitForSignal('release');
     return payload ?? 'released';
   });
 
@@ -633,7 +632,7 @@ describe('tenant resource quotas', () => {
     const activityResult = Promise.withResolvers<string>();
 
     engine.register('slow-tenant-completion', async function* (context: WorkflowContext) {
-      const result = yield* (context as Context).run(async () => {
+      const result = yield* context.run(async () => {
         activityStarted.resolve();
         return activityResult.promise;
       });

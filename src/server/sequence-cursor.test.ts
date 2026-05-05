@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -59,7 +58,7 @@ it('All live views share the same sequence and cursor semantics. Replay, resume,
   const engine = new Engine({ storage });
   engines.push(engine);
   engine.register('multi', async function* (ctx: WorkflowContext, _input: unknown) {
-    const context = ctx as Context;
+    const context = ctx;
     yield* context.run(async () => 'step-1');
     yield* context.run(async () => 'step-2');
     return yield* context.run(async () => 'done');

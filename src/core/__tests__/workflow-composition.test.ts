@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
 import { TestEngine } from '../../testing/test-engine.ts';
-import { Context } from '../context.ts';
 import { Engine } from '../engine.ts';
 import { tenantFromInputField } from '../tenant.ts';
 import type { WorkflowContext, WorkflowReduceInput } from '../types.ts';
@@ -49,7 +48,7 @@ describe('workflow composition operators', () => {
 
     async function* secondStage(ctx: WorkflowContext, input: unknown) {
       secondStageRuns++;
-      yield* (ctx as Context).sleep('1s');
+      yield* ctx.sleep('1s');
       throw new Error(`stage failed:${String(input)}`);
     }
 
@@ -68,7 +67,7 @@ describe('workflow composition operators', () => {
     engine.register(
       'pipeline-failure-parent',
       async function* (ctx: WorkflowContext, input: unknown) {
-        const context = ctx as Context;
+        const context = ctx;
 
         try {
           return yield* ctx.pipe(
@@ -91,7 +90,7 @@ describe('workflow composition operators', () => {
     recovered.register(
       'pipeline-failure-parent',
       async function* (ctx: WorkflowContext, input: unknown) {
-        const context = ctx as Context;
+        const context = ctx;
 
         try {
           return yield* ctx.pipe(
@@ -176,6 +175,70 @@ describe('workflow composition operators', () => {
     );
   });
 
+  it('child workflow reuse does not cross execution-state owners', async () => {
+    const engine = new TestEngine();
+
+    async function* echoStage(_ctx: WorkflowContext, input: unknown) {
+      return { echoed: input };
+    }
+
+    engine.register('echo-stage', echoStage);
+    engine.register('first-execution-parent', async function* (ctx: WorkflowContext) {
+      return yield* ctx.pipe([{ type: echoStage, options: { id: 'shared-child' } }], 'same');
+    });
+    engine.register('second-execution-parent', async function* (ctx: WorkflowContext) {
+      return yield* ctx.pipe([{ type: echoStage, options: { id: 'shared-child' } }], 'same');
+    });
+
+    const firstHandle = await engine.start('first-execution-parent', null, {
+      id: 'first-parent',
+    });
+    await expect(firstHandle.result()).resolves.toEqual({ echoed: 'same' });
+
+    const secondHandle = await engine.start('second-execution-parent', null, {
+      id: 'second-parent',
+    });
+    await expect(secondHandle.result()).rejects.toThrow(
+      'Child workflow id collision for "shared-child" does not match the requested child workflow',
+    );
+  });
+
+  it('child workflow id collisions do not leak nesting depth into later workflow starts', async () => {
+    const engine = new Engine({ maxNestingDepth: 1 });
+
+    async function* echoStage(_ctx: WorkflowContext, input: unknown) {
+      return { echoed: input };
+    }
+
+    engine.register('echo-stage', echoStage);
+    engine.register('first-parent', async function* (ctx: WorkflowContext) {
+      return yield* ctx.pipe([{ type: echoStage, options: { id: 'shared-child' } }], 'same');
+    });
+    engine.register('collision-parent', async function* (ctx: WorkflowContext) {
+      return yield* ctx.pipe([{ type: echoStage, options: { id: 'shared-child' } }], 'different');
+    });
+    engine.register('unrelated-parent', async function* (ctx: WorkflowContext) {
+      return yield* ctx.pipe([{ type: echoStage }], 'unrelated');
+    });
+
+    const firstHandle = await engine.start('first-parent', null, {
+      id: 'first-parent',
+    });
+    await expect(firstHandle.result()).resolves.toEqual({ echoed: 'same' });
+
+    const collisionHandle = await engine.start('collision-parent', null, {
+      id: 'collision-parent',
+    });
+    await expect(collisionHandle.result()).rejects.toThrow(
+      'Child workflow id collision for "shared-child" does not match the requested child workflow',
+    );
+
+    const unrelatedHandle = await engine.start('unrelated-parent', null, {
+      id: 'unrelated-parent',
+    });
+    await expect(unrelatedHandle.result()).resolves.toEqual({ echoed: 'unrelated' });
+  });
+
   it('Track 7c: ctx.map honors the concurrency limit while keeping input order', async () => {
     const engine = new TestEngine({ startTime: 0 });
 
@@ -185,7 +248,7 @@ describe('workflow composition operators', () => {
     async function* delayedStage(ctx: WorkflowContext, input: unknown) {
       activeChildren++;
       maxActiveChildren = Math.max(maxActiveChildren, activeChildren);
-      yield* (ctx as Context).sleep('1s');
+      yield* ctx.sleep('1s');
       activeChildren--;
       return Number(input) * 10;
     }
@@ -213,13 +276,13 @@ describe('workflow composition operators', () => {
 
     async function* delayedStage(ctx: WorkflowContext, input: unknown) {
       childRuns.push(Number(input));
-      yield* (ctx as Context).sleep('1s');
+      yield* ctx.sleep('1s');
       return Number(input) * 10;
     }
 
     engine.register('delayed-stage', delayedStage);
     engine.register('map-recovery-parent', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
       const mapped = yield* ctx.map([1, 2, 3], 'delayed-stage', { concurrency: 1 });
       yield* context.sleep('1s');
       return mapped;
@@ -235,7 +298,7 @@ describe('workflow composition operators', () => {
     const recovered = engine.recover();
     recovered.register('delayed-stage', delayedStage);
     recovered.register('map-recovery-parent', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
       const mapped = yield* ctx.map([1, 2, 3], 'delayed-stage', { concurrency: 1 });
       yield* context.sleep('1s');
       return mapped;
@@ -377,23 +440,22 @@ describe('workflow composition operators', () => {
     }
 
     engine.register('echo-stage', echoStage);
-    engine.register('first-parent', async function* (ctx: WorkflowContext) {
-      return yield* ctx.pipe([{ type: echoStage, options: { id: 'shared-child' } }], {
+    engine.register('same-execution-parent', async function* (ctx: WorkflowContext) {
+      const first = yield* ctx.pipe([{ type: echoStage, options: { id: 'shared-child' } }], {
         alpha: 1,
         beta: 2,
       });
-    });
-    engine.register('second-parent', async function* (ctx: WorkflowContext) {
-      return yield* ctx.pipe([{ type: echoStage, options: { id: 'shared-child' } }], {
+      const second = yield* ctx.pipe([{ type: echoStage, options: { id: 'shared-child' } }], {
         beta: 2,
         alpha: 1,
       });
+      return { first, second };
     });
 
-    const firstHandle = await engine.start('first-parent', null);
-    await expect(firstHandle.result()).resolves.toEqual({ alpha: 1, beta: 2 });
-
-    const secondHandle = await engine.start('second-parent', null);
-    await expect(secondHandle.result()).resolves.toEqual({ alpha: 1, beta: 2 });
+    const handle = await engine.start('same-execution-parent', null);
+    await expect(handle.result()).resolves.toEqual({
+      first: { alpha: 1, beta: 2 },
+      second: { alpha: 1, beta: 2 },
+    });
   });
 });

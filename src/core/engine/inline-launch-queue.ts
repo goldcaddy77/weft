@@ -87,6 +87,7 @@ async function startQueuedInlineWorkflowExecution(
       start.checkpoint,
       start.nestingDepth,
       start.executionDeadline,
+      start.executionStateOwnerId,
       start.tenant,
     );
 

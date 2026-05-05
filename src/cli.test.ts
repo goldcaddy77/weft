@@ -1462,8 +1462,8 @@ describe('executeTimeline', () => {
       engine.register('cli-timeline', {
         version: '7.0.0',
         handler: async function* (ctx) {
-          yield* (ctx as import('./core/context.ts').Context).run(firstCliStep);
-          return yield* (ctx as import('./core/context.ts').Context).run(secondCliStep);
+          yield* ctx.run(firstCliStep);
+          return yield* ctx.run(secondCliStep);
         },
       });
 
@@ -1523,8 +1523,8 @@ describe('executeTimeline', () => {
 
       engine.register('cli-timeline-failed', {
         handler: async function* (ctx) {
-          yield* (ctx as import('./core/context.ts').Context).run(prepareCliFailure);
-          return yield* (ctx as import('./core/context.ts').Context).run(failCliTimeline);
+          yield* ctx.run(prepareCliFailure);
+          return yield* ctx.run(failCliTimeline);
         },
       });
 

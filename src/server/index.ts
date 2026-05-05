@@ -271,8 +271,8 @@ const RECONCILIATION_MULTIPLIER = 12;
  * import { serve } from 'weft/server';
  *
  * await using engine = new Engine({ storage: new MemoryStorage() });
- * engine.register('greet', async function* (ctx: import('weft').WorkflowContext, input: unknown) {
- *   return `Hello, ${(input as { name: string }).name}!`;
+ * engine.register('greet', async function* (ctx: import('weft').WorkflowContext, input: { name: string }) {
+ *   return `Hello, ${input.name}!`;
  * });
  *
  * await using server = serve({ engine, port: 7233 });

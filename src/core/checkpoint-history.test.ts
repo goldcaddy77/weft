@@ -4,7 +4,6 @@ import { sleepForTesting } from '../testing/fake-timers.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { serializeCheckpoint } from './checkpoint.ts';
-import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import {
   CURRENT_CHECKPOINT_SCHEMA_VERSION,
@@ -62,7 +61,7 @@ function createMultiStepEngine(
 
   engine.register('multi-step', async function* (ctx: WorkflowContext) {
     for (let i = 0; i < steps; i++) {
-      yield* (ctx as Context).run(noop);
+      yield* ctx.run(noop);
     }
     return 'done';
   });
@@ -234,9 +233,9 @@ describe('checkpoint history', () => {
       // Register a workflow that does several steps then blocks on a signal
       engine.register('steps-then-wait', async function* (ctx: WorkflowContext) {
         for (let i = 0; i < 6; i++) {
-          yield* (ctx as Context).run(noop);
+          yield* ctx.run(noop);
         }
-        yield* (ctx as Context).waitForSignal('done');
+        yield* ctx.waitForSignal('done');
         return 'ok';
       });
 
@@ -266,9 +265,9 @@ describe('checkpoint history', () => {
 
       engine.register('steps-then-wait', async function* (ctx: WorkflowContext) {
         for (let i = 0; i < 5; i++) {
-          yield* (ctx as Context).run(noop);
+          yield* ctx.run(noop);
         }
-        yield* (ctx as Context).waitForSignal('done');
+        yield* ctx.waitForSignal('done');
         return 'ok';
       });
 
@@ -337,7 +336,7 @@ describe('checkpoint history', () => {
       engine = new Engine({ storage, checkpointHistory: 10 });
 
       engine.register('wait-forever', async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('never-arrives');
+        yield* ctx.waitForSignal('never-arrives');
         return 'never';
       });
 

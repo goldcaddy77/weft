@@ -4,11 +4,12 @@ import type { AgentDefinition } from '../../ai/declaration.ts';
 import { ReviewCoordinator, type ReviewRequest } from '../../ai/human-review.ts';
 import { AlertManager } from '../../alerting/alert-manager.ts';
 import { CompressedStorage } from '../../storage/compressed-storage.ts';
-import type { Storage as WeftStorage } from '../../storage/interface.ts';
+import { KEYS, type Storage as WeftStorage } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { ActivityWorkerDispatcher } from '../../workers/activity-worker-dispatcher.ts';
 import { WorkerPool } from '../../workers/pool.ts';
 import { ActivityRegistry, type ActivityRegistrationOptions } from '../activity-registry.ts';
+import { AtomicState, type AtomicStateOptions } from '../atomic-state.ts';
 import type { StoredStreamChunk } from '../context.ts';
 import { createExpiredResponseCleanupTick, createHandleCacheFinalizer } from '../engine-helpers.ts';
 import { InlineExecutionStrategy } from '../inline-execution-strategy.ts';
@@ -18,6 +19,7 @@ import { TenantQuotaManager } from '../tenant-quotas.ts';
 import {
   DEFAULT_RETENTION_SWEEP_BATCH_SIZE,
   DEFAULT_RETENTION_SWEEP_INTERVAL_MS,
+  type ActivityTypes,
   type BulkCancelResult,
   type BulkDeleteResult,
   type BulkSignalResult,
@@ -30,6 +32,7 @@ import {
   type ListFilter,
   type PaginatedResult,
   type PurgeResult,
+  type RegisteredActivityFunction,
   type RetentionOverview,
   type ScheduleAccessOptions,
   type ScheduleFilter,
@@ -40,10 +43,14 @@ import {
   type StepWorkflowFunction,
   type SubmitReviewOptions,
   type TenantQuotaUsage,
+  type UnregisteredName,
   type WorkerOutboundMessage,
   type WorkflowEvent,
   type WorkflowFunction,
+  type WorkflowInput,
+  type WorkflowOutput,
   type WorkflowRegistration,
+  type WorkflowRegistry,
   type WorkflowReplay,
   type WorkflowState,
   type WorkflowSummary,
@@ -198,11 +205,6 @@ export type {
   WorkflowFeedSelector,
 } from './workflow-feed.ts';
 
-declare global {
-  interface SymbolConstructor {
-    readonly observable: unique symbol;
-  }
-}
 /**
  * Options accepted by `Engine.register` when registering an agent definition.
  * Configures the LLM provider for the agent's runtime calls.
@@ -217,6 +219,36 @@ declare global {
  */
 export interface AgentRegistrationOptions {
   provider: LLMProvider;
+}
+
+/**
+ * Admin-facing factories for storage-backed {@link AtomicState} handles.
+ * Workflow code should prefer `ctx.state.*`; external maintenance and
+ * administrative code can use `engine.state.*` with explicit scope inputs.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type EngineStateNamespace } from 'weft';
+ *
+ * const engine = new Engine();
+ * const state: EngineStateNamespace = engine.state;
+ * const counter = state.tenant<number>('acme', 'count', { initial: 0 });
+ * void counter;
+ * ```
+ */
+export interface EngineStateNamespace {
+  execution<T>(
+    ownerWorkflowId: string,
+    key: string,
+    options?: AtomicStateOptions<T>,
+  ): AtomicState<T>;
+  workflow<T>(
+    tenantId: string,
+    workflowType: string,
+    key: string,
+    options?: AtomicStateOptions<T>,
+  ): AtomicState<T>;
+  tenant<T>(tenantId: string, key: string, options?: AtomicStateOptions<T>): AtomicState<T>;
 }
 
 function resolveEngineStorage(
@@ -359,7 +391,7 @@ export const ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING = Symbol('engineSignalWaiter
  * });
  * const engine = new Engine();
  * engine.register('greet', async function* (ctx: WorkflowContext, input: unknown) {
- *   const user = yield* (ctx as Context).run(fetchUser, input);
+ *   const user = yield* ctx.run(fetchUser, input);
  *   return `Hello, ${user.name}`;
  * });
  * const handle = await engine.start('greet', 'user-1');
@@ -413,6 +445,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     getInternals(this).broadcastChannel = null;
     getInternals(this).pendingNestingDepth = undefined;
     getInternals(this).pendingParentHeaders = undefined;
+    getInternals(this).pendingExecutionStateOwnerId = undefined;
     getInternals(this).workflowNestingDepths = new Map();
     getInternals(this).workflowHeaders = new Map();
     getInternals(this).workflowStateWriteChains = new Map();
@@ -547,6 +580,26 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#createRegistrationCallbacks(),
     );
   }
+  get state(): EngineStateNamespace {
+    const storage = getInternals(this).storage;
+    return {
+      execution: <T>(
+        ownerWorkflowId: string,
+        key: string,
+        options?: AtomicStateOptions<T>,
+      ): AtomicState<T> =>
+        new AtomicState<T>(storage, KEYS.stateExecution(ownerWorkflowId, key), options),
+      workflow: <T>(
+        tenantId: string,
+        workflowType: string,
+        key: string,
+        options?: AtomicStateOptions<T>,
+      ): AtomicState<T> =>
+        new AtomicState<T>(storage, KEYS.stateWorkflow(tenantId, workflowType, key), options),
+      tenant: <T>(tenantId: string, key: string, options?: AtomicStateOptions<T>): AtomicState<T> =>
+        new AtomicState<T>(storage, KEYS.stateTenant(tenantId, key), options),
+    };
+  }
   async #handleStrategyMessage(message: WorkerOutboundMessage): Promise<void> {
     return handleStrategyMessageFromInternals(
       getInternals(this),
@@ -558,12 +611,31 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return broadcastFromInternals(getInternals(this), message, this.#createBroadcastCallbacks());
   }
 
-  register<TInput = unknown, TOutput = unknown>(
-    name: string,
+  register<TName extends Extract<keyof WorkflowRegistry, string>>(
+    name: TName,
+    handler:
+      | WorkflowFunction<
+          WorkflowInput<WorkflowRegistry, TName>,
+          WorkflowOutput<WorkflowRegistry, TName>
+        >
+      | StepWorkflowFunction<
+          WorkflowInput<WorkflowRegistry, TName>,
+          WorkflowOutput<WorkflowRegistry, TName>
+        >,
+  ): void;
+  register<TName extends Extract<keyof WorkflowRegistry, string>>(
+    name: TName,
+    registration: WorkflowRegistration<
+      WorkflowInput<WorkflowRegistry, TName>,
+      WorkflowOutput<WorkflowRegistry, TName>
+    >,
+  ): void;
+  register<TName extends string, TInput = unknown, TOutput = unknown>(
+    name: UnregisteredName<TName, Extract<keyof WorkflowRegistry, string>>,
     handler: WorkflowFunction<TInput, TOutput> | StepWorkflowFunction<TInput, TOutput>,
   ): void;
-  register<TInput = unknown, TOutput = unknown>(
-    name: string,
+  register<TName extends string, TInput = unknown, TOutput = unknown>(
+    name: UnregisteredName<TName, Extract<keyof WorkflowRegistry, string>>,
     registration: WorkflowRegistration<TInput, TOutput>,
   ): void;
   register(agentDef: AgentDefinition, options: AgentRegistrationOptions): void;
@@ -591,13 +663,30 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     getInternals(this).composedWorkflowInterceptor = undefined;
     getInternals(this).composedActivityInterceptor = undefined;
   }
-  registerActivity<TArguments extends unknown[], TResult>(
+  registerActivity<TName extends string, TArguments extends unknown[], TResult>(
+    name: TName,
+    fn: TName extends Extract<keyof ActivityTypes, string>
+      ? RegisteredActivityFunction<ActivityTypes, TName>
+      : (...arguments_: TArguments) => TResult,
+    options?: ActivityRegistrationOptions,
+  ): void;
+  registerActivity(
     name: string,
-    fn: (...arguments_: TArguments) => TResult,
+    fn: (...arguments_: unknown[]) => unknown,
     options?: ActivityRegistrationOptions,
   ): void {
     getInternals(this).activityRegistry.register(name, fn, options);
   }
+  async start<TName extends Extract<keyof WorkflowRegistry, string>>(
+    type: TName,
+    input: WorkflowInput<WorkflowRegistry, TName>,
+    options?: StartOptions,
+  ): Promise<WorkflowHandle<WorkflowOutput<WorkflowRegistry, TName>>>;
+  async start<TName extends string>(
+    type: UnregisteredName<TName, Extract<keyof WorkflowRegistry, string>>,
+    input: unknown,
+    options?: StartOptions,
+  ): Promise<WorkflowHandle>;
   async start(type: string, input: unknown, options?: StartOptions): Promise<WorkflowHandle> {
     return startWorkflowFromLifecycle(
       getInternals(this),
@@ -920,6 +1009,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     internals.sleepResolvers.clear();
     internals.sleepResolversByWorkflow.clear();
     internals.checkpoints.clear();
+    internals.pendingExecutionStateOwnerId = undefined;
     internals.workflowNestingDepths.clear();
     internals.workflowHeaders.clear();
     internals.pendingStarts.clear();

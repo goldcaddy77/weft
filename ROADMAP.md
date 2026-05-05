@@ -6,15 +6,15 @@ A running list of issues, gaps, and follow-ups discovered while reading through 
 
 This section unifies the public type surface, ergonomics, and definition helpers. Everything here is pre-1.0 hard rename — no aliases, no codemod, no changelog warnings.
 
-- [ ] **Eliminate the `(ctx as Context)` cast pattern: widen `WorkflowContext` to be the full handler surface.** 🚨
+- [x] **Eliminate the `(ctx as Context)` cast pattern: widen `WorkflowContext` to be the full handler surface.** 🚨
 
-  **Where:** `src/core/types.ts:1184-1228` (the interface and its JSDoc that prescribes the cast), `src/core/context.ts:610` (the `Context` class). Pervasive in JSDoc and `documentation/guides/workflows.md:222` and elsewhere.
+  **Where:** `src/core/types/workflow-context.ts` (the widened workflow authoring interface), `src/core/context/index.ts` (the `Context` class). Pervasive in JSDoc and `documentation/guides/workflows.md` and elsewhere.
 
   Today `WorkflowContext` exposes only identity and composition operators; it _excludes_ `run`, `sleep`, `waitForSignal`, `startChild`, `all`, `race`, `offload`, `archive`, `agent`, `setAttribute`, `stream`, `suspendUntil`, `humanReview`. So `ctx.run(...)` fails to typecheck in handler signatures, and the project's own JSDoc prescribes `(ctx as Context).run(...)` — directly contradicting the codebase's "treat `as` with suspicion" rule.
 
   Widen `WorkflowContext` to the full handler surface (mirror every public method on `Context`). Verify `Context implements WorkflowContext` still holds. Remove every `(ctx as Context)` cast from JSDoc, source, and docs. Replace the JSDoc header rationale with a one-liner. Add a lint rule flagging `as Context` casts inside handlers.
 
-- [ ] **Replace `input: unknown` + `as` casts with idiomatic inline parameter annotations across every payload-accepting API.**
+- [x] **Replace `input: unknown` + `as` casts with idiomatic inline parameter annotations across every payload-accepting API.**
 
   **The decision:** inline parameter annotations (Option B) are the everyday default; `Engine<TRegistry>` (Option C) is the opt-in upgrade for cross-call typing. Both coexist.
 
@@ -80,16 +80,17 @@ This section unifies the public type surface, ergonomics, and definition helpers
 
   Replace the tag enum with the JSON Schema fragments produced by `searchAttribute()`. `'datetime'` becomes `{ type: 'string', format: 'date-time' }`; `'keyword_list'` becomes `{ type: 'array', items: { type: 'string' } }`. Filter coercion logic in `engine.list` reads the schema fragment instead of the tag. Test that the existing search-attribute behavior (string indexing, date-range filters, array containment) is preserved across the cleanup.
 
-- [ ] **Redesign `SharedState` from first principles: three named primitives with scope in the name.** 🚨
+- [x] **Redesign the durable state API from first principles: a scoped `ctx.state` ladder.** 🚨
 
-  **Severity: high.** The current class promises cross-workflow sharing (the name says so) but its tests demonstrate single-workflow private state — storage keys are `shared:${workflowId}:${stateKey}`. Two workflow runs each passing `ctx.workflowId` write to different keys and share nothing. Users get burned silently.
+  **Severity: high.** The previous API promised cross-workflow sharing but its tests demonstrated single-workflow private state because the storage key included the current workflow id. Two workflow runs each passing `ctx.workflowId` wrote to different keys and shared nothing. Users got burned silently.
 
-  **The redesign — three primitives, scope in the name:**
-  - **`tenantState<T>(key, options?)`** — every workflow in a tenant shares this. Storage key: `state:tenant:${tenantId}:${key}`.
-  - **`workflowTypeState<T>(workflowType, key, options?)`** — every execution of a given workflow type within a tenant shares this. Storage key: `state:type:${tenantId}:${workflowType}:${key}`.
-  - **`ctx.runState<T>(key, options?)`** — between a workflow execution and its children/concurrent branches. Storage key: `state:run:${ctx.workflowId}:${key}`.
+  **The redesign — one namespace, explicit scope ladder:**
+  - **`ctx.state.session<T>(key, options?)`** — checkpoint-local state private to the current workflow execution.
+  - **`ctx.state.execution<T>(key, options?)`** — shared by a parent workflow, durable child workflows, and concurrent branches. Storage key: `state:execution:${ownerWorkflowId}:${key}`.
+  - **`ctx.state.workflow<T>(key, options?)`** — shared by every execution of the current workflow type within a tenant. Storage key: `state:workflow:${tenantId}:${workflowType}:${key}`.
+  - **`ctx.state.tenant<T>(key, options?)`** — shared by every workflow in a tenant. Storage key: `state:tenant:${tenantId}:${key}`.
 
-  Tenant ID resolves from the engine's tenant resolver (or `ctx.tenant`); throws clearly if no tenant context. The current `SharedState` class stays as the underlying primitive (rename to `AtomicState` — more accurate, atomicity via CAS is the actual guarantee) and as the escape hatch for custom scopes.
+  Tenant ID resolves from the engine's tenant resolver (or `ctx.tenant`); throws clearly if no tenant context. Non-session scopes are also available for admin use through `engine.state.execution(ownerWorkflowId, key, options?)`, `engine.state.workflow(tenantId, workflowType, key, options?)`, and `engine.state.tenant(tenantId, key, options?)`. The old class is removed and replaced by `AtomicState` — more accurate, atomicity via CAS is the actual guarantee.
 
   **Other changes:**
   1. **`initial: T` at construction**, not on every call site. `.get()` returns `initial` if no value written; `undefined` if no `initial` and no value written.
@@ -97,28 +98,28 @@ This section unifies the public type surface, ergonomics, and definition helpers
   3. **Convenience methods over `.update()`** (no Proxy — hides asynchrony, breaks compound expressions). Always: `.get()`, `.update(fn)`, `.set(value)`, `.delete()`. For numeric `T`: `.increment(by?)`, `.decrement(by?)`. For object `T`: `.merge(partial)`. For array `T`: `.append(item)`, `.removeFirst()`, `.removeLast()`. CAS-on-delete is the safe form.
   4. **Tests** must prove tenant-wide sharing _and_ tenant isolation _and_ type-scoped sharing _and_ run-scoped sharing. Existing tests pass `'wf-1'` everywhere — single-namespace correctness only.
 
-  Rewrite `documentation/guides/shared-state.md`. Audit `offload`, `archive`, anything else taking a `workflowId` parameter outside a workflow context for the same disease. Pre-release, hard cut.
+  Rewrite the state documentation around `ctx.state`, remove the old session-state method, and audit `offload`, `archive`, anything else taking a `workflowId` parameter outside a workflow context for the same disease. Pre-release, hard cut.
 
   **Out of scope:** Proxy form, cross-process change notifications, automatic lifecycle binding, schema validation on writes (covered by Standard Schema item), Immer-style transactional draft.
 
 ## 2. Cross-Process Type Generation
 
-- [ ] **Add typed `ctx.run` and `engine.start` via a module-augmentation activity registry.**
+- [x] **Add typed `ctx.run` and `engine.start` via a module-augmentation activity registry.**
 
-  **Where:** `src/core/context.ts:942` (`ctx.run`), `src/core/engine.ts` (`start` / `registerActivity` typings), `src/core/types.ts` (where `WorkflowRegistry` already lives).
+  **Where:** `src/core/context/index.ts` (`ctx.run`), `src/core/engine/index.ts` (`start` / `registerActivity` typings), `src/core/types/workflow-registries.ts` (`WorkflowRegistry` and `ActivityTypes`).
 
   Mirror `WorkflowRegistry`. User declares once:
 
   ```ts
   declare module 'weft' {
-    interface ActivityRegistry {
+    interface ActivityTypes {
       greet: (name: string) => Promise<string>;
       sendEmail: (to: string, subject: string) => Promise<{ id: string }>;
     }
   }
   ```
 
-  `ctx.run` gets a string-name overload that consults the registry. Closure form (`ctx.run(greet, 'Steve')`) keeps working. Zero runtime change, additive at the type level. Companion to the codegen item below — codegen produces the augmentation; typed `ctx.run` consumes it.
+  `ctx.run` gets a string-name overload that consults the registry. Closure form (`ctx.run(greet, 'Steve')`) keeps working. Completion note: the activity augmentation target is `ActivityTypes` to avoid colliding with the public runtime `ActivityRegistry` class; string-name `ctx.run` now dispatches through registered activity names. Companion to the codegen item below — codegen produces the augmentation; typed `ctx.run` consumes it.
 
 - [ ] **Expose JSON Schema registries from the server.**
 
@@ -136,7 +137,7 @@ This section unifies the public type surface, ergonomics, and definition helpers
   bunx weft codegen --server https://weft.internal:7233 --token "$WEFT_TOKEN" --out src/weft.generated.d.ts
   ```
 
-  Fetches the registry, validates against an expected Zod shape, emits a single `.d.ts` with module augmentation for `WorkflowRegistry` and `ActivityRegistry`. Banner header (`// Generated by weft codegen — DO NOT EDIT. Source: <url> at <timestamp>`); deterministic byte-identical output for stable diffs; alphabetically-sorted keys; idempotent writes. JSON Schema → TypeScript via `json-schema-to-typescript`. Optional `tsc --noEmit` validation post-write — schema producing invalid TS is a server-side bug, fail fast.
+  Fetches the registry, validates against an expected Zod shape, emits a single `.d.ts` with module augmentation for `WorkflowRegistry` and `ActivityTypes`. Banner header (`// Generated by weft codegen — DO NOT EDIT. Source: <url> at <timestamp>`); deterministic byte-identical output for stable diffs; alphabetically-sorted keys; idempotent writes. JSON Schema → TypeScript via `json-schema-to-typescript`. Optional `tsc --noEmit` validation post-write — schema producing invalid TS is a server-side bug, fail fast.
 
   Auth via `--token`, env var `WEFT_TOKEN`, or `~/.weft/credentials`. `--config <path>` for JSON or TS config files (mirrors `prisma generate`, `drizzle-kit`, `openapi-typescript`). `--watch` polls for change; `--from <path>` reads from local file (offline / vendored). `--target` flag designed for future `python` / `go` emitters; v1 ships TypeScript only. Multi-server via running the command multiple times (v1 simplicity).
 
@@ -203,7 +204,9 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
 
 - [ ] **Formally specify the `RemoteWorker` wire protocol so SDKs in other languages can implement it.**
 
-  **Where:** new `documentation/specifications/remote-worker-protocol.md`. Driven from existing `src/worker/index.ts` (registration, dispatch, heartbeat) and `src/server/json-rpc-websocket.ts` (server side).
+  > **Partial progress:** spec doc shipped at `documentation/reference/remote-worker-protocol.md` (note: filed under `reference/` rather than `specifications/` to match existing docs conventions). Conformance test suite, drift-prevention test, and `protocolVersion` field still pending.
+
+  **Where:** `documentation/reference/remote-worker-protocol.md`. Driven from existing `src/worker/index.ts` (registration, dispatch, heartbeat) and `src/server/json-rpc-websocket.ts` (server side).
 
   Document:
   1. **Message envelope and types.** Worker → Server: `register`, `heartbeat`, `task_complete`, `task_failed`, `task_progress`. Server → Worker: `task`, `cancel`, `disconnect`. Full payload shape, required vs. optional fields, semantics of empty vs. omitted fields.
@@ -217,7 +220,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
 
   Stable on-the-wire field names (TS-side renames don't affect wire format). Forward-compatible — additions only, never renames or repurposings. Pick `snake_case` _or_ `camelCase` consistently (audit current).
 
-- [ ] **Document "workflows are TypeScript-only by design" via an ADR + README + architecture pages.**
+- [x] **Document "workflows are TypeScript-only by design" via an ADR + README + architecture pages.**
 
   **Where:**
   - `documentation/contributing/architecture-decisions/0001-workflows-typescript-only.md` — full ADR recording Status, Context (checkpoint-not-replay model), the constraint (generators not serializable across processes), the implication (engine drives the generator end-to-end in one process), why this makes workflows TS-only (Python `async def` and JS `async function*` have different state machines; cross-language serialization of in-flight execution state cannot be done because no language runtime exposes execution state as a serializable artifact), the three theoretical paths considered (Path B replay-determinism rejected — abandons the defining design choice; Path C separate state-store rejected — collapses back to Path B; Path A chosen — workflows in engine, polyglot activities), Decision, Consequences, Forces, What Stays Open.
@@ -292,3 +295,27 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
   The guide exists and covers the lower-level Service Worker primitives, but `setupServiceWorker()` has since landed. Make the one-call helper the primary quickstart, then keep `createFetchHandler()`, `createLifecycleHandlers()`, `createPeriodicSyncHandler()`, and manual `engine.scheduler.tick()` wiring as the lower-level escape hatch.
 
   Keep the existing browser-runtime coverage: Service Worker persistence over IndexedDB, Periodic Background Sync support and fallbacks, lifecycle limitations, HTTPS requirements, path-prefix wiring, debugging, and common pitfalls.
+
+- [ ] **Hello World implies activities are closures; reality is they're named, registered units.**
+
+  Same files as above. Today's example writes `async function greet(name)` inline and passes it to `ctx.run(greet, user.name)`. That works only because everything's in one process. `ctx.run` captures `fn.name` and yields an operation keyed by that name (`src/core/context.ts:974-982`); the engine resolves it via `#activityRegistry.resolve(operation.activityName)` (`engine.ts:6686`). On the remote path, only the name + serialized args travel over the WebSocket — the closure-captured `fn` never runs.
+
+  Fix: in Hello World, either call `engine.registerActivity('greet', ...)` and reference by name, or keep the closure form with a one-line note pointing at Remote Workers. In `documentation/guides/activities.md`, lead with "activities are registered by name; `ctx.run` dispatches by name." Show the paired engine + worker shape end-to-end in the Remote Workers section.
+
+- [ ] **Write `documentation/guides/multi-tenancy.md` and link it from the README.**
+
+  **The gap:** the README has 12 lines on multi-tenancy (lines 237-250) showing `tenantFromInputField` and `tenantQuotas`, with no deeper guide. Tenant references are scattered across `documentation/guides/remote-workers.md` and `interceptors.md`.
+
+  **What the guide must cover:** conceptual model (logical isolation boundary); tenant resolution (`tenantFromInputField`, custom `tenantResolver`, default-tenant behavior, resolution failures); per-tenant quotas (`maxRunningWorkflows`, `workflowCreationRateLimit`, storage quotas — what's enforced where, what error surfaces, how to monitor); tenant scoping in agents (cross-link `documentation/agents/agent-declaration.md`'s `toolsForTenant`); tenant context in workflows (`ctx.tenant`, propagation to activities, interceptor visibility); storage isolation (`ScopedStorage`); deployment patterns (single-engine multi-tenant, per-tenant engines, hybrid); observability and auditing (tenant-tagged events / traces / metrics); security boundaries (what tenants cannot vs. can see across each other); common pitfalls (resolver returning wrong tenant, quotas hitting before user expects, cross-tenant signal injection, debugging "wrong tenant" incidents).
+
+  Cross-link to `agent-declaration.md`, `api-context.md`, `api-engine.md`, `configuration.md`, `remote-workers.md`, `interceptors.md`. Add a `[Multi-Tenancy](documentation/guides/multi-tenancy.md)` link to the README's Documentation/Guides bullet list and a one-line pointer at the end of the README's Multi-Tenancy section. Ship the guide and the README link in the same PR.
+
+- [x] **Write `documentation/guides/service-worker.md`.**
+
+  > File pre-existed; rewrite added the `setupServiceWorker()` quickstart, decision tree, browser support matrix, debugging, and pitfalls coverage the roadmap called for.
+
+  **Where:** new file. Cross-link from `documentation/architecture/browser-runtime.md` (currently the only walkthrough), `documentation/guides/server.md` (mentions in passing at line 206), README.
+
+  **What the guide must cover:** conceptual model (Service Worker as durable persistence backbone over IndexedDB; background timer wakeup via Periodic Background Sync; intercepts `fetch` for the engine's HTTP surface); quickstart using `setupServiceWorker()` (after section 7's helper lands); registration (`navigator.serviceWorker.register('/sw.js')`, registering workflows inside the worker, communicating from page code via the engine's HTTP surface); Periodic Background Sync (Chrome / Edge / Opera; not Firefox / Safari at time of writing — verify; fallback when unavailable is `setTimeout` polling that only works while a tab is open); limitations and gotchas (~30s idle termination, IndexedDB quota, first-install lifecycle race, HTTPS requirement except localhost, scope considerations); path prefix and the engine's HTTP surface (`pathPrefix` default `/weft/`); browser support matrix; debugging (Application tab, Update on reload, clearing storage); pairing with PWAs; common pitfalls (Periodic Background Sync not registered/supported being the most common, hot-reload causing reload loops, cross-tab state coordination via `BroadcastChannel`).
+
+  **Out of scope:** general Service Worker tutorials (link to MDN); PWA build tooling (Workbox, vite-plugin-pwa) — different concern, mention in passing; Web Workers (non-Service-Worker) — separate doc.

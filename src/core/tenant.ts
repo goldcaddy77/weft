@@ -113,7 +113,7 @@ export interface TenantResolver {
  *
  * engine.register('per-tenant', async function* (ctx: WorkflowContext) {
  *   // ctx.tenant is { id: "acme" } when input = { customerId: "acme", ... }
- *   return (ctx as Context).tenant?.id ?? 'anonymous';
+ *   return ctx.tenant?.id ?? 'anonymous';
  * });
  * ```
  */

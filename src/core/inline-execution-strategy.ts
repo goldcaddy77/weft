@@ -10,7 +10,7 @@
  * @module core/inline-execution-strategy
  */
 
-import type { ContextOperationRequest } from './context.ts';
+import type { ContextOperationRequest, ContextOptions } from './context.ts';
 import { Context } from './context.ts';
 import type { ExecutionStrategy } from './execution-strategy.ts';
 import type { TenantContext } from './tenant.ts';
@@ -38,6 +38,52 @@ export interface InlineExecutionDependencies {
   resolveWorkflowType?: (target: string | Function) => string;
   maxNestingDepth: number;
   development?: boolean;
+}
+
+type InlineWorkflowRegistration = NonNullable<
+  ReturnType<InlineExecutionDependencies['getRegistration']>
+>;
+
+type InlineStartWorkflowParameters = {
+  workflowId: string;
+  workflowType: string;
+  input: unknown;
+  checkpoint: ArrayBuffer | Uint8Array;
+  nestingDepth?: number;
+  executionStateOwnerId?: string;
+  startedAt?: number;
+  sleepReferenceTime?: number;
+  deadline?: number;
+  headers?: [string, string][];
+  tenant?: TenantContext;
+};
+
+function createInlineContextOptions(
+  dependencies: InlineExecutionDependencies,
+  registration: InlineWorkflowRegistration,
+  parameters: InlineStartWorkflowParameters,
+  workflowAbort: AbortController,
+): ContextOptions {
+  return {
+    workflowId: parameters.workflowId,
+    workflowType: parameters.workflowType,
+    startedAt: parameters.startedAt ?? dependencies.getNow(),
+    abortController: workflowAbort,
+    getNow: dependencies.getNow,
+    nestingDepth: parameters.nestingDepth ?? 0,
+    executionStateOwnerId: parameters.executionStateOwnerId ?? parameters.workflowId,
+    ...(parameters.sleepReferenceTime !== undefined && {
+      sleepReferenceTime: parameters.sleepReferenceTime,
+    }),
+    ...(dependencies.resolveWorkflowType !== undefined && {
+      resolveWorkflowType: dependencies.resolveWorkflowType,
+    }),
+    ...(registration.searchAttributes && {
+      searchAttributeSchema: registration.searchAttributes,
+    }),
+    ...(parameters.deadline !== undefined && { deadline: parameters.deadline }),
+    ...(parameters.tenant !== undefined && { tenant: parameters.tenant }),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -103,18 +149,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
     this.#messageHandler = handler;
   }
 
-  startWorkflow(parameters: {
-    workflowId: string;
-    workflowType: string;
-    input: unknown;
-    checkpoint: ArrayBuffer | Uint8Array;
-    nestingDepth?: number;
-    startedAt?: number;
-    sleepReferenceTime?: number;
-    deadline?: number;
-    headers?: [string, string][];
-    tenant?: TenantContext;
-  }): void {
+  startWorkflow(parameters: InlineStartWorkflowParameters): void {
     const registration = this.#dependencies.getRegistration(parameters.workflowType);
     if (!registration) {
       this.#emit({
@@ -128,25 +163,9 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
     const workflowAbort = new AbortController();
     this.#abortControllers.set(parameters.workflowId, workflowAbort);
 
-    const context = new Context({
-      workflowId: parameters.workflowId,
-      workflowType: parameters.workflowType,
-      startedAt: parameters.startedAt ?? this.#dependencies.getNow(),
-      abortController: workflowAbort,
-      getNow: this.#dependencies.getNow,
-      nestingDepth: parameters.nestingDepth ?? 0,
-      ...(parameters.sleepReferenceTime !== undefined && {
-        sleepReferenceTime: parameters.sleepReferenceTime,
-      }),
-      ...(this.#dependencies.resolveWorkflowType !== undefined && {
-        resolveWorkflowType: this.#dependencies.resolveWorkflowType,
-      }),
-      ...(registration.searchAttributes && {
-        searchAttributeSchema: registration.searchAttributes,
-      }),
-      ...(parameters.deadline !== undefined && { deadline: parameters.deadline }),
-      ...(parameters.tenant !== undefined && { tenant: parameters.tenant }),
-    });
+    const context = new Context(
+      createInlineContextOptions(this.#dependencies, registration, parameters, workflowAbort),
+    );
 
     if (this.#dependencies.development) {
       context.explain(true);

@@ -538,7 +538,7 @@ async function* researchWorkflow(ctx: Context, topic: string) {
 }
 ```
 
-Beyond fan-out, the agent-native engine supports `ctx.handoff()` for delegation with context transfer, `ctx.debate()` for adversarial multi-agent review, and `SharedState` for concurrent mutable state. See [Agent-Native Engine: Multi-Agent Coordination](./agent-engine.md#127-multi-agent-coordination) for the full treatment.
+Beyond fan-out, the agent-native engine supports `ctx.handoff()` for delegation with context transfer, `ctx.debate()` for adversarial multi-agent review, and `ctx.state.execution()` for concurrent mutable state. See [Agent-Native Engine: Multi-Agent Coordination](./agent-engine.md#127-multi-agent-coordination) for the full treatment.
 
 **Going further: cost observability with `ctx.setBudget()`.** Budget state is stored in the checkpoint and enforced via `AbortController`. Each `ctx.agent()` call reports token usage back to the budget tracker:
 
@@ -707,7 +707,7 @@ Restate competes on architecture and latency. Virtual Objects provide session-sc
 
 **Where Restate leads:** Virtual Objects provide built-in session affinity with co-located state—no sticky routing configuration needed. User code suspension during async waits (similar to Inngest) allows processes to be shut down during LLM calls.
 
-**Where Weft leads:** Agent-native primitives. Restate provides durable execution primitives; Weft provides agent-level abstractions (budget enforcement, context window management, model routing, human-in-the-loop, multi-agent coordination) built into the core. Restate requires building these from scratch. Weft's `SharedState` with optimistic concurrency provides similar concurrent state access to Virtual Objects but within the checkpoint model.
+**Where Weft leads:** Agent-native primitives. Restate provides durable execution primitives; Weft provides agent-level abstractions (budget enforcement, context window management, model routing, human-in-the-loop, multi-agent coordination) built into the core. Restate requires building these from scratch. Weft's `ctx.state` ladder keeps session state checkpoint-local while execution, workflow, and tenant scopes use durable storage-backed state.
 
 ### Hatchet
 

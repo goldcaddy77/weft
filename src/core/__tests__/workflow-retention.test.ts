@@ -9,7 +9,6 @@ import type { BatchOperation, ScanOptions } from '../../storage/interface.ts';
 import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { encode } from '../codec.ts';
-import type { Context } from '../context.ts';
 import { Engine } from '../engine.ts';
 import type { AttributeFilter, WorkflowContext } from '../types.ts';
 
@@ -163,7 +162,7 @@ describe('workflow retention', () => {
       throw new Error('boom');
     });
     engine.register('retention-blocked', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('continue');
+      yield* ctx.waitForSignal('continue');
       return 'done';
     });
 
@@ -380,7 +379,7 @@ describe('workflow retention', () => {
     });
 
     engine.register('artifact-workflow', async function* (ctx: WorkflowContext) {
-      const concreteContext = ctx as Context;
+      const concreteContext = ctx;
       yield* concreteContext.stream('chunks', async function* () {
         yield { index: 0 };
         yield { index: 1 };
@@ -395,7 +394,7 @@ describe('workflow retention', () => {
     });
     await handle.result();
     await engine.setAttributes(handle.id, { priority: 'high' });
-    await storage.put(`shared:${handle.id}:counter`, new TextEncoder().encode('1'));
+    await storage.put(KEYS.stateExecution(handle.id, 'counter'), new TextEncoder().encode('1'));
     await storage.put(KEYS.update(handle.id, 'update-1'), encode({ updateId: 'update-1' }));
     await storage.put(KEYS.updateResponse('update-1'), encode({ result: 'done' }));
 
@@ -413,7 +412,7 @@ describe('workflow retention', () => {
     expect(await collectKeys(storage, `offload:${handle.id}:`)).toEqual([]);
     expect(await collectKeys(storage, `archive:${handle.id}:`)).toEqual([]);
     expect(await collectKeys(storage, `blob:${handle.id}:`)).toEqual([]);
-    expect(await collectKeys(storage, `shared:${handle.id}:`)).toEqual([]);
+    expect(await collectKeys(storage, `state:execution:${handle.id}:`)).toEqual([]);
     expect(await collectKeys(storage, `idx:priority:`)).toEqual([]);
     expect(await collectKeys(storage, KEYS.terminalWorkflowPrefix())).toEqual([]);
     expect(await storage.get(KEYS.update(handle.id, 'update-1'))).toBeNull();
@@ -432,7 +431,7 @@ describe('workflow retention', () => {
       return 'done';
     });
     engine.register('waiting', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('continue');
+      yield* ctx.waitForSignal('continue');
       return 'done';
     });
 
@@ -492,7 +491,7 @@ describe('workflow retention', () => {
 
     engine.register('retained', {
       handler: async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('continue');
+        yield* ctx.waitForSignal('continue');
         return 'done';
       },
       retention: {
@@ -519,7 +518,7 @@ describe('workflow retention', () => {
     );
 
     engine.register('retained', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('continue');
+      yield* ctx.waitForSignal('continue');
       return 'done';
     });
 
@@ -648,7 +647,7 @@ describe('workflow retention', () => {
       return 'done';
     });
     engine.register('retention-running', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('continue');
+      yield* ctx.waitForSignal('continue');
       return 'done';
     });
 

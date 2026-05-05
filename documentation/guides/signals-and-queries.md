@@ -7,19 +7,17 @@ Sometimes a workflow needs to wait for something that is not an activity result 
 Inside a workflow, `yield* ctx.waitForSignal<T>(name)` pauses execution until a signal with that name arrives. The workflow is checkpointed at the pause point---it costs nothing to wait, even for days.
 
 ```typescript partial
-engine.register('approval', async function* (ctx, input) {
-  const { orderId } = input as { orderId: string };
-
+engine.register('approval', async function* (ctx, input: { orderId: string }) {
   // Pauses here until 'approval' signal arrives
   const approval = yield* ctx.waitForSignal<{ approved: boolean }>('approval');
 
   if (approval.approved) {
-    yield* ctx.run(fulfillOrder, orderId);
+    yield* ctx.run(fulfillOrder, input.orderId);
   } else {
-    yield* ctx.run(cancelOrder, orderId);
+    yield* ctx.run(cancelOrder, input.orderId);
   }
 
-  return { orderId, approved: approval.approved };
+  return { orderId: input.orderId, approved: approval.approved };
 });
 ```
 
@@ -62,19 +60,17 @@ This durability guarantee is what makes signals safe for human-in-the-loop workf
 A workflow can wait for multiple signals, either sequentially or with different names.
 
 ```typescript partial
-engine.register('multi-step-approval', async function* (ctx, input) {
-  const { orderId } = input as { orderId: string };
-
+engine.register('multi-step-approval', async function* (ctx, input: { orderId: string }) {
   // Wait for manager approval
   const manager = yield* ctx.waitForSignal<{ approved: boolean }>('manager-approval');
-  if (!manager.approved) return { orderId, status: 'rejected-by-manager' };
+  if (!manager.approved) return { orderId: input.orderId, status: 'rejected-by-manager' };
 
   // Then wait for finance approval
   const finance = yield* ctx.waitForSignal<{ approved: boolean }>('finance-approval');
-  if (!finance.approved) return { orderId, status: 'rejected-by-finance' };
+  if (!finance.approved) return { orderId: input.orderId, status: 'rejected-by-finance' };
 
-  yield* ctx.run(fulfillOrder, orderId);
-  return { orderId, status: 'approved' };
+  yield* ctx.run(fulfillOrder, input.orderId);
+  return { orderId: input.orderId, status: 'approved' };
 });
 ```
 

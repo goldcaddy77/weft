@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import type { Context } from '../../core/context.ts';
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
@@ -36,9 +35,9 @@ function createReplayEngine(): Engine {
   engine.register('three-steps', {
     version: '1.0.0',
     handler: async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).run(firstStep);
-      yield* (ctx as Context).run(secondStep);
-      return yield* (ctx as Context).run(thirdStep);
+      yield* ctx.run(firstStep);
+      yield* ctx.run(secondStep);
+      return yield* ctx.run(thirdStep);
     },
   });
 

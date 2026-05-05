@@ -59,37 +59,62 @@ interface WorkflowContext {
   readonly executionTimeRemaining: number;
   readonly startedAt: number;
   readonly tenant: TenantContext | undefined;
-  sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T>;
-  pipe<TInput, TOutput>(
-    inputs: TInput[],
-    stages: WorkflowPipeStage<TInput, TOutput>[],
-    options?: WorkflowChildOptions,
-  ): WorkflowOperation<TOutput[]>;
-  map<TInput, TOutput>(
-    inputs: TInput[],
-    target: ChildWorkflowTarget<TInput, TOutput>,
+  readonly state: WorkflowStateNamespace;
+  run<TArguments extends unknown[], TResult>(
+    fn: (...arguments_: TArguments) => Promise<TResult> | TResult,
+    ...rest: TArguments
+  ): WorkflowOperation<TResult>;
+  run<TName extends keyof ActivityTypes & string>(
+    name: TName,
+    ...rest: ActivityArguments<ActivityTypes, TName>
+  ): WorkflowOperation<ActivityResult<ActivityTypes, TName>>;
+  sleep(duration: Duration): WorkflowOperation<void>;
+  waitForSignal<T = unknown>(name: string): WorkflowOperation<T>;
+  waitForUpdate<T = unknown>(
+    name: string,
+  ): WorkflowOperation<{ payload: T; respond: (result: unknown) => void }>;
+  startChild<TResult = unknown>(
+    workflowType: string,
+    input: unknown,
+    options?: ChildWorkflowOptions,
+  ): WorkflowOperation<TResult>;
+  all(operations: WorkflowOperation<unknown>[]): WorkflowOperation<unknown[]>;
+  race(operations: WorkflowOperation<unknown>[]): WorkflowOperation<unknown>;
+  offload<T>(key: string, fn: () => Promise<T>): WorkflowOperation<OffloadReference>;
+  stream(
+    key: string,
+    fn: (sink: StreamSink) => AsyncGenerator<unknown, void, unknown>,
+  ): WorkflowOperation<StreamReference>;
+  archive(key: string, data: unknown): WorkflowOperation<void>;
+  setAttribute(key: string, value: SearchAttributeValue): void;
+  onUpdate<TPayload = unknown>(name: string, handler: (payload: TPayload) => unknown): void;
+  pipe<TResult = unknown>(
+    stages: WorkflowPipeStageDefinition[],
+    input: unknown,
+  ): WorkflowOperation<TResult>;
+  map<TItem, TResult>(
+    items: readonly TItem[],
+    target: ChildWorkflowTarget<TItem, TResult>,
     options?: WorkflowMapOptions,
-  ): WorkflowOperation<TOutput[]>;
-  reduce<TInput, TAcc>(
-    inputs: TInput[],
-    target: ChildWorkflowTarget<[TAcc, TInput], TAcc>,
-    initial: TAcc,
+  ): WorkflowOperation<TResult[]>;
+  reduce<TItem, TAccumulator>(
+    items: readonly TItem[],
+    target: ChildWorkflowTarget<WorkflowReduceInput<TAccumulator, TItem>, TAccumulator>,
+    initial: TAccumulator,
     options?: WorkflowReduceOptions,
-  ): WorkflowOperation<TAcc>;
+  ): WorkflowOperation<TAccumulator>;
 }
 ```
 
-The full `Context` class exposes additional concrete methods documented in the [Context API reference](./api-context.md).
+`WorkflowContext` is the normal workflow authoring surface. You do not need to cast it to `Context` to call durable operations.
 
 ### Composition Types
 
 Types for `ctx.pipe()`, `ctx.map()`, and `ctx.reduce()` durable composition operators.
 
 ```ts partial
-/** A pending durable composition result. Yield with `yield*` inside a workflow. */
-interface WorkflowOperation<TResult> {
-  readonly operationId: string;
-}
+/** A pending durable operation result. Yield with `yield*` inside a workflow. */
+type WorkflowOperation<TResult> = Generator<unknown, TResult, unknown>;
 
 /** Accepted forms for specifying a child workflow in composition operators. */
 type ChildWorkflowTarget<TInput = unknown, TOutput = unknown> =
@@ -99,37 +124,102 @@ type ChildWorkflowTarget<TInput = unknown, TOutput = unknown> =
 
 interface WorkflowMapOptions {
   concurrency?: number;
+}
+
+interface WorkflowReduceOptions extends Record<string, unknown> {
   idPrefix?: string;
 }
 
-interface WorkflowReduceOptions {
-  idPrefix?: string;
+type ChildWorkflowOptions = Record<string, unknown> & {
+  id?: string;
+};
+
+interface WorkflowPipeStage<TInput = unknown, TOutput = unknown> {
+  type: ChildWorkflowTarget<TInput, TOutput>;
+  options?: ChildWorkflowOptions;
 }
 
-interface WorkflowPipeStageDefinition<TInput = unknown, TOutput = unknown> {
-  target: ChildWorkflowTarget<TInput, TOutput>;
-  options?: WorkflowChildOptions;
-}
+type WorkflowPipeStageDefinition<TInput = unknown, TOutput = unknown> =
+  | WorkflowPipeStage<TInput, TOutput>
+  | ChildWorkflowTarget<TInput, TOutput>;
+```
 
-type WorkflowPipeStage<TInput = unknown, TOutput = unknown> =
-  | ChildWorkflowTarget<TInput, TOutput>
-  | WorkflowPipeStageDefinition<TInput, TOutput>;
+### `WorkflowStateNamespace`
+
+State factories exposed as `ctx.state`. Session state is checkpoint-local.
+Execution, workflow, and tenant state are storage-backed and must be yielded
+inside workflows.
+
+```ts partial
+interface WorkflowStateNamespace {
+  session<T>(key: string, options?: { initial?: T }): WorkflowSessionState<T>;
+  execution<T>(key: string, options?: WorkflowAtomicStateOptions<T>): WorkflowAtomicState<T>;
+  workflow<T>(key: string, options?: WorkflowAtomicStateOptions<T>): WorkflowAtomicState<T>;
+  tenant<T>(key: string, options?: WorkflowAtomicStateOptions<T>): WorkflowAtomicState<T>;
+}
+```
+
+### `WorkflowAtomicStateOptions<T>`
+
+Options accepted by the storage-backed `ctx.state.execution`,
+`ctx.state.workflow`, and `ctx.state.tenant` factories.
+
+```ts partial
+type WorkflowAtomicStateOptions<T> = {
+  initial?: T;
+  maxRetries?: number;
+};
 ```
 
 ### `WorkflowSessionState<T>`
 
-Per-workflow durable state slot returned by `ctx.sessionState(key, initialValue?)`. Checkpointed with the workflow.
+Checkpoint-local state slot returned by `ctx.state.session(key, options?)`.
+Checkpointed with the workflow and private to that workflow instance.
 
 ```ts partial
 interface WorkflowSessionState<T> {
   get(): T | undefined;
   set(value: T): T;
   update(updater: (current: T | undefined) => T): T;
-  clear(): void;
+  delete(): void;
+  increment(this: WorkflowSessionState<number>, amount?: number): number;
+  decrement(this: WorkflowSessionState<number>, amount?: number): number;
+  merge<TObject extends Record<string, unknown>>(
+    this: WorkflowSessionState<TObject>,
+    patch: Partial<TObject>,
+  ): TObject;
+  append<TItem>(this: WorkflowSessionState<TItem[]>, item: TItem): TItem[];
+  removeFirst<TItem>(this: WorkflowSessionState<TItem[]>): TItem | undefined;
+  removeLast<TItem>(this: WorkflowSessionState<TItem[]>): TItem | undefined;
   run<TResult>(
     fn: (...args: unknown[]) => Promise<TResult> | TResult,
     ...rest: unknown[]
   ): WorkflowOperation<TResult>;
+}
+```
+
+### `WorkflowAtomicState<T>`
+
+Storage-backed durable state returned by `ctx.state.execution`,
+`ctx.state.workflow`, and `ctx.state.tenant`.
+
+```ts partial
+interface WorkflowAtomicState<T> {
+  get(): WorkflowOperation<T | undefined>;
+  set(value: T): WorkflowOperation<T>;
+  update(updater: (current: T | undefined) => T): WorkflowOperation<T>;
+  delete(): WorkflowOperation<void>;
+  increment(this: WorkflowAtomicState<number>, amount?: number): WorkflowOperation<number>;
+  decrement(this: WorkflowAtomicState<number>, amount?: number): WorkflowOperation<number>;
+  merge<TObject extends Record<string, unknown>>(
+    this: WorkflowAtomicState<TObject>,
+    patch: Partial<TObject>,
+  ): WorkflowOperation<TObject>;
+  append<TItem>(this: WorkflowAtomicState<TItem[]>, item: TItem): WorkflowOperation<TItem[]>;
+  removeFirst<TItem>(this: WorkflowAtomicState<TItem[]>): WorkflowOperation<TItem | undefined>;
+  removeLast<TItem>(this: WorkflowAtomicState<TItem[]>): WorkflowOperation<TItem | undefined>;
+  addEventListener(type: 'change' | 'conflict' | 'exhausted', listener: EventListener): void;
+  removeEventListener(type: 'change' | 'conflict' | 'exhausted', listener: EventListener): void;
 }
 ```
 
@@ -144,12 +234,39 @@ interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
 }
 ```
 
-### `WorkflowRegistry`
+### `WorkflowRegistry` and `ActivityTypes`
 
-Type-level registry for `Engine<TRegistry>`.
+Module-augmentation interfaces for typed workflow starts and activity runs. `ActivityTypes` is the augmentation target for activities; `ActivityRegistry` remains the runtime registration class.
 
 ```ts partial
-type WorkflowRegistry = Record<string, { input: unknown; output: unknown }>;
+interface WorkflowRegistry {}
+interface ActivityTypes {}
+```
+
+```ts
+import 'weft';
+
+interface TypedWelcomeInput {
+  name: string;
+}
+
+interface TypedWelcomeOutput {
+  greeting: string;
+}
+
+interface TypedFormatGreetingInput {
+  name: string;
+}
+
+declare module 'weft' {
+  interface WorkflowRegistry {
+    typedWelcome: { input: TypedWelcomeInput; output: TypedWelcomeOutput };
+  }
+
+  interface ActivityTypes {
+    typedFormatGreeting: (input: TypedFormatGreetingInput) => Promise<string>;
+  }
+}
 ```
 
 ### `Duration`
@@ -411,7 +528,7 @@ type ContextOperationRequest =
       type: 'activity';
       operationId: string;
       activityName: string;
-      fn: Function;
+      fn?: (...args: unknown[]) => unknown;
       args: unknown[];
       callerStack?: string;
       options?: Record<string, unknown>;

@@ -102,3 +102,13 @@ Temporal stores every activity input and output in the event history. If your wo
 Weft checkpoints store only the current state---the values of local variables at the yield point. Activity inputs aren't stored (they're derived from the workflow code on re-execution). Previous activity results are only present if they're still in scope as local variables. A workflow that processed 100 large API responses but only keeps a summary has a checkpoint containing only that summary.
 
 The difference is architectural, not incremental. Replay _must_ store everything that happened. Checkpointing stores only what matters _right now_.
+
+## Consequence: workflows are TypeScript-only
+
+The checkpoint model leans on two language features working together: an async-iterable suspension primitive (`AsyncGenerator` + `yield*`) that gives the engine a clean re-entry point at every checkpoint boundary, and a serialization story (`structuredClone` semantics, via MessagePack) that lets the engine durably persist the workflow's locals at that boundary. JavaScript has both in its standard library. Most other mainstream languages have only one or neither: Python `async def` has no `yield*`-shaped typed return-value plumbing and no public way to round-trip arbitrary live values; Go goroutines and Java continuations don't expose suspension state as a serializable artifact at all.
+
+That means **workflows in Weft are TypeScript-only by design**. Activities — the side-effecting work — can run in any language via the [`RemoteWorker` wire protocol](../reference/remote-worker-protocol.md), but the workflow orchestration code itself is TypeScript.
+
+This isn't an oversight or a roadmap item. It's the load-bearing consequence of choosing checkpoint-not-replay. A polyglot workflow runtime would either (a) abandon the checkpoint model and re-introduce replay, which is the thing we left behind, or (b) build a separate state-machine-on-messages model per language, which collapses back to replay with extra steps. Temporal does (a) well. If you need workflows in multiple languages, Temporal is the right answer.
+
+The full design rationale and the alternatives we considered live in [ADR 0001 — Workflows Are TypeScript-Only by Design](../contributing/architecture-decisions/0001-workflows-typescript-only.md).

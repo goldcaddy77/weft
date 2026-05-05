@@ -31,6 +31,9 @@ Weft is a ground-up rethink: what would durable execution look like if you desig
 - **Runs in the browser.** The core engine (minus the server shell) runs in Web Workers with a Service Worker as its persistence backbone. Same workflow code, different environment.
 - **Agent-native.** Dynamic execution graphs, durable agent loops, human-in-the-loop oversight, and multi-agent coordination are built into the core---each tool call a checkpoint boundary, each conversation durable across crashes.
 
+> [!IMPORTANT]
+> Workflows run in TypeScript on the engine; activities can run in any language via the `RemoteWorker` protocol. This split is intentional — the checkpoint model requires single-process generator state, so workflow code is TypeScript-only by design. See [ADR 0001](documentation/contributing/architecture-decisions/0001-workflows-typescript-only.md) for the design rationale.
+
 ## Hello, World
 
 ```typescript
@@ -38,7 +41,6 @@ import {
   Engine,
   WorkflowAlreadyExistsError,
   activity,
-  type Context,
   type WorkflowContext,
   type WorkflowHandle,
 } from 'weft';
@@ -46,28 +48,46 @@ import { SQLiteStorage } from 'weft/storage/sqlite';
 
 const engine = new Engine({ storage: new SQLiteStorage('./weft.db') });
 
-const formatGreeting = activity({
-  name: 'formatGreeting',
-  execute: async (input: { name: string }) => `Hello, ${input.name}!`,
+interface ReadmeWelcomeInput {
+  name: string;
+}
+
+interface ReadmeWelcomeOutput {
+  greeting: string;
+  onboarded: boolean;
+}
+
+declare module 'weft' {
+  interface WorkflowRegistry {
+    readmeWelcome: { input: ReadmeWelcomeInput; output: ReadmeWelcomeOutput };
+  }
+
+  interface ActivityTypes {
+    readmeFormatGreeting: (input: ReadmeWelcomeInput) => Promise<string>;
+  }
+}
+
+const readmeFormatGreeting = activity({
+  name: 'readmeFormatGreeting',
+  execute: async (input: ReadmeWelcomeInput) => `Hello, ${input.name}!`,
 });
 
-engine.registerActivity(formatGreeting.name, formatGreeting);
+engine.registerActivity(readmeFormatGreeting.name, readmeFormatGreeting);
 
-engine.register('welcome', async function* (ctx: WorkflowContext, user: { name: string }) {
-  const context = ctx as Context;
-  const greeting = yield* context.run(formatGreeting, { name: user.name });
-  yield* context.sleep('1s');
+engine.register('readmeWelcome', async function* (ctx: WorkflowContext, user: ReadmeWelcomeInput) {
+  const greeting = yield* ctx.run('readmeFormatGreeting', { name: user.name });
+  yield* ctx.sleep('1s');
   return { greeting, onboarded: true };
 });
 
 await engine.recoverAll();
 
-const workflowId = 'welcome:steve';
+const workflowId = 'readmeWelcome:steve';
 const workflowInput = { name: 'Steve' };
 let handle: WorkflowHandle;
 
 try {
-  handle = await engine.start('welcome', workflowInput, { id: workflowId });
+  handle = await engine.start('readmeWelcome', workflowInput, { id: workflowId });
 } catch (error) {
   if (!(error instanceof WorkflowAlreadyExistsError)) throw error;
   handle = await engine.resume(workflowId).catch(() => engine.getHandle(workflowId));
@@ -388,18 +408,21 @@ Each `ctx.step()` is a checkpoint boundary. The engine compiles step-style workf
 
 ## Weft vs. Temporal
 
-| Concept                | Temporal                          | Weft                                                                       |
-| ---------------------- | --------------------------------- | -------------------------------------------------------------------------- |
-| Core mental model      | Replay determinism                | Generators pause and resume                                                |
-| Activity invocation    | `proxyActivities()` + type import | `yield* ctx.run(namedActivity, input)`                                     |
-| Timer                  | Deterministic `workflow.sleep()`  | `yield* ctx.sleep("1 hour")`                                               |
-| Signal                 | `setHandler` + `condition`        | `yield* ctx.waitForSignal(name)`                                           |
-| Versioning             | `patched()` / `deprecatePatch()`  | Deploy new code (migration optional)                                       |
-| Long-running workflows | `continueAsNew()`                 | None needed (checkpoint size is bounded by live state, not history length) |
-| Agent declaration      | N/A (build from primitives)       | `defineAgent()` or `ctx.agent()`—bring your own provider and tools         |
-| Durable agent loop     | Activity boundary only            | Every tool call is a checkpoint boundary                                   |
-| Dev environment        | Docker Compose + Temporal server  | `bun add weft`                                                             |
-| Bundling               | Webpack for workflow sandbox      | None                                                                       |
+| Concept                | Temporal                                      | Weft                                                                       |
+| ---------------------- | --------------------------------------------- | -------------------------------------------------------------------------- |
+| Core mental model      | Replay determinism                            | Generators pause and resume                                                |
+| Workflow language      | Go, Java, TypeScript, Python, .NET, Ruby, PHP | TypeScript only (activities can be any language via `RemoteWorker`)        |
+| Activity invocation    | `proxyActivities()` + type import             | `yield* ctx.run(namedActivity, input)`                                     |
+| Timer                  | Deterministic `workflow.sleep()`              | `yield* ctx.sleep("1 hour")`                                               |
+| Signal                 | `setHandler` + `condition`                    | `yield* ctx.waitForSignal(name)`                                           |
+| Versioning             | `patched()` / `deprecatePatch()`              | Deploy new code (migration optional)                                       |
+| Long-running workflows | `continueAsNew()`                             | None needed (checkpoint size is bounded by live state, not history length) |
+| Agent declaration      | N/A (build from primitives)                   | `defineAgent()` or `ctx.agent()`—bring your own provider and tools         |
+| Durable agent loop     | Activity boundary only                        | Every tool call is a checkpoint boundary                                   |
+| Dev environment        | Docker Compose + Temporal server              | `bun add weft`                                                             |
+| Bundling               | Webpack for workflow sandbox                  | None                                                                       |
+
+> Weft is for teams whose primary backend language is TypeScript. If you need workflows in multiple languages, [Temporal](https://temporal.io) is the right answer. For the design rationale, see [ADR 0001 — Workflows Are TypeScript-Only by Design](documentation/contributing/architecture-decisions/0001-workflows-typescript-only.md).
 
 ## Documentation
 
@@ -414,7 +437,7 @@ Guides:
 - [Workflows](documentation/guides/workflows.md), [Activities](documentation/guides/activities.md), [Storage](documentation/guides/storage.md), [Server](documentation/guides/server.md)
 - [Signals and Queries](documentation/guides/signals-and-queries.md), [Synchronous Updates](documentation/guides/synchronous-updates.md)
 - [Durable Timers](documentation/guides/durable-timers.md), [Timeouts](documentation/guides/timeouts.md), [Parallel Execution](documentation/guides/parallel-execution.md)
-- [Search Attributes](documentation/guides/search-attributes.md), [Multi-Tenancy](documentation/guides/multi-tenancy.md), [Shared State](documentation/guides/shared-state.md), [Session State](documentation/guides/session-state.md), [Events](documentation/guides/events.md)
+- [Search Attributes](documentation/guides/search-attributes.md), [Multi-Tenancy](documentation/guides/multi-tenancy.md), [State](documentation/guides/state.md), [Session State](documentation/guides/session-state.md), [Events](documentation/guides/events.md)
 - [Interceptors](documentation/guides/interceptors.md), [Observability](documentation/guides/observability.md), [Testing](documentation/guides/testing.md)
 - [Workflow Versioning](documentation/guides/workflow-versioning.md), [Remote Workers](documentation/guides/remote-workers.md), [Service Worker](documentation/guides/service-worker.md), [Resource Management](documentation/guides/resource-management.md)
 

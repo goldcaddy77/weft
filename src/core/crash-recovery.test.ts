@@ -14,7 +14,6 @@ import type { BatchOperation, ScanOptions, Storage } from '../storage/interface.
 import { KEYS as STORAGE_KEYS, encodeStorageKeyComponent } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { encode } from './codec.ts';
-import type { Context } from './context.ts';
 import { ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING, Engine } from './engine.ts';
 import { WorkflowResumedEvent } from './events.ts';
 import type { WorkflowContext } from './types.ts';
@@ -313,7 +312,7 @@ describe('crash recovery', () => {
 
     function makeWorkflow() {
       return async function* (ctx: WorkflowContext, input: unknown) {
-        const c = ctx as Context;
+        const c = ctx;
         const { value } = input as { value: string };
         const r1 = yield* c.run(step1, value);
         const r2 = yield* c.run(step2, r1);
@@ -377,7 +376,7 @@ describe('crash recovery', () => {
 
     function makeWorkflow() {
       return async function* (ctx: WorkflowContext, input: unknown) {
-        const c = ctx as Context;
+        const c = ctx;
         const r1 = yield* c.run(step1, input);
         // This signal wait will block, simulating a "crash point"
         const signal = yield* c.waitForSignal<string>('proceed');
@@ -432,7 +431,7 @@ describe('crash recovery', () => {
 
     function makeWorkflow() {
       return async function* (ctx: WorkflowContext) {
-        const c = ctx as Context;
+        const c = ctx;
         const approval = yield* c.waitForSignal<{ approved: boolean }>('approval');
         return { approved: approval.approved };
       };
@@ -490,7 +489,7 @@ describe('crash recovery', () => {
 
     const registerWorkflow = (engine: Engine) => {
       engine.register('resume-agent-workflow', async function* (ctx: WorkflowContext) {
-        return yield* (ctx as Context).agent({
+        return yield* ctx.agent({
           model: 'test-model',
           prompt: 'Wait for the provider resume signal',
           provider,
@@ -576,7 +575,7 @@ describe('crash recovery', () => {
 
     const registerWorkflow = (engine: Engine) => {
       engine.register('non-parkable-resume-agent-workflow', async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
+        const context = ctx;
         context.onUpdate('touch', () => 'ok');
         const agentResult = yield* context.agent({
           model: 'test-model',
@@ -651,7 +650,7 @@ describe('crash recovery', () => {
 
     const engine = new Engine({ storage, suspendOnLlmWait: true });
     engine.register('agent-mirror-repair', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
       context.onUpdate('touch', () => 'ok');
       const agentResult = yield* context.agent({
         model: 'test-model',
@@ -696,7 +695,7 @@ describe('crash recovery', () => {
 
     const registerWorkflow = (engine: Engine) => {
       engine.register('abort-during-agent-suspension', async function* (ctx: WorkflowContext) {
-        return yield* (ctx as Context).agent({
+        return yield* ctx.agent({
           model: 'test-model',
           prompt: 'Wait for the provider resume signal',
           provider,
@@ -750,7 +749,7 @@ describe('crash recovery', () => {
 
     const registerWorkflow = (engine: Engine) => {
       engine.register('agent-store-crash-window', async function* (ctx: WorkflowContext) {
-        return yield* (ctx as Context).agent({
+        return yield* ctx.agent({
           model: 'test-model',
           prompt: 'Wait for the provider resume signal',
           provider,
@@ -804,7 +803,7 @@ describe('crash recovery', () => {
 
     const registerWorkflow = (engine: Engine) => {
       engine.register('agent-clear-crash-window', async function* (ctx: WorkflowContext) {
-        return yield* (ctx as Context).agent({
+        return yield* ctx.agent({
           model: 'test-model',
           prompt: 'Wait for the provider resume signal',
           provider,
@@ -878,7 +877,7 @@ describe('crash recovery', () => {
     const { TestEngine } = await import('../testing/test-engine.ts');
 
     const sleepWorkflow = async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       yield* c.sleep(5000);
       return 'awake';
     };
@@ -915,7 +914,7 @@ describe('crash recovery', () => {
     let currentTime = 1000;
 
     const sleepWorkflow = async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       yield* c.sleep(5000);
       return 'fast-path-awake';
     };
@@ -958,7 +957,7 @@ describe('crash recovery', () => {
 
     // Workflow: sleep 2s, then sleep 3s, return
     const twoSleepWorkflow = async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       yield* c.sleep(2000);
       yield* c.sleep(3000);
       return 'both-done';
@@ -1027,7 +1026,7 @@ describe('crash recovery', () => {
 
     const engine1 = new Engine({ storage });
     engine1.register('failing', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       yield* c.run(async () => {
         throw new Error('boom');
       });
@@ -1054,7 +1053,7 @@ describe('crash recovery', () => {
 
     function makeWorkflow() {
       return async function* (ctx: WorkflowContext) {
-        const c = ctx as Context;
+        const c = ctx;
         yield* c.waitForSignal('go');
         return 'done';
       };
@@ -1093,7 +1092,7 @@ describe('crash recovery', () => {
 
     const engine = new Engine({ storage });
     engine.register('stepping', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       yield* c.run(async () => 'a');
       yield* c.run(async () => 'b');
       yield* c.run(async () => 'c');
@@ -1121,7 +1120,7 @@ describe('crash recovery', () => {
 
     const engine = new Engine({ storage });
     engine.register('accumulating', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       yield* c.run(async () => 'first');
       // Wait for signal to block the workflow mid-execution
       yield* c.waitForSignal('go');
@@ -1158,7 +1157,7 @@ describe('crash recovery', () => {
     // Workflow that blocks on a signal so we can inspect the event log mid-run.
     function makeWorkflow() {
       return async function* (ctx: WorkflowContext) {
-        const c = ctx as Context;
+        const c = ctx;
         // Run one activity so a checkpoint is written before we crash.
         yield* c.run(async () => 'step-one');
         // Block here to simulate the engine crashing while still running.
@@ -1215,7 +1214,7 @@ describe('crash recovery', () => {
 
     function makeWorkflow() {
       return async function* (ctx: WorkflowContext) {
-        const c = ctx as Context;
+        const c = ctx;
         yield* c.waitForSignal('go');
         return 'sqlite-recovered';
       };

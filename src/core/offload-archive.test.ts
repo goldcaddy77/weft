@@ -5,7 +5,7 @@ import { KEYS } from '../storage/interface';
 import { MemoryStorage } from '../storage/memory';
 import { TestEngine } from '../testing/test-engine';
 import { decode, encode } from './codec';
-import type { Context, OffloadReference } from './context';
+import type { OffloadReference } from './context';
 import { Engine } from './engine';
 import type { WorkflowContext } from './types';
 
@@ -17,7 +17,7 @@ describe('offload, load, and archive', () => {
     const payload = { items: [1, 2, 3], nested: { flag: true } };
 
     engine.register('test', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const reference = yield* c.offload('big-data', async () => payload);
       const loaded = yield* c.load<typeof payload>(reference);
       return loaded;
@@ -38,7 +38,7 @@ describe('offload, load, and archive', () => {
     let capturedReference: OffloadReference | undefined;
 
     engine.register('test', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const reference = yield* c.offload('sized-data', async () => payload);
       capturedReference = reference;
       return reference;
@@ -56,7 +56,7 @@ describe('offload, load, and archive', () => {
     const engine = new Engine({ storage });
 
     engine.register('test', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const fakeReference: OffloadReference = {
         key: 'nonexistent-key',
         workflowId: ctx.workflowId,
@@ -77,13 +77,13 @@ describe('offload, load, and archive', () => {
     let trustedReference: OffloadReference | undefined;
 
     engine.register('producer', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       trustedReference = yield* c.offload('cross-workflow', async () => ({ ok: true }));
       return trustedReference;
     });
 
     engine.register('consumer', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       return yield* c.load(trustedReference!);
     });
 
@@ -100,7 +100,7 @@ describe('offload, load, and archive', () => {
     const engine = new Engine({ storage });
 
     engine.register('test', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const malformedReference = {
         workflowId: ctx.workflowId,
         key: 123,
@@ -123,7 +123,7 @@ describe('offload, load, and archive', () => {
     const archivePayload = { report: 'quarterly', values: [100, 200, 300] };
 
     engine.register('test', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       yield* c.archive('report-q1', archivePayload);
       return 'done';
     });
@@ -146,7 +146,7 @@ describe('offload, load, and archive', () => {
     let offloadRuns = 0;
 
     engine.register('offload-step', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const reference = yield* c.offload('recovery-data', async () => {
         offloadRuns++;
         return payload;
@@ -165,7 +165,7 @@ describe('offload, load, and archive', () => {
 
     // Register same workflow on recovered engine
     recovered.register('offload-step', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const reference = yield* c.offload('recovery-data', async () => {
         offloadRuns++;
         return payload;
@@ -186,7 +186,7 @@ describe('offload, load, and archive', () => {
     const engine = new Engine({ storage });
 
     engine.register('test', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       try {
         yield* c.offload('failing', async () => {
           throw new Error('computation failed');
