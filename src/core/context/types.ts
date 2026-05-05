@@ -1,9 +1,4 @@
-import type { AgentTool } from '../../ai/agent.ts';
-import type { BudgetOptions } from '../../ai/budget.ts';
-import type { ContextStrategy } from '../../ai/context-window.ts';
-import type { AgentHooks } from '../../ai/hooks.ts';
-import type { ModelRouter } from '../../ai/model-router.ts';
-import type { LLMProvider } from '../../ai/providers/interface.ts';
+import type { AgentTool, LLMProvider } from '../../ai/agent/index.ts';
 import type { ActivityDefinition, SearchAttributeSchema, SearchAttributeValue } from '../types.ts';
 
 /**
@@ -149,12 +144,6 @@ export interface AgentContextOptions {
   tools?: AgentTool[];
   maxTurns?: number;
   systemPrompt?: string;
-  budget?: BudgetOptions;
-  /** Namespace for organization-level budget enforcement. */
-  budgetNamespace?: string;
-  modelRouter?: ModelRouter;
-  contextStrategy?: ContextStrategy;
-  hooks?: AgentHooks;
 }
 
 /**

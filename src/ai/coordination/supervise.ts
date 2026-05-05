@@ -1,4 +1,4 @@
-import { executeAgentLoop } from '../agent.ts';
+import { executeAgentLoop } from '../agent/index.ts';
 import type { AgentResult } from '../agent/types.ts';
 import {
   formatWorkerSummary,
@@ -40,7 +40,6 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
     input,
     strategy,
     provider,
-    budget,
     signal: parentSignal,
     voting,
     n,
@@ -49,18 +48,10 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
   const workers = resolveWorkers(rawWorkers, n, input);
 
   // Unlike handoff/debate (sequential), supervise runs workers in parallel via
-  // Promise.all. A dedicated AbortController lets budget exhaustion in one
-  // branch abort all other in-flight branches — something a passthrough signal
-  // can't do because the budget tracker needs its own controller to fire abort.
+  // Promise.all. A dedicated AbortController lets a parent abort signal stop
+  // all other in-flight branches.
   const controller = new AbortController();
   const onParentAbort = parentSignal ? () => controller.abort(parentSignal.reason) : undefined;
-
-  // Wire budget enforcement: exceeding the budget aborts all parallel branches.
-  // Scoped to this call — cleared in finally so a shared BudgetTracker isn't
-  // left referencing a stale controller after supervise() returns.
-  if (budget) {
-    budget.setAbortController(controller);
-  }
 
   if (parentSignal) {
     if (parentSignal.aborted) {
@@ -84,7 +75,6 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
             systemPrompt: worker.systemPrompt,
             tools: worker.tools,
             maxTurns: worker.maxTurns,
-            budget,
             signal,
           },
           input,
@@ -120,7 +110,6 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
               systemPrompt: supervisor.systemPrompt,
               tools: supervisor.tools,
               maxTurns: supervisor.maxTurns,
-              budget,
               signal,
             },
             supervisorInput,
@@ -142,7 +131,6 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
             systemPrompt: supervisor.systemPrompt,
             tools: supervisor.tools,
             maxTurns: supervisor.maxTurns,
-            budget,
             signal,
           },
           supervisorInput,
@@ -163,7 +151,6 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
             systemPrompt: supervisor.systemPrompt,
             tools: supervisor.tools,
             maxTurns: supervisor.maxTurns,
-            budget,
             signal,
           },
           supervisorInput,
@@ -185,13 +172,6 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
   } finally {
     if (parentSignal && onParentAbort) {
       parentSignal.removeEventListener('abort', onParentAbort);
-    }
-    // Detach only if the budget's current signal is the one this call installed.
-    // Without this check, two concurrent supervise() calls sharing the same
-    // budget would race: the first to finish would overwrite the controller
-    // the second is still using.
-    if (budget && budget.signal === controller.signal) {
-      budget.setAbortController(new AbortController());
     }
   }
 }

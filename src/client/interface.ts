@@ -6,7 +6,6 @@
  * @module client/interface
  */
 
-import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
 import type { StoredStreamChunk } from '../core/context.ts';
 import type { TypedEventTarget, WeftEventMap } from '../core/events.ts';
 import type {
@@ -256,12 +255,6 @@ export interface WeftClient {
 
   /** Submit a decision for a pending review. */
   submitReview(reviewId: string, options: SubmitReviewOptions): Promise<void>;
-
-  /** Set an organization-level budget policy. */
-  setBudgetPolicy(options: BudgetPolicyOptions): Promise<void>;
-
-  /** Retrieve the budget policy for a namespace, or `null` if none is set. */
-  getBudgetPolicy(namespace: string): Promise<BudgetPolicyOptions | null>;
 
   /** Retrieve current quota usage versus configured limits for a tenant. */
   getQuotaUsage(tenantId: string): Promise<TenantQuotaUsage>;

@@ -115,8 +115,6 @@ function createFullSurfaceResponses(
     jsonResponse({ events: [{ type: 'workflow:started' }] }),
     jsonResponse({ items: [{ reviewId: 'review-1' }] }),
     new Response(null, { status: 204 }),
-    new Response(null, { status: 204 }),
-    jsonResponse({ namespace: 'agents', daily: { maxCost: 10 } }),
     jsonResponse({
       chunks: [
         { sequence: 2, value: 'chunk-a' },
@@ -206,11 +204,6 @@ async function exerciseRecoveryAndReviewRequests(httpClient: HttpClient): Promis
   expect(await httpClient.getEvents('wf/1')).toMatchObject([{ type: 'workflow:started' }]);
   expect(await httpClient.listReviews()).toEqual([{ reviewId: 'review-1' }]);
   await httpClient.submitReview('review-1', { decision: 'approved', reviewer: 'alex' });
-  await httpClient.setBudgetPolicy({ namespace: 'agents', daily: { maxCost: 10 } });
-  expect(await httpClient.getBudgetPolicy('agents')).toEqual({
-    namespace: 'agents',
-    daily: { maxCost: 10 },
-  });
   expect(await httpClient.getStreamChunks('wf/1', 'stream/key', { after: 1 })).toEqual([
     { sequence: 2, value: 'chunk-a' },
     { sequence: 3, value: 'chunk-b' },
@@ -373,14 +366,14 @@ function assertFilterAndFollowupCalls(fetchCalls: FetchCall[]): void {
   expect(fetchCalls[10]?.url).toContain('/update/rename');
   expect(fetchCalls[26]?.url).toContain('/resume');
   expect(fetchCalls[27]?.url).toBe('http://example.test/v1/recover');
-  expect(fetchCalls[36]?.url).toContain('/streams/stream%2Fkey?after=1');
+  expect(fetchCalls[34]?.url).toContain('/streams/stream%2Fkey?after=1');
 }
 
 function assertForkCall(fetchCalls: FetchCall[]): void {
-  expect(fetchCalls[37]?.url).toBe('http://example.test/v1/workflows/wf%2F1/fork');
-  expect(fetchCalls[37]?.init?.method).toBe('POST');
+  expect(fetchCalls[35]?.url).toBe('http://example.test/v1/workflows/wf%2F1/fork');
+  expect(fetchCalls[35]?.init?.method).toBe('POST');
 
-  const forkBody = fetchCalls[37]?.init?.body;
+  const forkBody = fetchCalls[35]?.init?.body;
   expect(typeof forkBody).toBe('string');
   if (typeof forkBody !== 'string') {
     throw new Error('Expected fork request body to be a string');
@@ -461,8 +454,6 @@ describe('HttpClient', () => {
     expect(client.replayTo).toBeFunction();
     expect(client.listReviews).toBeFunction();
     expect(client.submitReview).toBeFunction();
-    expect(client.setBudgetPolicy).toBeFunction();
-    expect(client.getBudgetPolicy).toBeFunction();
     expect(client.getQuotaUsage).toBeFunction();
     expect(client.getStreamChunks).toBeFunction();
     expect(client.fork).toBeFunction();
@@ -881,8 +872,6 @@ describe('HttpClient', () => {
         'getEvents',
         'listReviews',
         'submitReview',
-        'setBudgetPolicy',
-        'getBudgetPolicy',
         'getQuotaUsage',
         'getStreamChunks',
         'fork',

@@ -7,7 +7,7 @@ A running list of issues, gaps, and follow-ups discovered while reading through 
 
 ## 1. AI Surface Shrinkage 🚨
 
-- [ ] **Audit `src/ai/*` against the durability test. Cut everything that isn't durability-essential. Reframe Weft's agent pitch around the narrower surface.**
+- [x] **Audit `src/ai/*` against the durability test. Cut everything that isn't durability-essential. Reframe Weft's agent pitch around the narrower surface.**
 
   **The test:** _Does this feature fundamentally require checkpoint-and-recovery semantics, or does it just happen to be useful in agent contexts?_ Requires durability → keep. Useful but not durability-shaped → delete (move upstream to `armorer` / `conversationalist` / Agent Bureau).
 

@@ -1,145 +1,280 @@
-import type { BudgetTracker, SerializedBudgetState } from '../budget.ts';
-import type { ContextWindowManager } from '../context-window.ts';
+/* oxlint-disable max-lines -- ID:ai-agent-types-file-length */
 import type { ToolIdentityResult } from '../declaration.ts';
-import type { AgentHooks } from '../hooks.ts';
-import type { MCPAuthConfig } from '../mcp/authentication.ts';
-import type { RegistryTool } from '../mcp/registry.ts';
-import type { TransportKind } from '../mcp/transport.ts';
-import type { ModelRouter } from '../model-router.ts';
-import type { ProviderHealthTracker } from '../provider-health.ts';
-import type { LLMProvider } from '../providers/interface.ts';
-import type { ChatResponse, Message, TokenUsage, ToolDefinition } from '../providers/types.ts';
-import type { CacheEntry } from '../tool-cache.ts';
 import type { ToolEffectLogLike } from '../tool-effect-log.ts';
 
+// ---------------------------------------------------------------------------
+// Structural types - canonical home post-shrinkage.
+// Phase 0 seam: these were previously in src/ai/providers/types.ts and
+// src/ai/providers/interface.ts. They now live here and are re-exported
+// through src/ai/agent/index.ts.
+// ---------------------------------------------------------------------------
+
 /**
- * An MCP server URL to discover tools from at agent initialization.
+ * Discriminator for the four conversation roles the agent loop normalizes.
+ * `system` carries the agent's instructions; `user` is the human input;
+ * `assistant` is a model turn; `tool` carries tool-call results back into
+ * the conversation.
  *
- * @example Connect an HTTP MCP server with bearer auth
+ * @example
  * ```ts
- * import { executeAgentLoop, type MCPToolSource } from 'weft';
- * import type { LLMProvider } from 'weft';
+ * import type { MessageRole } from 'weft';
  *
- * declare const provider: LLMProvider;
- *
- * const source: MCPToolSource = {
- *   mcp: 'https://tools.example.com/mcp',
- *   auth: { type: 'bearer', token: process.env['MCP_TOKEN'] ?? '' },
- *   timeout: 10_000,
- * };
- *
- * const result = await executeAgentLoop(
- *   { model: 'claude-sonnet-4-5', provider, tools: [source] },
- *   'What tools are available?',
- * );
+ * const role: MessageRole = 'assistant';
  * ```
  */
-export interface MCPToolSource {
-  mcp: string;
-  auth?: MCPAuthConfig | undefined;
-  timeout?: number | undefined;
-  /**
-   * Override transport auto-detection.
-   * - `'http'` (default for `http(s)://` URLs): plain HTTP request/response
-   * - `'sse'`: HTTP POST for requests, Server-Sent Events for responses
-   * - `'stdio'` (default for `stdio://` URLs): JSON-RPC over child process stdin/stdout
-   */
-  transport?: TransportKind | undefined;
+export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
+
+/**
+ * Normalized conversation message used throughout the agent loop.
+ *
+ * @example Build a minimal two-message conversation
+ * ```ts
+ * import type { Message } from 'weft';
+ *
+ * const conversation: Message[] = [
+ *   { role: 'system', content: 'You are a helpful assistant.' },
+ *   { role: 'user', content: 'What time is it?' },
+ * ];
+ * ```
+ */
+export interface Message {
+  role: MessageRole;
+  content: string;
+  toolCalls?: ToolCall[];
+  toolResults?: ToolResult[];
+  name?: string;
 }
 
 /**
- * Configuration object passed to {@link executeAgentLoop}. Controls the model,
- * provider, tool list, budget, turn limit, context management, and observability
- * hooks for a single agent invocation.
+ * A model-requested tool invocation. Pairs a stable `id` with the tool
+ * `name` and the model-supplied `input` payload.
  *
- * `toolEffectLog` deduplicates tool calls across checkpoint restores.
- * `toolCacheTTL`, `toolCacheMaxSize`, and `checkpointSizeWarningThreshold`
- * tune in-memory caching and conversation-size warnings.
- *
- * @example Run a tool-calling agent with a cost budget
+ * @example
  * ```ts
- * import { executeAgentLoop, BudgetTracker, type AgentOptions } from 'weft';
- * import type { LLMProvider } from 'weft';
+ * import type { ToolCall } from 'weft';
  *
- * declare const provider: LLMProvider;
+ * const call: ToolCall = { id: 'call-1', name: 'get_time', input: {} };
+ * ```
+ */
+export interface ToolCall {
+  id: string;
+  name: string;
+  input: unknown;
+}
+
+/**
+ * A normalized tool result sent back into the conversation. `toolCallId`
+ * matches the originating {@link ToolCall.id}; `isError` flags an error
+ * outcome the model should see.
  *
- * const options: AgentOptions = {
+ * @example
+ * ```ts
+ * import type { ToolResult } from 'weft';
+ *
+ * const result: ToolResult = { toolCallId: 'call-1', output: '12:34Z' };
+ * ```
+ */
+export interface ToolResult {
+  toolCallId: string;
+  output: string;
+  isError?: boolean;
+}
+
+/**
+ * Schema descriptor for a callable tool. Consumed by {@link LLMProvider}
+ * implementations to advertise tools to the model. `inputSchema` follows
+ * JSON Schema Draft 7 conventions; tools with no parameters use
+ * `{ type: 'object' }`.
+ *
+ * @example
+ * ```ts
+ * import type { ToolDefinition } from 'weft';
+ *
+ * const search: ToolDefinition = {
+ *   name: 'web_search',
+ *   description: 'Search the web for recent information.',
+ *   inputSchema: {
+ *     type: 'object',
+ *     required: ['query'],
+ *     properties: { query: { type: 'string' } },
+ *   },
+ * };
+ * ```
+ */
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+/**
+ * Provider-supplied metadata that tells Weft which workflow signal should
+ * resume a paused chat turn. Providers may attach provider-specific state
+ * that round-trips through durable suspension.
+ *
+ * @example
+ * ```ts
+ * import type { ChatResumeHint } from 'weft';
+ *
+ * const hint: ChatResumeHint = {
+ *   resumeToken: 'llm-ready-token',
+ *   state: { requestId: 'req-123' },
+ * };
+ * ```
+ */
+export interface ChatResumeHint {
+  resumeToken: string;
+  state?: unknown;
+}
+
+/**
+ * Resume payload delivered back to the provider after a matching workflow
+ * signal arrives. The original {@link ChatResumeHint} is preserved
+ * alongside the signal payload so providers can correlate the resumed
+ * request.
+ *
+ * @example
+ * ```ts
+ * import type { ChatResumeContext } from 'weft';
+ *
+ * const resumeContext: ChatResumeContext = {
+ *   hint: { resumeToken: 'llm-ready-token' },
+ *   payload: { approved: true },
+ * };
+ * ```
+ */
+export interface ChatResumeContext {
+  hint: ChatResumeHint;
+  payload: unknown;
+}
+
+/**
+ * Token consumption summary returned inside {@link ChatResponse.usage}.
+ * Produced by providers; callers read it but do not construct it.
+ *
+ * @example
+ * ```ts
+ * import type { TokenUsage } from 'weft';
+ *
+ * function totalTokens(usage: TokenUsage): number {
+ *   return usage.totalTokens;
+ * }
+ * ```
+ */
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+/**
+ * Per-call options passed to {@link LLMProvider.chat}. Specifies the model
+ * identifier, optional tool list, max output tokens, sampling
+ * temperature, abort signal, and per-call system prompt.
+ *
+ * @example
+ * ```ts
+ * import type { ChatOptions } from 'weft';
+ *
+ * const options: ChatOptions = {
  *   model: 'claude-sonnet-4-5',
- *   provider,
- *   systemPrompt: 'You are a helpful assistant.',
- *   maxTurns: 8,
- *   budget: new BudgetTracker({
- *     maxCost: 0.25,
- *     models: { 'claude-sonnet-4-5': { inputCostPer1K: 0.003, outputCostPer1K: 0.015 } },
- *   }),
+ *   maxTokens: 2048,
+ *   temperature: 0.7,
  * };
- *
- * const result = await executeAgentLoop(options, 'Summarize the latest news.');
- * console.log(result.content);
  * ```
  */
-export interface AgentOptions {
+export interface ChatOptions {
   model: string;
-  provider: LLMProvider;
-  systemPrompt?: string | undefined;
-  tools?: (AgentTool | MCPToolSource)[] | undefined;
-  /** Maximum number of LLM turns before returning. Defaults to 10. */
-  maxTurns?: number | undefined;
-  budget?: BudgetTracker | undefined;
-  modelRouter?: ModelRouter | undefined;
-  contextManager?: ContextWindowManager | undefined;
-  healthTracker?: ProviderHealthTracker | undefined;
-  /** Tool result cache TTL in milliseconds. Defaults to 300 000 (5 minutes). */
-  toolCacheTTL?: number | undefined;
-  /**
-   * Maximum number of tool result cache entries. When the cache grows past
-   * this cap, the oldest entry (by insertion order) is evicted to make room.
-   * Defaults to 1000.
-   */
-  toolCacheMaxSize?: number | undefined;
-  signal?: AbortSignal | undefined;
-  hooks?: AgentHooks | undefined;
-  eventTarget?: EventTarget | undefined;
-  workflowId?: string | undefined;
-  agentId?: string | undefined;
-  onTurnStarted?: ((turn: TurnInfo) => void) | undefined;
-  onTurnCompleted?: ((turn: TurnResult) => void) | undefined;
-  onToolCalled?: ((call: ToolCallInfo) => void) | undefined;
-  onToolReturned?: ((result: ToolReturnInfo) => void) | undefined;
-  /**
-   * Conversation size in bytes at which an `AgentCheckpointSizeWarningEvent`
-   * is dispatched via the eventTarget. Defaults to 65 536 (64 KB).
-   */
-  checkpointSizeWarningThreshold?: number | undefined;
-  /**
-   * Durable tool effect log for deduplicating tool calls across
-   * checkpoint-restore cycles. When provided, the agent loop consults the log
-   * before each tool execution and short-circuits on committed matches.
-   */
-  toolEffectLog?: ToolEffectLogLike | undefined;
-  /**
-   * Internal hook used by speculative execution to defer tool-result
-   * verification until the enclosing speculative branch drains.
-   */
-  verificationRecorder?: VerificationRecorder | undefined;
+  tools?: ToolDefinition[];
+  maxTokens?: number;
+  temperature?: number;
+  signal?: AbortSignal;
+  systemPrompt?: string;
+  turnIndex?: number;
+  resumeContext?: ChatResumeContext;
 }
 
 /**
- * A locally-defined tool that the agent loop can call during a conversation.
- * Pairs a {@link ToolDefinition} (name, description, and JSON Schema) with an
- * async `execute` function, plus optional `verify` and semantic `identity` callbacks.
+ * Normalized response shape returned by {@link LLMProvider.chat}. Contains
+ * the generated text, any tool calls the model requested, cumulative
+ * token usage, the model id that served the request, the stop reason,
+ * and an optional reasoning trace.
  *
- * @example Define a tool that fetches the current UTC time
+ * @example
+ * ```ts
+ * import type { ChatResponse } from 'weft';
+ *
+ * const response: ChatResponse = {
+ *   content: 'Hello',
+ *   toolCalls: [],
+ *   usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+ *   model: 'claude-sonnet-4-5',
+ *   stopReason: 'end_turn',
+ * };
+ * ```
+ */
+export interface ChatResponse {
+  content: string;
+  toolCalls: ToolCall[];
+  usage: TokenUsage;
+  model: string;
+  stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence';
+  reasoningTrace?: string | undefined;
+}
+
+/**
+ * The normalized provider interface that executeAgentLoop depends on.
+ * Bring your own provider - Weft does not ship built-in providers.
+ *
+ * Required: chat(). Optional: createChatResumeHint(), warmup().
+ * No stream(), no countTokens() - those are not durability-shaped.
+ *
+ * @example Minimal stub provider for testing
+ * ```ts
+ * import type { LLMProvider } from 'weft';
+ *
+ * const stubProvider: LLMProvider = {
+ *   name: 'stub',
+ *   async chat(_messages, _options) {
+ *     return {
+ *       content: 'Hello',
+ *       toolCalls: [],
+ *       usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+ *       model: 'stub-1.0',
+ *       stopReason: 'end_turn',
+ *     };
+ *   },
+ * };
+ * ```
+ */
+export interface LLMProvider {
+  readonly name: string;
+  chat(messages: Message[], options: ChatOptions): Promise<ChatResponse>;
+  createChatResumeHint?(
+    messages: Message[],
+    options: ChatOptions,
+  ): Promise<ChatResumeHint | undefined>;
+  warmup?(): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Agent types
+// ---------------------------------------------------------------------------
+
+/**
+ * A locally-defined tool that the agent loop can call.
+ *
+ * @example Define a tool that returns the current time
  * ```ts
  * import type { AgentTool } from 'weft';
  *
- * const currentTimeTool: AgentTool = {
+ * const timeTool: AgentTool = {
  *   definition: {
  *     name: 'get_current_time',
- *     description: 'Returns the current UTC time as an ISO 8601 string.',
+ *     description: 'Returns current UTC time.',
  *     inputSchema: { type: 'object', properties: {} },
  *   },
- *   execute: async (_input: unknown) => new Date().toISOString(),
+ *   execute: async () => new Date().toISOString(),
  * };
  * ```
  */
@@ -152,22 +287,15 @@ export interface AgentTool {
 }
 
 /**
- * Sink that records `Promise<void>` verifications produced by tool execution.
- *
- * The agent runtime uses this to track in-flight verification work that must
- * settle before the agent loop returns its final result. Pass an implementation
- * to `executeAgentLoop` via `AgentOptions.verificationRecorder` to opt into
- * verification tracking.
+ * Sink that records Promise<void> verifications produced by tool execution.
  *
  * @example
  * ```ts
- * import { type VerificationRecorder } from 'weft';
+ * import type { VerificationRecorder } from 'weft';
  *
  * const verifications: Array<Promise<void>> = [];
  * const recorder: VerificationRecorder = {
- *   recordVerification(promise) {
- *     verifications.push(promise);
- *   },
+ *   recordVerification(promise) { verifications.push(promise); },
  * };
  * ```
  */
@@ -175,177 +303,153 @@ export interface VerificationRecorder {
   recordVerification(verification: Promise<void>): void;
 }
 
-export interface TurnInfo {
-  turnIndex: number;
-  model: string;
-  conversationLength: number;
-}
-
-export interface TurnResult {
-  turnIndex: number;
-  model: string;
-  inputTokens: number;
-  outputTokens: number;
-  cost: number;
-  duration: number;
-  toolCallCount: number;
-}
-
-export interface ToolCallInfo {
-  turnIndex: number;
-  toolName: string;
-  toolInput: unknown;
-}
-
-export interface ToolReturnInfo {
-  turnIndex: number;
-  toolName: string;
-  duration: number;
-  success: boolean;
-}
-
 /**
- * Per-turn cost breakdown returned in `AgentResult.turnCosts`. `tools` is an
- * array of tool *names* invoked during this turn (not the calls themselves).
- * `model` is the model that actually responded, which may differ from the
- * requested model when a `ModelRouter` fallback fired.
- */
-export interface TurnCostEntry {
-  turn: number;
-  inputTokens: number;
-  outputTokens: number;
-  cost: number;
-  model: string;
-  tools: string[];
-}
-
-/**
- * Return value of {@link executeAgentLoop}. Contains the final text response,
- * the full normalized conversation history, cumulative token usage, per-turn
- * cost breakdown, and any reasoning traces captured from the provider.
- * The optional `confidence` field is reserved for provider-surfaced confidence
- * scores and is currently always `undefined` — `buildAgentResult` does not
- * populate it.
+ * Per-turn token usage entry in {@link AgentResult.turnUsage}. Exactly one
+ * entry per completed turn. The discriminator narrows the token fields:
+ * `source: 'provider'` carries numeric token counts; `source:
+ * 'unavailable'` carries `null` token counts (the provider did not
+ * report usage).
  *
- * @example Inspect costs and reasoning after an agent run
+ * The built-in `executeAgentLoop` always emits `source: 'provider'`
+ * because `LLMProvider.chat` returns a required `TokenUsage` block. The
+ * `'unavailable'` variant exists for downstream consumers that wrap the
+ * loop or extend the result shape — for example, a wrapper that aggregates
+ * usage across providers where some providers omit token counts. Consumers
+ * should always check the discriminator before reading the token fields.
+ *
+ * @example Sum input tokens across the run, ignoring unavailable turns
  * ```ts
- * import { executeAgentLoop, type AgentResult } from 'weft';
- * import type { LLMProvider } from 'weft';
+ * import type { TurnUsageEntry } from 'weft';
+ *
+ * function totalInputTokens(usage: TurnUsageEntry[]): number {
+ *   let total = 0;
+ *   for (const entry of usage) {
+ *     if (entry.source === 'provider') total += entry.inputTokens;
+ *   }
+ *   return total;
+ * }
+ * ```
+ */
+export type TurnUsageEntry =
+  | {
+      /** Zero-based, monotonic across the loop including resumed turns. */
+      turnNumber: number;
+      source: 'provider';
+      inputTokens: number;
+      outputTokens: number;
+    }
+  | {
+      /** Zero-based, monotonic across the loop including resumed turns. */
+      turnNumber: number;
+      source: 'unavailable';
+      inputTokens: null;
+      outputTokens: null;
+    };
+
+/**
+ * Configuration object passed to executeAgentLoop.
+ *
+ * @example Basic agent options
+ * ```ts
+ * import type { AgentOptions, LLMProvider } from 'weft';
  *
  * declare const provider: LLMProvider;
  *
- * const result: AgentResult = await executeAgentLoop(
- *   { model: 'claude-sonnet-4-5', provider },
- *   'Explain recursion in one sentence.',
- * );
- *
- * console.log(result.content);
- * console.log('Total cost:', result.totalCost);
- * console.log('Turns:', result.turnCount);
- * result.turnCosts.forEach((t) => console.log(`Turn ${t.turn}: ${t.cost.toFixed(4)}`));
+ * const options: AgentOptions = {
+ *   model: 'claude-sonnet-4-5',
+ *   provider,
+ *   systemPrompt: 'You are a helpful assistant.',
+ *   maxTurns: 8,
+ * };
  * ```
  */
-export interface AgentResult {
-  content: string;
-  conversation: Message[];
-  totalTokens: TokenUsage;
-  totalCost: number;
-  turnCount: number;
-  /** Reasoning/thinking traces captured from each turn's provider response. */
-  reasoningTraces: string[];
-  /** Per-turn cost breakdown with token counts, model, and tools used. */
-  turnCosts: TurnCostEntry[];
+export interface AgentOptions {
+  model: string;
+  provider: LLMProvider;
+  systemPrompt?: string | undefined;
+  /** Plain AgentTool array. */
+  tools?: AgentTool[] | undefined;
+  /** Maximum number of LLM turns before returning. Defaults to 10. */
+  maxTurns?: number | undefined;
+  signal?: AbortSignal | undefined;
+  eventTarget?: EventTarget | undefined;
+  workflowId?: string | undefined;
+  agentId?: string | undefined;
   /**
-   * Confidence score surfaced by the provider, if available.
-   * A value in [0, 1] where higher means more confident.
-   * `undefined` when the provider does not surface a confidence value.
+   * Durable tool effect log for deduplicating tool calls across
+   * checkpoint-restore cycles.
    */
-  confidence?: number | undefined;
+  toolEffectLog?: ToolEffectLogLike | undefined;
+  /**
+   * Internal hook used by speculative execution to defer tool-result
+   * verification until the enclosing speculative branch drains.
+   */
+  verificationRecorder?: VerificationRecorder | undefined;
+  /**
+   * Conversation size in bytes at which an AgentCheckpointSizeWarningEvent
+   * is dispatched. Defaults to 65536 (64 KB).
+   */
+  checkpointSizeWarningThreshold?: number | undefined;
 }
 
+/** Resolved (defaults filled in) form of AgentOptions. */
 export interface ResolvedAgentOptions {
   defaultModel: string;
   provider: LLMProvider;
   systemPrompt?: string | undefined;
   maxTurns: number;
-  budget?: BudgetTracker | undefined;
-  modelRouter?: ModelRouter | undefined;
-  contextManager?: ContextWindowManager | undefined;
-  healthTracker?: ProviderHealthTracker | undefined;
-  toolCacheTTL: number;
-  toolCacheMaxSize: number;
   signal?: AbortSignal | undefined;
-  hooks?: AgentHooks | undefined;
   eventTarget?: EventTarget | undefined;
   workflowId: string;
   agentId: string;
-  onTurnStarted?: ((turn: TurnInfo) => void) | undefined;
-  onTurnCompleted?: ((turn: TurnResult) => void) | undefined;
-  onToolCalled?: ((call: ToolCallInfo) => void) | undefined;
-  onToolReturned?: ((result: ToolReturnInfo) => void) | undefined;
-  checkpointSizeWarningThreshold: number;
   toolEffectLog?: ToolEffectLogLike | undefined;
   verificationRecorder?: VerificationRecorder | undefined;
+  checkpointSizeWarningThreshold: number;
 }
 
+/** Runtime state of the agent loop. */
 export interface AgentLoopState {
   conversation: Message[];
-  toolCache: Map<string, CacheEntry>;
   totalTokens: TokenUsage;
-  totalCost: number;
   turnCount: number;
   lastContent: string;
   sizeWarningFired: boolean;
-  budgetWarningFired: boolean;
-  previousModels: string[];
   reasoningTraces: string[];
-  turnCosts: TurnCostEntry[];
+  turnUsage: TurnUsageEntry[];
 }
 
 /**
- * Snapshot of an agent loop's runtime state, suitable for durable persistence
- * and later resumption.
- *
- * The engine captures this when an agent operation suspends (e.g. on a provider
- * resume hint), writes it to storage, and rehydrates it when the workflow
- * resumes. Workflow authors typically don't construct this directly — it's
- * produced by `snapshotAgentLoopState` and consumed by `executeAgentLoopWithState`.
+ * Snapshot of an agent loop's runtime state, suitable for durable persistence.
  *
  * @example
  * ```ts
- * import { type PersistedAgentLoopState } from 'weft';
+ * import type { PersistedAgentLoopState } from 'weft';
  *
  * function isFinalState(state: PersistedAgentLoopState): boolean {
- *   return state.turnCount > 0 && state.lastContent.length > 0;
+ *   return state.turnCount > 0 && state.lastContent !== null;
  * }
  * ```
  */
 export interface PersistedAgentLoopState {
+  schemaVersion: 2;
   conversation: Message[];
-  toolCacheEntries: Array<[string, CacheEntry]>;
   totalTokens: TokenUsage;
-  totalCost: number;
   turnCount: number;
-  lastContent: string;
+  lastContent: string | null;
   sizeWarningFired: boolean;
-  budgetWarningFired: boolean;
-  previousModels: string[];
+  agentId: string;
+  workflowId: string;
   reasoningTraces: string[];
-  turnCosts: TurnCostEntry[];
-  budgetState?: SerializedBudgetState | undefined;
+  turnUsage: TurnUsageEntry[];
+  pendingProviderResume?: PendingProviderResumeState | undefined;
 }
 
 /**
  * State of a pending provider resume that the agent loop is waiting on.
  *
- * When `resumed: false`, the agent has not yet received the resume payload.
- * When `resumed: true`, the payload is attached and the loop is ready to
- * continue. The `turnIndex` field anchors the resume to a specific turn so
- * out-of-order resumes are detectable.
- *
  * @example
  * ```ts
- * import { type PendingProviderResumeState } from 'weft';
+ * import type { PendingProviderResumeState } from 'weft';
  *
  * function describe(state: PendingProviderResumeState): string {
  *   return state.resumed ? `resumed at turn ${state.turnIndex}` : `awaiting turn ${state.turnIndex}`;
@@ -355,23 +459,18 @@ export interface PersistedAgentLoopState {
 export type PendingProviderResumeState =
   | {
       turnIndex: number;
-      hint: import('../providers/types.ts').ChatResumeHint;
+      hint: ChatResumeHint;
       resumed: false;
     }
   | {
       turnIndex: number;
-      hint: import('../providers/types.ts').ChatResumeHint;
+      hint: ChatResumeHint;
       resumed: true;
       payload: unknown;
     };
 
 /**
  * Thrown by the agent loop when it must suspend before the next provider fetch.
- *
- * The engine catches this error inside the agent operation, persists the
- * attached `loopState` and `pendingResume`, and parks the workflow until the
- * external resume signal arrives. Workflow authors typically don't catch this
- * directly — it flows through the engine's suspension machinery.
  *
  * @example
  * ```ts
@@ -397,39 +496,51 @@ export class AgentLoopSuspendedError extends Error {
   }
 }
 
+/**
+ * Return value of executeAgentLoop.
+ *
+ * @example
+ * ```ts
+ * import { executeAgentLoop, type AgentResult } from 'weft';
+ * import type { LLMProvider } from 'weft';
+ *
+ * declare const provider: LLMProvider;
+ *
+ * const result: AgentResult = await executeAgentLoop(
+ *   { model: 'claude-sonnet-4-5', provider },
+ *   'Explain recursion.',
+ * );
+ * console.log(result.content);
+ * console.log('Turns:', result.turnCount);
+ * ```
+ */
+export interface AgentResult {
+  content: string;
+  conversation: Message[];
+  totalTokens: TokenUsage;
+  turnCount: number;
+  reasoningTraces: string[];
+  turnUsage: TurnUsageEntry[];
+}
+
+/** Internal runtime bundle used by the agent loop. */
 export interface AgentRuntime {
   options: ResolvedAgentOptions;
-  toolMap: Map<string, RegistryTool>;
+  toolMap: Map<string, import('./tool-initialization.ts').RegistryToolEntry>;
   toolDefinitions: ToolDefinition[];
   state: AgentLoopState;
-  /** Dispose MCP transports and their child processes/connections. */
   dispose: () => void;
 }
 
-export type PreparedTurn = ActiveTurn | SkippedTurn;
-
-export interface ActiveTurn {
-  currentModel: string;
-  originalModel: string;
-  fallbackModels: string[];
-  messagesToSend: Message[];
-  turnStart: number;
-  costBefore: number;
-}
-
-export interface SkippedTurn {
-  skippedResult: string;
-}
-
+/** Metadata returned after one provider chat turn. */
 export interface ChatTurnResult {
   response: ChatResponse;
-  currentModel: string;
+  /** The model the loop requested (always equal to options.model post-shrinkage; kept for caller event payloads). */
   originalModel: string;
-  fallbackAttempts: number;
-  turnCost: number;
   turnDuration: number;
 }
 
+/** Normalized result of executing one tool call. */
 export interface ToolExecutionOutcome {
   output: string;
   success: boolean;

@@ -268,7 +268,11 @@ function interfaceLine(
   const members = sortedMemberSignatures(declaration.members, checker);
   // When the interface only extends others (no own members), walk the
   // heritage clauses so the snapshot reflects the actual public shape.
-  if (members.length === 0 && declaration.heritageClauses && declaration.heritageClauses.length > 0) {
+  if (
+    members.length === 0 &&
+    declaration.heritageClauses &&
+    declaration.heritageClauses.length > 0
+  ) {
     const inherited = inheritedMemberSignatures(declaration, checker);
     if (inherited.length > 0) {
       return `interface ${exportedName} { ${inherited.join('; ')} }`;

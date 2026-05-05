@@ -7,43 +7,42 @@
 </script>
 
 <script lang="ts">
-  import { formatCost } from '../utilities/format-number.ts';
-  import { computeWaterfallBars } from './agent-cost-waterfall.ts';
+  import { buildTurnUsageRowsFromTurnData } from './agent-cost-waterfall.ts';
 
   let { turns }: AgentCostWaterfallProps = $props();
 
-  const bars = $derived(computeWaterfallBars(turns));
-  const rowHeight = 24;
-  const viewBoxHeight = $derived(Math.max(rowHeight, bars.length * rowHeight));
+  const rows = $derived(buildTurnUsageRowsFromTurnData(turns));
 </script>
 
-{#if bars.length === 0}
-  <p class="empty">No turn cost data yet.</p>
+{#if rows.length === 0}
+  <p class="empty">No turn usage data yet.</p>
 {:else}
-  <svg
-    class="waterfall"
-    role="img"
-    aria-label="Per-turn cost waterfall"
-    viewBox={`0 0 100 ${viewBoxHeight}`}
-    preserveAspectRatio="xMinYMin meet"
-  >
-    {#each bars as bar, index (bar.turnIndex)}
-      <g transform={`translate(0, ${index * rowHeight})`}>
-        <title>{bar.ariaLabel}</title>
-        <rect
-          class="waterfall-bar"
-          x="0"
-          y="4"
-          width={bar.widthPercentage}
-          height={rowHeight - 8}
-          rx="1"
-        ></rect>
-        <text class="waterfall-label" x="1" y={rowHeight / 2 + 3}>
-          Turn {bar.turnIndex + 1} · {bar.model} · {formatCost(bar.cost)}
-        </text>
-      </g>
-    {/each}
-  </svg>
+  <table class="usage-table">
+    <thead>
+      <tr>
+        <th scope="col">Turn</th>
+        <th scope="col">Input</th>
+        <th scope="col">Output</th>
+        <th scope="col">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {#each rows as row (row.turnNumber)}
+        <tr>
+          <td>{row.turnNumber + 1}</td>
+          <td>{row.inputTokens ?? 'n/a'}</td>
+          <td>{row.outputTokens ?? 'n/a'}</td>
+          <td>
+            {#if row.unavailable}
+              <span class="badge">unavailable</span>
+            {:else}
+              <span class="status">reported</span>
+            {/if}
+          </td>
+        </tr>
+      {/each}
+    </tbody>
+  </table>
 {/if}
 
 <style>
@@ -54,23 +53,39 @@
     font-size: var(--text-sm, 0.875rem);
   }
 
-  .waterfall {
-    display: block;
+  .usage-table {
     width: 100%;
-    height: auto;
+    border-collapse: collapse;
+    font-size: var(--text-sm, 0.875rem);
+    table-layout: fixed;
   }
 
-  .waterfall-bar {
-    fill: var(--accent, #6366f1);
-    opacity: 0.85;
+  th,
+  td {
+    padding: var(--space-2, 0.5rem);
+    border-bottom: 1px solid var(--border-muted, #e5e7eb);
+    text-align: left;
+    vertical-align: middle;
   }
 
-  .waterfall-label {
-    /* SVG user units, not CSS pixels — the viewBox is 100 units wide so 5
-       gives roughly the same apparent size as 0.875rem on a typical display. */
-    font-size: 5;
-    font-family: var(--font-mono, monospace);
-    fill: var(--text, #111827);
-    dominant-baseline: middle;
+  th {
+    color: var(--text-muted, #6b7280);
+    font-weight: 600;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.5rem;
+    padding: 0 var(--space-2, 0.5rem);
+    border-radius: 4px;
+    background: var(--surface-muted, #f3f4f6);
+    color: var(--text-muted, #6b7280);
+    font-size: var(--text-xs, 0.75rem);
+  }
+
+  .status {
+    color: var(--text-muted, #6b7280);
+    font-size: var(--text-xs, 0.75rem);
   }
 </style>

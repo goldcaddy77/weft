@@ -5,7 +5,7 @@ import type {
   HandoffResult,
   SuperviseOptions,
   SuperviseResult,
-} from '../../ai/coordination.ts';
+} from '../../ai/coordination/index.ts';
 import type { Context } from './index.ts';
 import type { ContextInternals } from './internals.ts';
 import type { ContextOperationRequest } from './operation-request.ts';

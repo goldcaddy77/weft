@@ -15,7 +15,6 @@
     "weft/storage/indexeddb": "src/storage/indexeddb.ts",
     "weft/server": "src/server/index.ts",
     "weft/server/handler": "src/server/handler.ts",
-    "weft/mcp/stdio": "src/ai/mcp/transport-stdio.ts",
     "weft/client": "src/client/index.ts",
     "weft/client/local": "src/client/local.ts"
   },
@@ -39,14 +38,6 @@
       "sourceName": "executeAgentLoopWithState",
       "kind": "value",
       "subKind": "function",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/agent/types.ts",
-      "sourceName": "ActiveTurn",
-      "kind": "type",
-      "subKind": "interface",
       "publicFaces": [],
       "classification": "not-public"
     },
@@ -124,6 +115,62 @@
     },
     {
       "sourceFile": "src/ai/agent/types.ts",
+      "sourceName": "ChatOptions",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "ChatOptions",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/ai/agent/types.ts",
+      "sourceName": "ChatResponse",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "ChatResponse",
+          "kind": "type"
+        }
+      ],
+      "classification": "prose-only"
+    },
+    {
+      "sourceFile": "src/ai/agent/types.ts",
+      "sourceName": "ChatResumeContext",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "ChatResumeContext",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/ai/agent/types.ts",
+      "sourceName": "ChatResumeHint",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "ChatResumeHint",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/ai/agent/types.ts",
       "sourceName": "ChatTurnResult",
       "kind": "type",
       "subKind": "interface",
@@ -132,13 +179,41 @@
     },
     {
       "sourceFile": "src/ai/agent/types.ts",
-      "sourceName": "MCPToolSource",
+      "sourceName": "LLMProvider",
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [
         {
           "importPath": "weft",
-          "exportName": "MCPToolSource",
+          "exportName": "LLMProvider",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/ai/agent/types.ts",
+      "sourceName": "Message",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "Message",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/ai/agent/types.ts",
+      "sourceName": "MessageRole",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "MessageRole",
           "kind": "type"
         }
       ],
@@ -174,14 +249,6 @@
     },
     {
       "sourceFile": "src/ai/agent/types.ts",
-      "sourceName": "PreparedTurn",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/agent/types.ts",
       "sourceName": "ResolvedAgentOptions",
       "kind": "type",
       "subKind": "interface",
@@ -190,19 +257,45 @@
     },
     {
       "sourceFile": "src/ai/agent/types.ts",
-      "sourceName": "SkippedTurn",
+      "sourceName": "TokenUsage",
       "kind": "type",
       "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "TokenUsage",
+          "kind": "type"
+        }
+      ],
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/ai/agent/types.ts",
-      "sourceName": "ToolCallInfo",
+      "sourceName": "ToolCall",
       "kind": "type",
       "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "ToolCall",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/ai/agent/types.ts",
+      "sourceName": "ToolDefinition",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "ToolDefinition",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/agent/types.ts",
@@ -214,41 +307,31 @@
     },
     {
       "sourceFile": "src/ai/agent/types.ts",
-      "sourceName": "ToolReturnInfo",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/agent/types.ts",
-      "sourceName": "TurnCostEntry",
+      "sourceName": "ToolResult",
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [
         {
           "importPath": "weft",
-          "exportName": "TurnCostEntry",
+          "exportName": "ToolResult",
           "kind": "type"
         }
       ],
-      "classification": "prose-only"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/agent/types.ts",
-      "sourceName": "TurnInfo",
+      "sourceName": "TurnUsageEntry",
       "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/agent/types.ts",
-      "sourceName": "TurnResult",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "TurnUsageEntry",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/agent/types.ts",
@@ -260,244 +343,6 @@
           "importPath": "weft",
           "exportName": "VerificationRecorder",
           "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/budget-policy.ts",
-      "sourceName": "BudgetPolicyEnforcer",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "BudgetPolicyEnforcer",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/budget-policy.ts",
-      "sourceName": "BudgetPolicyOptions",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "BudgetPolicyOptions",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/budget-policy.ts",
-      "sourceName": "OrganizationBudgetExceededError",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "OrganizationBudgetExceededError",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/budget.ts",
-      "sourceName": "BudgetCallbacks",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/budget.ts",
-      "sourceName": "BudgetExceededError",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "BudgetExceededError",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/budget.ts",
-      "sourceName": "BudgetOptions",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "BudgetOptions",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/budget.ts",
-      "sourceName": "BudgetState",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "BudgetState",
-          "kind": "type"
-        }
-      ],
-      "classification": "prose-only"
-    },
-    {
-      "sourceFile": "src/ai/budget.ts",
-      "sourceName": "BudgetTracker",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "BudgetTracker",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/budget.ts",
-      "sourceName": "ModelPricing",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "ModelPricing",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/budget.ts",
-      "sourceName": "ModelUsageEntry",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/budget.ts",
-      "sourceName": "SerializedBudgetState",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/context-strategies/sliding-window.ts",
-      "sourceName": "SlidingWindowOptions",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/context-strategies/sliding-window.ts",
-      "sourceName": "slidingWindowStrategy",
-      "kind": "value",
-      "subKind": "function",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "slidingWindowStrategy",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/context-window.ts",
-      "sourceName": "CompactOptions",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/context-window.ts",
-      "sourceName": "ContextStrategy",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "ContextStrategy",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/context-window.ts",
-      "sourceName": "ContextWindowCheckpoint",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/context-window.ts",
-      "sourceName": "ContextWindowManager",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "ContextWindowManager",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/context-window.ts",
-      "sourceName": "ContextWindowOptions",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/context-window.ts",
-      "sourceName": "composeStrategies",
-      "kind": "value",
-      "subKind": "function",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "composeStrategies",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/context-window.ts",
-      "sourceName": "noopStrategy",
-      "kind": "value",
-      "subKind": "function",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "noopStrategy",
-          "kind": "value"
         }
       ],
       "classification": "example-required"
@@ -637,34 +482,6 @@
       "classification": "example-required"
     },
     {
-      "sourceFile": "src/ai/events/budget-events.ts",
-      "sourceName": "AgentBudgetExceededEvent",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "AgentBudgetExceededEvent",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/events/budget-events.ts",
-      "sourceName": "AgentBudgetWarningEvent",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "AgentBudgetWarningEvent",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
       "sourceFile": "src/ai/events/checkpoint-events.ts",
       "sourceName": "AgentCheckpointResumedEvent",
       "kind": "value",
@@ -683,46 +500,10 @@
       "sourceName": "AgentCheckpointSizeWarningEvent",
       "kind": "value",
       "subKind": "class",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/events/context-events.ts",
-      "sourceName": "AgentContextCompactedEvent",
-      "kind": "value",
-      "subKind": "class",
       "publicFaces": [
         {
           "importPath": "weft",
-          "exportName": "AgentContextCompactedEvent",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/events/model-events.ts",
-      "sourceName": "AgentModelFallbackEvent",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "AgentModelFallbackEvent",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/events/provider-events.ts",
-      "sourceName": "AgentProviderCircuitOpenEvent",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "AgentProviderCircuitOpenEvent",
+          "exportName": "AgentCheckpointSizeWarningEvent",
           "kind": "value"
         }
       ],
@@ -811,60 +592,6 @@
         }
       ],
       "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/hooks.ts",
-      "sourceName": "AfterToolCallContext",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/hooks.ts",
-      "sourceName": "AfterToolCallResult",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/hooks.ts",
-      "sourceName": "AgentHooks",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "AgentHooks",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/hooks.ts",
-      "sourceName": "BeforeTurnContext",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/hooks.ts",
-      "sourceName": "BeforeTurnResult",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/hooks.ts",
-      "sourceName": "BudgetWarningContext",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/human-review.ts",
@@ -959,964 +686,6 @@
         {
           "importPath": "weft",
           "exportName": "ReviewTimeoutError",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/authentication.ts",
-      "sourceName": "MCPAuthConfig",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "MCPAuthConfig",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/authentication.ts",
-      "sourceName": "SyncMCPAuthConfig",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "SyncMCPAuthConfig",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/authentication.ts",
-      "sourceName": "buildAuthHeaders",
-      "kind": "value",
-      "subKind": "function",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "buildAuthHeaders",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/client.ts",
-      "sourceName": "MCPClient",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "MCPClient",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/client.ts",
-      "sourceName": "MCPClientOptions",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "MCPClientOptions",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/client.ts",
-      "sourceName": "MCPClientTransportOptions",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "MCPClientTransportOptions",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/client.ts",
-      "sourceName": "MCPClientUrlOptions",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "MCPClientUrlOptions",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/client.ts",
-      "sourceName": "MCPServerUnavailableError",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "MCPServerUnavailableError",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/client.ts",
-      "sourceName": "MCPToolTimeoutError",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "MCPToolTimeoutError",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/oauth2-token-manager.ts",
-      "sourceName": "OAuth2Config",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "OAuth2Config",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/oauth2-token-manager.ts",
-      "sourceName": "OAuth2TokenError",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "OAuth2TokenError",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/oauth2-token-manager.ts",
-      "sourceName": "OAuth2TokenManager",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "OAuth2TokenManager",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/oauth2-token-manager.ts",
-      "sourceName": "createOAuth2TokenManager",
-      "kind": "value",
-      "subKind": "function",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "createOAuth2TokenManager",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/registry.ts",
-      "sourceName": "RegistryTool",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "RegistryTool",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/registry.ts",
-      "sourceName": "ToolNameConflictError",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "ToolNameConflictError",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/registry.ts",
-      "sourceName": "ToolRegistry",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "ToolRegistry",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/schema-validator.ts",
-      "sourceName": "ToolSchemaValidationError",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "ToolSchemaValidationError",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/schema-validator.ts",
-      "sourceName": "ValidationError",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/mcp/schema-validator.ts",
-      "sourceName": "ValidationResult",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/mcp/schema-validator.ts",
-      "sourceName": "validateSchema",
-      "kind": "value",
-      "subKind": "function",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "validateSchema",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/transport-http-sse.ts",
-      "sourceName": "HttpSseTransport",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "HttpSseTransport",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/transport-http-sse.ts",
-      "sourceName": "HttpSseTransportOptions",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "HttpSseTransportOptions",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/transport-http.ts",
-      "sourceName": "HeaderSource",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "HeaderSource",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/transport-http.ts",
-      "sourceName": "HttpTransport",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "HttpTransport",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/transport-http.ts",
-      "sourceName": "HttpTransportOptions",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "HttpTransportOptions",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/transport-stdio.ts",
-      "sourceName": "StdioTransport",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft/mcp/stdio",
-          "exportName": "StdioTransport",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/transport-stdio.ts",
-      "sourceName": "StdioTransportOptions",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [
-        {
-          "importPath": "weft/mcp/stdio",
-          "exportName": "StdioTransportOptions",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/transport.ts",
-      "sourceName": "MCPRequest",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "MCPRequest",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/transport.ts",
-      "sourceName": "MCPResponse",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "MCPResponse",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/transport.ts",
-      "sourceName": "MCPTransport",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "MCPTransport",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/transport.ts",
-      "sourceName": "MCPTransportError",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "MCPTransportError",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/transport.ts",
-      "sourceName": "TransportKind",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "TransportKind",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/transport.ts",
-      "sourceName": "inferTransportKind",
-      "kind": "value",
-      "subKind": "function",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "inferTransportKind",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/mcp/transport.ts",
-      "sourceName": "parseStdioUrl",
-      "kind": "value",
-      "subKind": "function",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "parseStdioUrl",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/model-router.ts",
-      "sourceName": "CostTier",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/model-router.ts",
-      "sourceName": "ModelRouter",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "ModelRouter",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/model-router.ts",
-      "sourceName": "ModelSelection",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "ModelSelection",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/model-router.ts",
-      "sourceName": "RoutingContext",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "RoutingContext",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/model-router.ts",
-      "sourceName": "WeightedVariant",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/model-router.ts",
-      "sourceName": "abTestRouter",
-      "kind": "value",
-      "subKind": "function",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "abTestRouter",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/model-router.ts",
-      "sourceName": "costTierRouter",
-      "kind": "value",
-      "subKind": "function",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "costTierRouter",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/model-router.ts",
-      "sourceName": "customRouter",
-      "kind": "value",
-      "subKind": "function",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "customRouter",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/model-router.ts",
-      "sourceName": "staticFallbackRouter",
-      "kind": "value",
-      "subKind": "function",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "staticFallbackRouter",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/prompt-cache/cache.ts",
-      "sourceName": "PromptCache",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "PromptCache",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/prompt-cache/types.ts",
-      "sourceName": "AnnotateResult",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "AnnotateResult",
-          "kind": "type"
-        }
-      ],
-      "classification": "prose-only"
-    },
-    {
-      "sourceFile": "src/ai/prompt-cache/types.ts",
-      "sourceName": "AnnotatedMessage",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "AnnotatedMessage",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/prompt-cache/types.ts",
-      "sourceName": "AnthropicCacheControl",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "AnthropicCacheControl",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/prompt-cache/types.ts",
-      "sourceName": "PROMPT_CACHE_HIT_METRIC",
-      "kind": "value",
-      "subKind": "const",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "PROMPT_CACHE_HIT_METRIC",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/prompt-cache/types.ts",
-      "sourceName": "PROMPT_CACHE_MISS_METRIC",
-      "kind": "value",
-      "subKind": "const",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "PROMPT_CACHE_MISS_METRIC",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/prompt-cache/types.ts",
-      "sourceName": "PromptCacheProviderMetadata",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "PromptCacheProviderMetadata",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/provider-health.ts",
-      "sourceName": "CircuitState",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/provider-health.ts",
-      "sourceName": "ProviderHealthOptions",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/provider-health.ts",
-      "sourceName": "ProviderHealthTracker",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "ProviderHealthTracker",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/providers/anthropic.ts",
-      "sourceName": "AnthropicProvider",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "AnthropicProvider",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/providers/anthropic.ts",
-      "sourceName": "AnthropicProviderOptions",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/providers/interface.ts",
-      "sourceName": "ChatOptions",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "ChatOptions",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/providers/interface.ts",
-      "sourceName": "LLMProvider",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "LLMProvider",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/providers/openai.ts",
-      "sourceName": "OpenAIProvider",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "OpenAIProvider",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/providers/openai.ts",
-      "sourceName": "OpenAIProviderOptions",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/providers/types.ts",
-      "sourceName": "ChatResponse",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "ChatResponse",
-          "kind": "type"
-        }
-      ],
-      "classification": "prose-only"
-    },
-    {
-      "sourceFile": "src/ai/providers/types.ts",
-      "sourceName": "ChatResumeContext",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "ChatResumeContext",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/providers/types.ts",
-      "sourceName": "ChatResumeHint",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "ChatResumeHint",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/providers/types.ts",
-      "sourceName": "Message",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "Message",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/providers/types.ts",
-      "sourceName": "MessageRole",
-      "kind": "type",
-      "subKind": "type-alias",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/providers/types.ts",
-      "sourceName": "StreamChunk",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "StreamChunk",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/providers/types.ts",
-      "sourceName": "TokenUsage",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "TokenUsage",
-          "kind": "type"
-        }
-      ],
-      "classification": "prose-only"
-    },
-    {
-      "sourceFile": "src/ai/providers/types.ts",
-      "sourceName": "ToolCall",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/providers/types.ts",
-      "sourceName": "ToolDefinition",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "ToolDefinition",
-          "kind": "type"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/providers/types.ts",
-      "sourceName": "ToolResult",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/streaming.ts",
-      "sourceName": "MultiplexerOptions",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/streaming.ts",
-      "sourceName": "ReconnectionBuffer",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "ReconnectionBuffer",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/streaming.ts",
-      "sourceName": "ReconnectionBufferOptions",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/ai/streaming.ts",
-      "sourceName": "StreamMultiplexer",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "StreamMultiplexer",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/ai/streaming.ts",
-      "sourceName": "TokenBridge",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "TokenBridge",
           "kind": "value"
         }
       ],

@@ -298,7 +298,7 @@ class AgentTurnStartedEvent extends Event {
 
 ### `AgentTurnCompletedEvent`
 
-Emitted when an agent turn finishes. Contains full cost and token telemetry.
+Emitted when an agent turn finishes.
 
 ```ts partial
 class AgentTurnCompletedEvent extends Event {
@@ -307,15 +307,11 @@ class AgentTurnCompletedEvent extends Event {
   readonly agentId: string;
   readonly turnIndex: number;
   readonly model: string;
-  readonly selectedModel: string;
   readonly inputTokens: number;
   readonly outputTokens: number;
-  readonly cost: number;
-  readonly cumulativeCost: number;
   readonly duration: number;
   readonly toolCallCount: number;
-  readonly fallbackAttempts: number;
-  readonly reasoningTrace: string | undefined;
+  readonly messages: readonly Message[];
 }
 ```
 
@@ -331,7 +327,6 @@ class AgentToolCalledEvent extends Event {
   readonly turnIndex: number;
   readonly toolName: string;
   readonly toolInput: unknown;
-  readonly source: 'local' | 'mcp';
   readonly operationId: string;
 }
 ```
@@ -353,95 +348,16 @@ class AgentToolReturnedEvent extends Event {
 }
 ```
 
-### `AgentBudgetWarningEvent`
-
-Emitted when an agent's budget consumption exceeds a warning threshold.
-
-```ts partial
-class AgentBudgetWarningEvent extends Event {
-  static readonly type = 'agent:budget:warning';
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly budgetUsedPercent: number;
-  readonly tokensRemaining: number;
-  readonly costRemaining: number;
-  readonly threshold: number;
-}
-```
-
-### `AgentBudgetExceededEvent`
-
-Emitted when an agent exceeds its allocated budget.
-
-```ts partial
-class AgentBudgetExceededEvent extends Event {
-  static readonly type = 'agent:budget:exceeded';
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly tokensUsed: number;
-  readonly costUsed: number;
-  readonly tokenBudget: number;
-  readonly maxCost: number;
-}
-```
-
-### `AgentContextCompactedEvent`
-
-Emitted when an agent's conversation history is compacted by a context strategy.
-
-```ts partial
-class AgentContextCompactedEvent extends Event {
-  static readonly type = 'agent:context:compacted';
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly strategy: string;
-  readonly tokensBefore: number;
-  readonly tokensAfter: number;
-  readonly messagesDropped: number;
-}
-```
-
 ### `AgentCheckpointResumedEvent`
 
-Emitted when an agent resumes from a persisted checkpoint after a process restart.
+Emitted when an agent resumes and the effect log prevents duplicate tool execution.
 
 ```ts partial
 class AgentCheckpointResumedEvent extends Event {
   static readonly type = 'agent:checkpoint:resumed';
   readonly workflowId: string;
   readonly agentId: string;
-  readonly turnIndex: number;
-}
-```
-
-### `AgentModelFallbackEvent`
-
-Emitted when a model call fails and the agent falls back to an alternative model.
-
-```ts partial
-class AgentModelFallbackEvent extends Event {
-  static readonly type = 'agent:model:fallback';
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly turnIndex: number;
-  readonly failedModel: string;
-  readonly failedReason: string;
-  readonly nextModel: string;
-  readonly attemptIndex: number;
-}
-```
-
-### `AgentProviderCircuitOpenEvent`
-
-Emitted when a provider's error rate trips the circuit breaker.
-
-```ts partial
-class AgentProviderCircuitOpenEvent extends Event {
-  static readonly type = 'agent:provider:circuit-open';
-  readonly provider: string;
-  readonly errorRate: number;
-  readonly threshold: number;
-  readonly windowDuration: number;
+  readonly duplicatesPrevented: number;
 }
 ```
 
@@ -518,12 +434,7 @@ interface WeftAgentEventMap {
   'agent:turn:completed': AgentTurnCompletedEvent;
   'agent:tool:called': AgentToolCalledEvent;
   'agent:tool:returned': AgentToolReturnedEvent;
-  'agent:budget:warning': AgentBudgetWarningEvent;
-  'agent:budget:exceeded': AgentBudgetExceededEvent;
-  'agent:context:compacted': AgentContextCompactedEvent;
   'agent:checkpoint:resumed': AgentCheckpointResumedEvent;
-  'agent:model:fallback': AgentModelFallbackEvent;
-  'agent:provider:circuit-open': AgentProviderCircuitOpenEvent;
   'human-review:requested': HumanReviewRequestedEvent;
   'human-review:completed': HumanReviewCompletedEvent;
 }

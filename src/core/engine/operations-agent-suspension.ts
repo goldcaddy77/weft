@@ -1,10 +1,14 @@
-import type { PendingProviderResumeState, PersistedAgentLoopState } from '../../ai/agent.ts';
-import type { LLMProvider } from '../../ai/providers/interface.ts';
+/* oxlint-disable max-lines -- ID:core-engine-operations-agent-suspension-file-length */
+import type {
+  LLMProvider,
+  PendingProviderResumeState,
+  PersistedAgentLoopState,
+} from '../../ai/agent/index.ts';
 import {
   createSuspendingProvider,
   type PendingChatResumeState,
   type SuspendingProviderCoordinator,
-} from '../../ai/providers/suspending-provider.ts';
+} from '../../ai/agent/suspending-provider.ts';
 import { KEYS, encodeStorageKeyComponent, type BatchOperation } from '../../storage/interface.ts';
 import { decode, encode } from '../codec.ts';
 import { isRecord } from '../debug-output.ts';
@@ -20,6 +24,18 @@ export type StoredPendingAgentExecutionState = {
 };
 
 export type SignalPayloadWaitResult = { kind: 'resumed'; payload: unknown } | { kind: 'aborted' };
+
+export class VersionMismatchError extends Error {
+  readonly offendingField?: string;
+
+  constructor(message: string, offendingField?: string) {
+    super(message);
+    this.name = 'VersionMismatchError';
+    if (offendingField !== undefined) {
+      this.offendingField = offendingField;
+    }
+  }
+}
 
 export type AgentSuspensionCallbacks = {
   hasBufferedSignal: (workflowId: string, signalName: string) => Promise<boolean>;
@@ -61,30 +77,8 @@ function hasNumberProperties(value: Record<string, unknown>, properties: string[
   return properties.every((property) => typeof value[property] === 'number');
 }
 
-function hasBooleanProperties(value: Record<string, unknown>, properties: string[]): boolean {
-  return properties.every((property) => typeof value[property] === 'boolean');
-}
-
 function hasArrayProperties(value: Record<string, unknown>, properties: string[]): boolean {
   return properties.every((property) => Array.isArray(value[property]));
-}
-
-function hasPersistedAgentLoopScalars(value: Record<string, unknown>): boolean {
-  return (
-    hasNumberProperties(value, ['totalCost', 'turnCount']) &&
-    typeof value['lastContent'] === 'string' &&
-    hasBooleanProperties(value, ['sizeWarningFired', 'budgetWarningFired'])
-  );
-}
-
-function hasPersistedAgentLoopCollections(value: Record<string, unknown>): boolean {
-  return hasArrayProperties(value, [
-    'conversation',
-    'toolCacheEntries',
-    'previousModels',
-    'reasoningTraces',
-    'turnCosts',
-  ]);
 }
 
 function isTokenUsageRecord(value: unknown): boolean {
@@ -93,13 +87,69 @@ function isTokenUsageRecord(value: unknown): boolean {
   );
 }
 
-function isPersistedAgentLoopStateValue(value: unknown): value is PersistedAgentLoopState {
-  return (
-    isRecord(value) &&
-    hasPersistedAgentLoopCollections(value) &&
+function logUnknownPersistedAgentLoopFields(value: Record<string, unknown>): void {
+  const knownFields = new Set([
+    'schemaVersion',
+    'conversation',
+    'totalTokens',
+    'turnCount',
+    'lastContent',
+    'sizeWarningFired',
+    'agentId',
+    'workflowId',
+    'reasoningTraces',
+    'turnUsage',
+    'pendingProviderResume',
+  ]);
+
+  const unknownFields = Object.keys(value).filter((field) => !knownFields.has(field));
+  if (unknownFields.length > 0) {
+    console.debug(
+      `[weft] Ignoring unknown persisted agent loop fields: ${unknownFields.join(', ')}`,
+    );
+  }
+}
+
+function assertNoForbiddenPersistedAgentLoopFields(value: Record<string, unknown>): void {
+  for (const field of ['toolCacheEntries', 'previousModels', 'budgetState']) {
+    if (field in value) {
+      throw new VersionMismatchError(
+        `Persisted agent loop state contains unsupported v1 field "${field}"`,
+        field,
+      );
+    }
+  }
+}
+
+// oxlint-disable-next-line complexity -- ID:core-engine-operations-agent-suspension-is-persisted-state-complexity
+export function isPersistedAgentLoopStateValue(value: unknown): value is PersistedAgentLoopState {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  assertNoForbiddenPersistedAgentLoopFields(value);
+
+  if (value['schemaVersion'] !== 2) {
+    return false;
+  }
+
+  const lastContent = value['lastContent'];
+  const requiredShapeMatches =
+    Array.isArray(value['conversation']) &&
     isTokenUsageRecord(value['totalTokens']) &&
-    hasPersistedAgentLoopScalars(value)
-  );
+    typeof value['turnCount'] === 'number' &&
+    (typeof lastContent === 'string' || lastContent === null) &&
+    typeof value['sizeWarningFired'] === 'boolean' &&
+    typeof value['agentId'] === 'string' &&
+    typeof value['workflowId'] === 'string' &&
+    hasArrayProperties(value, ['reasoningTraces', 'turnUsage']);
+
+  if (!requiredShapeMatches) {
+    return false;
+  }
+
+  logUnknownPersistedAgentLoopFields(value);
+  return true;
 }
 
 function isStoredPendingAgentExecutionState(

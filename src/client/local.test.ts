@@ -84,8 +84,6 @@ describe('LocalClient', () => {
     expect(client.replayTo).toBeFunction();
     expect(client.listReviews).toBeFunction();
     expect(client.submitReview).toBeFunction();
-    expect(client.setBudgetPolicy).toBeFunction();
-    expect(client.getBudgetPolicy).toBeFunction();
     expect(client.getQuotaUsage).toBeFunction();
     expect(client.getStreamChunks).toBeFunction();
     expect(client.fork).toBeFunction();
@@ -643,8 +641,6 @@ describe('LocalClient delegation surface', () => {
       })),
       listReviews: mock(async () => [{ reviewId: 'review-1' }]),
       submitReview: mock(async () => undefined),
-      setBudgetPolicy: mock(async () => undefined),
-      getBudgetPolicy: mock(async () => ({ namespace: 'agents', daily: { maxCost: 12 } })),
       getStreamChunks: mock(async () => [
         { sequence: 2, value: 'chunk-a' },
         { sequence: 3, value: 'chunk-b' },
@@ -731,11 +727,6 @@ describe('LocalClient delegation surface', () => {
     });
     expect(await client.listReviews()).toEqual([{ reviewId: 'review-1' }]);
     await client.submitReview('review-1', { decision: 'approved', reviewer: 'alex' });
-    await client.setBudgetPolicy({ namespace: 'agents', daily: { maxCost: 10 } });
-    expect(await client.getBudgetPolicy('agents')).toEqual({
-      namespace: 'agents',
-      daily: { maxCost: 12 },
-    });
     expect(await client.getStreamChunks('delegated-workflow', 'stream-key', { after: 1 })).toEqual([
       { sequence: 2, value: 'chunk-a' },
       { sequence: 3, value: 'chunk-b' },

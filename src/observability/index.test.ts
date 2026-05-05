@@ -5,7 +5,7 @@ import {
   AgentToolReturnedEvent,
   AgentTurnCompletedEvent,
   AgentTurnStartedEvent,
-} from '../ai/events';
+} from '../ai/events/index.ts';
 import type { Context } from '../core/context';
 import { Engine } from '../core/engine';
 import {
@@ -25,7 +25,12 @@ import type { WorkflowContext } from '../core/types';
 import { MemoryStorage } from '../storage/memory';
 import { createObservabilityInterceptors } from './index';
 import { MetricsCollector } from './metrics';
-import type { OpenTelemetryApi, OpenTelemetrySpan, OpenTelemetryTracer, SpanLink } from './no-op-telemetry';
+import type {
+  OpenTelemetryApi,
+  OpenTelemetrySpan,
+  OpenTelemetryTracer,
+  SpanLink,
+} from './no-op-telemetry';
 
 // ---------------------------------------------------------------------------
 // Recording tracer: captures all span operations for assertions
@@ -1585,15 +1590,10 @@ describe('createObservabilityInterceptors', () => {
               'agent-1',
               0,
               'claude',
-              'claude',
               100,
               50,
-              0.01,
-              0.01,
               500,
               1,
-              0,
-              undefined,
               [],
             ),
           );
@@ -1610,7 +1610,6 @@ describe('createObservabilityInterceptors', () => {
       expect(turnSpan!.attributes['weft.agent.model']).toBe('claude');
       expect(turnSpan!.attributes['weft.agent.input_tokens']).toBe(100);
       expect(turnSpan!.attributes['weft.agent.output_tokens']).toBe(50);
-      expect(turnSpan!.attributes['weft.agent.cost']).toBe(0.01);
       expect(turnSpan!.ended).toBe(true);
     });
 
@@ -1652,15 +1651,10 @@ describe('createObservabilityInterceptors', () => {
               'agent-1',
               0,
               'claude',
-              'claude',
               100,
               50,
-              0.01,
-              0.01,
               500,
               1,
-              0,
-              undefined,
               [],
             ),
           );
@@ -1708,15 +1702,10 @@ describe('createObservabilityInterceptors', () => {
               'agent-1',
               0,
               'claude',
-              'claude',
               100,
               50,
-              0.01,
-              0.01,
               500,
               1,
-              0,
-              undefined,
               [],
             ),
           );
@@ -1744,15 +1733,10 @@ describe('createObservabilityInterceptors', () => {
               'agent-1',
               1,
               'claude',
-              'claude',
               200,
               100,
-              0.02,
-              0.03,
               600,
               1,
-              0,
-              undefined,
               [],
             ),
           );
@@ -1821,15 +1805,10 @@ describe('createObservabilityInterceptors', () => {
               'agent-1',
               0,
               'claude',
-              'claude',
               100,
               50,
-              0.01,
-              0.01,
               500,
               2,
-              0,
-              undefined,
               [],
             ),
           );

@@ -1,11 +1,10 @@
 /**
  * Shared newline-delimited framing helper for JSON-RPC over stdio.
  *
- * Both the MCP stdio transport (`src/ai/mcp/transport-stdio.ts`) and the
- * runtime stdio subcommand (Phase 13) consume this. Phase 6 locked in
- * the framing contract against the inline buffer logic in
- * `StdioTransport.#startReadLoop`; Phase 7 (this module) extracts that
- * logic into one pure function that both transports call.
+ * The runtime stdio subcommand consumes this helper to turn newline-delimited
+ * byte chunks into complete JSON-RPC frames. Phase 6 locked in the framing
+ * contract against the original inline buffer logic; Phase 7 extracted that
+ * logic into this pure function.
  *
  * Contract:
  *   - Input:  `buffer` (leftover from the previous call) + `chunk` (new
@@ -28,10 +27,7 @@
  * helper is deliberately primitive here — callers that cannot trust
  * the peer (the Phase 13 runtime stdio session; any future network-
  * facing consumer) MUST enforce their own max-frame cap and drop /
- * fault the connection when the buffer exceeds it. The MCP stdio
- * transport (`src/ai/mcp/transport-stdio.ts`) talks only to a locally
- * spawned child process and the operator has direct control of that
- * binary, so no cap is needed there.
+ * fault the connection when the buffer exceeds it.
  */
 
 export type FramingResult = {

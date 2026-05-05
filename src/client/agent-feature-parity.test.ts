@@ -2,13 +2,12 @@ import { sleepForTesting } from '../testing/fake-timers.ts';
 /**
  * Agent feature parity tests.
  *
- * Proves that streaming, budget, and human review features work identically
+ * Proves that streaming and human review features work identically
  * through both {@link LocalClient} (library mode) and {@link HttpClient}
  * (server mode). No agent capability is server-only or library-only.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
 import { ReviewCoordinator } from '../ai/human-review.ts';
 import type { Context, StreamReference } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
@@ -45,32 +44,6 @@ async function* streamingWorkflow(ctx: WorkflowContext, _input: unknown) {
 // ---------------------------------------------------------------------------
 
 function agentFeatureTests(getClient: () => WeftClient, getEngine: () => Engine, label: string) {
-  describe(`${label}: budget policy`, () => {
-    it('setBudgetPolicy + getBudgetPolicy round-trips a policy', async () => {
-      const client = getClient();
-
-      const policy: BudgetPolicyOptions = {
-        namespace: `${label}-org`,
-        daily: { maxCost: 50 },
-        monthly: { maxCost: 500 },
-      };
-
-      await client.setBudgetPolicy(policy);
-      const retrieved = await client.getBudgetPolicy(`${label}-org`);
-
-      expect(retrieved).not.toBeNull();
-      expect(retrieved!.namespace).toBe(`${label}-org`);
-      expect(retrieved!.daily).toEqual({ maxCost: 50 });
-      expect(retrieved!.monthly).toEqual({ maxCost: 500 });
-    });
-
-    it('getBudgetPolicy returns null for unknown namespace', async () => {
-      const client = getClient();
-      const result = await client.getBudgetPolicy('nonexistent-namespace');
-      expect(result).toBeNull();
-    });
-  });
-
   describe(`${label}: human review`, () => {
     it('listReviews returns reviews created via ReviewCoordinator', async () => {
       const client = getClient();
@@ -162,13 +135,7 @@ function agentFeatureTests(getClient: () => WeftClient, getEngine: () => Engine,
 // Interface completeness check — shared across both clients
 // ---------------------------------------------------------------------------
 
-const AGENT_METHODS = [
-  'listReviews',
-  'submitReview',
-  'setBudgetPolicy',
-  'getBudgetPolicy',
-  'getStreamChunks',
-] as const;
+const AGENT_METHODS = ['listReviews', 'submitReview', 'getStreamChunks'] as const;
 
 function interfaceCompletenessTests(getClient: () => WeftClient, label: string) {
   describe(`${label}: interface completeness`, () => {

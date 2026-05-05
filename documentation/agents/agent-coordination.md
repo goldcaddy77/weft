@@ -27,7 +27,6 @@ The `HandoffOptions`:
 | `provider`           | `LLMProvider`          | The LLM provider to use                                                                   |
 | `forwardContext`     | `ForwardContext`       | How much of the parent's conversation to include                                          |
 | `parentConversation` | `Message[]`            | The parent agent's conversation history                                                   |
-| `budget`             | `BudgetTracker?`       | Shared budget tracker—child agent usage accumulates here                                  |
 | `signal`             | `AbortSignal?`         | Abort signal propagated to the child agent                                                |
 | `headers`            | `Map<string, string>?` | Trace context headers for OpenTelemetry propagation (use `createChildHeaders()` to build) |
 
@@ -111,7 +110,7 @@ The debate runs in rounds. In each round, the advocate argues first, then the cr
 
 The `DebateResult`:
 
-```typescript
+```typescript partial
 interface DebateResult {
   verdict: string;
   rounds: DebateRound[];
@@ -165,7 +164,7 @@ Two additional options let you tune consensus behavior. Set `voting: 'confidence
 
 The `SuperviseResult`:
 
-```typescript
+```typescript partial
 interface SuperviseResult {
   finalResult: string;
   workerResults: AgentResult[];
@@ -202,12 +201,8 @@ await storage.batch(next.operations);
 
 See the core [shared state](../guides/workflows.md) documentation for the full API.
 
-## Budget enforcement across parallel agents
+## Signals across parallel agents
 
-When multiple agents run in parallel via `ctx.all()`, they share the workflow-level budget. The total token cost across all parallel branches counts against the budget set by the `BudgetTracker`. If any branch exhausts the shared budget, all branches receive the abort signal via `AbortSignal.any()`.
-
-This prevents runaway cost in fan-out scenarios. If you launch five workers and one of them hits a pathological tool loop that burns through tokens, the budget tracker aborts all five rather than letting the others continue to accumulate cost.
-
-Agents can also communicate mid-execution through signals. A supervisor agent can signal a worker to change strategy if it observes concerning patterns (like escalating token usage).
+Agents can communicate mid-execution through signals. A supervisor agent can signal a worker to change strategy if it observes concerning patterns, stale assumptions, or a better division of work.
 
 These coordination patterns compose naturally with Weft's durability model. Each agent turn is checkpointed independently. Handoff boundaries, debate rounds, and worker completions are all checkpoint boundaries. Crash recovery resumes each agent from its last checkpoint—no re-execution of completed work.

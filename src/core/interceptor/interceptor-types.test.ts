@@ -11,19 +11,24 @@ import { WORKFLOW_INTERCEPTOR_HOOKS } from './interceptor-interfaces.ts';
 // type-check (and thus fails to compile) when the relationships drift.
 
 // 1. Every key on `WorkflowInterceptor` must exist on `Interceptor`.
-type _WorkflowKeysOnInterceptor =
-  keyof WorkflowInterceptor extends keyof Interceptor ? true : never;
+type _WorkflowKeysOnInterceptor = keyof WorkflowInterceptor extends keyof Interceptor
+  ? true
+  : never;
 const _workflowKeysCheck: _WorkflowKeysOnInterceptor = true;
 
 // 2. Every key on `ActivityInterceptor` must exist on `Interceptor`.
-type _ActivityKeysOnInterceptor =
-  keyof ActivityInterceptor extends keyof Interceptor ? true : never;
+type _ActivityKeysOnInterceptor = keyof ActivityInterceptor extends keyof Interceptor
+  ? true
+  : never;
 const _activityKeysCheck: _ActivityKeysOnInterceptor = true;
 
 // 3. `Interceptor` must not have keys that don't appear in either narrow
 //    interface (catches accidental widening of the unified shape).
-type _InterceptorKeysSubsetOfNarrow =
-  keyof Interceptor extends keyof WorkflowInterceptor | keyof ActivityInterceptor ? true : never;
+type _InterceptorKeysSubsetOfNarrow = keyof Interceptor extends
+  | keyof WorkflowInterceptor
+  | keyof ActivityInterceptor
+  ? true
+  : never;
 const _interceptorKeysCheck: _InterceptorKeysSubsetOfNarrow = true;
 
 // 4. `WORKFLOW_INTERCEPTOR_HOOKS` must enumerate every key of

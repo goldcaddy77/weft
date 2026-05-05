@@ -8,7 +8,7 @@ import type { WorkflowContext } from '../core/types.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { TestEngine } from '../testing/test-engine.ts';
-import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from './events.ts';
+import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from './events/index.ts';
 import {
   ReviewCoordinator,
   ReviewTimeoutError,
