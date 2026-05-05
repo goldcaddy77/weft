@@ -4,6 +4,7 @@ import type { Engine } from '../../core/engine.ts';
 import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
+import { invalidParamsFault } from './operation-helpers.ts';
 
 const queryWorkflowInput = z.object({
   workflowId: z.string().min(1),
@@ -112,11 +113,30 @@ export const queryWorkflowWithInputRestBinding: UnknownRestBinding = {
     input: { kind: 'body-field', bodyField: 'input' },
   },
   extractInput: async (request, pathParams) => {
-    const body = (await request.json().catch(() => ({}))) as { input?: unknown };
+    const rawBody = await request.text();
+    if (rawBody.trim().length === 0) {
+      return {
+        workflowId: pathParams['id'] ?? '',
+        queryName: pathParams['name'] ?? '',
+        input: undefined,
+      };
+    }
+
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody) as unknown;
+    } catch {
+      throw invalidParamsFault('Invalid JSON body');
+    }
+
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      throw invalidParamsFault('Request body must be a JSON object');
+    }
+
     return {
       workflowId: pathParams['id'] ?? '',
       queryName: pathParams['name'] ?? '',
-      input: body.input,
+      input: (body as Record<string, unknown>)['input'],
     };
   },
   success: { kind: 'json', status: 200 },

@@ -96,6 +96,29 @@ describe('weft.workflows.query', () => {
     expect(await response.json()).toEqual({ result: { detail: true } });
   });
 
+  it('returns 400 for malformed POST query JSON', async () => {
+    const engine = createEngine();
+    const handle = await engine.start('queryable', null, { id: 'query-workflow-malformed-input' });
+    await waitForStatus(engine, handle.id, 'running');
+
+    const response = await handleRequest(
+      new Request(`http://localhost/v1/workflows/${handle.id}/query/echoInput`, {
+        method: 'POST',
+        body: '{"input":',
+        headers: { 'Content-Type': 'application/json' },
+      }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: bindings,
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get('content-type')).toBe('application/json');
+    expect(await response.json()).toEqual({ error: 'Invalid JSON body' });
+  });
+
   it('returns 501 with the legacy error body when queries are not supported', async () => {
     const engine = createEngine();
     const originalQuery = engine.query.bind(engine);
