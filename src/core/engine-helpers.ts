@@ -1,5 +1,9 @@
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
+import {
+  captureFirstRejection,
+  createFirstRejectionCapture,
+} from './engine/parallel-dispatch.ts';
 import type { AgentInterception } from './interceptor.ts';
 
 /** Apply callback handlers provided by an agent interceptor to the active interception. */
@@ -103,32 +107,29 @@ export type RunAllSettledResult = {
  * Never rejects: callers inspect the result and decide how to surface
  * failure. Used by the top-level run-all dispatch path so fulfilled
  * branches can be persisted before any rejection propagates.
+ *
+ * The first-rejection-by-settlement-timing contract is shared with
+ * `dispatchBranchesAllSettled` via the `FirstRejectionCapture` helper
+ * to keep both fan-out paths consistent.
  */
 export async function executeRunAllBranchesSettled(
   branches: Record<string, [fn: Function, ...args: unknown[]]>,
   callActivity: (fn: Function, args: unknown[]) => unknown,
 ): Promise<RunAllSettledResult> {
   const entries = Object.entries(branches);
-  let hasFirstError = false;
-  let firstError: unknown = undefined;
+  const capture = createFirstRejectionCapture();
   const outcomes = await Promise.all(
     entries.map(async ([name, [fn, ...args]]): Promise<RunAllBranchOutcome> => {
       try {
         const value = await callActivity(fn, args);
         return { status: 'fulfilled', name, value };
       } catch (error) {
-        // Capture the FIRST rejection by settlement timing — the
-        // first branch to actually reject wins, not the first branch
-        // in insertion order.
-        if (!hasFirstError) {
-          hasFirstError = true;
-          firstError = error;
-        }
+        captureFirstRejection(capture, error);
         return { status: 'rejected', name, reason: error };
       }
     }),
   );
-  return { outcomes, hasFirstError, firstError };
+  return { outcomes, hasFirstError: capture.hasFirstError, firstError: capture.firstError };
 }
 
 /** Execute the `ctx.runAll()` branches and return a name-keyed result record. */

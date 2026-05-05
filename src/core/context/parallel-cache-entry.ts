@@ -163,10 +163,15 @@ export function isParallelOperationCacheEntry(
  * check. Used to surface malformed entries (e.g. checkpoints written
  * by a future engine version) instead of silently producing wrong
  * replay behavior.
+ *
+ * NOT an `asserts` predicate: a value without the marker is also a
+ * valid input here (it just means the cache slot held a non-parallel
+ * legacy value). Callers still narrow via `isParallelOperationCacheEntry`
+ * after calling this — using `asserts` would over-narrow plain
+ * non-parallel cached values and mark the legacy fallback paths
+ * (`return cached as unknown[]`) as dead code in TypeScript.
  */
-export function assertValidParallelOperationCacheEntry(
-  value: unknown,
-): asserts value is ParallelOperationCacheEntry {
+export function assertValidParallelOperationCacheEntry(value: unknown): void {
   if (hasParallelOperationCacheMarker(value) && !isParallelOperationCacheEntry(value)) {
     throw new BranchTopologyChangedError(
       'Parallel operation cache entry is malformed or incompatible with this engine version.',

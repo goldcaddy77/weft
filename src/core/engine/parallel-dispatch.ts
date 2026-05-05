@@ -50,6 +50,39 @@ export type ParallelDispatchResult = {
   firstError: unknown;
 };
 
+/**
+ * Mutable accumulator for the first rejection observed across a fan-out
+ * dispatch. Shared by `dispatchBranchesAllSettled` here and by
+ * `executeRunAllBranchesSettled` in `engine-helpers.ts` so both
+ * Promise.all-style settled dispatches use the same capture logic and
+ * don't drift in the contract for "first rejection wins" semantics.
+ *
+ * `Promise.all` rethrows whatever was thrown — including non-`Error`
+ * values like strings, numbers, or `undefined`. The accumulator
+ * preserves the original `unknown` value so callers can rethrow it
+ * verbatim.
+ */
+export type FirstRejectionCapture = {
+  hasFirstError: boolean;
+  firstError: unknown;
+};
+
+/** Create a fresh first-rejection accumulator. */
+export function createFirstRejectionCapture(): FirstRejectionCapture {
+  return { hasFirstError: false, firstError: undefined };
+}
+
+/** Record a rejection, keeping only the first one observed by settlement timing. */
+export function captureFirstRejection(
+  capture: FirstRejectionCapture,
+  reason: unknown,
+): void {
+  if (!capture.hasFirstError) {
+    capture.hasFirstError = true;
+    capture.firstError = reason;
+  }
+}
+
 export type DispatchOneBranch = (index: number) => Promise<unknown>;
 
 /**
@@ -76,8 +109,7 @@ export async function dispatchBranchesAllSettled(
     return { status: 'pending', operationId };
   });
 
-  let hasFirstError = false;
-  let firstError: unknown = undefined;
+  const capture = createFirstRejectionCapture();
 
   await Promise.all(
     operationIds.map(async (operationId, index) => {
@@ -98,15 +130,12 @@ export async function dispatchBranchesAllSettled(
           reason: { name: reasonError.name, message: reasonError.message },
           operationId,
         };
-        if (!hasFirstError) {
-          hasFirstError = true;
-          firstError = error;
-        }
+        captureFirstRejection(capture, error);
       }
     }),
   );
 
-  return { slots, hasFirstError, firstError };
+  return { slots, hasFirstError: capture.hasFirstError, firstError: capture.firstError };
 }
 
 /**
