@@ -58,9 +58,9 @@ export interface ScheduleOptions {
  *
  * @example
  * ```ts
- * import { schedule } from 'weft';
+ * import { schedule, type ScheduleDefinition } from 'weft';
  *
- * const dailyReport = schedule({
+ * const dailyReport: ScheduleDefinition<{ day: string }> = schedule({
  *   workflow: 'report',
  *   cron: '0 9 * * *',
  *   input: { day: 'today' },
@@ -82,6 +82,8 @@ export interface ScheduleDefinition<TInput = unknown> {
  *
  * @example
  * ```ts
+ * import { schedule } from 'weft';
+ *
  * const definition = schedule({ workflow: 'report', cron: '0 9 * * *', input: null });
  * ```
  */

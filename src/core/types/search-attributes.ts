@@ -91,7 +91,12 @@ export type SearchAttributeValueForDefinition<TDefinition> =
  *
  * @example
  * ```ts
- * const customerId = searchAttribute('customerId', 'string');
+ * import { searchAttribute, type SearchAttributeHandle } from 'weft';
+ *
+ * declare const ctx: {
+ *   setAttribute(attribute: SearchAttributeHandle<string>, value: string): void;
+ * };
+ * const customerId: SearchAttributeHandle<string> = searchAttribute('customerId', 'string');
  * ctx.setAttribute(customerId, 'cust_123');
  * ```
  */
@@ -130,6 +135,8 @@ export type SearchAttributeSchema = Record<string, SearchAttributeDefinition>;
  *
  * @example
  * ```ts
+ * import { searchAttribute } from 'weft';
+ *
  * const createdAt = searchAttribute('createdAt', { type: 'string', format: 'date-time' });
  * ```
  */

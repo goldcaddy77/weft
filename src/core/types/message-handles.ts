@@ -8,9 +8,12 @@
  *
  * @example
  * ```ts
- * import { signal } from 'weft';
+ * import { signal, type SignalDefinition } from 'weft';
  *
- * const approval = signal<{ approved: boolean }>('approval');
+ * declare const handle: {
+ *   signal(definition: SignalDefinition<{ approved: boolean }>, input: { approved: boolean }): Promise<void>;
+ * };
+ * const approval: SignalDefinition<{ approved: boolean }> = signal('approval');
  * await handle.signal(approval, { approved: true });
  * ```
  */
@@ -25,9 +28,16 @@ export interface SignalDefinition<TInput = void> {
  *
  * @example
  * ```ts
- * import { update } from 'weft';
+ * import { update, type UpdateDefinition } from 'weft';
  *
- * const approveOrder = update<{ orderId: string }, { status: string }>('approveOrder');
+ * declare const handle: {
+ *   update(
+ *     definition: UpdateDefinition<{ orderId: string }, { status: string }>,
+ *     input: { orderId: string },
+ *   ): Promise<{ status: string }>;
+ * };
+ * const approveOrder: UpdateDefinition<{ orderId: string }, { status: string }> =
+ *   update('approveOrder');
  * const result = await handle.update(approveOrder, { orderId: 'ord_123' });
  * console.log(result.status);
  * ```
@@ -44,9 +54,16 @@ export interface UpdateDefinition<TInput = void, TOutput = unknown> {
  *
  * @example
  * ```ts
- * import { query } from 'weft';
+ * import { query, type QueryDefinition } from 'weft';
  *
- * const orderStatus = query<{ orderId: string }, { state: string }>('orderStatus');
+ * declare const handle: {
+ *   query(
+ *     definition: QueryDefinition<{ orderId: string }, { state: string }>,
+ *     input: { orderId: string },
+ *   ): Promise<{ state: string }>;
+ * };
+ * const orderStatus: QueryDefinition<{ orderId: string }, { state: string }> =
+ *   query('orderStatus');
  * const status = await handle.query(orderStatus, { orderId: 'ord_123' });
  * console.log(status.state);
  * ```
@@ -69,6 +86,8 @@ export type MessageName = string | { readonly name: string };
  *
  * @example
  * ```ts
+ * import { signal } from 'weft';
+ *
  * const approval = signal<{ approved: boolean }>('approval');
  * ```
  */
@@ -81,6 +100,8 @@ export function signal<TInput = void>(name: string): SignalDefinition<TInput> {
  *
  * @example
  * ```ts
+ * import { update } from 'weft';
+ *
  * const approve = update<{ id: string }, { accepted: boolean }>('approve');
  * ```
  */
@@ -95,6 +116,8 @@ export function update<TInput = void, TOutput = unknown>(
  *
  * @example
  * ```ts
+ * import { query } from 'weft';
+ *
  * const status = query<void, { state: string }>('status');
  * ```
  */

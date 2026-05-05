@@ -472,9 +472,9 @@ export interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
  *
  * @example
  * ```ts
- * import { workflow } from 'weft';
+ * import { workflow, type WorkflowDefinition } from 'weft';
  *
- * const greet = workflow(async function* greet(ctx, input: string) {
+ * const greet: WorkflowDefinition<string, string> = workflow(async function* greet(ctx, input: string) {
  *   return `hello ${input}`;
  * });
  * ```
@@ -498,6 +498,8 @@ export interface WorkflowDefinitionOptions<
  *
  * @example
  * ```ts
+ * import { workflow } from 'weft';
+ *
  * const checkout = workflow({
  *   name: 'checkout',
  *   handler: async function* checkout(ctx, input: { orderId: string }) {

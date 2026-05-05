@@ -175,7 +175,7 @@ export interface ActivityDefinition<TInput = unknown, TOutput = unknown> {
  * import { activity, type ActivityCallable } from 'weft';
  *
  * const normalizeEmail: ActivityCallable<string, string> = activity(async function normalizeEmail(
- *   input,
+ *   input: string,
  * ) {
  *   return input.trim().toLowerCase();
  * });
