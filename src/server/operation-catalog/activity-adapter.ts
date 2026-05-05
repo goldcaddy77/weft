@@ -18,5 +18,5 @@ export function catalogActivity(metadata: ActivityMetadata): CatalogActivityDefi
 }
 
 export function catalogActivities(registry: ActivityRegistry): CatalogActivityDefinition[] {
-  return registry.listDefinitions().map(catalogActivity);
+  return registry.listDefinitions();
 }

@@ -358,6 +358,33 @@ describe('ActivityRegistry', () => {
       });
       expect(registry.getMetadata(fn)?.name).toBe('alias');
     });
+
+    it('retargets function metadata when an aliased name is registered to a different function', () => {
+      const registry = new ActivityRegistry();
+      const original = makeFunction();
+      const replacement = makeFunction();
+
+      registry.register('primary', original, {
+        description: 'Primary definition.',
+      });
+      registry.register('alias', original, {
+        description: 'Alias definition.',
+      });
+      registry.register('alias', replacement, {
+        description: 'Replacement definition.',
+      });
+
+      expect(registry.getMetadata(original)).toMatchObject({
+        name: 'primary',
+        description: 'Primary definition.',
+      });
+      expect(registry.getMetadata(replacement)).toMatchObject({
+        name: 'alias',
+        description: 'Replacement definition.',
+      });
+      expect(registry.getDefinition('primary')?.name).toBe('primary');
+      expect(registry.getDefinition('alias')?.name).toBe('alias');
+    });
   });
 
   describe('names()', () => {

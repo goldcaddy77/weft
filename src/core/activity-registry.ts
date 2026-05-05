@@ -213,6 +213,21 @@ export class ActivityRegistry {
     this.#nameIndex = new Map();
   }
 
+  #retargetFunctionMetadata(fn: object, excludingName?: string): void {
+    let replacementMetadata: ActivityMetadata | undefined;
+    for (const [registeredName, registeredFn] of this.#nameIndex) {
+      if (registeredName !== excludingName && registeredFn === fn) {
+        replacementMetadata = this.#definitions.get(registeredName);
+      }
+    }
+
+    if (replacementMetadata === undefined) {
+      this.#metadata.delete(fn);
+    } else {
+      this.#metadata.set(fn, replacementMetadata);
+    }
+  }
+
   /**
    * Register an activity function with associated metadata.
    *
@@ -227,22 +242,12 @@ export class ActivityRegistry {
     fn: T,
     options?: ActivityRegistrationOptions,
   ): void {
-    // Clean up any previous registration under this name to avoid leaking
-    // the old function in #metadata. Only delete metadata if no other name
-    // still references the same function.
+    // Keep function-reference metadata aligned when this name moves to a
+    // different function. Aliased functions retarget to a remaining name;
+    // unaliased functions leave the WeakMap.
     const existingFn = this.#nameIndex.get(name);
     if (existingFn && existingFn !== fn) {
-      let stillReferenced = false;
-      for (const [registeredName, registeredFn] of this.#nameIndex) {
-        if (registeredName !== name && registeredFn === existingFn) {
-          stillReferenced = true;
-          break;
-        }
-      }
-
-      if (!stillReferenced) {
-        this.#metadata.delete(existingFn);
-      }
+      this.#retargetFunctionMetadata(existingFn, name);
     }
 
     const extracted = extractDefinitionMetadata(fn);
@@ -308,7 +313,7 @@ export class ActivityRegistry {
     return metadata === undefined ? undefined : copyActivityMetadata(metadata);
   }
 
-  /** Get metadata by activity name. Resolves the function first, then looks up its metadata. */
+  /** Get metadata by registered activity name. */
   getMetadataByName(name: string): ActivityMetadata | undefined {
     return this.getDefinition(name);
   }
@@ -334,18 +339,7 @@ export class ActivityRegistry {
     this.#definitions.delete(name);
 
     if (fn) {
-      let replacementMetadata: ActivityMetadata | undefined;
-      for (const [registeredName, registeredFn] of this.#nameIndex) {
-        if (registeredFn === fn) {
-          replacementMetadata = this.#definitions.get(registeredName);
-        }
-      }
-
-      if (replacementMetadata === undefined) {
-        this.#metadata.delete(fn);
-      } else {
-        this.#metadata.set(fn, replacementMetadata);
-      }
+      this.#retargetFunctionMetadata(fn);
     }
   }
 
