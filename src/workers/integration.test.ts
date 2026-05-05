@@ -8,6 +8,18 @@ import {
   handleRunMessage,
 } from './workflow-runner.ts';
 
+function expectActivityOperationRequestName(operationRequest: unknown, expected: string): void {
+  if (
+    typeof operationRequest !== 'object' ||
+    operationRequest === null ||
+    !('activityName' in operationRequest)
+  ) {
+    throw new Error('Expected an activity operation request');
+  }
+
+  expect(operationRequest.activityName).toBe(expected);
+}
+
 // ---------------------------------------------------------------------------
 // Integration tests: workflow runner with real async generators
 // ---------------------------------------------------------------------------
@@ -67,7 +79,7 @@ describe('workflow runner integration', () => {
 
       expect(result.type).toBe('checkpoint');
       if (result.type === 'checkpoint') {
-        expect(result.operationRequest.activityName).toBe('fetchData');
+        expectActivityOperationRequestName(result.operationRequest, 'fetchData');
       }
     });
 
@@ -202,7 +214,7 @@ describe('workflow runner integration', () => {
 
       expect(secondStep.type).toBe('checkpoint');
       if (secondStep.type === 'checkpoint') {
-        expect(secondStep.operationRequest.activityName).toBe('step2');
+        expectActivityOperationRequestName(secondStep.operationRequest, 'step2');
       }
 
       const finalResult = await handleResumeMessage(context, {

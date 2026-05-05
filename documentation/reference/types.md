@@ -59,7 +59,7 @@ interface WorkflowContext {
   readonly executionTimeRemaining: number;
   readonly startedAt: number;
   readonly tenant: TenantContext | undefined;
-  sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T>;
+  readonly state: WorkflowStateNamespace;
   run<TArguments extends unknown[], TResult>(
     fn: (...arguments_: TArguments) => Promise<TResult> | TResult,
     ...rest: TArguments
@@ -144,21 +144,83 @@ type WorkflowPipeStageDefinition<TInput = unknown, TOutput = unknown> =
   | ChildWorkflowTarget<TInput, TOutput>;
 ```
 
+### `WorkflowStateNamespace`
+
+State factories exposed as `ctx.state`. Session state is checkpoint-local.
+Execution, workflow, and tenant state are storage-backed and must be yielded
+inside workflows.
+
+```ts partial
+interface WorkflowStateNamespace {
+  session<T>(key: string, options?: { initial?: T }): WorkflowSessionState<T>;
+  execution<T>(key: string, options?: WorkflowAtomicStateOptions<T>): WorkflowAtomicState<T>;
+  workflow<T>(key: string, options?: WorkflowAtomicStateOptions<T>): WorkflowAtomicState<T>;
+  tenant<T>(key: string, options?: WorkflowAtomicStateOptions<T>): WorkflowAtomicState<T>;
+}
+```
+
+### `WorkflowAtomicStateOptions<T>`
+
+Options accepted by the storage-backed `ctx.state.execution`,
+`ctx.state.workflow`, and `ctx.state.tenant` factories.
+
+```ts partial
+type WorkflowAtomicStateOptions<T> = {
+  initial?: T;
+  maxRetries?: number;
+};
+```
+
 ### `WorkflowSessionState<T>`
 
-Per-workflow durable state slot returned by `ctx.sessionState(key, initialValue?)`. Checkpointed with the workflow.
+Checkpoint-local state slot returned by `ctx.state.session(key, options?)`.
+Checkpointed with the workflow and private to that workflow instance.
 
 ```ts partial
 interface WorkflowSessionState<T> {
   get(): T | undefined;
   set(value: T): T;
   update(updater: (current: T | undefined) => T): T;
-  clear(): void;
+  delete(): void;
+  increment(this: WorkflowSessionState<number>, amount?: number): number;
+  decrement(this: WorkflowSessionState<number>, amount?: number): number;
+  merge<TObject extends Record<string, unknown>>(
+    this: WorkflowSessionState<TObject>,
+    patch: Partial<TObject>,
+  ): TObject;
+  append<TItem>(this: WorkflowSessionState<TItem[]>, item: TItem): TItem[];
+  removeFirst<TItem>(this: WorkflowSessionState<TItem[]>): TItem | undefined;
+  removeLast<TItem>(this: WorkflowSessionState<TItem[]>): TItem | undefined;
   run<TResult>(
     fn: (input: unknown) => Promise<TResult> | TResult,
     input?: unknown,
     options?: ActivityCallOptions,
   ): WorkflowOperation<TResult>;
+}
+```
+
+### `WorkflowAtomicState<T>`
+
+Storage-backed durable state returned by `ctx.state.execution`,
+`ctx.state.workflow`, and `ctx.state.tenant`.
+
+```ts partial
+interface WorkflowAtomicState<T> {
+  get(): WorkflowOperation<T | undefined>;
+  set(value: T): WorkflowOperation<T>;
+  update(updater: (current: T | undefined) => T): WorkflowOperation<T>;
+  delete(): WorkflowOperation<void>;
+  increment(this: WorkflowAtomicState<number>, amount?: number): WorkflowOperation<number>;
+  decrement(this: WorkflowAtomicState<number>, amount?: number): WorkflowOperation<number>;
+  merge<TObject extends Record<string, unknown>>(
+    this: WorkflowAtomicState<TObject>,
+    patch: Partial<TObject>,
+  ): WorkflowOperation<TObject>;
+  append<TItem>(this: WorkflowAtomicState<TItem[]>, item: TItem): WorkflowOperation<TItem[]>;
+  removeFirst<TItem>(this: WorkflowAtomicState<TItem[]>): WorkflowOperation<TItem | undefined>;
+  removeLast<TItem>(this: WorkflowAtomicState<TItem[]>): WorkflowOperation<TItem | undefined>;
+  addEventListener(type: 'change' | 'conflict' | 'exhausted', listener: EventListener): void;
+  removeEventListener(type: 'change' | 'conflict' | 'exhausted', listener: EventListener): void;
 }
 ```
 

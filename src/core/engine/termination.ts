@@ -246,6 +246,7 @@ export async function cleanupWorkflowStorage(
   const prefixes: string[] = [
     `sig:${encodedWorkflowId}:`,
     `agent-execution:${encodedWorkflowId}:`,
+    `state:execution:${encodedWorkflowId}:`,
     `tool-effect:${encodedWorkflowId}:`,
   ];
 
@@ -254,11 +255,7 @@ export async function cleanupWorkflowStorage(
     // artifacts too. Event history is still preserved via the omission of
     // the `ev:` prefix - callers that want it gone should use a storage
     // TTL or explicit pruning.
-    prefixes.push(
-      `offload:${encodedWorkflowId}:`,
-      `blob:${encodedWorkflowId}:`,
-      `shared:${encodedWorkflowId}:`,
-    );
+    prefixes.push(`offload:${encodedWorkflowId}:`, `blob:${encodedWorkflowId}:`);
   }
 
   await internals.storage.delete(KEYS.workflowHeaders(workflowId));

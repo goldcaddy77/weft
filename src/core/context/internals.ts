@@ -8,7 +8,7 @@ export interface ContextInternals {
   stepIndex: number;
   accumulatedResults: Map<number, unknown> | undefined;
   checkpointLocals: Record<string, unknown>;
-  sessionState: Record<string, unknown> | undefined;
+  stateSession: Record<string, unknown> | undefined;
   searchAttributes: Record<string, SearchAttributeValue>;
   searchAttributeSchema: SearchAttributeSchema | undefined;
   pendingAttributeChanges: Record<string, SearchAttributeValue> | undefined;
@@ -22,6 +22,7 @@ export interface ContextInternals {
   explainMode: boolean;
   nestingDepth: number;
   tenant: import('../tenant.ts').TenantContext | undefined;
+  executionStateOwnerId: string;
   resolveWorkflowType: ((target: string | Function) => string) | undefined;
 }
 
@@ -37,7 +38,7 @@ export function initializeInternals(
     abortController: options.abortController,
     stepIndex: options.initialStep ?? 0,
     accumulatedResults: options.accumulatedResults,
-    sessionState: initialSessionState,
+    stateSession: initialSessionState,
     checkpointLocals: createCheckpointLocals(initialSessionState, options.locals),
     searchAttributes: options.searchAttributes ? { ...options.searchAttributes } : {},
     searchAttributeSchema: options.searchAttributeSchema,
@@ -52,6 +53,7 @@ export function initializeInternals(
     explainMode: false,
     nestingDepth: options.nestingDepth ?? 0,
     tenant: options.tenant,
+    executionStateOwnerId: options.executionStateOwnerId ?? options.workflowId,
     resolveWorkflowType: options.resolveWorkflowType,
   };
   INTERNALS.set(context, internals);

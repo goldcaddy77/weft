@@ -176,6 +176,12 @@ export interface ContextOptions {
   getNow?: () => number;
   nestingDepth?: number;
   /**
+   * Owner identifier for `ctx.state.execution()`. Defaults to the workflow id.
+   * Child workflows inherit the parent's owner so execution-scoped state is
+   * shared across a durable execution tree.
+   */
+  executionStateOwnerId?: string;
+  /**
    * The {@link TenantContext} resolved for this workflow, if any. Made
    * available to workflow code via `ctx.tenant`.
    */

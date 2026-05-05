@@ -1,3 +1,4 @@
+import type { AtomicStateOptions } from '../atomic-state.ts';
 import type { TenantContext } from '../tenant.ts';
 import type { WorkflowVersionTuple } from '../workflow-version-tuple.ts';
 import type { ActivityCallOptions } from './activity.ts';
@@ -39,6 +40,13 @@ export interface WorkflowState {
    */
   failureCategory?: FailureCategory | null;
   version: string;
+  /**
+   * Owner identifier for execution-scoped durable state. Top-level workflows
+   * own their own execution state; durable child workflows inherit the
+   * parent's owner so `ctx.state.execution()` is shared across the execution
+   * tree.
+   */
+  executionStateOwnerId?: string;
   /**
    * Semantic version of the agent definition at the time this workflow was
    * started. Populated when the workflow was registered via an
@@ -109,12 +117,23 @@ export type WorkflowTimelineEntry = {
 };
 
 /**
- * Typed per-workflow session state slot returned by `ctx.sessionState(key)`.
+ * Options accepted by `ctx.state.session(key, options)`.
+ */
+export interface WorkflowSessionStateOptions<T> {
+  /**
+   * Value returned by `get()` before this session slot has been written.
+   * The value is captured when the handle is constructed.
+   */
+  initial?: T;
+}
+
+/**
+ * Typed per-workflow session state slot returned by `ctx.state.session(key)`.
  * Survives checkpoint recovery but is scoped to the current workflow instance.
  * Use `get` to read the current value, `set` or `update` to write, and `run`
  * to schedule a sticky durable activity that may need session-bound context.
- * `clear()` removes the stored value; subsequent `get()` returns the handle's
- * captured `initialValue` if one was provided, otherwise `undefined`.
+ * `delete()` removes the stored value; subsequent `get()` returns the handle's
+ * captured `initial` value if one was provided, otherwise `undefined`.
  * `run` schedules the function as a regular activity routed through sticky
  * worker execution. The function receives the single input value you pass to
  * `run(...)` — it cannot read the slot from inside. Read `session.get()`
@@ -124,7 +143,16 @@ export interface WorkflowSessionState<T> {
   get(): T | undefined;
   set(value: T): T;
   update(updater: (current: T | undefined) => T): T;
-  clear(): void;
+  delete(): void;
+  increment(this: WorkflowSessionState<number>, amount?: number): number;
+  decrement(this: WorkflowSessionState<number>, amount?: number): number;
+  merge<TObject extends Record<string, unknown>>(
+    this: WorkflowSessionState<TObject>,
+    patch: Partial<TObject>,
+  ): TObject;
+  append<TItem>(this: WorkflowSessionState<TItem[]>, item: TItem): TItem[];
+  removeFirst<TItem>(this: WorkflowSessionState<TItem[]>): TItem | undefined;
+  removeLast<TItem>(this: WorkflowSessionState<TItem[]>): TItem | undefined;
   run<TResult>(
     fn: () => Promise<TResult> | TResult,
     options?: ActivityCallOptions,
@@ -134,6 +162,76 @@ export interface WorkflowSessionState<T> {
     input: TInput,
     options?: ActivityCallOptions,
   ): WorkflowOperation<TResult>;
+}
+
+/**
+ * Options accepted by storage-backed workflow state handles such as
+ * `ctx.state.execution(key, options)`, `ctx.state.workflow(key, options)`,
+ * and `ctx.state.tenant(key, options)`.
+ *
+ * @example
+ * ```ts
+ * import type { WorkflowAtomicStateOptions } from 'weft';
+ *
+ * const options: WorkflowAtomicStateOptions<number> = {
+ *   initial: 0,
+ *   maxRetries: 5,
+ * };
+ * void options;
+ * ```
+ */
+export type WorkflowAtomicStateOptions<T> = Pick<AtomicStateOptions<T>, 'initial' | 'maxRetries'>;
+
+/**
+ * Typed storage-backed workflow state slot returned by durable
+ * `ctx.state.*` factories.
+ *
+ * @example
+ * ```ts
+ * import type { WorkflowAtomicState } from 'weft';
+ *
+ * declare const counter: WorkflowAtomicState<number>;
+ * const operation = counter.increment();
+ * void operation;
+ * ```
+ */
+export interface WorkflowAtomicState<T> {
+  get(): WorkflowOperation<T | undefined>;
+  set(value: T): WorkflowOperation<T>;
+  update(updater: (current: T | undefined) => T): WorkflowOperation<T>;
+  delete(): WorkflowOperation<void>;
+  increment(this: WorkflowAtomicState<number>, amount?: number): WorkflowOperation<number>;
+  decrement(this: WorkflowAtomicState<number>, amount?: number): WorkflowOperation<number>;
+  merge<TObject extends Record<string, unknown>>(
+    this: WorkflowAtomicState<TObject>,
+    patch: Partial<TObject>,
+  ): WorkflowOperation<TObject>;
+  append<TItem>(this: WorkflowAtomicState<TItem[]>, item: TItem): WorkflowOperation<TItem[]>;
+  removeFirst<TItem>(this: WorkflowAtomicState<TItem[]>): WorkflowOperation<TItem | undefined>;
+  removeLast<TItem>(this: WorkflowAtomicState<TItem[]>): WorkflowOperation<TItem | undefined>;
+  addEventListener(type: 'change' | 'conflict' | 'exhausted', listener: EventListener): void;
+  removeEventListener(type: 'change' | 'conflict' | 'exhausted', listener: EventListener): void;
+}
+
+/**
+ * State factory namespace exposed as `ctx.state` inside workflow code.
+ *
+ * @example
+ * ```ts
+ * import type { WorkflowStateNamespace } from 'weft';
+ *
+ * declare const state: WorkflowStateNamespace;
+ * const session = state.session<number>('attempts', { initial: 0 });
+ * const durable = state.execution<number>('branches', { initial: 0, maxRetries: 5 });
+ * void session;
+ * void durable;
+ * ```
+ */
+export interface WorkflowStateNamespace {
+  session<T>(key: string, options?: WorkflowSessionStateOptions<T>): WorkflowSessionState<T>;
+  execution<T>(key: string, options?: WorkflowAtomicStateOptions<T>): WorkflowAtomicState<T>;
+  workflow<T>(key: string, options?: WorkflowAtomicStateOptions<T>): WorkflowAtomicState<T>;
+  tenant<T>(key: string, options?: WorkflowAtomicStateOptions<T>): WorkflowAtomicState<T>;
 }
 
 // ---------------------------------------------------------------------------

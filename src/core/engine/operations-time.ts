@@ -28,6 +28,7 @@ export type TimeOperationCallbacks = {
     checkpoint: Checkpoint,
     executionDeadline: number | undefined,
     tenant: WorkflowState['tenant'],
+    executionStateOwnerId: string,
     registration: RegistrationEntry,
   ) => void;
   workflowVersionTupleFromState: (state: WorkflowState) => WorkflowVersionTuple;
@@ -231,6 +232,7 @@ export async function startDelayedWorkflow(
     checkpoint,
     executionDeadline,
     runningState.tenant,
+    runningState.executionStateOwnerId ?? entry.workflowId,
     registration,
   );
 }

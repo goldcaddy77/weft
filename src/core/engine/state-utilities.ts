@@ -68,6 +68,8 @@ export function getTimelineOperationLabel(operation: ContextOperationRequest): s
     case 'offload':
     case 'archive':
     case 'stream':
+    case 'state-read':
+    case 'state-commit':
       return operation.key;
     case 'load':
       return operation.reference.key;
@@ -106,6 +108,14 @@ export function getTimelineBasicInputSummary(operation: ContextOperationRequest)
       return summarizeTimelineValue({ key: operation.reference.key });
     case 'archive':
       return summarizeTimelineValue({ key: operation.key, data: operation.data });
+    case 'state-read':
+      return summarizeTimelineValue({ key: operation.key, scope: operation.scope });
+    case 'state-commit':
+      return summarizeTimelineValue({
+        key: operation.key,
+        mode: operation.mode,
+        scope: operation.scope,
+      });
     case 'speculate':
       return summarizeTimelineValue({ branch: 'speculative' });
     case 'stream':

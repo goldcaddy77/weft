@@ -278,6 +278,8 @@ export async function startWorkflow(
   // work, to prevent a concurrent child-workflow start from overwriting them.
   const parentHeaders = internals.pendingParentHeaders;
   internals.pendingParentHeaders = undefined;
+  const executionStateOwnerId = internals.pendingExecutionStateOwnerId ?? workflowId;
+  internals.pendingExecutionStateOwnerId = undefined;
   const submissionTime = internals.options.getNow();
   const scheduledStartAt = resolveScheduledStartAt(internals, options, submissionTime, callbacks);
   const normalizedTags = normalizeStartWorkflowTags(internals, options?.tags, undefined, callbacks);
@@ -326,6 +328,7 @@ export async function startWorkflow(
       options,
       normalizedTags,
       tenant,
+      executionStateOwnerId,
       delayedStartTimer,
       callbacks,
     );
@@ -397,6 +400,7 @@ export async function startWorkflow(
         checkpoint,
         state.executionDeadline,
         tenant,
+        state.executionStateOwnerId ?? workflowId,
         registration,
         callbacks,
       );
@@ -467,6 +471,7 @@ export function beginWorkflowExecution(
   checkpoint: Checkpoint,
   executionDeadline: number | undefined,
   tenant: TenantContext | undefined,
+  executionStateOwnerId: string,
   registration: RegistrationEntry,
   callbacks: LifecycleCallbacks,
 ): void {
@@ -482,6 +487,7 @@ export function beginWorkflowExecution(
       checkpoint,
       nestingDepth,
       executionDeadline,
+      executionStateOwnerId,
       tenant,
     });
     return;
@@ -496,6 +502,7 @@ export function beginWorkflowExecution(
     checkpoint,
     nestingDepth,
     executionDeadline,
+    executionStateOwnerId,
     tenant,
     callbacks,
   );
@@ -744,6 +751,7 @@ export function createInitialWorkflowState(
   options: StartOptions | undefined,
   tags: string[] | undefined,
   tenant: TenantContext | undefined,
+  executionStateOwnerId: string,
   delayedStartTimer: TimerEntry | undefined,
   callbacks: LifecycleCallbacks,
 ): WorkflowState {
@@ -754,6 +762,7 @@ export function createInitialWorkflowState(
     status: delayedStartTimer ? 'pending' : 'running',
     input,
     version: versionTuple.workflowVersion,
+    executionStateOwnerId,
     createdAt: now,
     ...(!delayedStartTimer && { startedAt: now }),
     updatedAt: now,
@@ -1023,6 +1032,7 @@ export function startWorkflowExecution(
   checkpoint: Checkpoint,
   nestingDepth: number,
   executionDeadline: number | undefined,
+  executionStateOwnerId: string,
   tenant: TenantContext | undefined,
   _callbacks?: LifecycleCallbacks,
 ): void {
@@ -1037,6 +1047,7 @@ export function startWorkflowExecution(
     input,
     checkpoint: serializeCheckpoint(checkpoint),
     nestingDepth,
+    executionStateOwnerId,
     startedAt: checkpoint.createdAt,
     sleepReferenceTime: checkpoint.createdAt,
     ...(executionDeadline !== undefined && { deadline: executionDeadline }),
@@ -1086,6 +1097,7 @@ export function createForkedWorkflowState(
     status: 'running',
     input: sourceState.input,
     version: versionTuple.workflowVersion,
+    executionStateOwnerId: workflowId,
     createdAt: forkedAt,
     startedAt: forkedAt,
     updatedAt: forkedAt,
@@ -1146,6 +1158,73 @@ export function buildForkBatchOperations(
   return operations;
 }
 
+function launchInlineWorkflowFromCheckpoint(
+  internals: EngineInternals,
+  workflowId: string,
+  state: WorkflowState,
+  checkpoint: Checkpoint,
+  registration: RegistrationEntry,
+  callbacks: LifecycleCallbacks,
+): void {
+  const inlineStrategy = internals.inlineStrategy;
+  if (!inlineStrategy) {
+    throw new Error('Inline workflow launch requested without an inline strategy.');
+  }
+
+  const accumulatedResults = new Map<number, unknown>(checkpoint.accumulatedResults);
+  const workflowAbort = new AbortController();
+
+  const context = new Context({
+    workflowId,
+    workflowType: state.type,
+    startedAt: getWorkflowExecutionStartedAt(state),
+    abortController: workflowAbort,
+    getNow: internals.options.getNow,
+    resolveWorkflowType: callbacks.resolveWorkflowTypeTarget,
+    executionStateOwnerId: state.executionStateOwnerId ?? workflowId,
+    accumulatedResults,
+    searchAttributes: checkpoint.searchAttributes,
+    ...(registration.searchAttributes && {
+      searchAttributeSchema: registration.searchAttributes,
+    }),
+    sleepReferenceTime: checkpoint.createdAt,
+    ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
+    ...(state.tenant !== undefined && { tenant: state.tenant }),
+  });
+
+  if (internals.options.development) {
+    context.explain(true);
+  }
+
+  const generator = registration.handler(context, state.input);
+  inlineStrategy.adoptWorkflow(workflowId, generator, context, workflowAbort);
+  inlineStrategy.continueWorkflow(workflowId, undefined);
+  void callbacks.swallowPromiseRejection(
+    callbacks.processPendingUpdatesAfterInlineAdvance(workflowId),
+  );
+}
+
+function launchWorkerWorkflowFromCheckpoint(
+  internals: EngineInternals,
+  workflowId: string,
+  state: WorkflowState,
+  checkpoint: Checkpoint,
+): void {
+  const serialized = serializeCheckpoint(checkpoint);
+  internals.strategy.startWorkflow({
+    workflowId,
+    workflowType: state.type,
+    input: state.input,
+    checkpoint: serialized,
+    executionStateOwnerId: state.executionStateOwnerId ?? workflowId,
+    ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
+    ...(internals.workflowHeaders.has(workflowId) && {
+      headers: [...internals.workflowHeaders.get(workflowId)!],
+    }),
+    ...(state.tenant !== undefined && { tenant: state.tenant }),
+  });
+}
+
 export function launchWorkflowFromCheckpoint(
   internals: EngineInternals,
   workflowId: string,
@@ -1170,49 +1249,16 @@ export function launchWorkflowFromCheckpoint(
   callbacks.dispatchEvent(new WorkflowStartedEvent(workflowId, state.type, state.input));
 
   if (internals.inlineStrategy) {
-    const accumulatedResults = new Map<number, unknown>(checkpoint.accumulatedResults);
-    const workflowAbort = new AbortController();
-
-    const context = new Context({
+    launchInlineWorkflowFromCheckpoint(
+      internals,
       workflowId,
-      workflowType: state.type,
-      startedAt: getWorkflowExecutionStartedAt(state),
-      abortController: workflowAbort,
-      getNow: internals.options.getNow,
-      resolveWorkflowType: callbacks.resolveWorkflowTypeTarget,
-      accumulatedResults,
-      searchAttributes: checkpoint.searchAttributes,
-      ...(registration.searchAttributes && {
-        searchAttributeSchema: registration.searchAttributes,
-      }),
-      sleepReferenceTime: checkpoint.createdAt,
-      ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
-      ...(state.tenant !== undefined && { tenant: state.tenant }),
-    });
-
-    if (internals.options.development) {
-      context.explain(true);
-    }
-
-    const generator = registration.handler(context, state.input);
-    internals.inlineStrategy.adoptWorkflow(workflowId, generator, context, workflowAbort);
-    internals.inlineStrategy.continueWorkflow(workflowId, undefined);
-    void callbacks.swallowPromiseRejection(
-      callbacks.processPendingUpdatesAfterInlineAdvance(workflowId),
+      state,
+      checkpoint,
+      registration,
+      callbacks,
     );
   } else {
-    const serialized = serializeCheckpoint(checkpoint);
-    internals.strategy.startWorkflow({
-      workflowId,
-      workflowType: state.type,
-      input: state.input,
-      checkpoint: serialized,
-      ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
-      ...(internals.workflowHeaders.has(workflowId) && {
-        headers: [...internals.workflowHeaders.get(workflowId)!],
-      }),
-      ...(state.tenant !== undefined && { tenant: state.tenant }),
-    });
+    launchWorkerWorkflowFromCheckpoint(internals, workflowId, state, checkpoint);
   }
 
   return handle;
@@ -1317,6 +1363,7 @@ export async function resumeWorkflowFromStorage(
         abortController: workflowAbort,
         getNow: internals.options.getNow,
         resolveWorkflowType: callbacks.resolveWorkflowTypeTarget,
+        executionStateOwnerId: latestState.executionStateOwnerId ?? workflowId,
         accumulatedResults,
         locals: resumeCheckpoint.locals,
         searchAttributes: resumeCheckpoint.searchAttributes,
@@ -1345,6 +1392,7 @@ export async function resumeWorkflowFromStorage(
         input: latestState.input,
         checkpoint: serialized,
         nestingDepth: internals.workflowNestingDepths.get(workflowId) ?? 0,
+        executionStateOwnerId: latestState.executionStateOwnerId ?? workflowId,
         ...(latestState.executionDeadline !== undefined && {
           deadline: latestState.executionDeadline,
         }),

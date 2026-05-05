@@ -451,34 +451,42 @@ budgetRemaining(): BudgetState | undefined
 
 Query the current budget state. Returns `undefined` if no budget is set.
 
-### `sessionState()`
+### `state`
 
 ```ts partial
-sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T>
+readonly state: WorkflowStateNamespace
 ```
 
-Return a typed session-state slot keyed by `key`. The slot is durable: its value is checkpointed alongside the workflow and survives process restarts. If no value has been stored yet, `get()` returns `initialValue` (or `undefined`).
+Return the workflow state namespace.
 
-| Parameter      | Type     | Description                                |
-| -------------- | -------- | ------------------------------------------ |
-| `key`          | `string` | Unique key for this state slot             |
-| `initialValue` | `T`      | Optional default value returned by `get()` |
+- `ctx.state.session<T>(key, options?)` is checkpoint-local and synchronous. It is private to the current workflow instance.
+- `ctx.state.execution<T>(key, options?)` is storage-backed and shared by a parent workflow, durable child workflows, and concurrent branches in that execution tree.
+- `ctx.state.workflow<T>(key, options?)` is storage-backed and shared by every run of the current workflow type in the current tenant.
+- `ctx.state.tenant<T>(key, options?)` is storage-backed and shared by every workflow in the current tenant.
 
-**Returns:** `WorkflowSessionState<T>` — a slot with `.get()`, `.set()`, `.update()`, `.clear()`, and `.run()`.
+All factories accept `options.initial`, captured when the handle is constructed.
+Session handles expose synchronous `.get()`, `.set()`, `.update()`, `.delete()`,
+convenience methods, and `.run()`. Durable handles expose yielded `.get()`,
+`.set()`, `.update()`, `.delete()`, and the same convenience methods.
 
 ```ts partial
 engine.register('order', async function* (ctx, order) {
-  const attempts = ctx.sessionState<number>('chargeAttempts', 0);
+  const attempts = ctx.state.session<number>('chargeAttempts', { initial: 0 });
   attempts.set((attempts.get() ?? 0) + 1);
   if (attempts.get()! > 3) {
     return { status: 'abandoned' };
   }
+
+  const tenantCharges = ctx.state.tenant<number>('chargeCount', { initial: 0 });
+  yield* tenantCharges.increment();
+
   const receipt = yield* ctx.run(chargeCard, order.token);
   return { status: 'charged', receipt };
 });
 ```
 
-`sessionState()` is synchronous — no `yield*` needed. Only the `.run()` method on the returned slot requires `yield*` (it executes a durable operation over the state).
+`ctx.state.session()` is synchronous -- no `yield*` needed. Durable state methods
+must be yielded because they read and commit through storage.
 
 ---
 

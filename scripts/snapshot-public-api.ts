@@ -70,6 +70,7 @@ function buildProgram(entryPath: string): ProgramBuild {
     noEmit: true,
     skipLibCheck: true,
     allowJs: false,
+    strictNullChecks: true,
   });
   const checker = program.getTypeChecker();
   const sourceFile = program.getSourceFile(entryPath);

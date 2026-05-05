@@ -220,10 +220,13 @@ describe('KEYS', () => {
     expect(KEYS.workflowHeaders(workflowId)).toBe(`wf-headers:${encodedWorkflowId}`);
     expect(KEYS.offload(workflowId, 'payload')).toBe(`offload:${encodedWorkflowId}:payload`);
     expect(KEYS.archive(workflowId, 'payload')).toBe(`archive:${encodedWorkflowId}:payload`);
-    expect(KEYS.sharedState(workflowId, 'cursor')).toBe(`shared:${encodedWorkflowId}:cursor`);
-    expect(KEYS.sharedStateVersion(workflowId, 'cursor')).toBe(
-      `shared:${encodedWorkflowId}:cursor:version`,
+    expect(KEYS.stateExecution(workflowId, 'cursor:1')).toBe(
+      `state:execution:${encodedWorkflowId}:cursor%3A1`,
     );
+    expect(KEYS.stateWorkflow('tenant:1', 'invoice:review', 'cursor:1')).toBe(
+      'state:workflow:tenant%3A1:invoice%3Areview:cursor%3A1',
+    );
+    expect(KEYS.stateTenant('tenant:1', 'cursor:1')).toBe('state:tenant:tenant%3A1:cursor%3A1');
     expect(KEYS.streamChunk(workflowId, 'stream', 7)).toBe(
       `blob:${encodedWorkflowId}:stream:chunk:0000000007`,
     );

@@ -174,32 +174,27 @@ interface SuperviseResult {
 
 You get the final synthesized answer _and_ each worker's individual result, so you can audit what each expert concluded.
 
-## SharedState across parallel agents
+## Execution state across parallel agents
 
-When parallel agents need to write to shared mutable state, Weft's `SharedState` provides compare-and-swap semantics backed by storage. Multiple agents can read and update the same state without conflicts—on write collision, the update function retries with the latest value.
+When parallel agents need to write to shared mutable state, use `ctx.state.execution()`. Execution state is backed by `AtomicState` and shared by a parent workflow, durable child workflows, and concurrent branches in the same execution tree. On write collision, the update function retries with the latest value.
 
 ```typescript partial
-import { SharedState } from 'weft';
+engine.register('research', async function* (ctx, input) {
+  const findings = ctx.state.execution<{ articles: string[]; totalCost: number }>(
+    'research-findings',
+    { initial: { articles: [], totalCost: 0 } },
+  );
 
-const initialFindings = { articles: [], totalCost: 0 };
+  yield* findings.update((current) => ({
+    articles: [...(current?.articles ?? []), input.article],
+    totalCost: (current?.totalCost ?? 0) + input.cost,
+  }));
 
-// SharedState is constructed directly with storage, workflowId, key, and optional options.
-const findings = new SharedState<{ articles: string[]; totalCost: number }>(
-  storage,
-  workflowId,
-  'research-findings',
-);
-
-// Use get() to read, update() to prepare compare-and-swap writes.
-const current = await findings.get(initialFindings);
-const next = await findings.update(
-  (prev) => ({ ...prev, totalCost: prev.totalCost + cost }),
-  initialFindings,
-);
-await storage.batch(next.operations);
+  return yield* findings.get();
+});
 ```
 
-See the core [shared state](../guides/workflows.md) documentation for the full API.
+See the core [state](../guides/state.md) documentation for the full API.
 
 ## Signals across parallel agents
 

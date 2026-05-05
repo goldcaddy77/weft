@@ -20,7 +20,7 @@ import type { WorkflowId } from './identity.ts';
 import type { QueryDefinition, SignalDefinition, UpdateDefinition } from './message-handles.ts';
 import type { Duration } from './retry-retention.ts';
 import type { SearchAttributeHandle, SearchAttributeValue } from './search-attributes.ts';
-import type { WorkflowSessionState } from './state.ts';
+import type { WorkflowStateNamespace } from './state.ts';
 import type {
   ChildWorkflowOptions,
   ChildWorkflowTarget,
@@ -83,7 +83,7 @@ export interface WorkflowContext {
    * contract that the getter can't satisfy.
    */
   readonly tenant: TenantContext | undefined;
-  sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T>;
+  readonly state: WorkflowStateNamespace;
   run<TName extends Extract<keyof ActivityTypes, string>>(
     name: TName,
     ...rest: ActivityArguments<ActivityTypes, TName>

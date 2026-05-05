@@ -545,12 +545,12 @@ const results =
   });
 ```
 
-**`SharedState` — concurrent mutable state.** When multiple agents run in parallel via `ctx.all()`, they may need shared, mutable state. `ctx.sharedState()` provides a CAS (compare-and-swap) primitive backed by storage:
+**Execution state — concurrent mutable state.** When multiple agents run in parallel via `ctx.all()`, they may need shared, mutable state. `ctx.state.execution()` provides a CAS (compare-and-swap) primitive backed by storage:
 
 ```typescript
 async function* collaborativeResearch(ctx: Context, topics: string[]) {
-  // Shared state for concurrent agents
-  const findings = yield* ctx.sharedState('research-findings', {
+  // Execution state for concurrent agents in this execution tree.
+  const findings = ctx.state.execution('research-findings', {
     initial: { articles: [], totalCost: 0 },
   });
 
@@ -580,7 +580,7 @@ async function* collaborativeResearch(ctx: Context, topics: string[]) {
 }
 ```
 
-`SharedState` writes are serialized via optimistic concurrency control. On conflict (another agent wrote between read and write), the update function is retried with the latest state. Writes are committed atomically with the agent turn checkpoint via `batch()`.
+Execution state writes are serialized via optimistic concurrency control. On conflict (another agent wrote between read and write), the update function is retried with the latest state. Writes are committed through a conditional storage batch.
 
 **Agent-to-agent messaging.** Agents running in parallel can communicate through their workflow handles via `ctx.signal()`. A supervisor agent can signal a worker to change strategy mid-execution.
 
@@ -923,10 +923,12 @@ review:{workflowId}:{reviewId}           → Pending human review request (JSON:
 review-resp:{reviewId}                    → Human review response (JSON: decision, reviewer, feedback)
 budget:{namespace}:daily:{YYYY-MM-DD}    → Organization daily budget counter (number: cumulative cost)
 budget:{namespace}:monthly:{YYYY-MM}     → Organization monthly budget counter (number: cumulative cost)
-shared:{workflowId}:{stateKey}           → SharedState data (JSON: current state)
-shared:{workflowId}:{stateKey}:version   → SharedState version counter (number: CAS version for optimistic concurrency)
+state:execution:{ownerWorkflowId}:{key}  → Execution state data (MessagePack: current state)
+state:execution:{ownerWorkflowId}:{key}:version → Execution state version counter (number: CAS version)
+state:workflow:{tenantId}:{workflowType}:{key} → Workflow-scoped state data (MessagePack: current state)
+state:tenant:{tenantId}:{key}            → Tenant-scoped state data (MessagePack: current state)
 mcp-tools:{serverUrl}:{cacheKey}         → Cached MCP tool definitions (JSON: tool schemas, TTL)
 provider-health:{provider}:{window}      → Provider error rate tracking (JSON: error count, request count, window start)
 ```
 
-Review requests and shared state entries are cleaned up when the parent workflow reaches a terminal state. Organization budget counters are retained for billing and audit. MCP tool caches expire based on their configured TTL.
+Review requests and execution-scoped state entries are cleaned up when the owning workflow reaches a terminal state. Workflow- and tenant-scoped state persists until explicitly deleted. Organization budget counters are retained for billing and audit. MCP tool caches expire based on their configured TTL.
