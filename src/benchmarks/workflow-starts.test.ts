@@ -118,7 +118,7 @@ function medianMeasurement(
   measurements: WorkflowStartAdmissionMeasurement[],
 ): WorkflowStartAdmissionMeasurement {
   const sortedMeasurements = measurements.toSorted(
-    (left, right) => right.admissionsPerSecond - left.admissionsPerSecond,
+    (left, right) => left.admissionsPerSecond - right.admissionsPerSecond,
   );
   const median = sortedMeasurements[Math.floor(sortedMeasurements.length / 2)];
 

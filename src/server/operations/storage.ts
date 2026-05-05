@@ -422,7 +422,7 @@ export const storagePutRestBinding: UnknownRestBinding = {
   operationName: 'weft.storage.put',
   inputSources: {
     key: { kind: 'path', pathParam: 'key' },
-    value: { kind: 'body' },
+    value: { kind: 'body', mediaType: 'application/octet-stream' },
   },
   extractInput: async (request, pathParams) => ({
     key: storageKeyFromPath(pathParams),

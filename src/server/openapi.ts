@@ -8,7 +8,10 @@
  * @module server/openapi
  */
 
+import { z } from 'zod';
+
 import type { ErasedOperation, OperationRegistry } from './operation-catalog.ts';
+import type { ParamSource } from './rest-binding.ts';
 import type { UnknownRestBinding } from './rest-bindings.ts';
 import { createLiveOperationRegistry, createLiveRestBindings } from './rest-bindings.ts';
 import { ROUTES, toOpenApiPath } from './route-model.ts';
@@ -47,6 +50,16 @@ export type OpenApiOptions = {
 // Generator
 // ---------------------------------------------------------------------------
 
+type OpenApiSchema = Record<string, unknown>;
+type OpenApiContent = Record<string, { schema: OpenApiSchema }>;
+type OpenApiResponse = {
+  description: string;
+  content?: OpenApiContent;
+};
+
+const JSON_MEDIA_TYPE = 'application/json';
+const OCTET_STREAM_MEDIA_TYPE = 'application/octet-stream';
+
 /**
  * Generate an OpenAPI 3.1 JSON document from the shared route definitions.
  *
@@ -62,13 +75,178 @@ function buildPathParameters(paramNames: readonly string[]): Array<Record<string
   }));
 }
 
+function inputSourceEntries(binding: UnknownRestBinding): Array<[string, ParamSource]> {
+  return Object.entries(binding.inputSources)
+    .filter((entry): entry is [string, ParamSource] => entry[1] !== undefined)
+    .toSorted(([left], [right]) => byString(left, right));
+}
+
+function zodToJsonSchema(schema: z.ZodType): OpenApiSchema {
+  // Zod 4 ships native JSON Schema conversion. Unrepresentable runtime
+  // values degrade to `{}` so discovery stays available for custom types.
+  const result = z.toJSONSchema(schema, { unrepresentable: 'any' }) as OpenApiSchema;
+  if ('$schema' in result) {
+    const { $schema: _unused, ...rest } = result;
+    return rest;
+  }
+  return result;
+}
+
+function inputJsonSchema(operation: ErasedOperation): OpenApiSchema {
+  return zodToJsonSchema(operation.inputSchema);
+}
+
+function fieldSchema(operation: ErasedOperation, field: string): OpenApiSchema {
+  const properties = asPlainObject(inputJsonSchema(operation)['properties']);
+  return asPlainObject(properties[field]);
+}
+
+function requiredInputFields(operation: ErasedOperation): Set<string> {
+  return new Set(asStringArray(inputJsonSchema(operation)['required']));
+}
+
+function buildBindingParameters(
+  binding: UnknownRestBinding,
+  operation: ErasedOperation,
+): Array<Record<string, unknown>> {
+  const parameters = buildPathParameters(binding.pathParamNames);
+  const seen = new Set(
+    parameters.map((parameter) => `${String(parameter['in'])}:${String(parameter['name'])}`),
+  );
+
+  for (const [field, source] of inputSourceEntries(binding)) {
+    if (source.kind !== 'query' && source.kind !== 'header') continue;
+    const parameter = {
+      name: source.kind === 'query' ? source.queryParam : source.headerName,
+      in: source.kind,
+      required: false,
+      schema: fieldSchema(operation, field),
+    };
+    const key = `${parameter.in}:${parameter.name}`;
+    if (seen.has(key)) continue;
+    parameters.push(parameter);
+    seen.add(key);
+  }
+
+  return parameters;
+}
+
+function buildRequestBody(
+  binding: UnknownRestBinding,
+  operation: ErasedOperation,
+): Record<string, unknown> | undefined {
+  const entries = inputSourceEntries(binding);
+  const bodyEntry = entries.find((entry) => entry[1].kind === 'body');
+  if (bodyEntry !== undefined) {
+    const [field, source] = bodyEntry;
+    if (source.kind !== 'body') return undefined;
+    const mediaType = source.mediaType ?? JSON_MEDIA_TYPE;
+    const schema =
+      mediaType === OCTET_STREAM_MEDIA_TYPE ? binaryBodySchema() : fieldSchema(operation, field);
+    return {
+      required: true,
+      content: { [mediaType]: { schema } },
+    };
+  }
+
+  const bodyFieldEntries = entries.filter(
+    (entry): entry is [string, Extract<ParamSource, { kind: 'body-field' }>] =>
+      entry[1].kind === 'body-field',
+  );
+  if (bodyFieldEntries.length === 0) return undefined;
+
+  const requiredFields = requiredInputFields(operation);
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  for (const [field, source] of bodyFieldEntries) {
+    properties[source.bodyField] = fieldSchema(operation, field);
+    if (requiredFields.has(field)) required.push(source.bodyField);
+  }
+
+  const schema: OpenApiSchema = {
+    type: 'object',
+    properties,
+    additionalProperties: operation.unknownKeyPolicy.http !== 'reject',
+  };
+  if (required.length > 0) schema['required'] = required.toSorted(byString);
+
+  return {
+    required: true,
+    content: { [JSON_MEDIA_TYPE]: { schema } },
+  };
+}
+
+function buildResponses(
+  binding: UnknownRestBinding,
+  operation: ErasedOperation,
+): Record<string, OpenApiResponse> {
+  const responses: Record<string, OpenApiResponse> = {};
+  const success = binding.success;
+
+  if (success.kind === 'json') {
+    responses[String(success.status)] = {
+      description: 'Successful response',
+      content: { [JSON_MEDIA_TYPE]: { schema: zodToJsonSchema(operation.outputSchema) } },
+    };
+    return responses;
+  }
+
+  if (success.kind === 'empty') {
+    responses[String(success.status)] = { description: 'No content' };
+    return responses;
+  }
+
+  responses['200'] = {
+    description: 'Streaming response',
+    content: { [success.mediaType]: { schema: streamingResponseSchema(success.mediaType) } },
+  };
+
+  if (success.mediaType === OCTET_STREAM_MEDIA_TYPE && outputCanBeNull(operation)) {
+    responses['404'] = { description: 'Storage key not found' };
+  }
+
+  return responses;
+}
+
+function binaryBodySchema(): OpenApiSchema {
+  return { type: 'string', format: 'binary' };
+}
+
+function streamingResponseSchema(mediaType: string): OpenApiSchema {
+  if (mediaType === OCTET_STREAM_MEDIA_TYPE) return binaryBodySchema();
+  return { type: 'string' };
+}
+
+function outputCanBeNull(operation: ErasedOperation): boolean {
+  try {
+    return operation.outputSchema.safeParse(null).success;
+  } catch {
+    return false;
+  }
+}
+
+function asPlainObject(value: unknown): Record<string, unknown> {
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === 'string');
+}
+
+function byString(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 /**
  * Emit REST bindings into the OpenAPI paths map. Exported for tests;
  * `generateOpenApiDocument` is the production entry point.
  *
  * @internal
  */
-// oxlint-disable-next-line complexity -- ID:server-openapi-emit-bindings-complexity
 export function emitBindings(
   paths: Record<string, Record<string, unknown>>,
   tagSet: Set<string>,
@@ -83,23 +261,17 @@ export function emitBindings(
     boundMethodPaths.add(`${binding.method} ${openApiPath}`);
     if (!paths[openApiPath]) paths[openApiPath] = {};
 
-    const parameters = buildPathParameters(binding.pathParamNames);
+    const parameters = buildBindingParameters(binding, operation);
     const entry: Record<string, unknown> = {
       summary: operation.summary,
       operationId: operation.name,
       tags: operation.tags,
-      responses: { '200': { description: 'Successful response' } },
+      responses: buildResponses(binding, operation),
     };
     if (parameters.length > 0) entry['parameters'] = parameters;
 
-    // Body-accepting methods documented with a JSON request body — same
-    // behavior as the legacy `emitRoutes` path so a migrated POST/PUT/
-    // PATCH operation keeps its `requestBody` entry in the document.
-    if (binding.method === 'POST' || binding.method === 'PUT' || binding.method === 'PATCH') {
-      entry['requestBody'] = {
-        content: { 'application/json': { schema: { type: 'object' } } },
-      };
-    }
+    const requestBody = buildRequestBody(binding, operation);
+    if (requestBody !== undefined) entry['requestBody'] = requestBody;
 
     paths[openApiPath][binding.method.toLowerCase()] = entry;
     for (const tag of operation.tags) tagSet.add(tag);

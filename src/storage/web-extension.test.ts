@@ -185,6 +185,31 @@ describe('WebExtensionStorage', () => {
     }
   });
 
+  it('rejects user access to the reserved metadata key', async () => {
+    const area = new FakeStorageArea();
+    const restore = installStorageNamespace('browser', area);
+    try {
+      const storage = new WebExtensionStorage();
+      await expect(storage.get('__weftStorageKeyspace')).rejects.toThrow(
+        'reserved for adapter metadata',
+      );
+      await expect(storage.put('__weftStorageKeyspace', encode('value'))).rejects.toThrow(
+        'reserved for adapter metadata',
+      );
+      await expect(
+        storage.batch([
+          { type: 'put', key: 'safe', value: encode('safe') },
+          { type: 'delete', key: '__weftStorageKeyspace' },
+        ]),
+      ).rejects.toThrow('reserved for adapter metadata');
+
+      expect(await collect(storage.keys(''))).toEqual([]);
+      expect(area.setCallCount).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
   it('serializes concurrent writes so read-modify-write cycles do not lose data', async () => {
     const area = new FakeStorageArea();
     const restore = installStorageNamespace('browser', area);

@@ -116,6 +116,19 @@ function isStorageKeyspace(value: unknown): value is StorageKeyspace {
   return Object.values(value).every(isStorageEnvelope);
 }
 
+function assertUserStorageKey(key: string): void {
+  if (key !== KEYSPACE_STORAGE_KEY) return;
+  throw new Error(
+    `WebExtensionStorage key "${KEYSPACE_STORAGE_KEY}" is reserved for adapter metadata.`,
+  );
+}
+
+function assertBatchUserStorageKeys(operations: readonly BatchOperation[]): void {
+  for (const operation of operations) {
+    assertUserStorageKey(operation.key);
+  }
+}
+
 function createPutEnvelope(value: Uint8Array): StorageEnvelope {
   return { __weftStorage: ENVELOPE_MARKER, value: encodeBytesToBase64(value) };
 }
@@ -349,12 +362,14 @@ export class WebExtensionStorage implements Storage {
   }
 
   async get(key: string): Promise<Uint8Array | null> {
+    assertUserStorageKey(key);
     const keyspace = await this.#getKeyspace();
     return decodeEnvelope(keyspace[key]);
   }
 
   async put(key: string, value: Uint8Array): Promise<void> {
     this.#assertWritable();
+    assertUserStorageKey(key);
     await this.#withMutationLock(async () => {
       const keyspace = await this.#getKeyspace();
       keyspace[key] = createPutEnvelope(value);
@@ -364,6 +379,7 @@ export class WebExtensionStorage implements Storage {
 
   async delete(key: string): Promise<void> {
     this.#assertWritable();
+    assertUserStorageKey(key);
     await this.#withMutationLock(async () => {
       const keyspace = await this.#getKeyspace();
       if (!(key in keyspace)) return;
@@ -397,6 +413,7 @@ export class WebExtensionStorage implements Storage {
   async batch(operations: BatchOperation[]): Promise<void> {
     this.#assertWritable();
     if (operations.length === 0) return;
+    assertBatchUserStorageKeys(operations);
     await this.#withMutationLock(async () => {
       const keyspace = await this.#getKeyspace();
       for (const operation of operations) {

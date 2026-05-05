@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import { decodeBase64ToBytes, encodeBytesToBase64 } from './byte-encoding.ts';
+import { decodeBase64ToBytes, encodeBytesToBase64, isRecord } from './byte-encoding.ts';
 
 const originalFromCharCode = String.fromCharCode;
 
@@ -31,5 +31,11 @@ describe('byte encoding', () => {
     expect(decodeBase64ToBytes(encoded)).toEqual(bytes);
     expect(largestArgumentCount).toBeLessThanOrEqual(512);
     expect(callCount).toBeLessThan(bytes.length / 2);
+  });
+
+  it('treats arrays as untrusted JSON values instead of records', () => {
+    expect(isRecord({ value: 'ok' })).toBe(true);
+    expect(isRecord([])).toBe(false);
+    expect(isRecord(null)).toBe(false);
   });
 });

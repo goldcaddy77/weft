@@ -24,5 +24,5 @@ export function decodeBase64ToBytes(value: string): Uint8Array {
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

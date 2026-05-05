@@ -794,13 +794,6 @@ naming the alternative that was rejected.
 - **Symbol**: `handleSubscribe`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
-## `server-openapi-emit-bindings-complexity`
-
-- **File**: `src/server/openapi.ts`
-- **Rule**: `complexity`
-- **Symbol**: `emitBindings`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
 ## `server-openapi-generate-open-api-document-complexity`
 
 - **File**: `src/server/openapi.ts`
