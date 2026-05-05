@@ -1,6 +1,10 @@
 import { serializeCheckpoint } from '../checkpoint.ts';
 import type { ComposedActivityInterceptor, ComposedWorkflowInterceptor } from '../interceptor.ts';
-import { composeActivityInterceptors, composeWorkflowInterceptors } from '../interceptor.ts';
+import {
+  composeActivityInterceptors,
+  composeWorkflowInterceptors,
+  splitInterceptors,
+} from '../interceptor.ts';
 import type { OperationOutcome } from '../types.ts';
 import type { EngineInternals } from './internals.ts';
 
@@ -68,16 +72,27 @@ export function getComposedWorkflowInterceptor(
   internals: EngineInternals,
 ): ComposedWorkflowInterceptor | null {
   if (internals.interceptors.length === 0) return null;
-  internals.composedWorkflowInterceptor ??= composeWorkflowInterceptors(internals.interceptors);
+  // Tri-state cache: `undefined` = uncomputed; `null` = computed-empty;
+  // a value = computed-non-empty. Distinguishes "we already checked and
+  // there are no workflow-side hooks" from "we haven't checked yet".
+  if (internals.composedWorkflowInterceptor !== undefined) {
+    return internals.composedWorkflowInterceptor;
+  }
+  const workflowSlice = splitInterceptors(internals.interceptors).workflow;
+  internals.composedWorkflowInterceptor =
+    workflowSlice.length === 0 ? null : composeWorkflowInterceptors(workflowSlice);
   return internals.composedWorkflowInterceptor;
 }
 
 export function getComposedActivityInterceptor(
   internals: EngineInternals,
 ): ComposedActivityInterceptor | null {
-  if (internals.activityInterceptors.length === 0) return null;
-  internals.composedActivityInterceptor ??= composeActivityInterceptors(
-    internals.activityInterceptors,
-  );
+  if (internals.interceptors.length === 0) return null;
+  if (internals.composedActivityInterceptor !== undefined) {
+    return internals.composedActivityInterceptor;
+  }
+  const activitySlice = splitInterceptors(internals.interceptors).activity;
+  internals.composedActivityInterceptor =
+    activitySlice.length === 0 ? null : composeActivityInterceptors(activitySlice);
   return internals.composedActivityInterceptor;
 }

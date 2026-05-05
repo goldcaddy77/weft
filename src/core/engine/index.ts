@@ -13,7 +13,7 @@ import { ActivityRegistry, type ActivityRegistrationOptions } from '../activity-
 import type { StoredStreamChunk } from '../context.ts';
 import { createExpiredResponseCleanupTick, createHandleCacheFinalizer } from '../engine-helpers.ts';
 import { InlineExecutionStrategy } from '../inline-execution-strategy.ts';
-import type { ActivityInterceptor, WorkflowInterceptor } from '../interceptor.ts';
+import type { Interceptor } from '../interceptor.ts';
 import { Scheduler } from '../scheduler.ts';
 import { TenantQuotaManager } from '../tenant-quotas.ts';
 import {
@@ -234,6 +234,13 @@ function resolveEngineStorage(
   });
 }
 
+function resolveEngineInterceptors(options?: EngineConstructorOptions): Interceptor[] {
+  // Defensive copy: callers must not mutate the engine's interceptor list
+  // after construction. Mutating the source array directly would bypass
+  // the composed-interceptor cache invalidation in `addInterceptor`.
+  return options?.interceptors ? [...options.interceptors] : [];
+}
+
 // oxlint-disable-next-line complexity -- ID:core-engine-resolve-engine-options-complexity
 function resolveEngineOptions(
   storage: WeftStorage,
@@ -391,10 +398,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     getInternals(this).updateWaitersByWorkflow = new Map();
     getInternals(this).sleepResolvers = new Map();
     getInternals(this).sleepResolversByWorkflow = new Map();
-    getInternals(this).interceptors = [];
-    getInternals(this).activityInterceptors = [];
-    getInternals(this).composedWorkflowInterceptor = null;
-    getInternals(this).composedActivityInterceptor = null;
+    getInternals(this).interceptors = resolveEngineInterceptors(options);
+    getInternals(this).composedWorkflowInterceptor = undefined;
+    getInternals(this).composedActivityInterceptor = undefined;
     getInternals(this).updateCoordinator = new UpdateCoordinator(storage);
     getInternals(this).activityRegistry = new ActivityRegistry();
     getInternals(this).activityWorkerDispatcher = null;
@@ -575,13 +581,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#createRegistrationCallbacks(),
     );
   }
-  addInterceptor(interceptor: WorkflowInterceptor): void {
+  addInterceptor(interceptor: Interceptor): void {
     getInternals(this).interceptors.push(interceptor);
-    getInternals(this).composedWorkflowInterceptor = null;
-  }
-  addActivityInterceptor(interceptor: ActivityInterceptor): void {
-    getInternals(this).activityInterceptors.push(interceptor);
-    getInternals(this).composedActivityInterceptor = null;
+    // Adding ANY interceptor invalidates BOTH composed caches because the
+    // unified list feeds both pipelines. Use `undefined` to mean
+    // "uncomputed" so the next call recomputes; `null` would be
+    // indistinguishable from a legitimate computed-empty result.
+    getInternals(this).composedWorkflowInterceptor = undefined;
+    getInternals(this).composedActivityInterceptor = undefined;
   }
   registerActivity<TArguments extends unknown[], TResult>(
     name: string,
