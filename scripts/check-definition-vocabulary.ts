@@ -7,10 +7,20 @@ type Finding = {
   message: string;
 };
 
-const ROOTS = ['README.md', 'documentation', 'src'] as const;
+const ROOTS = ['README.md', 'documentation', 'reference', 'src'] as const;
 const TEXT_EXTENSIONS = new Set(['.md', '.ts', '.txt']);
 const IGNORED_PATH_PARTS = new Set(['.git', 'coverage', 'dist', 'node_modules', 'tmp']);
-const IGNORED_FILES = new Set(['documentation/public-api.snapshot.txt']);
+const IGNORED_FILES = new Set([
+  'documentation/public-api.snapshot.txt',
+  'reference/jsdoc-manifest.json',
+]);
+
+type CallExpression = {
+  argumentsList: string[];
+  index: number;
+  methodName?: string;
+  receiverName?: string;
+};
 
 function extension(path: string): string {
   const dot = path.lastIndexOf('.');
@@ -45,23 +55,31 @@ async function collectFiles(path: string): Promise<string[]> {
   return files;
 }
 
-function findCallArguments(line: string, receiverPattern: RegExp): string[][] {
-  const calls: string[][] = [];
+function lineNumberForIndex(source: string, index: number): number {
+  let line = 1;
+  for (let currentIndex = 0; currentIndex < index; currentIndex++) {
+    if (source[currentIndex] === '\n') line++;
+  }
+  return line;
+}
+
+function findCallArguments(fileText: string, receiverPattern: RegExp): CallExpression[] {
+  const calls: CallExpression[] = [];
   receiverPattern.lastIndex = 0;
 
   let match: RegExpExecArray | null;
-  while ((match = receiverPattern.exec(line)) !== null) {
+  while ((match = receiverPattern.exec(fileText)) !== null) {
     let index = receiverPattern.lastIndex;
     let depth = 1;
     let quote: '"' | "'" | '`' | undefined;
     let escaped = false;
-    let source = '';
+    let argumentsSource = '';
 
-    while (index < line.length && depth > 0) {
-      const character = line[index];
+    while (index < fileText.length && depth > 0) {
+      const character = fileText[index];
 
       if (quote !== undefined) {
-        source += character;
+        argumentsSource += character;
         if (escaped) {
           escaped = false;
         } else if (character === '\\') {
@@ -75,18 +93,23 @@ function findCallArguments(line: string, receiverPattern: RegExp): string[][] {
 
       if (character === '"' || character === "'" || character === '`') {
         quote = character;
-        source += character;
+        argumentsSource += character;
         index++;
         continue;
       }
 
       if (character === '(') depth++;
       if (character === ')') depth--;
-      if (depth > 0) source += character;
+      if (depth > 0) argumentsSource += character;
       index++;
     }
 
-    calls.push(splitTopLevelArguments(source));
+    calls.push({
+      argumentsList: splitTopLevelArguments(argumentsSource),
+      index: match.index,
+      methodName: match[2] ?? match[1],
+      receiverName: match[1],
+    });
   }
 
   return calls;
@@ -134,40 +157,40 @@ function splitTopLevelArguments(source: string): string[] {
   return argumentsList;
 }
 
-function isAllowedActivityOptionsArgument(argument: string): boolean {
-  if (argument.startsWith('{')) return true;
-  return /^(activityOptions|callOptions|options)$/.test(argument);
+function isStringLiteral(argument: string | undefined): boolean {
+  return argument !== undefined && /^(['"]).*\1$/s.test(argument.trim());
 }
 
-function checkLine(file: string, line: string, lineNumber: number): Finding[] {
+function checkFile(file: string, text: string): Finding[] {
   const findings: Finding[] = [];
   const testFile = isTestFile(file);
 
-  if (!testFile && line.includes('defineAgent')) {
-    findings.push({
-      file,
-      line: lineNumber,
-      message:
-        'Use the public agent() helper; defineAgent must not appear in public source or docs.',
-    });
+  if (!testFile) {
+    let defineAgentIndex = text.indexOf('defineAgent');
+    while (defineAgentIndex !== -1) {
+      findings.push({
+        file,
+        line: lineNumberForIndex(text, defineAgentIndex),
+        message:
+          'Use the public agent() helper; defineAgent must not appear in public source or docs.',
+      });
+      defineAgentIndex = text.indexOf('defineAgent', defineAgentIndex + 'defineAgent'.length);
+    }
   }
 
   if (!testFile) {
-    const runCalls = findCallArguments(line, /\b(?:ctx|context)\.run\s*\(/g);
-    for (const argumentsList of runCalls) {
+    const runCalls = findCallArguments(text, /\b(?:ctx|context)\.run\s*\(/g);
+    for (const { argumentsList, index } of runCalls) {
       if (argumentsList.length > 3) {
         findings.push({
           file,
-          line: lineNumber,
+          line: lineNumberForIndex(text, index),
           message: 'ctx.run() accepts only activity, input?, options?.',
         });
-      } else if (
-        argumentsList.length === 3 &&
-        !isAllowedActivityOptionsArgument(argumentsList[2])
-      ) {
+      } else if (argumentsList.length === 3 && isStringLiteral(argumentsList[2])) {
         findings.push({
           file,
-          line: lineNumber,
+          line: lineNumberForIndex(text, index),
           message:
             'The third ctx.run() argument must be ActivityCallOptions, not another activity input.',
         });
@@ -175,15 +198,23 @@ function checkLine(file: string, line: string, lineNumber: number): Finding[] {
     }
   }
 
-  if (
-    !testFile &&
-    /\b(?:engine|handle|client|httpClient|localClient)\.(?:signal|update|query)\(\s*['"]/.test(line)
-  ) {
-    findings.push({
-      file,
-      line: lineNumber,
-      message: 'Public examples should use signal(), update(), or query() typed handles.',
-    });
+  if (!testFile) {
+    const messageCalls = findCallArguments(
+      text,
+      /\b([A-Za-z_$][\w$]*)\.(signal|update|query)\s*\(/g,
+    );
+    for (const { argumentsList, index, receiverName } of messageCalls) {
+      if (receiverName === 'KEYS') continue;
+      const firstArgumentIsString = isStringLiteral(argumentsList[0]);
+      const secondArgumentIsString = isStringLiteral(argumentsList[1]);
+      if (firstArgumentIsString || secondArgumentIsString) {
+        findings.push({
+          file,
+          line: lineNumberForIndex(text, index),
+          message: 'Public examples should use signal(), update(), or query() typed handles.',
+        });
+      }
+    }
   }
 
   return findings;
@@ -196,10 +227,7 @@ const findings: Finding[] = [];
 for (const file of files) {
   if (IGNORED_FILES.has(file)) continue;
   const text = await Bun.file(file).text();
-  const lines = text.split(/\r?\n/);
-  for (const [index, line] of lines.entries()) {
-    findings.push(...checkLine(file, line, index + 1));
-  }
+  findings.push(...checkFile(file, text));
 }
 
 if (findings.length > 0) {

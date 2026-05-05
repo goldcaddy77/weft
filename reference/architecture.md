@@ -2625,13 +2625,15 @@ const server = serve({
 
     // Agent-Specific Endpoints
     'GET /v1/workflows/:id/conversation': async (req) => {
-      const conversation = await engine.query(req.params.id, 'agentConversation');
+      const agentConversation = query<void, AgentConversation>('agentConversation');
+      const conversation = await engine.query(req.params.id, agentConversation);
       if (!conversation) return new Response('Not found', { status: 404 });
       return Response.json(conversation);
     },
 
     'GET /v1/workflows/:id/cost': async (req) => {
-      const cost = await engine.query(req.params.id, 'agentCostWaterfall');
+      const agentCostWaterfall = query<void, AgentCostWaterfall>('agentCostWaterfall');
+      const cost = await engine.query(req.params.id, agentCostWaterfall);
       if (!cost) return new Response('Not found', { status: 404 });
       return Response.json(cost);
     },
@@ -2918,7 +2920,7 @@ function handleHeartbeat(operationId: string, details?: unknown) {
 }
 ```
 
-Heartbeat details are queryable from the workflow via `handle.query("activityProgress")`, enabling progress UIs without custom plumbing.
+Heartbeat details are queryable from the workflow via `handle.query(activityProgressQuery)`, enabling progress UIs without custom plumbing.
 
 #### Worker Identity and Routing
 
@@ -3758,16 +3760,20 @@ The full event taxonomy:
 **Queryable data.** Agent-specific state is queryable via workflow handles:
 
 ```typescript
+const agentCostWaterfall = query<void, AgentCostWaterfall>('agentCostWaterfall');
+const agentConversation = query<void, AgentConversation>('agentConversation');
+const agentCostProjection = query<void, AgentCostProjection>('agentCostProjection');
+
 // Cost waterfall: per-turn cost breakdown
-const costWaterfall = await handle.query('agentCostWaterfall');
+const costWaterfall = await handle.query(agentCostWaterfall);
 // [{ turn: 0, inputTokens: 1200, outputTokens: 450, cost: 0.0103, model: "claude-sonnet-4-20250514", tools: ["webSearch"] }, ...]
 
 // Full conversation history
-const conversation = await handle.query('agentConversation');
+const conversation = await handle.query(agentConversation);
 // [{ role: "system", content: "..." }, { role: "user", content: "..." }, { role: "assistant", content: "...", toolCalls: [...] }, ...]
 
 // Cost projection
-const projection = await handle.query('agentCostProjection');
+const projection = await handle.query(agentCostProjection);
 // { estimatedTurnsRemaining: 8, estimatedTotalCost: 4.20, confidence: 0.7 }
 ```
 
@@ -4461,10 +4467,11 @@ async function* approvalWorkflow(ctx: Context, document: Document) {
 
 ```typescript
 const handle = engine.getHandle('wf-cart-abc');
+const validateCoupon = update<{ code: string }, ValidationResult>('validate_coupon');
 
 // Blocks until the workflow processes the update and responds
 const result = await handle.update(
-  'validate_coupon',
+  validateCoupon,
   { code: 'SAVE20' },
   {
     timeout: 5000, // 5 seconds max wait
@@ -5165,7 +5172,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Least-loaded routing by default.** Server picks the worker with the lowest `inFlight` count.
 - [x] **Visibility timeout on every in-flight task.** Default 30 seconds, configurable per activity. Stored in database (survives server restart).
 - [x] **Worker heartbeats extend visibility deadline.** `heartbeat` message resets the timeout clock.
-- [x] **Heartbeat details are queryable.** Progress info from heartbeats available via `handle.query("activityProgress")`.
+- [x] **Heartbeat details are queryable.** Progress info from heartbeats available via `handle.query(activityProgressQuery)`.
 - [x] **Worker disconnection triggers task reassignment.** WebSocket `close` event → scan in-flight tasks → requeue with incremented attempt.
 - [x] **Visibility timeout expiry triggers task reassignment.** Scheduler scans `op:inflight:*` for expired deadlines.
 - [x] **Retry policy respected on reassignment.** `maxAttempts` exceeded → permanent failure. Backoff delay applied between attempts.
@@ -5222,7 +5229,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`engine.setBudgetPolicy()` sets organization-level budgets.** Daily and monthly limits per namespace. Stored at `budget:{namespace}:daily:{date}` and `budget:{namespace}:monthly:{month}`.
 - [x] **Organization budget enforcement is real-time.** Token usage written to budget counter atomically with agent turn checkpoint via `batch()`. Exceeding rejects new `ctx.agent()` calls with `OrganizationBudgetExceededError`.
 - [x] **Cost-aware retry skips retries when budget insufficient.** Before retrying, engine checks `ctx.budgetRemaining()`. If estimated retry cost exceeds remaining budget, `BudgetExceededError` thrown instead.
-- [x] **Cost queryable via `handle.query("tokenUsage")`.** Returns cumulative token usage breakdown per agent call and per model.
+- [x] **Cost queryable via `handle.query(tokenUsageQuery)`.** Returns cumulative token usage breakdown per agent call and per model.
 - [x] **`AgentBudgetWarningEvent` dispatched at configurable threshold.** Default: 80% of budget consumed. Dispatched on both `WorkflowHandle` and `Engine`.
 - [x] **`AgentBudgetExceededEvent` dispatched when budget exhausted.** Includes breakdown by model and turn.
 - [x] **Cost observable as search attribute.** `ctx.agent()` automatically updates `weft:tokenCost` search attribute with cumulative USD cost.
@@ -5293,9 +5300,9 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`AgentBudgetWarningEvent` dispatched at configurable threshold.** Default: 80%. Includes `budgetUsedPercent`, `tokensRemaining`, `costRemaining`.
 - [x] **`AgentBudgetExceededEvent` dispatched when budget exhausted.** Includes `tokensUsed`, `costUsed`, `tokenBudget`, `maxCost`.
 - [x] **Reasoning trace captured per turn.** Model `thinking` blocks stored in checkpoint and included in `AgentTurnCompletedEvent`.
-- [x] **Cost waterfall per turn queryable.** `handle.query("agentCostWaterfall")` returns per-turn array: `[{ turn, inputTokens, outputTokens, cost, model, tools }]`.
-- [x] **Conversation history queryable.** `handle.query("agentConversation")` returns full message array including system prompt, user messages, assistant responses, and tool results.
-- [x] **Cost projection based on burn rate.** `handle.query("agentCostProjection")` estimates total cost at completion based on average per-turn cost.
+- [x] **Cost waterfall per turn queryable.** `handle.query(agentCostWaterfall)` returns per-turn array: `[{ turn, inputTokens, outputTokens, cost, model, tools }]`.
+- [x] **Conversation history queryable.** `handle.query(agentConversation)` returns full message array including system prompt, user messages, assistant responses, and tool results.
+- [x] **Cost projection based on burn rate.** `handle.query(agentCostProjection)` estimates total cost at completion based on average per-turn cost.
 - [x] **Dashboard agent view.** Built-in dashboard includes: conversation timeline, tool calls with inputs/outputs, token usage per turn, cumulative cost curve, budget remaining gauge, reasoning trace accordion, real-time streaming output.
 - [x] **`AgentContextCompactedEvent` dispatched on context strategy trigger.** Includes `strategy`, `tokensBefore`, `tokensAfter`, `messagesDropped`.
 - [x] **`HumanReviewRequestedEvent` and `HumanReviewCompletedEvent` dispatched.** Includes `workflowId`, `reviewId`, `type`/`decision`, `reviewer`, `duration`.

@@ -168,6 +168,16 @@ describe('Context', () => {
       expect(request.options).toBeUndefined();
     });
 
+    it('does not treat an options-shaped object as options for an input activity', () => {
+      const context = createContext();
+
+      const generator = context.run(greet, { queue: 'orders' });
+      const request = expectRequest(generator.next(), 'activity');
+
+      expect(request.input).toEqual({ queue: 'orders' });
+      expect(request.options).toBeUndefined();
+    });
+
     it('does not treat { timeout: 5000 } as options — timeout alone is ambiguous', () => {
       const context = createContext();
 

@@ -9,6 +9,7 @@
 import type { StoredStreamChunk } from '../core/context.ts';
 import type { TypedEventTarget, WeftEventMap } from '../core/events.ts';
 import type {
+  AttributeFilterKey,
   BulkCancelResult,
   BulkDeleteResult,
   BulkSignalResult,
@@ -28,6 +29,7 @@ import type {
   StartOptions,
   SubmitReviewOptions,
   TenantQuotaUsage,
+  TypedListFilter,
   UpdateDefinition,
   WorkflowEvent,
   WorkflowReplay,
@@ -200,7 +202,9 @@ export interface WeftClient {
   getSchedule(id: string): Promise<ScheduleSummary | null>;
 
   /** List workflows with optional filtering and pagination. */
-  list(filter?: ListFilter): Promise<PaginatedResult<WorkflowSummary>>;
+  list<const TAttributeKeys extends readonly AttributeFilterKey[] = readonly AttributeFilterKey[]>(
+    filter?: TypedListFilter<TAttributeKeys>,
+  ): Promise<PaginatedResult<WorkflowSummary>>;
 
   /** List recurring schedules with optional filtering and pagination. */
   listSchedules(filter?: ScheduleFilter): Promise<PaginatedResult<ScheduleSummary>>;

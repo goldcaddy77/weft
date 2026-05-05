@@ -20,6 +20,7 @@ import {
   DEFAULT_RETENTION_SWEEP_INTERVAL_MS,
   messageName,
   type ActivityContext,
+  type AttributeFilterKey,
   type BulkCancelResult,
   type BulkDeleteResult,
   type BulkSignalResult,
@@ -46,6 +47,7 @@ import {
   type StepWorkflowFunction,
   type SubmitReviewOptions,
   type TenantQuotaUsage,
+  type TypedListFilter,
   type UpdateDefinition,
   type WorkerOutboundMessage,
   type WorkflowDefinition,
@@ -634,7 +636,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
     return createWorkflowHandleWithResultPromiseFromInternals(getInternals(this), workflowId);
   }
-  async list(filter?: ListFilter): Promise<PaginatedResult<WorkflowSummary>> {
+  async list<
+    const TAttributeKeys extends readonly AttributeFilterKey[] = readonly AttributeFilterKey[],
+  >(filter?: TypedListFilter<TAttributeKeys>): Promise<PaginatedResult<WorkflowSummary>> {
     return listWorkflows(getInternals(this), filter);
   }
   getRetentionOverview(): RetentionOverview {

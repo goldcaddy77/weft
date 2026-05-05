@@ -38,10 +38,17 @@ const zeroInputActivity = activity({
 });
 expectType<Promise<string>>(zeroInputActivity());
 
+const unknownInputActivity = activity(async function inspectUnknown(input: unknown) {
+  return input;
+});
+
 context.run(metadataActivity, { name: 'Ada' });
 context.run(zeroInputActivity);
+context.run(unknownInputActivity, { inspected: true });
 // @ts-expect-error ctx.run accepts one input value plus optional ActivityCallOptions.
 context.run(metadataActivity, { name: 'Ada' }, { name: 'Grace' });
+// @ts-expect-error unknown is still an input type and must be provided.
+context.run(unknownInputActivity);
 
 const checkoutWorkflow = workflow(async function* checkout(
   _context: WorkflowContext,
@@ -77,11 +84,33 @@ context.onUpdate(approveUpdate, (input) => ({ accepted: input.reviewer.length > 
 context.onQuery(statusQuery, (input) => ({ status: input.verbose ? 'verbose' : 'compact' }));
 context.onQuery(noInputStatusQuery, () => ({ status: 'ok' }));
 
-const priority = searchAttribute<number>('priority', 'number');
+const priority = searchAttribute('priority', 'number');
+const customerId = searchAttribute('customerId', 'string');
+const createdAt = searchAttribute('createdAt', { type: 'string', format: 'date-time' });
+const tags = searchAttribute('tags', { type: 'array', items: { type: 'string' } });
 context.setAttribute(priority, 5);
+context.setAttribute(customerId, 'cust_123');
+context.setAttribute(createdAt, new Date('2026-05-05T00:00:00.000Z'));
+context.setAttribute(tags, ['new', 'priority']);
 expectType<number | undefined>(context.getAttribute(priority));
+expectType<string | undefined>(context.getAttribute(customerId));
+expectType<Date | undefined>(context.getAttribute(createdAt));
+expectType<string[] | undefined>(context.getAttribute(tags));
 // @ts-expect-error searchAttribute handles carry their value type.
 context.setAttribute(priority, 'high');
+// @ts-expect-error searchAttribute ties the schema fragment to the handle value type.
+context.setAttribute(createdAt, '2026-05-05T00:00:00.000Z');
+// @ts-expect-error string array search attributes require an array value.
+context.setAttribute(tags, 'new');
+// @ts-expect-error value type is inferred from the schema, not a caller-supplied generic.
+searchAttribute<number>('customerId', 'string');
+
+engine.list({ attributes: [{ key: priority, value: 1 }] });
+engine.list({ attributes: [{ key: createdAt, gt: new Date('2026-05-05T00:00:00.000Z') }] });
+// @ts-expect-error typed attribute filters must match the handle value type.
+engine.list({ attributes: [{ key: priority, value: 'wrong' }] });
+// @ts-expect-error string-valued attributes do not support numeric range filters.
+engine.list({ attributes: [{ key: customerId, gt: 10 }] });
 
 const invariant = constraint({
   name: 'positiveBalance',

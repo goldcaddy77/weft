@@ -10,6 +10,7 @@
 
 import type { Engine, ScheduleHandle, WorkflowHandle } from '../core/engine.ts';
 import type {
+  AttributeFilterKey,
   BulkCancelResult,
   BulkDeleteResult,
   BulkSignalResult,
@@ -30,6 +31,7 @@ import type {
   StartOptions,
   SubmitReviewOptions,
   TenantQuotaUsage,
+  TypedListFilter,
   UpdateDefinition,
   WorkflowEvent,
   WorkflowReplay,
@@ -224,7 +226,9 @@ export class LocalClient implements WeftClient {
     return this.#engine.getSchedule(id);
   }
 
-  async list(filter?: ListFilter): Promise<PaginatedResult<WorkflowSummary>> {
+  async list<
+    const TAttributeKeys extends readonly AttributeFilterKey[] = readonly AttributeFilterKey[],
+  >(filter?: TypedListFilter<TAttributeKeys>): Promise<PaginatedResult<WorkflowSummary>> {
     return this.#engine.list(filter);
   }
 

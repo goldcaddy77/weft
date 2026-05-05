@@ -184,12 +184,14 @@ export interface ActivityDefinition<TInput = unknown, TOutput = unknown> {
  * void normalized;
  * ```
  */
-export type ActivityCallable<TInput, TOutput> = ActivityDefinition<TInput, TOutput> &
-  ([TInput] extends [void]
-    ? (input?: TInput) => Promise<TOutput>
-    : [unknown] extends [TInput]
-      ? (input?: TInput) => Promise<TOutput>
-      : (input: TInput) => Promise<TOutput>);
+export type ActivityCallable<TInput, TOutput> = ActivityDefinition<TInput, TOutput> & {
+  readonly _types?: {
+    readonly input: TInput;
+    readonly output: TOutput;
+  };
+} & ([TInput] extends [void]
+    ? (input?: TInput, context?: ActivityContext) => Promise<TOutput>
+    : (input: TInput, context?: ActivityContext) => Promise<TOutput>);
 
 /**
  * Create an activity with colocated configuration.
@@ -241,10 +243,8 @@ export function activity<TInput, TOutput>(
     throw new Error('activity() requires a named function or an options object with name.');
   }
 
-  const fn = ((inputValue?: TInput) => options.execute(inputValue as TInput)) as ActivityCallable<
-    TInput,
-    TOutput
-  >;
+  const fn = ((inputValue: TInput, activityContext?: ActivityContext) =>
+    options.execute(inputValue, activityContext)) as ActivityCallable<TInput, TOutput>;
 
   // Assign non-function-builtin properties from options to the function
   const { name, execute, ...rest } = options;

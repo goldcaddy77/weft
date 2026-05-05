@@ -63,6 +63,14 @@ export type {
   StreamReference,
   StreamSink,
 } from './types.ts';
+
+function acceptsNoActivityInput(fn: unknown): boolean {
+  if (typeof fn !== 'function') return false;
+  if (fn.length === 0) return true;
+  const execute = (fn as { execute?: unknown }).execute;
+  return typeof execute === 'function' && execute.length === 0;
+}
+
 /**
  * Concrete workflow execution context injected as the first argument of every
  * registered workflow generator. Implements durable operations such as `run`,
@@ -237,32 +245,38 @@ export class Context implements WorkflowContext {
     return sessionStateHelpers.sessionState(this, getInternals(this), key, initialValue);
   }
   run<TResult>(
-    fn: ((input: unknown) => Promise<TResult> | TResult) & {
-      name: string;
-      execute: (input: unknown, context?: unknown) => Promise<TResult> | TResult;
-    },
+    fn: ActivityCallable<void, TResult>,
     options?: ActivityCallOptions,
   ): Generator<ContextOperationRequest, TResult, unknown>;
   run<TResult>(
-    fn: ActivityCallable<unknown, TResult>,
-    options?: ActivityCallOptions,
-  ): Generator<ContextOperationRequest, TResult, unknown>;
-  run<TResult>(
-    fn: () => Promise<TResult> | TResult,
+    fn: (() => Promise<TResult> | TResult) & { execute?: never },
     options?: ActivityCallOptions,
   ): Generator<ContextOperationRequest, TResult, unknown>;
   run<TInput, TResult>(
-    fn: (input: TInput) => Promise<TResult> | TResult,
+    fn: ActivityCallable<TInput, TResult>,
+    input: TInput,
+    options?: ActivityCallOptions,
+  ): Generator<ContextOperationRequest, TResult, unknown>;
+  run<TInput, TResult>(
+    fn: ((input: TInput) => Promise<TResult> | TResult) & { execute?: never },
     input: TInput,
     options?: ActivityCallOptions,
   ): Generator<ContextOperationRequest, TResult, unknown>;
   // oxlint-disable-next-line complexity -- ID:core-context-fn-complexity
-  *run<TResult>(
-    fn: (input: unknown, context?: unknown) => Promise<TResult> | TResult,
+  *run<TInput, TResult>(
+    fn:
+      | ActivityCallable<void, TResult>
+      | ((() => Promise<TResult> | TResult) & { execute?: never })
+      | ActivityCallable<TInput, TResult>
+      | (((input: TInput) => Promise<TResult> | TResult) & { execute?: never }),
     ...rest: unknown[]
   ): Generator<ContextOperationRequest, TResult, unknown> {
     let options: ActivityCallOptions | undefined;
-    if (rest.length > 0 && sessionStateHelpers.isActivityCallOptions(rest[rest.length - 1])) {
+    if (
+      rest.length > 0 &&
+      sessionStateHelpers.isActivityCallOptions(rest[rest.length - 1]) &&
+      (rest.length > 1 || acceptsNoActivityInput(fn))
+    ) {
       options = rest.pop() as ActivityCallOptions;
     }
     if (rest.length > 1) {
@@ -289,11 +303,12 @@ export class Context implements WorkflowContext {
     }
     const operationId = crypto.randomUUID();
     const callerStack = contextValidation.captureCallerStack();
+    const executeActivity = fn as (input: unknown, context?: unknown) => unknown;
     const result = yield {
       type: 'activity',
       operationId,
       activityName: fn.name || 'anonymous',
-      fn,
+      fn: executeActivity,
       input,
       callerStack,
       ...(options !== undefined ? { options: options as Record<string, unknown> } : {}),

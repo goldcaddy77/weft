@@ -181,10 +181,10 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      const customerId = searchAttribute<string>('customerId', 'string');
-      const orderTotal = searchAttribute<number>('orderTotal', 'number');
-      const createdAt = searchAttribute<Date>('createdAt', { type: 'string', format: 'date-time' });
-      const labels = searchAttribute<string[]>('labels', {
+      const customerId = searchAttribute('customerId', 'string');
+      const orderTotal = searchAttribute('orderTotal', 'number');
+      const createdAt = searchAttribute('createdAt', { type: 'string', format: 'date-time' });
+      const labels = searchAttribute('labels', {
         type: 'array',
         items: { type: 'string' },
       });

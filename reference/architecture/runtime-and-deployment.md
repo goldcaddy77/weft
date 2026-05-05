@@ -560,13 +560,15 @@ const server = serve({
 
     // Agent-Specific Endpoints
     'GET /v1/workflows/:id/conversation': async (req) => {
-      const conversation = await engine.query(req.params.id, 'agentConversation');
+      const agentConversation = query<void, AgentConversation>('agentConversation');
+      const conversation = await engine.query(req.params.id, agentConversation);
       if (!conversation) return new Response('Not found', { status: 404 });
       return Response.json(conversation);
     },
 
     'GET /v1/workflows/:id/cost': async (req) => {
-      const cost = await engine.query(req.params.id, 'agentCostWaterfall');
+      const agentCostWaterfall = query<void, AgentCostWaterfall>('agentCostWaterfall');
+      const cost = await engine.query(req.params.id, agentCostWaterfall);
       if (!cost) return new Response('Not found', { status: 404 });
       return Response.json(cost);
     },
@@ -853,7 +855,7 @@ function handleHeartbeat(operationId: string, details?: unknown) {
 }
 ```
 
-Heartbeat details are queryable from the workflow via `handle.query("activityProgress")`, enabling progress UIs without custom plumbing.
+Heartbeat details are queryable from the workflow via `handle.query(activityProgressQuery)`, enabling progress UIs without custom plumbing.
 
 #### Worker Identity and Routing
 

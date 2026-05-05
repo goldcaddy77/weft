@@ -180,6 +180,24 @@ describe('search-attributes', () => {
       expect(putOperation!.key).toBe('idx:tags:s:c:wf-1');
     });
 
+    it('replaces a scalar index value with array element index values', () => {
+      const operations = buildIndexOperations('wf-1', { tags: 'legacy' }, { tags: ['new'] });
+
+      expect(operations).toEqual([
+        { type: 'delete', key: 'idx:tags:s:legacy:wf-1' },
+        { type: 'put', key: 'idx:tags:s:new:wf-1', value: new Uint8Array(0) },
+      ]);
+    });
+
+    it('replaces array element index values with a scalar index value', () => {
+      const operations = buildIndexOperations('wf-1', { tags: ['old'] }, { tags: 'current' });
+
+      expect(operations).toEqual([
+        { type: 'delete', key: 'idx:tags:s:old:wf-1' },
+        { type: 'put', key: 'idx:tags:s:current:wf-1', value: new Uint8Array(0) },
+      ]);
+    });
+
     it('produces no operations when both previous and current are empty', () => {
       const operations = buildIndexOperations('wf-1', {}, {});
       expect(operations).toHaveLength(0);

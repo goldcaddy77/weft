@@ -3,6 +3,7 @@ import { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import { tenantFromInputField } from '../core/tenant.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { query } from '../core/types.ts';
 import { handleRequest } from '../server/handler.ts';
 import { principalFromApiKey } from '../server/principal.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -190,7 +191,10 @@ async function exerciseWorkflowClientRequests(httpClient: HttpClient): Promise<v
     type: 'echo',
     limit: 5,
     offset: 2,
-    attributes: [{ key: 'priority', value: 'high', gt: 1, lt: 9, gte: 2, lte: 8 }],
+    attributes: [
+      { key: 'priority', value: 'high' },
+      { key: 'priority', gt: 1, lt: 9, gte: 2, lte: 8 },
+    ],
   });
   await httpClient.cancel('wf/1');
   await httpClient.pauseSchedule('schedule-1');
@@ -1051,6 +1055,46 @@ describe('HttpClient request surface', () => {
       input: 'hello',
       startAfter: '5m',
     });
+  });
+
+  it('uses GET for no-input queries and POST with input payloads', async () => {
+    const fetchCalls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const responses = [
+      jsonResponse({ id: 'wf/1' }),
+      jsonResponse({ result: 'ready' }),
+      jsonResponse({ result: { detail: true } }),
+      jsonResponse({ result: { source: 'handle' } }),
+    ];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      fetchCalls.push({ url: requestInputToUrl(input), init });
+      return responses.shift() ?? jsonResponse({ result: null });
+    }) as unknown as typeof fetch;
+
+    const statusQuery = query<void, string>('status');
+    const echoInputQuery = query<{ detail?: boolean; source?: string }, object>('echoInput');
+    const httpClient = new HttpClient({ baseUrl: 'http://example.test' });
+    const handle = await httpClient.start('echo', null);
+
+    await expect(handle.query(statusQuery)).resolves.toBe('ready');
+    await expect(httpClient.query('wf/1', echoInputQuery, { detail: true })).resolves.toEqual({
+      detail: true,
+    });
+    await expect(handle.query(echoInputQuery, { source: 'handle' })).resolves.toEqual({
+      source: 'handle',
+    });
+
+    expect(fetchCalls[1]?.url).toBe('http://example.test/v1/workflows/wf%2F1/query/status');
+    expect(fetchCalls[1]?.init?.method).toBeUndefined();
+    expect(fetchCalls[1]?.init?.body).toBeUndefined();
+
+    expect(fetchCalls[2]?.url).toBe('http://example.test/v1/workflows/wf%2F1/query/echoInput');
+    expect(fetchCalls[2]?.init?.method).toBe('POST');
+    expect(fetchCalls[2]?.init?.body).toBe(JSON.stringify({ input: { detail: true } }));
+
+    expect(fetchCalls[3]?.url).toBe('http://example.test/v1/workflows/wf%2F1/query/echoInput');
+    expect(fetchCalls[3]?.init?.method).toBe('POST');
+    expect(fetchCalls[3]?.init?.body).toBe(JSON.stringify({ input: { source: 'handle' } }));
   });
 
   it('returns null or empty collections for missing GET resources', async () => {

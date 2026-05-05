@@ -22,13 +22,25 @@
  */
 export type SearchAttributeValue = string | number | boolean | Date | string[];
 
-export type JsonSchemaPrimitiveType =
-  | 'array'
-  | 'boolean'
-  | 'integer'
-  | 'number'
-  | 'object'
-  | 'string';
+export type JsonSchemaPrimitiveType = 'array' | 'boolean' | 'integer' | 'number' | 'string';
+
+export type StringSearchAttributeDefinition = {
+  type: 'string';
+  format?: string;
+};
+
+export type NumberSearchAttributeDefinition = {
+  type: 'number' | 'integer';
+};
+
+export type BooleanSearchAttributeDefinition = {
+  type: 'boolean';
+};
+
+export type StringArraySearchAttributeDefinition = {
+  type: 'array';
+  items?: StringSearchAttributeDefinition;
+};
 
 /**
  * JSON Schema fragment accepted by the search attribute registry. The engine
@@ -48,13 +60,31 @@ export type JsonSchemaPrimitiveType =
  * void tags;
  * ```
  */
-export interface SearchAttributeDefinition {
-  type: JsonSchemaPrimitiveType;
-  format?: string;
-  items?: SearchAttributeDefinition;
-  properties?: Record<string, SearchAttributeDefinition>;
-  required?: string[];
-}
+export type SearchAttributeDefinition =
+  | BooleanSearchAttributeDefinition
+  | NumberSearchAttributeDefinition
+  | StringArraySearchAttributeDefinition
+  | StringSearchAttributeDefinition;
+
+export type SearchAttributeValueForDefinition<TDefinition> = TDefinition extends 'string'
+  ? string
+  : TDefinition extends 'number' | 'integer'
+    ? number
+    : TDefinition extends 'boolean'
+      ? boolean
+      : TDefinition extends 'array'
+        ? string[]
+        : TDefinition extends { type: 'string'; format: 'date-time' }
+          ? Date
+          : TDefinition extends { type: 'string' }
+            ? string
+            : TDefinition extends { type: 'number' | 'integer' }
+              ? number
+              : TDefinition extends { type: 'boolean' }
+                ? boolean
+                : TDefinition extends { type: 'array' }
+                  ? string[]
+                  : SearchAttributeValue;
 
 /**
  * Named search attribute handle returned by {@link searchAttribute}. The
@@ -66,10 +96,11 @@ export interface SearchAttributeDefinition {
  * ctx.setAttribute(customerId, 'cust_123');
  * ```
  */
-export interface SearchAttributeHandle<
-  TValue extends SearchAttributeValue = SearchAttributeValue,
-> extends SearchAttributeDefinition {
+export interface SearchAttributeHandle<TValue extends SearchAttributeValue = SearchAttributeValue> {
   name: string;
+  type: JsonSchemaPrimitiveType;
+  format?: string;
+  items?: StringSearchAttributeDefinition;
   readonly _value?: () => TValue;
 }
 
@@ -103,12 +134,17 @@ export type SearchAttributeSchema = Record<string, SearchAttributeDefinition>;
  * const createdAt = searchAttribute('createdAt', { type: 'string', format: 'date-time' });
  * ```
  */
-export function searchAttribute<TValue extends SearchAttributeValue = SearchAttributeValue>(
+export function searchAttribute<
+  const TDefinition extends JsonSchemaPrimitiveType | SearchAttributeDefinition,
+>(
   name: string,
-  type: JsonSchemaPrimitiveType | SearchAttributeDefinition,
-): SearchAttributeHandle<TValue> {
-  const definition = typeof type === 'string' ? { type } : type;
-  return { name, ...definition } as SearchAttributeHandle<TValue>;
+  type: TDefinition,
+): SearchAttributeHandle<SearchAttributeValueForDefinition<TDefinition>> {
+  if (typeof type === 'string') {
+    return { name, type } as SearchAttributeHandle<SearchAttributeValueForDefinition<TDefinition>>;
+  }
+
+  return { name, ...type } as SearchAttributeHandle<SearchAttributeValueForDefinition<TDefinition>>;
 }
 
 export function searchAttributeName(attribute: string | { readonly name: string }): string {

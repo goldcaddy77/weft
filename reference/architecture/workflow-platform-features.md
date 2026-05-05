@@ -414,10 +414,11 @@ async function* approvalWorkflow(ctx: Context, document: Document) {
 
 ```typescript
 const handle = engine.getHandle('wf-cart-abc');
+const validateCoupon = update<{ code: string }, ValidationResult>('validate_coupon');
 
 // Blocks until the workflow processes the update and responds
 const result = await handle.update(
-  'validate_coupon',
+  validateCoupon,
   { code: 'SAVE20' },
   {
     timeout: 5000, // 5 seconds max wait

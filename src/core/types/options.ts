@@ -216,19 +216,63 @@ export interface ListFilter {
   status?: WorkflowStatus | WorkflowStatus[];
   type?: string;
   tags?: string[];
-  attributes?: AttributeFilter[];
+  attributes?: readonly AttributeFilter[];
   limit?: number;
   offset?: number;
 }
 
-export interface AttributeFilter {
-  key: string | SearchAttributeHandle;
-  value?: SearchAttributeValue;
-  gt?: SearchAttributeValue;
-  lt?: SearchAttributeValue;
-  gte?: SearchAttributeValue;
-  lte?: SearchAttributeValue;
-}
+export type AttributeFilterKey = string | SearchAttributeHandle;
+
+export type AttributeFilterValue<TKey extends AttributeFilterKey> =
+  TKey extends SearchAttributeHandle<infer TValue>
+    ? TValue extends string[]
+      ? string
+      : TValue
+    : SearchAttributeValue;
+
+export type AttributeRangeValue<TKey extends AttributeFilterKey> =
+  TKey extends SearchAttributeHandle<infer TValue>
+    ? Extract<TValue, Date | number>
+    : SearchAttributeValue;
+
+export type AttributeFilter<TKey extends AttributeFilterKey = AttributeFilterKey> =
+  TKey extends SearchAttributeHandle
+    ?
+        | {
+            key: TKey;
+            value?: AttributeFilterValue<TKey>;
+            gt?: never;
+            lt?: never;
+            gte?: never;
+            lte?: never;
+          }
+        | {
+            key: TKey;
+            value?: never;
+            gt?: AttributeRangeValue<TKey>;
+            lt?: AttributeRangeValue<TKey>;
+            gte?: AttributeRangeValue<TKey>;
+            lte?: AttributeRangeValue<TKey>;
+          }
+    : {
+        key: TKey;
+        value?: SearchAttributeValue;
+        gt?: SearchAttributeValue;
+        lt?: SearchAttributeValue;
+        gte?: SearchAttributeValue;
+        lte?: SearchAttributeValue;
+      };
+
+export type AttributeFilterList<TAttributeKeys extends readonly AttributeFilterKey[]> = {
+  readonly [TIndex in keyof TAttributeKeys]: AttributeFilter<TAttributeKeys[TIndex]>;
+};
+
+export type TypedListFilter<TAttributeKeys extends readonly AttributeFilterKey[]> = Omit<
+  ListFilter,
+  'attributes'
+> & {
+  attributes?: AttributeFilterList<TAttributeKeys>;
+};
 
 // ---------------------------------------------------------------------------
 // Paginated result

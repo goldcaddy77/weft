@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import { activity } from './activity.ts';
-import type { ActivityDefinition } from './types.ts';
+import type { ActivityContext, ActivityDefinition } from './types.ts';
 import { activity as createConfiguredActivity } from './types.ts';
 
 describe('activity()', () => {
@@ -64,5 +64,25 @@ describe('activity()', () => {
     expect(sendEmail.name).toBe('send-email');
     expect(sendEmail.queue).toBe('priority');
     expect(sendEmail.execute).toBeDefined();
+  });
+
+  it('forwards ActivityContext when the configured activity is called directly', async () => {
+    let receivedContext: ActivityContext | undefined;
+    const context: ActivityContext = {
+      signal: new AbortController().signal,
+      heartbeat: () => {},
+    };
+
+    const recordHeartbeat = createConfiguredActivity({
+      name: 'record-heartbeat',
+      execute: async (_input: string, activityContext?: ActivityContext) => {
+        receivedContext = activityContext;
+        activityContext?.heartbeat({ progress: 1 });
+        return 'recorded';
+      },
+    });
+
+    expect(await recordHeartbeat('start', context)).toBe('recorded');
+    expect(receivedContext).toBe(context);
   });
 });

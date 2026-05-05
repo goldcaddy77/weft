@@ -636,16 +636,20 @@ The full event taxonomy:
 **Queryable data.** Agent-specific state is queryable via workflow handles:
 
 ```typescript
+const agentCostWaterfall = query<void, AgentCostWaterfall>('agentCostWaterfall');
+const agentConversation = query<void, AgentConversation>('agentConversation');
+const agentCostProjection = query<void, AgentCostProjection>('agentCostProjection');
+
 // Cost waterfall: per-turn cost breakdown
-const costWaterfall = await handle.query('agentCostWaterfall');
+const costWaterfall = await handle.query(agentCostWaterfall);
 // [{ turn: 0, inputTokens: 1200, outputTokens: 450, cost: 0.0103, model: "claude-sonnet-4-20250514", tools: ["webSearch"] }, ...]
 
 // Full conversation history
-const conversation = await handle.query('agentConversation');
+const conversation = await handle.query(agentConversation);
 // [{ role: "system", content: "..." }, { role: "user", content: "..." }, { role: "assistant", content: "...", toolCalls: [...] }, ...]
 
 // Cost projection
-const projection = await handle.query('agentCostProjection');
+const projection = await handle.query(agentCostProjection);
 // { estimatedTurnsRemaining: 8, estimatedTotalCost: 4.20, confidence: 0.7 }
 ```
 

@@ -13,6 +13,7 @@ import { describe, expect, it } from 'bun:test';
 import { MemoryStorage } from '../../storage/memory.ts';
 import type { Context } from '../context.ts';
 import { Engine } from '../engine.ts';
+import type { WorkflowInterceptor } from '../interceptor.ts';
 import type { ActivityContext, ActivityDefinition, WorkflowContext } from '../types.ts';
 
 /** Drain microtasks so fire-and-forget engine work completes. */
@@ -413,11 +414,10 @@ describe('ctx.saga()', () => {
   // ---------------------------------------------------------------------------
   // 9. Input that looks like ActivityCallOptions is not silently swallowed.
   //
-  //    ctx.run() applies an isActivityCallOptions heuristic to the last
-  //    positional argument. If saga passes step.input as a second arg,
-  //    an input like { queue: 'orders' } would be stripped and treated as
-  //    scheduling options rather than activity data. The execute wrapper must
-  //    close over step.input so it is never exposed as a positional argument.
+  //    ctx.run() applies an isActivityCallOptions heuristic for zero-input
+  //    activities. Saga must still pass step.input through the operation so
+  //    interceptors and remote workers see the real payload, even when that
+  //    payload looks like ActivityCallOptions.
   // ---------------------------------------------------------------------------
 
   it('delivers input that looks like ActivityCallOptions unchanged to the activity', async () => {
@@ -435,8 +435,8 @@ describe('ctx.saga()', () => {
     engine.register('options-like-saga', async function* (ctx: WorkflowContext) {
       const c = ctx as Context;
       // This input has a 'queue' key, which is a DISCRIMINATOR_KEYS member.
-      // If passed as a positional arg to ctx.run(), isActivityCallOptions
-      // would classify it as ActivityCallOptions and strip it from args.
+      // If ctx.run() classified every final { queue } object as options, this
+      // would be stripped and the activity would receive undefined.
       yield* c.saga([{ definition: activity as ActivityDefinition, input: { queue: 'orders' } }]);
     });
 
@@ -445,6 +445,38 @@ describe('ctx.saga()', () => {
 
     // The activity must have received the full object, not undefined.
     expect(receivedInput).toEqual({ queue: 'orders' });
+
+    engine[Symbol.dispose]();
+  });
+
+  it('passes saga step input through workflow activity interceptors', async () => {
+    const engine = new Engine();
+    const observedInputs: unknown[] = [];
+
+    const interceptor: WorkflowInterceptor = {
+      *activity(interception, next) {
+        observedInputs.push(interception.input);
+        return yield* next(interception);
+      },
+    };
+
+    engine.addInterceptor(interceptor);
+
+    const activity = makeActivity({
+      name: 'intercepted-saga-step',
+      execute: (input: { queue: string }) => `processed:${input.queue}`,
+    });
+
+    engine.register('intercepted-saga', async function* (ctx: WorkflowContext) {
+      const c = ctx as Context;
+      return yield* c.saga([
+        { definition: activity as ActivityDefinition, input: { queue: 'orders' } },
+      ]);
+    });
+
+    const handle = await engine.start('intercepted-saga', null);
+    await expect(handle.result()).resolves.toBe('processed:orders');
+    expect(observedInputs).toEqual([{ queue: 'orders' }]);
 
     engine[Symbol.dispose]();
   });

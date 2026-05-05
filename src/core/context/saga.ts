@@ -18,16 +18,15 @@ export function* saga<TFinalOutput = unknown>(
   for (const step of steps) {
     const stepDefinition = step.definition;
     try {
-      const capturedInput = step.input;
-      const executeActivity = (_input: unknown, activityContext?: ActivityContext) =>
-        stepDefinition.execute(capturedInput, activityContext);
+      const executeActivity = (input: unknown, activityContext?: ActivityContext) =>
+        stepDefinition.execute(input, activityContext);
 
       Object.defineProperty(executeActivity, 'name', {
         value: stepDefinition.name,
         configurable: true,
       });
 
-      const output = yield* context.run(executeActivity, undefined);
+      const output = yield* context.run(executeActivity, step.input);
       completed.push({ definition: stepDefinition, input: step.input, output });
       lastOutput = output;
     } catch (stepError) {

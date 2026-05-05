@@ -205,8 +205,6 @@ export function validateAttributeType(
         );
       }
       break;
-    case 'object':
-      throw new Error(`Search attribute "${attributeName}" cannot be indexed as "object".`);
     default: {
       const _exhaustive: never = declaredType;
       throw new Error(`Unknown search attribute type declaration: ${String(_exhaustive)}`);
@@ -255,14 +253,41 @@ export function buildIndexOperations(
     const hadOld = attributeName in previous;
     const hasNew = attributeName in current;
 
-    // Handle keyword lists (string[]) element-by-element
-    if ((hadOld && Array.isArray(oldValue)) || (hasNew && Array.isArray(newValue))) {
-      const oldElements = new Set(hadOld ? (oldValue as string[]) : []);
-      const newElements = new Set(hasNew ? (newValue as string[]) : []);
+    const oldIsArray = Array.isArray(oldValue);
+    const newIsArray = Array.isArray(newValue);
 
-      // DELETE removed elements
-      for (const element of oldElements) {
-        if (!newElements.has(element)) {
+    // Handle string arrays element-by-element, while preserving correct index
+    // mutations when a schema-free attribute changes between scalar and array.
+    if (oldIsArray || newIsArray) {
+      if (oldIsArray && newIsArray) {
+        const oldElements = new Set(oldValue);
+        const newElements = new Set(newValue);
+
+        for (const element of oldElements) {
+          if (!newElements.has(element)) {
+            operations.push({
+              type: 'delete',
+              key: KEYS.attributeIndex(attributeName, encodeAttributeValue(element), workflowId),
+            });
+          }
+        }
+
+        for (const element of newElements) {
+          if (!oldElements.has(element)) {
+            operations.push({
+              type: 'put',
+              key: KEYS.attributeIndex(attributeName, encodeAttributeValue(element), workflowId),
+              value: EMPTY_VALUE,
+            });
+          }
+        }
+
+        continue;
+      }
+
+      if (hadOld) {
+        const oldValues = oldIsArray ? oldValue : [oldValue!];
+        for (const element of oldValues) {
           operations.push({
             type: 'delete',
             key: KEYS.attributeIndex(attributeName, encodeAttributeValue(element), workflowId),
@@ -270,9 +295,9 @@ export function buildIndexOperations(
         }
       }
 
-      // PUT added elements
-      for (const element of newElements) {
-        if (!oldElements.has(element)) {
+      if (hasNew) {
+        const newValues = newIsArray ? newValue : [newValue!];
+        for (const element of newValues) {
           operations.push({
             type: 'put',
             key: KEYS.attributeIndex(attributeName, encodeAttributeValue(element), workflowId),

@@ -2,6 +2,7 @@
 import { assertScopedBulkWorkflowFilter } from '../core/bulk-workflow-filter.ts';
 import type { StoredStreamChunk } from '../core/context.ts';
 import type {
+  AttributeFilterKey,
   BulkCancelResult,
   BulkDeleteResult,
   BulkSignalResult,
@@ -22,6 +23,7 @@ import type {
   StartOptions,
   SubmitReviewOptions,
   TenantQuotaUsage,
+  TypedListFilter,
   UpdateDefinition,
   WorkflowEvent,
   WorkflowReplay,
@@ -123,7 +125,9 @@ export class HttpClient implements WeftClient {
     );
   }
 
-  async list(filter?: ListFilter): Promise<PaginatedResult<WorkflowSummary>> {
+  async list<
+    const TAttributeKeys extends readonly AttributeFilterKey[] = readonly AttributeFilterKey[],
+  >(filter?: TypedListFilter<TAttributeKeys>): Promise<PaginatedResult<WorkflowSummary>> {
     const params = buildWorkflowListSearchParams(filter);
     const query = params.toString();
     const path = query ? `/workflows?${query}` : '/workflows';
