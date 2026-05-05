@@ -93,7 +93,7 @@ The server tracks the worker by its `workerId` in an in-memory registry. If the 
 
 All messages are JSON objects with a `type` discriminator.
 
-**Worker handling of unknown server messages**: ignore. New server-to-worker message types may appear in future `weft` versions; an SDK that ignores unknown ones forward-compatibly survives version skew.
+**Worker handling of unknown server messages**: SDKs may ignore them. New server-to-worker message types may appear in future `weft` versions, so ignoring unknown server messages keeps workers forward-compatible across version skew.
 
 **Server handling of unknown worker messages**: the current TypeScript server silently drops messages whose `type` it doesn't recognize, with no warning logged. SDK authors should treat this as an implementation wart, not a contract: a misspelled message type or a typo'd field name will fail silently. Validate your outgoing messages locally against the message catalog before sending. The drift-prevention test that locks this behavior down is tracked in the roadmap; until then, the cost of a typo is silent task loss.
 
@@ -271,7 +271,7 @@ These behaviors are unspecified or only partially specified by the current proto
 - **No application-level close codes.** Standard WebSocket close codes (`1000`, `1001`, `1006`, `1011`) are used as-is; the protocol defines no codes of its own.
 - **Reconnect with in-flight tasks.** When a worker disconnects with tasks in flight, the server eventually times them out via the visibility deadline. Tasks become eligible for redispatch to any worker subscribed to the queue, including a reconnected instance of the original worker. The protocol does not have an explicit "resume in-flight tasks" message — a reconnecting worker rejoins as a fresh worker.
 - **`operationId` uniqueness.** The TypeScript server uses operation identifiers that are unique per task across the engine's lifetime. Workers should treat them as opaque strings and not assume any structure.
-- **Unknown messages.** Both sides ignore message types they don't recognize. Implementations adding experimental message types should document the type prefix they use.
+- **Unknown messages.** Worker SDKs should ignore unknown server messages for forward compatibility. The current TypeScript server silently drops unknown worker messages and does not warn, so implementations should validate their own outbound messages locally.
 
 ## Conformance
 

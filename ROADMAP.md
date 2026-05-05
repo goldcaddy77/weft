@@ -382,7 +382,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
 
   > **Partial progress:** spec doc shipped at `documentation/reference/remote-worker-protocol.md` (note: filed under `reference/` rather than `specifications/` to match existing docs conventions). Conformance test suite, drift-prevention test, and `protocolVersion` field still pending.
 
-  **Where:** new `documentation/specifications/remote-worker-protocol.md`. Driven from existing `src/worker/index.ts` (registration, dispatch, heartbeat) and `src/server/json-rpc-websocket.ts` (server side).
+  **Where:** `documentation/reference/remote-worker-protocol.md`. Driven from existing `src/worker/index.ts` (registration, dispatch, heartbeat) and `src/server/json-rpc-websocket.ts` (server side).
 
   Document:
   1. **Message envelope and types.** Worker → Server: `register`, `heartbeat`, `task_complete`, `task_failed`, `task_progress`. Server → Worker: `task`, `cancel`, `disconnect`. Full payload shape, required vs. optional fields, semantics of empty vs. omitted fields.
