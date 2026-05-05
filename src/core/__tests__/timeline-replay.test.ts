@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { encode } from '../codec.ts';
-import type { Context } from '../context.ts';
 import { Engine } from '../engine.ts';
 import type { WorkflowContext } from '../types.ts';
 
@@ -38,11 +37,11 @@ describe('timeline and replay', () => {
     engine.register('checkout', {
       version: '2.0.0',
       handler: async function* (ctx: WorkflowContext) {
-        const order = yield* (ctx as Context).run(loadOrder, {
+        const order = yield* ctx.run(loadOrder, {
           authorization: 'Bearer customer-secret',
           orderId: 'order-1',
         });
-        return yield* (ctx as Context).run(chargeCard, {
+        return yield* ctx.run(chargeCard, {
           amount: 42,
           cardNumber: '4111111111111111',
           orderId: order.orderId,
@@ -104,9 +103,9 @@ describe('timeline and replay', () => {
     engine.register('three-steps', {
       version: '3.1.0',
       handler: async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).run(firstStep);
-        yield* (ctx as Context).run(secondStep);
-        return yield* (ctx as Context).run(thirdStep);
+        yield* ctx.run(firstStep);
+        yield* ctx.run(secondStep);
+        return yield* ctx.run(thirdStep);
       },
     });
 
@@ -264,7 +263,7 @@ describe('timeline and replay', () => {
 
     engine.register('timeline-failure', {
       handler: async function* (ctx: WorkflowContext) {
-        return yield* (ctx as Context).run(failStep);
+        return yield* ctx.run(failStep);
       },
     });
 

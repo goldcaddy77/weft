@@ -9,7 +9,7 @@ import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { ReviewCoordinator } from '../ai/human-review.ts';
-import type { Context, StreamReference } from '../core/context.ts';
+import type { StreamReference } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { handleRequest } from '../server/handler.ts';
@@ -27,7 +27,7 @@ async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
 }
 
 async function* streamingWorkflow(ctx: WorkflowContext, _input: unknown) {
-  const c = ctx as Context;
+  const c = ctx;
   const reference = yield* c.stream('report', async function* () {
     yield { row: 1, data: 'alpha' };
     yield { row: 2, data: 'bravo' };

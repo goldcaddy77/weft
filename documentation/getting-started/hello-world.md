@@ -21,7 +21,6 @@ import {
   Engine,
   WorkflowAlreadyExistsError,
   activity,
-  type Context,
   type WorkflowHandle,
   type WorkflowContext,
 } from 'weft';
@@ -29,35 +28,57 @@ import { SQLiteStorage } from 'weft/storage/sqlite';
 
 const engine = new Engine({ storage: new SQLiteStorage('./weft.db') });
 
-const formatGreeting = activity({
-  name: 'formatGreeting',
-  execute: async (input: { name: string }) => `Hello, ${input.name}!`,
+interface HelloWorldWelcomeInput {
+  name: string;
+}
+
+interface HelloWorldWelcomeOutput {
+  greeting: string;
+  notified: boolean;
+}
+
+declare module 'weft' {
+  interface WorkflowRegistry {
+    helloWorldWelcome: { input: HelloWorldWelcomeInput; output: HelloWorldWelcomeOutput };
+  }
+
+  interface ActivityTypes {
+    helloWorldFormatGreeting: (input: HelloWorldWelcomeInput) => Promise<string>;
+    helloWorldSendNotification: (input: { message: string }) => Promise<string>;
+  }
+}
+
+const helloWorldFormatGreeting = activity({
+  name: 'helloWorldFormatGreeting',
+  execute: async (input: HelloWorldWelcomeInput) => `Hello, ${input.name}!`,
 });
 
-const sendNotification = activity({
-  name: 'sendNotification',
+const helloWorldSendNotification = activity({
+  name: 'helloWorldSendNotification',
   execute: async (input: { message: string }) => `Notified: ${input.message}`,
 });
 
-engine.registerActivity(formatGreeting.name, formatGreeting);
-engine.registerActivity(sendNotification.name, sendNotification);
+engine.registerActivity(helloWorldFormatGreeting.name, helloWorldFormatGreeting);
+engine.registerActivity(helloWorldSendNotification.name, helloWorldSendNotification);
 
-engine.register('welcome', async function* (ctx: WorkflowContext, input: { name: string }) {
-  const context = ctx as Context;
-  const greeting = yield* context.run(formatGreeting, { name: input.name });
-  yield* context.sleep('1s');
-  yield* context.run(sendNotification, { message: greeting });
-  return { greeting, notified: true };
-});
+engine.register(
+  'helloWorldWelcome',
+  async function* (ctx: WorkflowContext, input: HelloWorldWelcomeInput) {
+    const greeting = yield* ctx.run('helloWorldFormatGreeting', { name: input.name });
+    yield* ctx.sleep('1s');
+    yield* ctx.run('helloWorldSendNotification', { message: greeting });
+    return { greeting, notified: true };
+  },
+);
 
 await engine.recoverAll();
 
-const workflowId = 'welcome:world';
+const workflowId = 'helloWorldWelcome:world';
 const workflowInput = { name: 'World' };
 let handle: WorkflowHandle;
 
 try {
-  handle = await engine.start('welcome', workflowInput, { id: workflowId });
+  handle = await engine.start('helloWorldWelcome', workflowInput, { id: workflowId });
 } catch (error) {
   if (!(error instanceof WorkflowAlreadyExistsError)) throw error;
   handle = await engine.resume(workflowId).catch(() => engine.getHandle(workflowId));
@@ -94,14 +115,16 @@ async function notify(message: string) {
   return `Notified: ${message}`;
 }
 
-engine.register('welcome', async (ctx, input: { name: string }) => {
+engine.register('helloWorldWelcome', async (ctx, input: { name: string }) => {
   const greeting = await ctx.step('greet', () => greet(input.name));
   await ctx.step('notify', () => notify(greeting));
   return { greeting, notified: true };
 });
 
 const workflowInput = { name: 'World' };
-const handle = await engine.start('welcome', workflowInput, { id: 'welcome:world' });
+const handle = await engine.start('helloWorldWelcome', workflowInput, {
+  id: 'helloWorldWelcome:world',
+});
 const result = await handle.result();
 console.log(result);
 // { greeting: "Hello, World!", notified: true }
@@ -115,7 +138,7 @@ The workflow is a **generator function**---notice the `function*` and the `yield
 
 There's no replay happening here. Weft doesn't re-execute your workflow from the beginning and try to match up results. It literally picks up where it left off. That's why you don't need to worry about determinism---your workflow code can use `Date.now()`, `Math.random()`, or anything else. The only rule is that side effects go inside activities (the functions you pass to `ctx.run()`).
 
-`ctx.run(activity, input)` is how you run an **activity**. An activity is a named unit of work registered with the engine. The function reference keeps local development ergonomic, but the durable dispatch key is the activity name. That is why the example registers `formatGreeting` and `sendNotification` before the workflow starts: remote workers receive an activity name plus serialized input, not your in-process closure.
+`ctx.run('activityName', input)` is how you run an **activity** by its durable dispatch key. Function references still work for local development, but the activity name is the durable boundary. That is why the example registers `helloWorldFormatGreeting` and `helloWorldSendNotification` before the workflow starts: remote workers receive an activity name plus serialized input, not your in-process closure.
 
 `engine.register()` gives your workflow a name so the engine can find it. `engine.start()` kicks off a new execution and returns a handle. `handle.result()` waits for the workflow to finish and gives you the output.
 
@@ -127,9 +150,9 @@ Durable sleeps are one of the things that make this interesting. A normal `setTi
 
 ```typescript partial
 engine.register('onboarding', async function* (ctx, input: { name: string }) {
-  const greeting = yield* ctx.run(formatGreeting, { name: input.name });
+  const greeting = yield* ctx.run(helloWorldFormatGreeting, { name: input.name });
   yield* ctx.sleep('1h');
-  yield* ctx.run(sendNotification, { message: `${input.name} completed onboarding` });
+  yield* ctx.run(helloWorldSendNotification, { message: `${input.name} completed onboarding` });
   return { greeting, onboarded: true };
 });
 ```

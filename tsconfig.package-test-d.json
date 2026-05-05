@@ -4,6 +4,6 @@
     "noEmit": true,
     "incremental": false
   },
-  "include": ["src/**/*.test-d.ts"],
-  "exclude": ["node_modules", "coverage", "**/dist/**", "**/build/**"]
+  "include": ["tests/**/*.test-d.ts"],
+  "exclude": ["node_modules", "coverage", "**/build/**"]
 }

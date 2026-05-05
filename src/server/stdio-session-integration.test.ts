@@ -17,7 +17,6 @@ import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
-import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -180,7 +179,7 @@ function createHoldEngine(): Engine {
   // and signalling it from the test drives engine commits that the feed
   // can deliver to the stdio subscriber.
   engine.register('hold', async function* (ctx: WorkflowContext, _input: unknown) {
-    return yield* (ctx as Context).waitForSignal<string>('release');
+    return yield* ctx.waitForSignal<string>('release');
   });
   return engine;
 }

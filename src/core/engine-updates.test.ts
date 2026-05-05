@@ -11,7 +11,6 @@ import {
   waitForWorkflowStatus,
 } from '../testing/storage-backends.ts';
 import { decode, encode } from './codec.ts';
-import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import type { WorkflowContext } from './types.ts';
 import { UpdateCoordinator, UpdateTimeoutError, WorkflowTerminalError } from './updates.ts';
@@ -557,7 +556,7 @@ for (const backend of storageBackends) {
         engine = new Engine({ storage: result.storage });
 
         engine.register('cancelme', async function* (ctx: WorkflowContext) {
-          yield* (ctx as Context).sleep('1 hour');
+          yield* ctx.sleep('1 hour');
           return 'done';
         });
 
@@ -583,7 +582,7 @@ for (const backend of storageBackends) {
         engine = new Engine({ storage: result.storage });
 
         engine.register('waiter', async function* (ctx: WorkflowContext) {
-          (ctx as Context).onUpdate('greet', (payload) => `hello ${String(payload)}`);
+          ctx.onUpdate('greet', (payload) => `hello ${String(payload)}`);
           await waitForever();
           return 'done';
         });
@@ -610,7 +609,7 @@ for (const backend of storageBackends) {
 
         engine.register('gen-test', async function* (ctx: WorkflowContext) {
           expect(() => {
-            (ctx as Context).onUpdate('bad', function* () {
+            ctx.onUpdate('bad', function* () {
               yield 1;
             } as unknown as (payload: unknown) => unknown);
           }).toThrow(TypeError);
@@ -629,7 +628,7 @@ for (const backend of storageBackends) {
 
         engine.register('async-gen-test', async function* (ctx: WorkflowContext) {
           expect(() => {
-            (ctx as Context).onUpdate('bad', async function* () {
+            ctx.onUpdate('bad', async function* () {
               yield 1;
             } as unknown as (payload: unknown) => unknown);
           }).toThrow(TypeError);
@@ -648,11 +647,11 @@ for (const backend of storageBackends) {
 
         engine.register('normal-test', async function* (ctx: WorkflowContext) {
           // Regular function -- should not throw
-          (ctx as Context).onUpdate('good', (payload) => `ok ${String(payload)}`);
+          ctx.onUpdate('good', (payload) => `ok ${String(payload)}`);
           // Arrow function -- should not throw
-          (ctx as Context).onUpdate('also-good', (payload) => payload);
+          ctx.onUpdate('also-good', (payload) => payload);
           // Async function -- should not throw
-          (ctx as Context).onUpdate('async-good', async (payload) => payload);
+          ctx.onUpdate('async-good', async (payload) => payload);
           return 'done';
         });
 
@@ -668,7 +667,7 @@ for (const backend of storageBackends) {
         engine.register('msg-test', async function* (ctx: WorkflowContext) {
           let threw = false;
           try {
-            (ctx as Context).onUpdate('myHandler', function* () {
+            ctx.onUpdate('myHandler', function* () {
               yield 1;
             } as unknown as (payload: unknown) => unknown);
             expect.unreachable('should have thrown');
@@ -704,7 +703,7 @@ for (const backend of storageBackends) {
         };
 
         engine.register('bc-test', async function* (ctx: WorkflowContext) {
-          (ctx as Context).onUpdate('ping', () => 'pong');
+          ctx.onUpdate('ping', () => 'pong');
           await waitForever();
           return 'done';
         });
@@ -805,7 +804,7 @@ for (const backend of storageBackends) {
         await result.storage.put(KEYS.update(workflowId, 'update-old'), encode(oldUpdate));
 
         engine.register('fifo-test', async function* (ctx: WorkflowContext) {
-          const { payload, respond } = yield* (ctx as Context).waitForUpdate<string>('data');
+          const { payload, respond } = yield* ctx.waitForUpdate<string>('data');
           respond(payload);
           return payload;
         });
@@ -829,11 +828,11 @@ for (const backend of storageBackends) {
         engine = new Engine({ storage: result.storage });
 
         engine.register('resumable', async function* (ctx: WorkflowContext) {
-          (ctx as Context).onUpdate('validate', (payload) => {
+          ctx.onUpdate('validate', (payload) => {
             return `validated: ${String(payload)}`;
           });
           // Sleep to keep the workflow active
-          yield* (ctx as Context).sleep('1 hour');
+          yield* ctx.sleep('1 hour');
           return 'done';
         });
 
@@ -864,10 +863,10 @@ for (const backend of storageBackends) {
 
         const engine1 = new Engine({ storage: result.storage });
         engine1.register('durable', async function* (ctx: WorkflowContext) {
-          (ctx as Context).onUpdate('process', (payload) => {
+          ctx.onUpdate('process', (payload) => {
             return `processed: ${String(payload)}`;
           });
-          yield* (ctx as Context).sleep('1 hour');
+          yield* ctx.sleep('1 hour');
           return 'done';
         });
 
@@ -892,10 +891,10 @@ for (const backend of storageBackends) {
         // Create engine2 with the same storage, simulating restart
         engine = new Engine({ storage: result.storage });
         engine.register('durable', async function* (ctx: WorkflowContext) {
-          (ctx as Context).onUpdate('process', (payload) => {
+          ctx.onUpdate('process', (payload) => {
             return `processed: ${String(payload)}`;
           });
-          yield* (ctx as Context).sleep('1 hour');
+          yield* ctx.sleep('1 hour');
           return 'done';
         });
 
@@ -956,7 +955,7 @@ for (const backend of storageBackends) {
         engine.addEventListener('update:completed', () => events.push('completed'));
 
         engine.register('event-test', async function* (ctx: WorkflowContext) {
-          (ctx as Context).onUpdate('test', (payload) => `echo: ${String(payload)}`);
+          ctx.onUpdate('test', (payload) => `echo: ${String(payload)}`);
           await waitForever();
           return 'done';
         });
@@ -977,8 +976,8 @@ for (const backend of storageBackends) {
         engine = new Engine({ storage: result.storage });
 
         engine.register('immediate-update', async function* (ctx: WorkflowContext) {
-          (ctx as Context).onUpdate('test', (payload) => `echo: ${String(payload)}`);
-          return yield* (ctx as Context).waitForSignal('finish');
+          ctx.onUpdate('test', (payload) => `echo: ${String(payload)}`);
+          return yield* ctx.waitForSignal('finish');
         });
 
         const handle = await engine.start('immediate-update', undefined);
@@ -1001,7 +1000,7 @@ for (const backend of storageBackends) {
         engine = new Engine({ storage: result.storage });
 
         engine.register('respond-test', async function* (ctx: WorkflowContext) {
-          const { payload, respond } = yield* (ctx as Context).waitForUpdate<string>('review');
+          const { payload, respond } = yield* ctx.waitForUpdate<string>('review');
           respond({ accepted: true, originalPayload: payload });
           return `processed: ${payload}`;
         });
@@ -1024,7 +1023,7 @@ for (const backend of storageBackends) {
         engine = new Engine({ storage: result.storage });
 
         engine.register('missing-respond', async function* (ctx: WorkflowContext) {
-          const { payload } = yield* (ctx as Context).waitForUpdate<string>('review');
+          const { payload } = yield* ctx.waitForUpdate<string>('review');
           return `processed without respond: ${payload}`;
         });
 
@@ -1052,7 +1051,7 @@ for (const backend of storageBackends) {
         engine = new Engine({ storage: result.storage });
 
         engine.register('idempotent-respond', async function* (ctx: WorkflowContext) {
-          const { payload, respond } = yield* (ctx as Context).waitForUpdate<string>('data');
+          const { payload, respond } = yield* ctx.waitForUpdate<string>('data');
           // Call respond twice -- the second call should be a no-op
           respond('first-response');
           respond('second-response');
@@ -1087,9 +1086,7 @@ for (const backend of storageBackends) {
         await result.storage.put(KEYS.update(workflowId, 'coordinated-1'), encode(pendingUpdate));
 
         engine.register('coordinated-respond', async function* (ctx: WorkflowContext) {
-          const { payload, respond } = yield* (ctx as Context).waitForUpdate<{ amount: number }>(
-            'approve',
-          );
+          const { payload, respond } = yield* ctx.waitForUpdate<{ amount: number }>('approve');
           respond({ approved: true, amount: payload.amount });
           return `approved: ${payload.amount}`;
         });
@@ -1133,10 +1130,10 @@ for (const backend of storageBackends) {
             engine = new Engine({ storage });
 
             engine.register('stale-waiter-race', async function* (ctx: WorkflowContext) {
-              const first = yield* (ctx as Context).waitForUpdate<string>('data');
+              const first = yield* ctx.waitForUpdate<string>('data');
               first.respond(`first:${first.payload}`);
 
-              const second = yield* (ctx as Context).waitForUpdate<string>('data');
+              const second = yield* ctx.waitForUpdate<string>('data');
               second.respond(`second:${second.payload}`);
 
               return [first.payload, second.payload];
@@ -1188,7 +1185,7 @@ for (const backend of storageBackends) {
         const workflowId = `wait-update-registration-race-${backend.name}`;
 
         engine.register('wait-update-registration-race', async function* (ctx: WorkflowContext) {
-          const { payload, respond } = yield* (ctx as Context).waitForUpdate<string>('data');
+          const { payload, respond } = yield* ctx.waitForUpdate<string>('data');
           respond(`processed:${payload}`);
           return payload;
         });
@@ -1229,7 +1226,7 @@ for (const backend of storageBackends) {
         let respondCallCount = 0;
 
         engine.register('recovery-respond', async function* (ctx: WorkflowContext) {
-          const { payload, respond } = yield* (ctx as Context).waitForUpdate<string>('data');
+          const { payload, respond } = yield* ctx.waitForUpdate<string>('data');
           respondCallCount++;
           respond(payload);
           return payload;
@@ -1262,7 +1259,7 @@ for (const backend of storageBackends) {
           yield 1;
         }
         engine.register('runtime-gen', async function* (ctx: WorkflowContext) {
-          (ctx as Context).onUpdate('bad-runtime', () => {
+          ctx.onUpdate('bad-runtime', () => {
             return sneakyGenerator();
           });
           await waitForever();

@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { waitForever } from '../testing/fake-timers.ts';
 
 import { flush, storageBackends, teardown } from '../testing/storage-backends.ts';
-import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import type { WorkflowContext } from './types.ts';
 
@@ -31,7 +30,7 @@ for (const backend of storageBackends) {
 
       engine.register('counter', async function* (ctx: WorkflowContext) {
         let count = 0;
-        (ctx as Context).onUpdate('increment', () => {
+        ctx.onUpdate('increment', () => {
           count += 1;
           return count;
         });

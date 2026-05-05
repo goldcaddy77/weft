@@ -7,11 +7,10 @@ You need a workflow to wait---maybe for an hour before sending a reminder, maybe
 Call `yield* ctx.sleep()` with a human-readable duration string.
 
 ```typescript partial
-engine.register('trial-expiry', async function* (ctx, input) {
-  const { userId } = input as { userId: string };
-  yield* ctx.run(activateTrial, userId);
+engine.register('trial-expiry', async function* (ctx, input: { userId: string }) {
+  yield* ctx.run(activateTrial, input.userId);
   yield* ctx.sleep('30 days');
-  yield* ctx.run(expireTrial, userId);
+  yield* ctx.run(expireTrial, input.userId);
   return { expired: true };
 });
 ```

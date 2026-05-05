@@ -4,7 +4,6 @@ import { waitForever } from '../testing/fake-timers.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { flush } from '../testing/storage-backends.ts';
-import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import { CleanupWarningEvent } from './events.ts';
 import type { WorkflowContext } from './types.ts';
@@ -75,7 +74,7 @@ describe('Engine dispatches CleanupWarningEvent on cleanup errors', () => {
     });
 
     engine.register('resumable', async function* (ctx: WorkflowContext) {
-      (ctx as Context).onUpdate('validate', (payload) => `validated: ${String(payload)}`);
+      ctx.onUpdate('validate', (payload) => `validated: ${String(payload)}`);
       await waitForever();
       return 'done';
     });
@@ -136,7 +135,7 @@ describe('Engine dispatches CleanupWarningEvent on cleanup errors', () => {
     });
 
     engine.register('updater', async function* (ctx: WorkflowContext) {
-      const { payload, respond } = yield* (ctx as Context).waitForUpdate<string>('process');
+      const { payload, respond } = yield* ctx.waitForUpdate<string>('process');
       respond(`processed: ${payload}`);
       return payload;
     });

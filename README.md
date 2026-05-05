@@ -41,7 +41,6 @@ import {
   Engine,
   WorkflowAlreadyExistsError,
   activity,
-  type Context,
   type WorkflowContext,
   type WorkflowHandle,
 } from 'weft';
@@ -49,28 +48,46 @@ import { SQLiteStorage } from 'weft/storage/sqlite';
 
 const engine = new Engine({ storage: new SQLiteStorage('./weft.db') });
 
-const formatGreeting = activity({
-  name: 'formatGreeting',
-  execute: async (input: { name: string }) => `Hello, ${input.name}!`,
+interface ReadmeWelcomeInput {
+  name: string;
+}
+
+interface ReadmeWelcomeOutput {
+  greeting: string;
+  onboarded: boolean;
+}
+
+declare module 'weft' {
+  interface WorkflowRegistry {
+    readmeWelcome: { input: ReadmeWelcomeInput; output: ReadmeWelcomeOutput };
+  }
+
+  interface ActivityTypes {
+    readmeFormatGreeting: (input: ReadmeWelcomeInput) => Promise<string>;
+  }
+}
+
+const readmeFormatGreeting = activity({
+  name: 'readmeFormatGreeting',
+  execute: async (input: ReadmeWelcomeInput) => `Hello, ${input.name}!`,
 });
 
-engine.registerActivity(formatGreeting.name, formatGreeting);
+engine.registerActivity(readmeFormatGreeting.name, readmeFormatGreeting);
 
-engine.register('welcome', async function* (ctx: WorkflowContext, user: { name: string }) {
-  const context = ctx as Context;
-  const greeting = yield* context.run(formatGreeting, { name: user.name });
-  yield* context.sleep('1s');
+engine.register('readmeWelcome', async function* (ctx: WorkflowContext, user: ReadmeWelcomeInput) {
+  const greeting = yield* ctx.run('readmeFormatGreeting', { name: user.name });
+  yield* ctx.sleep('1s');
   return { greeting, onboarded: true };
 });
 
 await engine.recoverAll();
 
-const workflowId = 'welcome:steve';
+const workflowId = 'readmeWelcome:steve';
 const workflowInput = { name: 'Steve' };
 let handle: WorkflowHandle;
 
 try {
-  handle = await engine.start('welcome', workflowInput, { id: workflowId });
+  handle = await engine.start('readmeWelcome', workflowInput, { id: workflowId });
 } catch (error) {
   if (!(error instanceof WorkflowAlreadyExistsError)) throw error;
   handle = await engine.resume(workflowId).catch(() => engine.getHandle(workflowId));

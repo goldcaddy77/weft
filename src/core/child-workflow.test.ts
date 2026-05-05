@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
 import { MemoryStorage } from '../storage/memory';
-import type { Context } from './context';
 import { Engine } from './engine';
 import type { WorkflowContext } from './types';
 
@@ -15,7 +14,7 @@ describe('child workflows', () => {
     });
 
     engine.register('parent', async function* (ctx: WorkflowContext, input: unknown) {
-      const context = ctx as Context;
+      const context = ctx;
       const { value } = input as { value: number };
       const childResult = yield* context.startChild<number>('child', { value });
       return { doubled: childResult };
@@ -34,7 +33,7 @@ describe('child workflows', () => {
     });
 
     engine.register('parent-catches', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
       try {
         yield* context.startChild('failing-child', {});
         return { caught: false };
@@ -54,7 +53,7 @@ describe('child workflows', () => {
 
     // Register a recursive workflow that calls itself as a child
     engine.register('recursive', async function* (ctx: WorkflowContext, input: unknown) {
-      const context = ctx as Context;
+      const context = ctx;
       const { depth } = input as { depth: number };
       if (depth > 0) {
         return yield* context.startChild<number>('recursive', { depth: depth - 1 });
@@ -73,7 +72,7 @@ describe('child workflows', () => {
     const engine = new Engine({ maxNestingDepth: 2 });
 
     engine.register('nested', async function* (ctx: WorkflowContext, input: unknown) {
-      const context = ctx as Context;
+      const context = ctx;
       const { level } = input as { level: number };
       if (level < 3) {
         return yield* context.startChild<string>('nested', { level: level + 1 });
@@ -91,7 +90,7 @@ describe('child workflows', () => {
     const engine = new Engine({ maxNestingDepth: 3 });
 
     engine.register('nested-ok', async function* (ctx: WorkflowContext, input: unknown) {
-      const context = ctx as Context;
+      const context = ctx;
       const { level } = input as { level: number };
       if (level < 3) {
         return yield* context.startChild<string>('nested-ok', { level: level + 1 });
@@ -114,7 +113,7 @@ describe('child workflows', () => {
     });
 
     engine.register('stored-parent', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
       const result = yield* context.startChild<string>('stored-child', { data: 'test' });
       return result;
     });
@@ -145,7 +144,7 @@ describe('child workflows', () => {
     });
 
     engine.register('recovery-parent', async function* (ctx: WorkflowContext, input: unknown) {
-      const context = ctx as Context;
+      const context = ctx;
       const { count } = input as { count: number };
       const results: string[] = [];
       for (let i = 0; i < count; i++) {

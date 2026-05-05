@@ -56,7 +56,15 @@ export type ActivityHandlerLookup = (
  * import { initializeActivityWorkerMessageLoop } from 'weft';
  *
  * const activities = new Map<string, (...args: unknown[]) => unknown>();
- * activities.set('greet', (input: unknown) => `Hello, ${(input as { name: string }).name}!`);
+ * activities.set('greet', (input: unknown) => {
+ *   if (typeof input !== 'object' || input === null || !('name' in input)) {
+ *     throw new Error('Expected greeting input');
+ *   }
+ *   if (typeof input.name !== 'string') {
+ *     throw new Error('Expected greeting name');
+ *   }
+ *   return `Hello, ${input.name}!`;
+ * });
  *
  * // Call inside a Worker file to start listening for tasks:
  * initializeActivityWorkerMessageLoop((name) => activities.get(name));

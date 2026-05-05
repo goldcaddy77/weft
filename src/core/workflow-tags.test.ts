@@ -3,7 +3,6 @@ import { sleepForTesting, waitForRealTimersForTesting } from '../testing/fake-ti
 
 import { KEYS, type BatchOperation, type ScanOptions, type Storage } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
-import { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import {
   coerceStartWorkflowTags,
@@ -23,7 +22,7 @@ async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
 }
 
 async function* waitForSignalWorkflow(ctx: WorkflowContext, input: unknown) {
-  const signal = yield* (ctx as Context).waitForSignal<string>('continue');
+  const signal = yield* ctx.waitForSignal<string>('continue');
   return `${String(input)}:${signal}`;
 }
 
