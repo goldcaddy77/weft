@@ -1,7 +1,7 @@
-import type { ModelRouter } from '../../ai/model-router.ts';
 import type { AlertingOptions } from '../../alerting/types.ts';
 import type { Storage as WeftStorage } from '../../storage/interface.ts';
 import type { CompressionAlgorithm, CompressionOptions } from '../compression.ts';
+import type { Interceptor } from '../interceptor.ts';
 import type { TenantResolver } from '../tenant.ts';
 import type { WorkflowStatus } from './identity.ts';
 import type { Duration, RetentionPolicy } from './retry-retention.ts';
@@ -87,7 +87,7 @@ export interface ForkOptions {
  *
  * All fields are optional. Common overrides include `storage`, `retention`,
  * `development`, `serializer`, `compression`, `workerExecution`,
- * `defaultModelRouter`, `alerts`, and `tenantResolver`/`quotas` for
+ * `alerts`, and `tenantResolver`/`quotas` for
  * multi-tenant deployments.
  *
  * @example
@@ -153,12 +153,6 @@ export interface EngineOptions {
   };
 
   /**
-   * Default model router applied to all `ctx.agent()` calls that don't
-   * provide their own `modelRouter`. Per-call routers override this.
-   */
-  defaultModelRouter?: ModelRouter | undefined;
-
-  /**
    * When providers expose async resume hints, park inline `ctx.agent()` turns
    * before the blocking LLM call begins. Non-parkable contexts fall back to an
    * in-memory wait. Off by default because only some providers can participate
@@ -168,6 +162,15 @@ export interface EngineOptions {
 
   /** Built-in alerting configuration. */
   alerts?: AlertingOptions;
+
+  /**
+   * Unified interceptors registered at construction. This is equivalent to
+   * calling `addInterceptor` for each entry; each interceptor participates in
+   * the workflow and/or activity pipeline based on which hooks it implements.
+   * The engine takes a defensive copy at construction — mutating this array
+   * after passing it has no effect.
+   */
+  interceptors?: readonly Interceptor[];
 
   /**
    * Optional {@link TenantResolver} that populates `ctx.tenant` for every new

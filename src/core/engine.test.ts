@@ -1,12 +1,9 @@
 import { describe, expect, it, mock, spyOn } from 'bun:test';
 import { sleepForTesting, withTimeout } from '../testing/fake-timers.ts';
 
-import { BudgetPolicyEnforcer } from '../ai/budget-policy.ts';
+import type { ChatResponse, LLMProvider } from '../ai/agent/index.ts';
+import type { PendingChatResumeState } from '../ai/agent/suspending-provider.ts';
 import { defineAgent } from '../ai/declaration.ts';
-import { AgentBudgetExceededEvent, AgentBudgetWarningEvent } from '../ai/events.ts';
-import type { LLMProvider } from '../ai/providers/interface.ts';
-import type { PendingChatResumeState } from '../ai/providers/suspending-provider.ts';
-import type { ChatResponse } from '../ai/providers/types.ts';
 import type { ScanOptions, Storage as WeftStorage } from '../storage/interface.ts';
 import { encodeStorageKeyComponent, KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -1052,12 +1049,6 @@ describe('Engine', () => {
             { once: true },
           );
         });
-      },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 1;
       },
     };
 
@@ -2450,10 +2441,10 @@ describe('Engine', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // engine.addActivityInterceptor()
+  // activity-side interceptor through engine.addInterceptor()
   // ---------------------------------------------------------------------------
 
-  it('engine.addActivityInterceptor() registers interceptor that wraps activity execution', async () => {
+  it('engine.addInterceptor() registers interceptor that wraps activity execution', async () => {
     const engine = new Engine();
     const executionOrder: string[] = [];
 
@@ -2466,7 +2457,7 @@ describe('Engine', () => {
       },
     };
 
-    engine.addActivityInterceptor(interceptor);
+    engine.addInterceptor(interceptor);
 
     const compute = async (...args: unknown[]) => (args[0] as number) + 1;
 
@@ -2705,12 +2696,6 @@ describe('Engine', () => {
           stopReason: 'end_turn',
         };
       },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
-      },
     };
 
     engine.register('agent-workflow', async function* (ctx: WorkflowContext) {
@@ -2749,12 +2734,6 @@ describe('Engine', () => {
           model: 'test-model',
           stopReason: 'end_turn',
         };
-      },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 12;
       },
     };
 
@@ -2813,12 +2792,6 @@ describe('Engine', () => {
           stopReason: 'end_turn',
         };
       },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
-      },
     };
 
     engine.register('agent-interceptor-parked-workflow', async function* (ctx: WorkflowContext) {
@@ -2876,12 +2849,6 @@ describe('Engine', () => {
           model: 'test-model',
           stopReason: 'end_turn',
         };
-      },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
       },
     };
 
@@ -2964,12 +2931,6 @@ describe('Engine', () => {
           model: 'test-model',
           stopReason: 'end_turn',
         };
-      },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
       },
     };
 
@@ -3055,12 +3016,6 @@ describe('Engine', () => {
           stopReason: 'end_turn',
         };
       },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
-      },
     };
 
     engine.register('batched-resume-signal-workflow', async function* (ctx: WorkflowContext) {
@@ -3134,12 +3089,6 @@ describe('Engine', () => {
           model: 'test-model',
           stopReason: 'end_turn',
         };
-      },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
       },
     };
 
@@ -4044,7 +3993,7 @@ describe('Engine', () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
     const { encode: encodeValue } = await import('./codec.ts');
-    const { HumanReviewCompletedEvent } = await import('../ai/events.ts');
+    const { HumanReviewCompletedEvent } = await import('../ai/events/index.ts');
 
     const createdAt = Date.now() - 5000;
     const review = {
@@ -4081,7 +4030,7 @@ describe('Engine', () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
     const { encode: encodeValue } = await import('./codec.ts');
-    const { HumanReviewCompletedEvent } = await import('../ai/events.ts');
+    const { HumanReviewCompletedEvent } = await import('../ai/events/index.ts');
 
     const createdAt = Date.now() - 3000;
     const review = {
@@ -4334,16 +4283,10 @@ describe('Engine', () => {
             stopReason: 'end_turn',
           };
         },
-        async stream() {
-          return new ReadableStream();
-        },
-        async countTokens(): Promise<number> {
-          return 100;
-        },
       };
     }
 
-    it('exposes agentCostWaterfall query with per-turn cost data', async () => {
+    it('exposes agentTurnUsage query with per-turn token data', async () => {
       const engine = new Engine();
       const provider = createMultiTurnMockProvider(3);
 
@@ -4360,10 +4303,6 @@ describe('Engine', () => {
           provider,
           tools: [noopTool],
           maxTurns: 10,
-          budget: {
-            maxCost: 100,
-            models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 2 } },
-          },
         });
         // Wait so we can query during execution
         yield* context.waitForSignal('release');
@@ -4373,30 +4312,30 @@ describe('Engine', () => {
       const handle = await engine.start('waterfall-workflow', null);
       await flush();
 
-      let waterfall = (await handle.query('agentCostWaterfall')) as
+      let turnUsage = (await handle.query('agentTurnUsage')) as
         | Array<{
-            turn: number;
-            inputTokens: number;
-            outputTokens: number;
-            cost: number;
-            model: string;
-            tools: string[];
+            turnNumber: number;
+            inputTokens: number | null;
+            outputTokens: number | null;
+            source: 'provider' | 'unavailable';
           }>
         | undefined;
-      for (let attempt = 0; waterfall === undefined && attempt < 10; attempt++) {
+      for (let attempt = 0; turnUsage === undefined && attempt < 10; attempt++) {
         await sleepForTesting(10);
-        waterfall = (await handle.query('agentCostWaterfall')) as typeof waterfall;
+        turnUsage = (await handle.query('agentTurnUsage')) as typeof turnUsage;
       }
 
-      expect(waterfall).toBeDefined();
-      const resolvedWaterfall = waterfall!;
-      expect(resolvedWaterfall).toHaveLength(3);
-      expect(resolvedWaterfall[0]!.turn).toBe(0);
-      expect(resolvedWaterfall[0]!.model).toBe('test-model');
-      expect(resolvedWaterfall[0]!.tools).toEqual(['noop']);
-      expect(resolvedWaterfall[1]!.turn).toBe(1);
-      expect(resolvedWaterfall[2]!.turn).toBe(2);
-      expect(resolvedWaterfall[2]!.tools).toEqual([]);
+      expect(turnUsage).toBeDefined();
+      const resolvedTurnUsage = turnUsage!;
+      expect(resolvedTurnUsage).toHaveLength(3);
+      expect(resolvedTurnUsage[0]).toEqual({
+        turnNumber: 0,
+        inputTokens: 100,
+        outputTokens: 50,
+        source: 'provider',
+      });
+      expect(resolvedTurnUsage[1]!.turnNumber).toBe(1);
+      expect(resolvedTurnUsage[2]!.turnNumber).toBe(2);
 
       await engine.signal(handle.id, 'release');
       await handle.result();
@@ -4416,12 +4355,6 @@ describe('Engine', () => {
             model: 'test-model',
             stopReason: 'end_turn',
           };
-        },
-        async stream() {
-          return new ReadableStream();
-        },
-        async countTokens(): Promise<number> {
-          return 100;
         },
       };
 
@@ -4459,56 +4392,7 @@ describe('Engine', () => {
       engine[Symbol.dispose]();
     });
 
-    it('exposes agentCostProjection query with estimated total cost', async () => {
-      const engine = new Engine();
-      const provider = createMultiTurnMockProvider(3);
-
-      const noopTool = {
-        definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
-        execute: async () => 'ok',
-      };
-
-      engine.register('projection-workflow', async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
-        yield* context.agent({
-          model: 'test-model',
-          prompt: 'Do three turns',
-          provider,
-          tools: [noopTool],
-          maxTurns: 10,
-          budget: {
-            maxCost: 100,
-            models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 2 } },
-          },
-        });
-        yield* context.waitForSignal('release');
-        return 'done';
-      });
-
-      const handle = await engine.start('projection-workflow', null);
-      await flush();
-
-      const projection = (await handle.query('agentCostProjection')) as {
-        averageCostPerTurn: number;
-        turnsCompleted: number;
-        maxTurns: number;
-        projectedTotalCost: number;
-      };
-
-      expect(projection.turnsCompleted).toBe(3);
-      expect(projection.maxTurns).toBe(10);
-      expect(projection.averageCostPerTurn).toBeGreaterThan(0);
-      expect(projection.projectedTotalCost).toBeCloseTo(
-        projection.averageCostPerTurn * projection.maxTurns,
-        4,
-      );
-
-      await engine.signal(handle.id, 'release');
-      await handle.result();
-      engine[Symbol.dispose]();
-    });
-
-    it('exposes merged tokenUsage across multiple agent steps', async () => {
+    it('exposes merged agentTurnUsage across multiple agent steps', async () => {
       const engine = new Engine();
       const provider: LLMProvider = {
         name: 'mock',
@@ -4521,23 +4405,12 @@ describe('Engine', () => {
             stopReason: 'end_turn',
           };
         },
-        async stream() {
-          return new ReadableStream();
-        },
-        async countTokens(): Promise<number> {
-          return 100;
-        },
       };
 
       engine.register('token-usage-workflow', async function* (ctx: WorkflowContext) {
         const context = ctx as Context;
-        const budget = {
-          maxTokens: 1_000,
-          models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 2 } },
-        };
-
-        yield* context.agent({ model: 'test-model', prompt: 'first', provider, budget });
-        yield* context.agent({ model: 'test-model', prompt: 'second', provider, budget });
+        yield* context.agent({ model: 'test-model', prompt: 'first', provider });
+        yield* context.agent({ model: 'test-model', prompt: 'second', provider });
         yield* context.waitForSignal('release');
         return 'done';
       });
@@ -4545,23 +4418,18 @@ describe('Engine', () => {
       const handle = await engine.start('token-usage-workflow', null);
       await flush();
 
-      const usage = (await handle.query('tokenUsage')) as {
-        tokensUsed: number;
-        costUsed: number;
-        breakdown: Array<{
-          model: string;
-          inputTokens: number;
-          outputTokens: number;
-          cost: number;
-        }>;
-      };
+      const usage = (await handle.query('agentTurnUsage')) as Array<{
+        turnNumber: number;
+        inputTokens: number | null;
+        outputTokens: number | null;
+        source: 'provider' | 'unavailable';
+      }>;
 
-      expect(usage.tokensUsed).toBe(60);
-      expect(usage.breakdown).toHaveLength(1);
-      expect(usage.breakdown[0]!.model).toBe('test-model');
-      expect(usage.breakdown[0]!.inputTokens).toBe(20);
-      expect(usage.breakdown[0]!.outputTokens).toBe(40);
-      expect(usage.costUsed).toBeGreaterThan(0);
+      expect(usage).toHaveLength(2);
+      expect(usage[0]!.inputTokens).toBe(10);
+      expect(usage[0]!.outputTokens).toBe(20);
+      expect(usage[1]!.inputTokens).toBe(10);
+      expect(usage[1]!.outputTokens).toBe(20);
 
       await engine.signal(handle.id, 'release');
       await handle.result();
@@ -4569,62 +4437,7 @@ describe('Engine', () => {
     });
   });
 
-  describe('agent budget events', () => {
-    it('dispatches warning and exceeded events for embedded agent steps', async () => {
-      const engine = new Engine();
-      const provider: LLMProvider = {
-        name: 'mock',
-        async chat(): Promise<ChatResponse> {
-          return {
-            content: 'budget result',
-            toolCalls: [],
-            usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
-            model: 'test-model',
-            stopReason: 'end_turn',
-          };
-        },
-        async stream() {
-          return new ReadableStream();
-        },
-        async countTokens(): Promise<number> {
-          return 100;
-        },
-      };
-
-      const warnings: AgentBudgetWarningEvent[] = [];
-      const exceeded: AgentBudgetExceededEvent[] = [];
-      engine.addEventListener(AgentBudgetWarningEvent.type, (event) => {
-        warnings.push(event as AgentBudgetWarningEvent);
-      });
-      engine.addEventListener(AgentBudgetExceededEvent.type, (event) => {
-        exceeded.push(event as AgentBudgetExceededEvent);
-      });
-
-      engine.register('budget-events-workflow', async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
-        return yield* context.agent({
-          model: 'test-model',
-          prompt: 'Spend the budget',
-          provider,
-          budget: {
-            maxTokens: 25,
-            warningThreshold: 0.5,
-            models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 1 } },
-          },
-        });
-      });
-
-      const handle = await engine.start('budget-events-workflow', null);
-      await handle.result();
-
-      expect(warnings).toHaveLength(1);
-      expect(exceeded).toHaveLength(1);
-      expect(warnings[0]!.budgetUsedPercent).toBeGreaterThanOrEqual(1);
-      expect(exceeded[0]!.tokensUsed).toBe(30);
-
-      engine[Symbol.dispose]();
-    });
-
+  describe('agent workflow tracking', () => {
     it('exposes the tracked agent workflow id set while a workflow is running', async () => {
       const engine = new Engine();
       let releaseProvider: (() => void) | undefined;
@@ -4641,12 +4454,6 @@ describe('Engine', () => {
             model: 'test-model',
             stopReason: 'end_turn',
           };
-        },
-        async stream() {
-          return new ReadableStream();
-        },
-        async countTokens(): Promise<number> {
-          return 1;
         },
       };
 
@@ -4689,12 +4496,6 @@ describe('Engine', () => {
             model: 'test-model',
             stopReason: 'end_turn',
           };
-        },
-        async stream() {
-          return new ReadableStream();
-        },
-        async countTokens(): Promise<number> {
-          return 1;
         },
       };
 
@@ -4995,12 +4796,6 @@ describe('Engine', () => {
             stopReason: 'end_turn',
           };
         },
-        async stream() {
-          return new ReadableStream();
-        },
-        async countTokens(): Promise<number> {
-          return 1;
-        },
       };
 
       const agent = defineAgent({ name: 'compressed-agent-workflow', model: 'test-model' });
@@ -5174,12 +4969,6 @@ describe('Engine', () => {
             model: 'test-model',
             stopReason: 'end_turn',
           };
-        },
-        async stream() {
-          return new ReadableStream();
-        },
-        async countTokens(): Promise<number> {
-          return 100;
         },
       };
 
@@ -5573,12 +5362,6 @@ describe('Engine', () => {
             stopReason: 'end_turn',
           };
         },
-        async stream() {
-          return new ReadableStream();
-        },
-        async countTokens(): Promise<number> {
-          return 10;
-        },
       };
 
       engine.register('race-abort-workflow', async function* (ctx: WorkflowContext) {
@@ -5636,12 +5419,6 @@ describe('Engine', () => {
             );
           });
         },
-        async stream() {
-          return new ReadableStream();
-        },
-        async countTokens(): Promise<number> {
-          return 1;
-        },
       };
 
       const outerWinner = async () => {
@@ -5683,74 +5460,6 @@ describe('Engine', () => {
       engine[Symbol.dispose]();
     });
 
-    it('records org budget for agents inside ctx.all() sub-operations', async () => {
-      const engine = new Engine();
-      await engine.setBudgetPolicy({
-        namespace: 'org-parallel',
-        daily: { maxCost: 100 },
-      });
-
-      const provider: LLMProvider = {
-        name: 'cost-provider',
-        async chat(): Promise<ChatResponse> {
-          return {
-            content: 'ok',
-            toolCalls: [],
-            usage: { inputTokens: 1000, outputTokens: 1000, totalTokens: 2000 },
-            model: 'test-model',
-            stopReason: 'end_turn',
-          };
-        },
-        async stream() {
-          return new ReadableStream();
-        },
-        async countTokens(): Promise<number> {
-          return 100;
-        },
-      };
-
-      engine.register('parallel-agents', async function* (ctx: WorkflowContext) {
-        const c = ctx as Context;
-        return yield* c.all([
-          c.agent({
-            model: 'test-model',
-            prompt: 'a',
-            provider,
-            budgetNamespace: 'org-parallel',
-            budget: {
-              maxCost: 100,
-              models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 2 } },
-            },
-          }),
-          c.agent({
-            model: 'test-model',
-            prompt: 'b',
-            provider,
-            budgetNamespace: 'org-parallel',
-            budget: {
-              maxCost: 100,
-              models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 2 } },
-            },
-          }),
-        ]);
-      });
-
-      const handle = await engine.start('parallel-agents', null);
-      await handle.result();
-      await flush();
-
-      // Each agent burn costs: (1000 / 1000) * $1 + (1000 / 1000) * $2 = $3
-      // Two agents in ctx.all() → $6 recorded against the org namespace.
-      const { decode: decodeValue } = await import('./codec.ts');
-      const dailyDate = new Date().toISOString().slice(0, 10);
-      const dailyKey = KEYS.budget('org-parallel', 'daily', dailyDate);
-      const dailyBytes = await engine.storage.get(dailyKey);
-      expect(dailyBytes).not.toBeNull();
-      const daily = decodeValue(dailyBytes!) as { cost: number };
-      expect(daily.cost).toBeCloseTo(6, 4);
-      engine[Symbol.dispose]();
-    });
-
     it('FinalizationRegistry does not evict a freshly-cached handle', async () => {
       const engine = new Engine();
       engine.register('finalize-stable', async function* (ctx: WorkflowContext) {
@@ -5785,11 +5494,7 @@ describe('Engine', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Budget policy enforcement through ctx.all() (additional regressions)
-  // ---------------------------------------------------------------------------
-
-  describe('org-level budget policy enforcement via ctx.all()', () => {
+  describe('agent sub-operations via ctx.all()', () => {
     function createSimpleMockProvider(): LLMProvider {
       return {
         name: 'mock',
@@ -5802,50 +5507,8 @@ describe('Engine', () => {
             stopReason: 'end_turn',
           };
         },
-        async stream() {
-          return new ReadableStream();
-        },
-        async countTokens(): Promise<number> {
-          return 100;
-        },
       };
     }
-
-    it('rejects agent sub-operation inside ctx.all() when org budget is exhausted', async () => {
-      const provider = createSimpleMockProvider();
-
-      // Pre-seed a MemoryStorage with an exhausted daily counter so the engine's
-      // BudgetPolicyEnforcer will reject the first checkBudget() call.
-      const storage = new MemoryStorage();
-      const seeder = new BudgetPolicyEnforcer(storage, Date.now);
-      seeder.setPolicy({ namespace: 'org', daily: { maxCost: 0.01 } });
-      await seeder.recordCost('org', 1.0);
-
-      // Build the engine on top of the same storage so the exhausted counter is visible.
-      const engine = new Engine({ storage });
-      await engine.setBudgetPolicy({ namespace: 'org', daily: { maxCost: 0.01 } });
-
-      engine.register('parallel-agent-budget-workflow', async function* (ctx: WorkflowContext) {
-        const results = yield* (ctx as Context).all([
-          (ctx as Context).agent({
-            model: 'test-model',
-            prompt: 'Say hello',
-            provider,
-            budgetNamespace: 'org',
-          }),
-        ]);
-        return results;
-      });
-
-      const handle = await engine.start('parallel-agent-budget-workflow', null);
-
-      // The engine serialises workflow errors to their message string and reconstructs a
-      // plain Error on retrieval, so match on the well-known OrganizationBudgetExceededError
-      // message prefix rather than the class constructor.
-      await expect(handle.result()).rejects.toThrow('Organization budget exceeded: org daily');
-
-      engine[Symbol.dispose]();
-    });
 
     it('returns agentResult.content (not the full result struct) from ctx.all()', async () => {
       const engine = new Engine();
@@ -6307,9 +5970,9 @@ describe('Engine tenant-isolation guards', () => {
     const storage = new MemoryStorage();
 
     // Forge a state record with a tampered `tenant` field — `id` is a number,
-    // not a string. A naive `as` cast would let this through and an agent's
-    // `toolsForTenant` could end up matching on `state.tenant.id === 1` and
-    // dispatching admin tools.
+    // not a string. A naive `as` cast would let this through and a workflow's
+    // `pickToolsForTenant` helper could end up matching on `state.tenant.id === 1`
+    // and dispatching admin tools.
     const tamperedState = {
       id: 'wf-tampered',
       type: 'tampered-workflow',
@@ -6340,7 +6003,7 @@ describe('Engine tenant-isolation guards', () => {
 
       // The entire point of this guard: when the engine returns a decoded
       // WorkflowState, the tampered tenant must be stripped to `undefined`
-      // so agent `validateInput` / `toolsForTenant` hooks never see it.
+      // so workflow-author tenant-scoping helpers never see it.
       const fetched = await engine.get('wf-tampered');
       expect(fetched).not.toBeNull();
       expect(fetched?.tenant).toBeUndefined();

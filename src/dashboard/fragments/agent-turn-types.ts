@@ -1,4 +1,4 @@
-import type { Message } from '../../ai/providers/types.ts';
+import type { Message } from '../../ai/agent/index.ts';
 
 /**
  * Per-turn aggregate built from agent events. Held in `workflow-detail-agent.svelte`
@@ -9,12 +9,11 @@ export interface AgentTurnData {
   model: string;
   inputTokens: number;
   outputTokens: number;
-  cost: number;
   toolCalls: Array<{ name: string; input: unknown; output: unknown }>;
   response: string;
   /**
    * Cumulative conversation snapshot at the moment this turn completed,
-   * truncated per the caps in `src/ai/event-message-snapshot.ts`. Empty for
+   * truncated per the caps in `src/ai/agent/event-message-snapshot.ts`. Empty for
    * legacy events that pre-date the snapshot field.
    */
   messages: Message[];

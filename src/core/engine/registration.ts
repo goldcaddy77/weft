@@ -1,7 +1,6 @@
 import type { AgentContextOptions } from '../context.ts';
 import { Context } from '../context.ts';
 import { compileStepWorkflow, isAsyncGeneratorFunction } from '../step-context.ts';
-import type { TenantContext } from '../tenant.ts';
 import type { StepWorkflowFunction, WorkflowFunction, WorkflowRegistration } from '../types.ts';
 import { collectToolVersions, type WorkflowVersionTuple } from '../workflow-version-tuple.ts';
 import type { EngineInternals } from './internals.ts';
@@ -19,12 +18,6 @@ type AgentDefinitionLike = {
   systemPrompt?: string;
   tools?: AgentToolCollection;
   maxTurns?: number;
-  budget?: AgentContextOptions['budget'];
-  modelRouter?: AgentContextOptions['modelRouter'];
-  contextStrategy?: AgentContextOptions['contextStrategy'];
-  hooks?: AgentContextOptions['hooks'];
-  toolsForTenant?: (tenant: TenantContext | undefined) => AgentToolCollection | undefined;
-  validateInput?: (input: unknown, tenant: TenantContext | undefined) => void;
 };
 
 type AgentRegistrationOptionsLike = {
@@ -54,36 +47,21 @@ export function register(
     const agentOptions = handlerOrRegistrationOrOptions as AgentRegistrationOptionsLike;
     const agentVersion = agentDef.version ?? '0.0.0';
     const workflowVersion = '1';
-    const resolveEffectiveTools = (tenant: TenantContext | undefined) =>
-      agentDef.toolsForTenant ? agentDef.toolsForTenant(tenant) : agentDef.tools;
-    const resolveVersionTuple = (tenant: TenantContext | undefined): WorkflowVersionTuple => {
-      const effectiveTools = resolveEffectiveTools(tenant);
+    const resolveVersionTuple = (): WorkflowVersionTuple => {
       return {
         workflowVersion,
         agentVersion,
-        ...(effectiveTools &&
-          effectiveTools.length > 0 && {
-            toolVersions: collectToolVersions(effectiveTools),
+        ...(agentDef.tools &&
+          agentDef.tools.length > 0 && {
+            toolVersions: collectToolVersions(agentDef.tools),
           }),
       };
     };
 
     // Build a workflow function that delegates to ctx.agent(), ensuring the
-    // agent execution flows through the engine's operation handler for budget
-    // policy enforcement, observability, and durable checkpointing.
+    // agent execution flows through the engine's operation handler for
+    // observability and durable checkpointing.
     const handler: WorkflowFunction = async function* (ctx, input) {
-      const tenant = ctx.tenant;
-
-      // Per-tenant input validation runs before any tool resolution so a
-      // malformed payload fails fast without burning budget.
-      if (agentDef.validateInput) {
-        agentDef.validateInput(input, tenant);
-      }
-
-      // Resolve the effective tool set: per-tenant override takes precedence
-      // over the static definition.
-      const effectiveTools = resolveEffectiveTools(tenant);
-
       const prompt = typeof input === 'string' ? input : JSON.stringify(input);
       const agentOpts: AgentContextOptions = {
         model: agentDef.model,
@@ -91,12 +69,8 @@ export function register(
         provider: agentOptions.provider,
       };
       if (agentDef.systemPrompt) agentOpts.systemPrompt = agentDef.systemPrompt;
-      if (effectiveTools) agentOpts.tools = effectiveTools;
+      if (agentDef.tools) agentOpts.tools = agentDef.tools;
       if (agentDef.maxTurns !== undefined) agentOpts.maxTurns = agentDef.maxTurns;
-      if (agentDef.budget) agentOpts.budget = agentDef.budget;
-      if (agentDef.modelRouter) agentOpts.modelRouter = agentDef.modelRouter;
-      if (agentDef.contextStrategy) agentOpts.contextStrategy = agentDef.contextStrategy;
-      if (agentDef.hooks) agentOpts.hooks = agentDef.hooks;
 
       const result = yield* (ctx as Context).agent(agentOpts);
       return result;

@@ -9,8 +9,7 @@ import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { describe, expect, it } from 'bun:test';
 
-import type { LLMProvider } from '../ai/providers/interface.ts';
-import type { ChatResponse } from '../ai/providers/types.ts';
+import type { ChatResponse, LLMProvider } from '../ai/agent/index.ts';
 import type { BatchOperation, ScanOptions, Storage } from '../storage/interface.ts';
 import { KEYS as STORAGE_KEYS, encodeStorageKeyComponent } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -54,12 +53,6 @@ function createResumeAwareProvider(chatCalls: ResumeAwareChatCall[]): LLMProvide
         model: 'test-model',
         stopReason: 'end_turn',
       };
-    },
-    async stream() {
-      return new ReadableStream();
-    },
-    async countTokens(): Promise<number> {
-      return 100;
     },
   };
 }
@@ -493,12 +486,6 @@ describe('crash recovery', () => {
           stopReason: 'end_turn',
         };
       },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
-      },
     };
 
     const registerWorkflow = (engine: Engine) => {
@@ -584,12 +571,6 @@ describe('crash recovery', () => {
           model: 'test-model',
           stopReason: 'end_turn',
         };
-      },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
       },
     };
 

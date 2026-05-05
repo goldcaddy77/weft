@@ -58,18 +58,6 @@ await Bun.build({
   external: ['bun:sqlite', 'better-sqlite3'],
 });
 
-// Runtime-specific subpath entrypoints (separate build to preserve dist layout)
-await Bun.build({
-  entrypoints: ['./src/ai/mcp/transport-stdio.ts'],
-  outdir: './dist/ai/mcp',
-  target: 'bun',
-  format: 'esm',
-  naming: '[name].js',
-  sourcemap: 'external',
-  minify: true,
-  external: ['lmdb', '@libsql/client', '@opentelemetry/api', 'bun:sqlite'],
-});
-
 // Browser entrypoints (Service Worker, IndexedDB, handler)
 await Bun.build({
   entrypoints: [

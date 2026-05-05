@@ -1,5 +1,4 @@
 import type { AgentResult } from '../agent/types.ts';
-import { confidenceWeightedConsensus } from '../confidence-voting.ts';
 import type { AgentDefinition } from '../declaration.ts';
 
 /**
@@ -49,10 +48,9 @@ export function resolveConsensusWinner(
   results: AgentResult[],
   voting: 'naive' | 'confidence-weighted' | undefined,
 ): string | null {
-  if (voting === 'confidence-weighted') {
-    return confidenceWeightedConsensus(results).winner;
-  }
-  // Naive default: unanimous exact-string agreement required.
+  void voting;
+  // The shrunken agent result no longer carries confidence; exact-string
+  // agreement is the only mechanically available consensus signal here.
   const allAgree = results.every((r) => r.content === results[0]!.content);
   return allAgree ? (results[0]?.content ?? null) : null;
 }

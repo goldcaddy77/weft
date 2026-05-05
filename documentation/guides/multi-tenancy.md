@@ -132,24 +132,33 @@ When JWT authentication is enabled, the quota endpoint limits tenant-scoped call
 
 ## Agents and tools
 
-Agent declarations can select tools per tenant with `toolsForTenant`. Use this when each tenant has different integrations, credentials, or feature flags.
+Agent definitions are tenant-agnostic post-shrinkage. The workflow author scopes tools per tenant before invoking the agent — Weft no longer enforces tool isolation centrally. Use `ctx.tenant` inside the workflow body to compose the right tool set:
 
 ```typescript partial
 const supportAgent = defineAgent({
   name: 'support',
   model: 'claude-sonnet-4-20250514',
   systemPrompt: 'Help the customer support team resolve tickets.',
-  toolsForTenant(tenant) {
-    if (tenant?.attributes?.['tier'] === 'enterprise') {
-      return [ticketSearch, contractLookup, escalationTool];
-    }
+});
 
-    return [ticketSearch];
-  },
+function pickToolsForTenant(tenant: TenantContext | undefined): AgentToolDefinition[] {
+  if (tenant?.attributes?.['tier'] === 'enterprise') {
+    return [ticketSearch, contractLookup, escalationTool];
+  }
+  return [ticketSearch];
+}
+
+engine.register('support-workflow', async function* (ctx) {
+  const result = yield* (ctx as Context).agent({
+    model: supportAgent.model,
+    prompt: 'Resolve the customer ticket.',
+    tools: pickToolsForTenant(ctx.tenant),
+  });
+  return result;
 });
 ```
 
-See the [agent declaration guide](../agents/agent-declaration.md) for `toolsForTenant` and per-tenant input validation.
+See [`what-weft-owns.md`](../agents/what-weft-owns.md) for the responsibility-shift rationale and the canonical mock-provider example.
 
 ## Remote workers and interceptors
 

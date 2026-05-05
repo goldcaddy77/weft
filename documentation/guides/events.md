@@ -64,14 +64,10 @@ _Operational events:_
 When running AI agent [workflows](workflows.md), a separate set of events tracks agent-specific behavior.
 
 - `AgentTurnStartedEvent` (`'agent:turn:started'`) -- carries `workflowId`, `agentId`, `turnIndex`, `model`, `inputTokenEstimate`, and `conversationLength`
-- `AgentTurnCompletedEvent` (`'agent:turn:completed'`) -- carries detailed metrics: `inputTokens`, `outputTokens`, `cost`, `cumulativeCost`, `duration`, `toolCallCount`, `fallbackAttempts`, and optional `reasoningTrace`
-- `AgentToolCalledEvent` (`'agent:tool:called'`) -- carries `toolName`, `toolInput`, `source` (`'local'` or `'mcp'`), and `operationId`
+- `AgentTurnCompletedEvent` (`'agent:turn:completed'`) -- carries `inputTokens`, `outputTokens`, `duration`, `toolCallCount`, and a size-bounded `messages` snapshot
+- `AgentToolCalledEvent` (`'agent:tool:called'`) -- carries `toolName`, `toolInput`, and `operationId`
 - `AgentToolReturnedEvent` (`'agent:tool:returned'`) -- carries `toolName`, `duration`, `success`, and `operationId`
-- `AgentBudgetWarningEvent` (`'agent:budget:warning'`) -- fires when budget usage crosses a threshold
-- `AgentBudgetExceededEvent` (`'agent:budget:exceeded'`) -- fires when the budget is fully consumed
-- `AgentContextCompactedEvent` (`'agent:context:compacted'`) -- fires when the context window is trimmed, with `tokensBefore`, `tokensAfter`, and `messagesDropped`
-- `AgentModelFallbackEvent` (`'agent:model:fallback'`) -- fires when a model fails and the router falls back to another
-- `AgentProviderCircuitOpenEvent` (`'agent:provider:circuit-open'`) -- fires when a provider's error rate trips the circuit breaker
+- `AgentCheckpointResumedEvent` (`'agent:checkpoint:resumed'`) -- carries `duplicatesPrevented` when committed tool results are replayed instead of re-executed
 - `HumanReviewRequestedEvent` (`'human-review:requested'`) -- carries `reviewId`, `reviewType`, and `reviewers`
 - `HumanReviewCompletedEvent` (`'human-review:completed'`) -- carries `reviewId`, `decision`, `reviewer`, and `duration`
 

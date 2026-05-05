@@ -8,10 +8,9 @@ budget, context, model fallback, provider health, human review, and checkpoint
 events each live in focused domain files. The directory `index.ts` rebuilds the
 `WeftAgentEventMap` union and re-exports the event classes.
 
-`src/ai/prompt-cache.ts` is now a pure barrel over `src/ai/prompt-cache/`.
-Public prompt-cache types and metric names moved to `types.ts`, trie internals
-and hashing helpers moved to `trie.ts`, and the `PromptCache` implementation
-plus eviction logic moved to `cache.ts`.
+The former prompt-prefix cache split has been removed from the current public
+agent surface. Historical notes should treat that work as superseded by the
+AI Surface Shrinkage refactor.
 
 `src/ai/coordination.ts` is now a pure barrel over `src/ai/coordination/`.
 Trace propagation, conversation summarization, handoff, debate, supervised

@@ -21,7 +21,6 @@ Every public entry point and storage adapter, with its supported runtimes.
 | `weft/storage/turso`         | yes       | yes        | conditional (requires fetch)        | conditional (requires fetch)     |
 | `weft/storage/compressed`    | yes       | yes        | no (requires node:zlib for brotli)  | no                               |
 | `weft/service-worker`        | no        | no         | yes                                 | yes                              |
-| `weft/mcp/stdio`             | yes       | no         | no                                  | no                               |
 
 ## Legend
 
@@ -33,5 +32,4 @@ Every public entry point and storage adapter, with its supported runtimes.
 
 - The root `weft` entry point is portable: it contains no `bun:*`, `node:*`, or filesystem dependencies.
 - `serve()` is Bun-only; use `handleRequest()` for portable HTTP handling.
-- `StdioTransport` uses `Bun.spawn` and is Bun-only; use `HttpTransport` or `HttpSseTransport` for portable MCP connectivity.
 - Storage adapters are isolated behind subpath exports. Heavy backends (`bun:sqlite`, `lmdb`, `better-sqlite3`) are never bundled into the portable root.

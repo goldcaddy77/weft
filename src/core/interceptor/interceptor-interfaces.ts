@@ -81,6 +81,28 @@ export interface WorkflowInterceptor {
 }
 
 /**
+ * Internal: the canonical list of workflow-side hook names. Used by
+ * {@link splitInterceptors} to route a unified `Interceptor` instance into
+ * the workflow-side pipeline. Frozen so consumers (and we) cannot mutate
+ * the array at runtime — the type system already marks it readonly, but
+ * the runtime array would otherwise be mutable.
+ *
+ * Not exported from the package root: this is an implementation detail.
+ * The `interceptor-types.test.ts` exhaustiveness assertions guarantee
+ * this stays in sync with `WorkflowInterceptor`.
+ */
+export const WORKFLOW_INTERCEPTOR_HOOKS = Object.freeze([
+  'activity',
+  'sleep',
+  'waitForSignal',
+  'workflowStart',
+  'childWorkflow',
+  'agent',
+  'query',
+  'signalReceived',
+] as const);
+
+/**
  * Middleware interface for activity-execution interception. Runs on the
  * side that actually executes the activity function (main thread or worker).
  * Implement `execute` to add retry logging, tracing, or input/output transforms.
@@ -105,6 +127,30 @@ export interface ActivityInterceptor {
     next: (interception: ActivityExecutionInterception) => Promise<unknown>,
   ): Promise<unknown>;
 }
+
+/**
+ * Unified interceptor surface accepted by the engine. Implement hooks from
+ * either the workflow side, the activity side, or both; each interceptor
+ * participates in whichever pipeline has matching hooks.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type Interceptor } from 'weft';
+ *
+ * const tracer: Interceptor = {
+ *   *activity(interception, next) {
+ *     return yield* next(interception);
+ *   },
+ *   async execute(interception, next) {
+ *     return next(interception);
+ *   },
+ * };
+ *
+ * const engine = new Engine({ interceptors: [tracer] });
+ * void engine;
+ * ```
+ */
+export interface Interceptor extends WorkflowInterceptor, ActivityInterceptor {}
 
 // ---------------------------------------------------------------------------
 // Composed interceptor interfaces

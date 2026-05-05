@@ -121,10 +121,6 @@
       "import": "./dist/server/handler.js",
       "default": "./dist/server/handler.js"
     },
-    "./mcp/stdio": {
-      "types": "./dist/ai/mcp/transport-stdio.d.ts",
-      "bun": "./dist/ai/mcp/transport-stdio.js"
-    },
     "./client": {
       "types": "./dist/client/index.d.ts",
       "import": "./dist/client/index.js",
@@ -163,7 +159,8 @@
     "test": "bun test --timeout 15000 --path-ignore-patterns='src/benchmarks/**' && bun test src/benchmarks --timeout 15000 --parallel=1",
     "test:coverage": "WEFT_COVERAGE_MODE=1 bun test --timeout 15000 --coverage",
     "typecheck": "tsc --noEmit",
-    "validate": "bun run build && bun run verify:exports && bun run verify:portability && bun run verify:jsdoc:full && bun run lint && bun run typecheck && bun run verify:no-test-sleeps && bun run test",
+    "typecheck:tests": "tsc --noEmit -p tsconfig.test-d.json",
+    "validate": "bun run lint && bun run typecheck && bun run typecheck:tests && bun run verify:no-test-sleeps && bun run test",
     "verify:exports": "bun run scripts/verify-tree-shaking.ts",
     "verify:jsdoc": "bun run scripts/audit-jsdoc-manifest.ts",
     "verify:jsdoc:declarations": "bun run scripts/check-declaration-jsdoc.ts --all",

@@ -1,4 +1,4 @@
-import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from '../../ai/events.ts';
+import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from '../../ai/events/index.ts';
 import {
   ReviewTimeoutError,
   type HumanReviewOptions,

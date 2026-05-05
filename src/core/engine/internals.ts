@@ -27,10 +27,9 @@ import type { EventHeadRecord } from '../event-log.ts';
 import type { ExecutionStrategy } from '../execution-strategy.ts';
 import type { InlineExecutionStrategy } from '../inline-execution-strategy.ts';
 import type {
-  ActivityInterceptor,
   ComposedActivityInterceptor,
   ComposedWorkflowInterceptor,
-  WorkflowInterceptor,
+  Interceptor,
 } from '../interceptor.ts';
 import type { Scheduler } from '../scheduler.ts';
 import type { TenantQuotaManager } from '../tenant-quotas.ts';
@@ -76,10 +75,15 @@ export interface EngineInternals {
   updateWaitersByWorkflow: Map<string, TrackedWaiterKeys>;
   sleepResolvers: Map<string, () => void>;
   sleepResolversByWorkflow: Map<string, Set<string>>;
-  interceptors: WorkflowInterceptor[];
-  activityInterceptors: ActivityInterceptor[];
-  composedWorkflowInterceptor: ComposedWorkflowInterceptor | null;
-  composedActivityInterceptor: ComposedActivityInterceptor | null;
+  interceptors: Interceptor[];
+  // `undefined` means "not yet computed". `null` means "computed and empty —
+  // no interceptor implements hooks for this side". Distinguishing the two
+  // lets `getComposed*Interceptor` cache the empty-slice result instead of
+  // re-running `splitInterceptors` on every call when only one side has
+  // hooks (e.g. an observability interceptor with workflow hooks but no
+  // `execute`).
+  composedWorkflowInterceptor: ComposedWorkflowInterceptor | null | undefined;
+  composedActivityInterceptor: ComposedActivityInterceptor | null | undefined;
   updateCoordinator: UpdateCoordinator;
   activityRegistry: ActivityRegistry;
   activityWorkerDispatcher: ActivityWorkerDispatcher | null;
@@ -90,19 +94,15 @@ export interface EngineInternals {
   workflowNestingDepths: Map<string, number>;
   workflowHeaders: Map<string, Map<string, string>>;
   workflowStateWriteChains: Map<string, Promise<void>>;
-  budgetPolicyEnforcer: import('../../ai/budget-policy.ts').BudgetPolicyEnforcer | null;
   tenantQuotaManager: TenantQuotaManager;
   heartbeatDetails: Map<string, unknown>;
   pendingStarts: Set<string>;
   pendingScheduleCreations: Set<string>;
-  chargedAgentOperations: Set<string>;
-  chargedAgentOperationsByWorkflow: Map<string, Set<string>>;
   workflowsNeedingTerminalCleanup: Set<string>;
   cleanupInterval: ReturnType<typeof setInterval> | null;
   retentionSweepInterval: ReturnType<typeof setInterval> | null;
   retentionSweepInFlight: Promise<void> | null;
   nextRetentionSweepAt: number | null;
-  defaultModelRouter: import('../../ai/model-router.ts').ModelRouter | undefined;
   reviewCoordinator: ReviewCoordinator;
   reviewWaiters: Map<string, (decision: HumanReviewResult) => void>;
   reviewWaitersByWorkflow: Map<string, TrackedWaiterKeys>;

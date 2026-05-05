@@ -1,4 +1,3 @@
-import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
 import { assertScopedBulkWorkflowFilter } from '../core/bulk-workflow-filter.ts';
 import type { StoredStreamChunk } from '../core/context.ts';
 import type {
@@ -328,21 +327,6 @@ export class HttpClient implements WeftClient {
         method: 'POST',
         body: JSON.stringify(options),
       },
-    );
-  }
-
-  async setBudgetPolicy(options: BudgetPolicyOptions): Promise<void> {
-    await request<unknown>(this.baseUrl, '/budget-policy', this.headers, {
-      method: 'PUT',
-      body: JSON.stringify(options),
-    });
-  }
-
-  async getBudgetPolicy(namespace: string): Promise<BudgetPolicyOptions | null> {
-    return request<BudgetPolicyOptions | null>(
-      this.baseUrl,
-      `/budget-policy/${encodeURIComponent(namespace)}`,
-      this.headers,
     );
   }
 

@@ -23,7 +23,6 @@ interface EngineOptions {
   compression?: boolean;
   workerExecution?: WorkerExecutionOptions;
   activityExecution?: ActivityExecutionOptions;
-  defaultModelRouter?: ModelRouter;
   alerts?: AlertOptions[];
 }
 ```
@@ -43,7 +42,6 @@ interface EngineOptions {
 | `compression`                    | `boolean`                  | `false`               | Enable checkpoint compression                                                                                              |
 | `workerExecution`                | `WorkerExecutionOptions`   | `undefined`           | Configuration for offloading workflow execution to Web Workers                                                             |
 | `activityExecution`              | `ActivityExecutionOptions` | `undefined`           | Configuration for activity execution behavior                                                                              |
-| `defaultModelRouter`             | `ModelRouter`              | `undefined`           | Default model router applied to all agent operations                                                                       |
 | `alerts`                         | `AlertOptions[]`           | `undefined`           | Metric alert thresholds that fire `AlertFiredEvent` / `AlertResolvedEvent`                                                 |
 
 **Example:**
@@ -121,40 +119,30 @@ interface AgentOptions {
   systemPrompt?: string;
   tools?: AgentTool[];
   maxTurns?: number;
-  budget?: BudgetTracker;
-  modelRouter?: ModelRouter;
-  contextManager?: ContextWindowManager;
-  healthTracker?: ProviderHealthTracker;
-  toolCacheTTL?: number;
   signal?: AbortSignal;
-  hooks?: AgentHooks;
   eventTarget?: EventTarget;
   workflowId?: string;
   agentId?: string;
-  onTurnStarted?: (turn: TurnInfo) => void;
-  onTurnCompleted?: (turn: TurnResult) => void;
-  onToolCalled?: (call: ToolCallInfo) => void;
-  onToolReturned?: (result: ToolReturnInfo) => void;
+  toolEffectLog?: ToolEffectLogLike;
+  verificationRecorder?: VerificationRecorder;
+  checkpointSizeWarningThreshold?: number;
 }
 ```
 
-| Field            | Type                    | Default     | Description                                                         |
-| ---------------- | ----------------------- | ----------- | ------------------------------------------------------------------- |
-| `model`          | `string`                | --          | Model identifier (e.g., `'claude-sonnet-4-5-20250929'`). Required.  |
-| `provider`       | `LLMProvider`           | --          | LLM provider instance. Required.                                    |
-| `systemPrompt`   | `string`                | `undefined` | System message prepended to the conversation.                       |
-| `tools`          | `AgentTool[]`           | `[]`        | Tools available to the model.                                       |
-| `maxTurns`       | `number`                | `10`        | Maximum LLM turns before returning.                                 |
-| `budget`         | `BudgetTracker`         | `undefined` | Token and cost budget tracker.                                      |
-| `modelRouter`    | `ModelRouter`           | `undefined` | Per-turn model selection strategy.                                  |
-| `contextManager` | `ContextWindowManager`  | `undefined` | Context window compaction manager.                                  |
-| `healthTracker`  | `ProviderHealthTracker` | `undefined` | Provider circuit breaker.                                           |
-| `toolCacheTTL`   | `number`                | `300_000`   | Tool result cache TTL in milliseconds.                              |
-| `signal`         | `AbortSignal`           | `undefined` | Cancellation signal.                                                |
-| `hooks`          | `AgentHooks`            | `undefined` | Lifecycle hooks (`beforeTurn`, `afterToolCall`, `onBudgetWarning`). |
-| `eventTarget`    | `EventTarget`           | `undefined` | Target for dispatching agent lifecycle events.                      |
-| `workflowId`     | `string`                | `''`        | Workflow ID for event correlation.                                  |
-| `agentId`        | `string`                | `''`        | Agent ID for event correlation.                                     |
+| Field                            | Type                   | Default     | Description                                           |
+| -------------------------------- | ---------------------- | ----------- | ----------------------------------------------------- |
+| `model`                          | `string`               | --          | Model identifier passed to the provider. Required.    |
+| `provider`                       | `LLMProvider`          | --          | Structural LLM provider. Required.                    |
+| `systemPrompt`                   | `string`               | `undefined` | System message prepended to the conversation.         |
+| `tools`                          | `AgentTool[]`          | `[]`        | Tools available to the model.                         |
+| `maxTurns`                       | `number`               | `10`        | Maximum LLM turns before returning.                   |
+| `signal`                         | `AbortSignal`          | `undefined` | Cancellation signal.                                  |
+| `eventTarget`                    | `EventTarget`          | `undefined` | Target for dispatching agent events.                  |
+| `workflowId`                     | `string`               | `''`        | Workflow ID for event correlation.                    |
+| `agentId`                        | `string`               | `''`        | Agent ID for event correlation.                       |
+| `toolEffectLog`                  | `ToolEffectLogLike`    | `undefined` | Durable effect log for tool-call deduplication.       |
+| `verificationRecorder`           | `VerificationRecorder` | `undefined` | Internal verification sink for speculative execution. |
+| `checkpointSizeWarningThreshold` | `number`               | `65_536`    | Conversation snapshot warning threshold in bytes.     |
 
 ---
 
@@ -220,85 +208,6 @@ const DEFAULT_VISIBILITY_TIMEOUT_MS = 30_000; // 30 seconds
 ```
 
 Default task visibility timeout. After this window, the task server considers a task unacknowledged and eligible for reassignment. Override via worker options.
-
----
-
-## `BudgetOptions`
-
-Passed to `BudgetTracker` to configure token and cost limits.
-
-```ts
-interface BudgetOptions {
-  maxTokens?: number;
-  maxCost?: number;
-  warningThreshold?: number;
-  models: Record<string, ModelPricing>;
-}
-```
-
-| Field              | Type                           | Default     | Description                                                   |
-| ------------------ | ------------------------------ | ----------- | ------------------------------------------------------------- |
-| `maxTokens`        | `number`                       | `undefined` | Maximum total tokens (input + output) before budget exceeded. |
-| `maxCost`          | `number`                       | `undefined` | Maximum total cost in dollars before budget exceeded.         |
-| `warningThreshold` | `number`                       | `0.8`       | Fraction (0-1) of budget at which the warning callback fires. |
-| `models`           | `Record<string, ModelPricing>` | --          | Per-model pricing for cost calculation. Required.             |
-
-### `ModelPricing`
-
-```ts
-interface ModelPricing {
-  inputCostPer1K: number;
-  outputCostPer1K: number;
-}
-```
-
----
-
-## `ContextWindowOptions`
-
-Passed to `ContextWindowManager` to configure context compaction.
-
-```ts
-interface ContextWindowOptions {
-  maxTokens: number;
-  reservedForOutput?: number;
-  compactAt?: number;
-  strategy?: ContextStrategy;
-  countTokens?: (messages: Message[]) => Promise<number>;
-}
-```
-
-| Field               | Type                            | Default              | Description                                             |
-| ------------------- | ------------------------------- | -------------------- | ------------------------------------------------------- |
-| `maxTokens`         | `number`                        | --                   | Maximum total token budget. Required.                   |
-| `reservedForOutput` | `number`                        | `maxTokens * 0.25`   | Tokens reserved for model output.                       |
-| `compactAt`         | `number`                        | `0.85`               | Fraction of `inputBudget` at which compaction triggers. |
-| `strategy`          | `ContextStrategy`               | `noopStrategy()`     | Compaction strategy to apply.                           |
-| `countTokens`       | `(messages) => Promise<number>` | `chars / 4` estimate | Token counting function.                                |
-
----
-
-## `ProviderHealthOptions`
-
-Passed to `ProviderHealthTracker` to configure circuit breaker behavior.
-
-```ts
-interface ProviderHealthOptions {
-  windowDuration?: number;
-  errorThreshold?: number;
-  cooldownDuration?: number;
-  minimumRequests?: number;
-  getNow?: () => number;
-}
-```
-
-| Field              | Type           | Default    | Description                                                 |
-| ------------------ | -------------- | ---------- | ----------------------------------------------------------- |
-| `windowDuration`   | `number`       | `60_000`   | Sliding window duration in ms.                              |
-| `errorThreshold`   | `number`       | `0.5`      | Error rate (0-1) at which the circuit trips.                |
-| `cooldownDuration` | `number`       | `30_000`   | Time in ms the circuit stays open before a probe request.   |
-| `minimumRequests`  | `number`       | `5`        | Minimum requests in the window before the circuit can trip. |
-| `getNow`           | `() => number` | `Date.now` | Clock function (useful for testing).                        |
 
 ---
 
