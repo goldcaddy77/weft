@@ -226,6 +226,8 @@ async function invokeWebExtensionMethod<T>(
  * ```
  */
 export class WebExtensionStorage implements Storage {
+  static readonly #mutationQueues = new WeakMap<WebExtensionStorageAreaDriver, Promise<void>>();
+
   readonly #namespace: WebExtensionNamespace;
   readonly #driver: WebExtensionStorageAreaDriver;
   readonly #area: WebExtensionStorageArea;
@@ -278,6 +280,27 @@ export class WebExtensionStorage implements Storage {
     const items: Record<string, unknown> = { [KEYSPACE_STORAGE_KEY]: keyspace };
     await this.#assertSyncQuota(items);
     await this.#setItems(items);
+  }
+
+  async #withMutationLock<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = WebExtensionStorage.#mutationQueues.get(this.#driver) ?? Promise.resolve();
+    const gate: { release?: () => void } = {};
+    const current = new Promise<void>((resolve) => {
+      gate.release = resolve;
+    });
+    const queued = previous.catch(() => undefined).then(() => current);
+
+    WebExtensionStorage.#mutationQueues.set(this.#driver, queued);
+    await previous.catch(() => undefined);
+
+    try {
+      return await operation();
+    } finally {
+      gate.release?.();
+      if (WebExtensionStorage.#mutationQueues.get(this.#driver) === queued) {
+        WebExtensionStorage.#mutationQueues.delete(this.#driver);
+      }
+    }
   }
 
   #assertWritable(): void {
@@ -336,17 +359,21 @@ export class WebExtensionStorage implements Storage {
 
   async put(key: string, value: Uint8Array): Promise<void> {
     this.#assertWritable();
-    const keyspace = await this.#getKeyspace();
-    keyspace[key] = createPutEnvelope(value);
-    await this.#writeKeyspace(keyspace);
+    await this.#withMutationLock(async () => {
+      const keyspace = await this.#getKeyspace();
+      keyspace[key] = createPutEnvelope(value);
+      await this.#writeKeyspace(keyspace);
+    });
   }
 
   async delete(key: string): Promise<void> {
     this.#assertWritable();
-    const keyspace = await this.#getKeyspace();
-    if (!(key in keyspace)) return;
-    delete keyspace[key];
-    await this.#writeKeyspace(keyspace);
+    await this.#withMutationLock(async () => {
+      const keyspace = await this.#getKeyspace();
+      if (!(key in keyspace)) return;
+      delete keyspace[key];
+      await this.#writeKeyspace(keyspace);
+    });
   }
 
   async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
@@ -374,15 +401,17 @@ export class WebExtensionStorage implements Storage {
   async batch(operations: BatchOperation[]): Promise<void> {
     this.#assertWritable();
     if (operations.length === 0) return;
-    const keyspace = await this.#getKeyspace();
-    for (const operation of operations) {
-      if (operation.type === 'put') {
-        keyspace[operation.key] = createPutEnvelope(operation.value);
-      } else {
-        delete keyspace[operation.key];
+    await this.#withMutationLock(async () => {
+      const keyspace = await this.#getKeyspace();
+      for (const operation of operations) {
+        if (operation.type === 'put') {
+          keyspace[operation.key] = createPutEnvelope(operation.value);
+        } else {
+          delete keyspace[operation.key];
+        }
       }
-    }
-    await this.#writeKeyspace(keyspace);
+      await this.#writeKeyspace(keyspace);
+    });
   }
 
   async has(key: string): Promise<boolean> {

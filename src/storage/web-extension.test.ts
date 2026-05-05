@@ -185,6 +185,26 @@ describe('WebExtensionStorage', () => {
     }
   });
 
+  it('serializes concurrent writes so read-modify-write cycles do not lose data', async () => {
+    const area = new FakeStorageArea();
+    const restore = installStorageNamespace('browser', area);
+    try {
+      const storage = new WebExtensionStorage();
+
+      await Promise.all([
+        storage.put('a', encode('one')),
+        storage.put('b', encode('two')),
+        storage.batch([{ type: 'put', key: 'c', value: encode('three') }]),
+      ]);
+
+      expect(decode(await storage.get('a'))).toBe('one');
+      expect(decode(await storage.get('b'))).toBe('two');
+      expect(decode(await storage.get('c'))).toBe('three');
+    } finally {
+      restore();
+    }
+  });
+
   it('removes keys from the logical keyspace when deleting a prefix', async () => {
     const area = new FakeStorageArea();
     const restore = installStorageNamespace('browser', area);
