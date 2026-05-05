@@ -149,18 +149,10 @@ Retrieve a `WorkflowHandle` for an existing workflow by ID. Uses a `WeakRef` cac
 ### `addInterceptor()`
 
 ```ts partial
-addInterceptor(interceptor: WorkflowInterceptor): void
+addInterceptor(interceptor: Interceptor): void
 ```
 
-Register a workflow-level interceptor. See the [Interceptors reference](./api-interceptors.md) for details.
-
-### `addActivityInterceptor()`
-
-```ts partial
-addActivityInterceptor(interceptor: ActivityInterceptor): void
-```
-
-Register an activity-level interceptor. See the [Interceptors reference](./api-interceptors.md) for details.
+Register a unified interceptor. It participates in the workflow and/or activity pipeline based on which hooks it implements. See the [Interceptors reference](./api-interceptors.md) for details.
 
 ### `storage` (getter)
 

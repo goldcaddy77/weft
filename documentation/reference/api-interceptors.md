@@ -74,7 +74,27 @@ const timingInterceptor: ActivityInterceptor = {
   },
 };
 
-engine.addActivityInterceptor(timingInterceptor);
+engine.addInterceptor(timingInterceptor);
+```
+
+---
+
+## `Interceptor`
+
+```ts
+interface Interceptor extends WorkflowInterceptor, ActivityInterceptor {}
+```
+
+`Interceptor` is the unified engine registration type. Implement workflow-side hooks, activity-side `execute`, or both. An interceptor that implements hooks from both sides participates in both pipelines.
+
+Register unified interceptors with the constructor option or with `engine.addInterceptor()`:
+
+```ts partial
+const engine = new Engine({
+  interceptors: [loggingInterceptor, timingInterceptor],
+});
+
+engine.addInterceptor(timingInterceptor);
 ```
 
 ---
@@ -245,7 +265,7 @@ Register interceptors on an engine instance before starting workflows:
 
 ```ts
 import { Engine } from 'weft';
-import type { WorkflowInterceptor, ActivityInterceptor } from 'weft';
+import type { ActivityInterceptor, WorkflowInterceptor } from 'weft';
 
 const engine = new Engine();
 
@@ -261,8 +281,8 @@ engine.addInterceptor({
   },
 });
 
-// Activity-level interceptor
-engine.addActivityInterceptor({
+// Activity-level hook
+engine.addInterceptor({
   async execute(interception, next) {
     const traceId = interception.headers.get('x-trace-id');
     console.log(`[${traceId}] Executing ${interception.activityName}`);

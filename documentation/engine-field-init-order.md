@@ -1,6 +1,6 @@
 # Engine field initialization order
 
-This document lists the 59 instance fields of `Engine` (formerly `#private`) in
+This document lists the instance fields of `Engine` (formerly `#private`) in
 the order they were declared in the pre-PR-8 `src/core/engine.ts`. The
 `initializeInternals(engine)` function in
 `src/core/engine/internals.ts` creates an empty skeleton; the Engine
@@ -12,68 +12,64 @@ that runs during construction (e.g., `createExecutionStrategyBundle` calling
 back into `getRegistration: getInternals(this).registrations.get.bind(...)`)
 expects fields to be assigned in this sequence.
 
-| #   | Field                              | Kind                                       |
-| --- | ---------------------------------- | ------------------------------------------ |
-| 1   | `storage`                          | data                                       |
-| 2   | `registrations`                    | data                                       |
-| 3   | `workflowTypesByHandler`           | data                                       |
-| 4   | `abortController`                  | data                                       |
-| 5   | `scheduler`                        | data                                       |
-| 6   | `options`                          | data                                       |
-| 7   | `strategy`                         | data                                       |
-| 8   | `inlineStrategy`                   | data (nullable)                            |
-| 9   | `handleCache`                      | data                                       |
-| 10  | `finalizationRegistry`             | data                                       |
-| 11  | `resultResolvers`                  | data                                       |
-| 12  | `signalWaiters`                    | data                                       |
-| 13  | `signalWaitersByWorkflow`          | data                                       |
-| 14  | `updateWaiters`                    | data                                       |
-| 15  | `updateWaitersByWorkflow`          | data                                       |
-| 16  | `sleepResolvers`                   | data                                       |
-| 17  | `sleepResolversByWorkflow`         | data                                       |
-| 18  | `interceptors`                     | data                                       |
-| 19  | `activityInterceptors`             | data                                       |
-| 20  | `composedWorkflowInterceptor`      | data (nullable)                            |
-| 21  | `composedActivityInterceptor`      | data (nullable)                            |
-| 22  | `updateCoordinator`                | data                                       |
-| 23  | `activityRegistry`                 | data                                       |
-| 24  | `activityWorkerDispatcher`         | data (nullable)                            |
-| 25  | `checkpoints`                      | data                                       |
-| 26  | `broadcastChannel`                 | data (nullable)                            |
-| 27  | `pendingNestingDepth`              | data (optional)                            |
-| 28  | `pendingParentHeaders`             | data (optional)                            |
-| 29  | `workflowNestingDepths`            | data                                       |
-| 30  | `workflowHeaders`                  | data                                       |
-| 31  | `workflowStateWriteChains`         | data                                       |
-| 32  | `budgetPolicyEnforcer`             | data (nullable)                            |
-| 33  | `tenantQuotaManager`               | data                                       |
-| 34  | `heartbeatDetails`                 | data                                       |
-| 35  | `pendingStarts`                    | data                                       |
-| 36  | `pendingScheduleCreations`         | data                                       |
-| 37  | `chargedAgentOperations`           | data                                       |
-| 38  | `chargedAgentOperationsByWorkflow` | data                                       |
-| 39  | `workflowsNeedingTerminalCleanup`  | data                                       |
-| 40  | `cleanupInterval`                  | data (nullable)                            |
-| 41  | `retentionSweepInterval`           | data (nullable)                            |
-| 42  | `retentionSweepInFlight`           | data (nullable)                            |
-| 43  | `nextRetentionSweepAt`             | data (nullable)                            |
-| 44  | `reviewCoordinator`                | data                                       |
-| 45  | `reviewWaiters`                    | data                                       |
-| 46  | `reviewWaitersByWorkflow`          | data                                       |
-| 47  | `reviewEscalationHandlers`         | data                                       |
-| 48  | `workflowReviewIds`                | data                                       |
-| 49  | `parkedInlineWorkflows`            | data                                       |
-| 51  | `terminalizingWorkflows`           | data                                       |
-| 52  | `reviewTimerIds`                   | data                                       |
-| 53  | `pendingWebhooks`                  | data                                       |
-| 54  | `alertManager`                     | data (nullable)                            |
-| 55  | `agentWorkflowIds`                 | inline initializer (`= new Set<string>()`) |
-| 56  | `eventLogHeads`                    | inline initializer (`= new Map()`)         |
-| 57  | `workflowFeedListeners`            | inline initializer (`= new Map()`)         |
-| 58  | `workflowVersionTuples`            | inline initializer (`= new Map()`)         |
-| 59  | `pendingTimelineEntries`           | data                                       |
+| #   | Field                             | Kind                                       |
+| --- | --------------------------------- | ------------------------------------------ |
+| 1   | `storage`                         | data                                       |
+| 2   | `registrations`                   | data                                       |
+| 3   | `workflowTypesByHandler`          | data                                       |
+| 4   | `abortController`                 | data                                       |
+| 5   | `scheduler`                       | data                                       |
+| 6   | `options`                         | data                                       |
+| 7   | `strategy`                        | data                                       |
+| 8   | `inlineStrategy`                  | data (nullable)                            |
+| 9   | `handleCache`                     | data                                       |
+| 10  | `finalizationRegistry`            | data                                       |
+| 11  | `resultResolvers`                 | data                                       |
+| 12  | `signalWaiters`                   | data                                       |
+| 13  | `signalWaitersByWorkflow`         | data                                       |
+| 14  | `updateWaiters`                   | data                                       |
+| 15  | `updateWaitersByWorkflow`         | data                                       |
+| 16  | `sleepResolvers`                  | data                                       |
+| 17  | `sleepResolversByWorkflow`        | data                                       |
+| 18  | `interceptors`                    | data                                       |
+| 19  | `composedWorkflowInterceptor`     | data (nullable)                            |
+| 20  | `composedActivityInterceptor`     | data (nullable)                            |
+| 21  | `updateCoordinator`               | data                                       |
+| 22  | `activityRegistry`                | data                                       |
+| 23  | `activityWorkerDispatcher`        | data (nullable)                            |
+| 24  | `checkpoints`                     | data                                       |
+| 25  | `broadcastChannel`                | data (nullable)                            |
+| 26  | `pendingNestingDepth`             | data (optional)                            |
+| 27  | `pendingParentHeaders`            | data (optional)                            |
+| 28  | `workflowNestingDepths`           | data                                       |
+| 29  | `workflowHeaders`                 | data                                       |
+| 30  | `workflowStateWriteChains`        | data                                       |
+| 31  | `tenantQuotaManager`              | data                                       |
+| 32  | `heartbeatDetails`                | data                                       |
+| 33  | `pendingStarts`                   | data                                       |
+| 34  | `pendingScheduleCreations`        | data                                       |
+| 35  | `workflowsNeedingTerminalCleanup` | data                                       |
+| 36  | `cleanupInterval`                 | data (nullable)                            |
+| 37  | `retentionSweepInterval`          | data (nullable)                            |
+| 38  | `retentionSweepInFlight`          | data (nullable)                            |
+| 39  | `nextRetentionSweepAt`            | data (nullable)                            |
+| 40  | `reviewCoordinator`               | data                                       |
+| 41  | `reviewWaiters`                   | data                                       |
+| 42  | `reviewWaitersByWorkflow`         | data                                       |
+| 43  | `reviewEscalationHandlers`        | data                                       |
+| 44  | `workflowReviewIds`               | data                                       |
+| 45  | `parkedInlineWorkflows`           | data                                       |
+| 46  | `terminalizingWorkflows`          | data                                       |
+| 47  | `reviewTimerIds`                  | data                                       |
+| 48  | `pendingWebhooks`                 | data                                       |
+| 49  | `alertManager`                    | data (nullable)                            |
+| 50  | `agentWorkflowIds`                | inline initializer (`= new Set<string>()`) |
+| 51  | `eventLogHeads`                   | inline initializer (`= new Map()`)         |
+| 52  | `workflowFeedListeners`           | inline initializer (`= new Map()`)         |
+| 53  | `workflowVersionTuples`           | inline initializer (`= new Map()`)         |
+| 54  | `pendingTimelineEntries`          | data                                       |
 
-**Note on inline-initializer fields (#55–#58)**: in the pre-PR-8 code these
+**Note on inline-initializer fields (#50–#53)**: in the pre-PR-8 code these
 ran automatically at instance-creation time, before the constructor body. In
 the WeakMap pattern they are populated explicitly in the constructor body
 near the other field assignments.

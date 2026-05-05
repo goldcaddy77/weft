@@ -2150,6 +2150,28 @@
     },
     {
       "sourceFile": "src/core/interceptor/interceptor-interfaces.ts",
+      "sourceName": "Interceptor",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "Interceptor",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/interceptor/interceptor-interfaces.ts",
+      "sourceName": "WORKFLOW_INTERCEPTOR_HOOKS",
+      "kind": "value",
+      "subKind": "const",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/interceptor/interceptor-interfaces.ts",
       "sourceName": "WorkflowInterceptor",
       "kind": "type",
       "subKind": "interface",
@@ -2686,6 +2708,14 @@
     },
     {
       "sourceFile": "src/core/types/checkpoint.ts",
+      "sourceName": "CURRENT_CHECKPOINT_SCHEMA_VERSION",
+      "kind": "value",
+      "subKind": "const",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/checkpoint.ts",
       "sourceName": "Checkpoint",
       "kind": "type",
       "subKind": "interface",
@@ -2697,6 +2727,14 @@
         }
       ],
       "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/checkpoint.ts",
+      "sourceName": "CheckpointSchemaVersionError",
+      "kind": "value",
+      "subKind": "class",
+      "publicFaces": [],
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/types/checkpoint.ts",

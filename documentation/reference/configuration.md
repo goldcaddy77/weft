@@ -70,29 +70,29 @@ interface ServeOptions {
   port?: number;
   hostname?: string;
   development?: boolean;
-  dashboard?: boolean;
+  dashboard?: unknown;
   auth?: AuthConfig;
   visibilityPollIntervalMs?: number;
   routingPolicy?: RoutingPolicy;
   schedulingPolicy?: SchedulingPolicy;
-  prometheusExporter?: boolean;
+  prometheusExporter?: PrometheusExporter;
   metricsCollector?: MetricsCollector;
 }
 ```
 
-| Field                      | Type               | Default          | Description                                          |
-| -------------------------- | ------------------ | ---------------- | ---------------------------------------------------- |
-| `engine`                   | `Engine`           | (required)       | The engine instance to expose over HTTP              |
-| `port`                     | `number`           | `7233`           | TCP port to listen on                                |
-| `hostname`                 | `string`           | `'0.0.0.0'`      | Hostname/IP to bind to                               |
-| `development`              | `boolean`          | `false`          | Enable development mode with verbose error responses |
-| `dashboard`                | `boolean`          | `true`           | Serve the web dashboard at `/ui`                     |
-| `auth`                     | `AuthConfig`       | `undefined`      | Authentication configuration (JWT, mTLS, or custom)  |
-| `visibilityPollIntervalMs` | `number`           | `1000`           | Polling interval for task visibility timeout checks  |
-| `routingPolicy`            | `RoutingPolicy`    | `'least-loaded'` | Worker routing policy                                |
-| `schedulingPolicy`         | `SchedulingPolicy` | `undefined`      | Scheduling policy for task dispatch                  |
-| `prometheusExporter`       | `boolean`          | `false`          | Expose Prometheus metrics at `/v1/metrics`           |
-| `metricsCollector`         | `MetricsCollector` | `undefined`      | Custom metrics collector instance                    |
+| Field                      | Type                 | Default          | Description                                                |
+| -------------------------- | -------------------- | ---------------- | ---------------------------------------------------------- |
+| `engine`                   | `Engine`             | (required)       | The engine instance to expose over HTTP                    |
+| `port`                     | `number`             | `7233`           | TCP port to listen on                                      |
+| `hostname`                 | `string`             | `'0.0.0.0'`      | Hostname/IP to bind to                                     |
+| `development`              | `boolean`            | `false`          | Enable development mode with verbose error responses       |
+| `dashboard`                | `unknown`            | `undefined`      | Dashboard HTML/module import served at `/ui` when supplied |
+| `auth`                     | `AuthConfig`         | `undefined`      | Authentication configuration (JWT, mTLS, or custom)        |
+| `visibilityPollIntervalMs` | `number`             | `5000`           | Polling interval for task visibility timeout checks        |
+| `routingPolicy`            | `RoutingPolicy`      | `'least-loaded'` | Worker routing policy                                      |
+| `schedulingPolicy`         | `SchedulingPolicy`   | `'priority'`     | Scheduling policy for task dispatch                        |
+| `prometheusExporter`       | `PrometheusExporter` | `undefined`      | Exporter that produces the response body for `/v1/metrics` |
+| `metricsCollector`         | `MetricsCollector`   | `undefined`      | Legacy metrics collector used when no exporter is supplied |
 
 The returned `WeftServer` exposes the resolved `port`, `hostname`, and `url`, along with a `stop()` method and `AsyncDisposable` support.
 

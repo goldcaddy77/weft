@@ -2441,10 +2441,10 @@ describe('Engine', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // engine.addActivityInterceptor()
+  // activity-side interceptor through engine.addInterceptor()
   // ---------------------------------------------------------------------------
 
-  it('engine.addActivityInterceptor() registers interceptor that wraps activity execution', async () => {
+  it('engine.addInterceptor() registers interceptor that wraps activity execution', async () => {
     const engine = new Engine();
     const executionOrder: string[] = [];
 
@@ -2457,7 +2457,7 @@ describe('Engine', () => {
       },
     };
 
-    engine.addActivityInterceptor(interceptor);
+    engine.addInterceptor(interceptor);
 
     const compute = async (...args: unknown[]) => (args[0] as number) + 1;
 
@@ -2607,6 +2607,40 @@ describe('Engine', () => {
       }),
     ).not.toThrow();
 
+    engine[Symbol.dispose]();
+  });
+
+  it('registerActivity() and ctx.run() accept typed activity definitions', async () => {
+    const engine = new Engine();
+    const sendEmail = activity({
+      name: 'sendEmail',
+      execute: async (input: { to: string; body: string }) => {
+        return `sent to ${input.to}: ${input.body}`;
+      },
+    });
+
+    expect(() => engine.registerActivity(sendEmail.name, sendEmail)).not.toThrow();
+    engine.register('send-email', async function* (ctx: WorkflowContext) {
+      return yield* (ctx as Context).run(sendEmail, {
+        to: 'hello@example.com',
+        body: 'Welcome',
+      });
+    });
+
+    const handle = await engine.start('send-email', undefined);
+    await expect(handle.result()).resolves.toBe('sent to hello@example.com: Welcome');
+    engine[Symbol.dispose]();
+  });
+
+  it('register() accepts workflows with typed input', async () => {
+    const engine = new Engine();
+    const handler = async function* (_ctx: WorkflowContext, input: { name: string }) {
+      return `hello ${input.name}`;
+    };
+
+    engine.register('typed-greet', handler);
+    const handle = await engine.start('typed-greet', { name: 'world' });
+    await expect(handle.result()).resolves.toBe('hello world');
     engine[Symbol.dispose]();
   });
 
