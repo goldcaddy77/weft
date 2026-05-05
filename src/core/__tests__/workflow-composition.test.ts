@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
 import { TestEngine } from '../../testing/test-engine.ts';
-import { Context } from '../context.ts';
 import { Engine } from '../engine.ts';
 import { tenantFromInputField } from '../tenant.ts';
 import type { WorkflowContext, WorkflowReduceInput } from '../types.ts';
@@ -49,7 +48,7 @@ describe('workflow composition operators', () => {
 
     async function* secondStage(ctx: WorkflowContext, input: unknown) {
       secondStageRuns++;
-      yield* (ctx as Context).sleep('1s');
+      yield* ctx.sleep('1s');
       throw new Error(`stage failed:${String(input)}`);
     }
 
@@ -68,7 +67,7 @@ describe('workflow composition operators', () => {
     engine.register(
       'pipeline-failure-parent',
       async function* (ctx: WorkflowContext, input: unknown) {
-        const context = ctx as Context;
+        const context = ctx;
 
         try {
           return yield* ctx.pipe(
@@ -91,7 +90,7 @@ describe('workflow composition operators', () => {
     recovered.register(
       'pipeline-failure-parent',
       async function* (ctx: WorkflowContext, input: unknown) {
-        const context = ctx as Context;
+        const context = ctx;
 
         try {
           return yield* ctx.pipe(
@@ -185,7 +184,7 @@ describe('workflow composition operators', () => {
     async function* delayedStage(ctx: WorkflowContext, input: unknown) {
       activeChildren++;
       maxActiveChildren = Math.max(maxActiveChildren, activeChildren);
-      yield* (ctx as Context).sleep('1s');
+      yield* ctx.sleep('1s');
       activeChildren--;
       return Number(input) * 10;
     }
@@ -213,13 +212,13 @@ describe('workflow composition operators', () => {
 
     async function* delayedStage(ctx: WorkflowContext, input: unknown) {
       childRuns.push(Number(input));
-      yield* (ctx as Context).sleep('1s');
+      yield* ctx.sleep('1s');
       return Number(input) * 10;
     }
 
     engine.register('delayed-stage', delayedStage);
     engine.register('map-recovery-parent', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
       const mapped = yield* ctx.map([1, 2, 3], 'delayed-stage', { concurrency: 1 });
       yield* context.sleep('1s');
       return mapped;
@@ -235,7 +234,7 @@ describe('workflow composition operators', () => {
     const recovered = engine.recover();
     recovered.register('delayed-stage', delayedStage);
     recovered.register('map-recovery-parent', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
       const mapped = yield* ctx.map([1, 2, 3], 'delayed-stage', { concurrency: 1 });
       yield* context.sleep('1s');
       return mapped;

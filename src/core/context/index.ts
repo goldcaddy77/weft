@@ -13,11 +13,15 @@ import {
   SESSION_STATE_LOCAL_KEY,
 } from '../session-state.ts';
 import type {
+  ActivityArguments,
   ActivityCallOptions,
+  ActivityResult,
+  ActivityTypes,
   ChildWorkflowOptions,
   ChildWorkflowTarget,
   Duration,
   SearchAttributeValue,
+  UnregisteredName,
   WorkflowContext,
   WorkflowMapOptions,
   WorkflowPipeStage,
@@ -219,17 +223,29 @@ export class Context implements WorkflowContext {
   sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T> {
     return sessionStateHelpers.sessionState(this, getInternals(this), key, initialValue);
   }
+  run<TName extends Extract<keyof ActivityTypes, string>>(
+    name: TName,
+    ...rest: ActivityArguments<ActivityTypes, TName>
+  ): Generator<ContextOperationRequest, ActivityResult<ActivityTypes, TName>, unknown>;
+  run<TName extends Extract<keyof ActivityTypes, string>>(
+    name: TName,
+    ...rest: [...ActivityArguments<ActivityTypes, TName>, ActivityCallOptions]
+  ): Generator<ContextOperationRequest, ActivityResult<ActivityTypes, TName>, unknown>;
+  run<TName extends string>(
+    name: UnregisteredName<TName, Extract<keyof ActivityTypes, string>>,
+    ...rest: unknown[]
+  ): Generator<ContextOperationRequest, unknown, unknown>;
   run<TArguments extends unknown[], TResult>(
-    fn: (...args: TArguments) => Promise<TResult> | TResult,
+    fn: (...arguments_: TArguments) => Promise<TResult> | TResult,
     ...rest: TArguments
   ): Generator<ContextOperationRequest, TResult, unknown>;
   run<TArguments extends unknown[], TResult>(
-    fn: (...args: TArguments) => Promise<TResult> | TResult,
+    fn: (...arguments_: TArguments) => Promise<TResult> | TResult,
     ...rest: [...TArguments, ActivityCallOptions]
   ): Generator<ContextOperationRequest, TResult, unknown>;
   // oxlint-disable-next-line complexity -- ID:core-context-fn-complexity
   *run<TResult>(
-    fn: (...args: unknown[]) => Promise<TResult> | TResult,
+    activity: string | ((...arguments_: unknown[]) => Promise<TResult> | TResult),
     ...rest: unknown[]
   ): Generator<ContextOperationRequest, TResult, unknown> {
     let options: ActivityCallOptions | undefined;
@@ -237,29 +253,29 @@ export class Context implements WorkflowContext {
       options = rest.pop() as ActivityCallOptions;
     }
     const args = rest;
+    const activityName = typeof activity === 'string' ? activity : activity.name || 'anonymous';
+    const activityFunction = typeof activity === 'function' ? activity : undefined;
     const internals = getInternals(this);
     const step = internals.stepIndex++;
     if (internals.accumulatedResults?.has(step)) {
       if (internals.explainMode) {
-        console.log(
-          `[weft] ctx.run(${fn.name || 'anonymous'}) → Returning cached result from step ${step}`,
-        );
+        console.log(`[weft] ctx.run(${activityName}) → Returning cached result from step ${step}`);
       }
       return internals.accumulatedResults.get(step) as TResult;
     }
     const queue = options?.queue ?? 'default';
     if (internals.explainMode) {
-      console.log(`[weft] ctx.run(${fn.name || 'anonymous'}, ${JSON.stringify(args)})`);
+      console.log(`[weft] ctx.run(${activityName}, ${JSON.stringify(args)})`);
       console.log(`  → Creating checkpoint at step ${step}`);
-      console.log(`  → Dispatching activity "${fn.name || 'anonymous'}" to queue "${queue}"`);
+      console.log(`  → Dispatching activity "${activityName}" to queue "${queue}"`);
     }
     const operationId = crypto.randomUUID();
     const callerStack = contextValidation.captureCallerStack();
     const result = yield {
       type: 'activity',
       operationId,
-      activityName: fn.name || 'anonymous',
-      fn,
+      activityName,
+      ...(activityFunction !== undefined ? { fn: activityFunction } : {}),
       args,
       callerStack,
       ...(options !== undefined ? { options: options as Record<string, unknown> } : {}),
@@ -438,8 +454,10 @@ export class Context implements WorkflowContext {
   getAttributes(): Readonly<Record<string, SearchAttributeValue>> {
     return contextAttributes.getAttributes(getInternals(this));
   }
-  onUpdate(name: string, handler: (payload: unknown) => unknown): void {
-    contextUpdates.onUpdate(getInternals(this), name, handler);
+  onUpdate<TPayload = unknown>(name: string, handler: (payload: TPayload) => unknown): void {
+    // Update payloads are delivered dynamically at runtime; the generic
+    // parameter gives workflow authors a typed handler surface.
+    contextUpdates.onUpdate(getInternals(this), name, handler as (payload: unknown) => unknown);
   }
   expose(accessors: Record<string, () => unknown>): void {
     contextUpdates.expose(getInternals(this), accessors);

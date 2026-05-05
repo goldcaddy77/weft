@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'bun:test';
 
-import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { activity } from '../core/types.ts';
@@ -54,7 +53,7 @@ describe('Track 3 speculation benchmark', () => {
     });
 
     engine.register('sequential-agent-like-workflow', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
 
       let lastResult = '';
       for (let turn = 1; turn <= TURN_COUNT; turn++) {
@@ -65,7 +64,7 @@ describe('Track 3 speculation benchmark', () => {
     });
 
     engine.register('speculative-agent-like-workflow', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
 
       return yield* context.speculate(async function* (branch) {
         let lastResult = '';

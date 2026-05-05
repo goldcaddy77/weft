@@ -119,6 +119,18 @@ describe('Context', () => {
       expect(request.options).toEqual({ queue: 'gpu' });
     });
 
+    it('accepts ActivityCallOptions for string-name activities', () => {
+      const context = createContext();
+
+      const generator = context.run('formatGreeting', { name: 'Alice' }, { queue: 'gpu' });
+      const request = expectRequest(generator.next(), 'activity');
+
+      expect(request.activityName).toBe('formatGreeting');
+      expect(request.fn).toBeUndefined();
+      expect(request.args).toEqual([{ name: 'Alice' }]);
+      expect(request.options).toEqual({ queue: 'gpu' });
+    });
+
     it('accepts ActivityCallOptions with no function arguments', () => {
       const context = createContext();
 

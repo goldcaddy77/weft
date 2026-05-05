@@ -14,4 +14,6 @@ export * from './types/search-attributes.ts';
 export * from './types/serializer.ts';
 export * from './types/state.ts';
 export * from './types/tenants.ts';
+export * from './types/workflow-context.ts';
 export * from './types/workflow-function.ts';
+export * from './types/workflow-registries.ts';

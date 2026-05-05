@@ -10,10 +10,9 @@ It's modeled after the virtual-object pattern: a typed slot you read and write t
 
 ```ts partial
 import { type WorkflowContext } from 'weft';
-import { type Context } from 'weft';
 
 engine.register('counter', async function* (ctx: WorkflowContext) {
-  const counter = (ctx as Context).sessionState<number>('count', 0);
+  const counter = ctx.sessionState<number>('count', 0);
 
   counter.set(counter.get()! + 1);
   return counter.get();
@@ -36,11 +35,10 @@ The slot's value is part of the workflow's checkpoint locals, so a process crash
 
 ```ts partial
 engine.register('survives-crashes', async function* (ctx: WorkflowContext) {
-  const context = ctx as Context;
-  const counter = context.sessionState<number>('count', 0);
+  const counter = ctx.sessionState<number>('count', 0);
   counter.update((n) => (n ?? 0) + 1);
 
-  yield* context.waitForSignal('resume');
+  yield* ctx.waitForSignal('resume');
 
   // After a recovery between the update above and the signal,
   // counter.get() still returns the incremented value.
@@ -80,7 +78,7 @@ If you hit either size limit, you probably want a different durability mechanism
 `get()` and `set()` use `structuredClone` so caller mutation can't leak into durable state.
 
 ```ts partial
-const draft = (ctx as Context).sessionState<{ items: string[] }>('draft');
+const draft = ctx.sessionState<{ items: string[] }>('draft');
 
 const stored = draft.set({ items: ['a'] });
 stored.items.push('b'); // does NOT affect the stored value

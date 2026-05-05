@@ -6,7 +6,6 @@ import { join } from 'node:path';
 
 import { executeSchedule, executeTimeline, parseCliArguments } from './cli/index.ts';
 import { encode } from './core/codec.ts';
-import { Context } from './core/context.ts';
 import { Engine } from './core/engine.ts';
 import type { WorkflowContext } from './core/types.ts';
 import { BunSQLiteStorage } from './storage/bun-sql.ts';
@@ -41,7 +40,7 @@ async function seedTimelineDatabase(databasePath: string): Promise<void> {
     engine.register('timeline-edge', {
       version: '1.0.0',
       handler: async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).run(firstStep);
+        yield* ctx.run(firstStep);
         return 'done';
       },
     });

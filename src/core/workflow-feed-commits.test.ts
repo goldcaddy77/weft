@@ -15,14 +15,13 @@ import { sleepForTesting } from '../testing/fake-timers.ts';
 import { describe, expect, it } from 'bun:test';
 
 import { MemoryStorage } from '../storage/memory.ts';
-import type { Context } from './context.ts';
 import { Engine, type WorkflowFeedRecord } from './engine.ts';
 import type { WorkflowContext } from './types.ts';
 
 function createEngineWithWorkflow(storage = new MemoryStorage()): Engine {
   const engine = new Engine({ storage });
   engine.register('hold', async function* (ctx: WorkflowContext, _input: unknown) {
-    const context = ctx as Context;
+    const context = ctx;
     const value = yield* context.waitForSignal<string>('release');
     yield* context.run(async () => `echoed:${value}`);
     yield* context.run(async () => 'done');

@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { sleepForTesting } from '../../testing/fake-timers.ts';
 
 import { decode } from '../../core/codec.ts';
-import type { Context } from '../../core/context.ts';
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
@@ -19,8 +18,8 @@ const noop = async () => null;
 function createEngine(): Engine {
   const engine = new Engine({ storage: new MemoryStorage(), checkpointHistory: 10 });
   engine.register('two-steps', async function* (ctx: WorkflowContext) {
-    yield* (ctx as Context).run(noop);
-    return yield* (ctx as Context).run(noop);
+    yield* ctx.run(noop);
+    return yield* ctx.run(noop);
   });
   return engine;
 }

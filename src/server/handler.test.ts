@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { sleepForTesting, waitForCondition } from '../testing/fake-timers.ts';
 
 import { decode, encode } from '../core/codec.ts';
-import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import { StartWorkflowValidationError } from '../core/start-workflow-validation.ts';
 import { QuotaExceededError } from '../core/tenant-quotas.ts';
@@ -51,7 +50,7 @@ async function waitForWorkflowStatus(
 }
 
 async function* waitingWorkflow(ctx: WorkflowContext, input: unknown) {
-  const signal = yield* (ctx as Context).waitForSignal<string>('continue');
+  const signal = yield* ctx.waitForSignal<string>('continue');
   return `${String(input)}:${signal}`;
 }
 
@@ -2031,7 +2030,7 @@ describe('handleRequest', () => {
     });
 
     engine.register('cancellable', async function* (ctx: WorkflowContext) {
-      yield* (ctx as import('../core/context.ts').Context).waitForSignal('never');
+      yield* ctx.waitForSignal('never');
       return 'nope';
     });
 
@@ -2059,7 +2058,7 @@ describe('handleRequest', () => {
     engine.register(
       'long-running',
       async function* (ctx: import('../core/types.ts').WorkflowContext) {
-        yield* (ctx as import('../core/context.ts').Context).waitForSignal('never-arrives');
+        yield* ctx.waitForSignal('never-arrives');
         return 'done';
       },
     );
@@ -2094,7 +2093,7 @@ describe('handleRequest', () => {
     engine = createEngine();
 
     engine.register('erroring', async function* (ctx: import('../core/types.ts').WorkflowContext) {
-      yield* (ctx as import('../core/context.ts').Context).waitForSignal('never');
+      yield* ctx.waitForSignal('never');
       return 'done';
     });
 
@@ -3173,10 +3172,9 @@ describe('handleRequest', () => {
       engine.register(
         'queryable',
         async function* (ctx: import('../core/types.ts').WorkflowContext) {
-          const context = ctx as import('../core/context.ts').Context;
           let counter = 42;
-          context.expose({ counter: () => counter });
-          yield* context.waitForSignal('done');
+          ctx.expose({ counter: () => counter });
+          yield* ctx.waitForSignal('done');
           return counter;
         },
       );
@@ -3201,9 +3199,8 @@ describe('handleRequest', () => {
       engine.register(
         'queryable',
         async function* (ctx: import('../core/types.ts').WorkflowContext) {
-          const context = ctx as import('../core/context.ts').Context;
-          context.expose({ counter: () => 1 });
-          yield* context.waitForSignal('done');
+          ctx.expose({ counter: () => 1 });
+          yield* ctx.waitForSignal('done');
           return 0;
         },
       );
@@ -3376,7 +3373,7 @@ describe('handleRequest', () => {
       engine.register(
         'long-running',
         async function* (ctx: import('../core/types.ts').WorkflowContext) {
-          yield* (ctx as import('../core/context.ts').Context).waitForSignal('never');
+          yield* ctx.waitForSignal('never');
           return 'done';
         },
       );
@@ -3912,11 +3909,11 @@ describe('handleRequest', () => {
     engine.register('timeline-http', {
       version: '1.2.3',
       handler: async function* (ctx: WorkflowContext) {
-        const cart = yield* (ctx as Context).run(loadCart, {
+        const cart = yield* ctx.run(loadCart, {
           cartId: 'cart-1',
           token: 'Bearer inbound-secret',
         });
-        return yield* (ctx as Context).run(submitOrder, {
+        return yield* ctx.run(submitOrder, {
           cardNumber: '4111 1111 1111 1111',
           cartId: cart.cartId,
         });
@@ -3965,8 +3962,8 @@ describe('handleRequest', () => {
     engine.register('replay-http', {
       version: '4.0.0',
       handler: async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).run(firstStage);
-        return yield* (ctx as Context).run(secondStage);
+        yield* ctx.run(firstStage);
+        return yield* ctx.run(secondStage);
       },
     });
 

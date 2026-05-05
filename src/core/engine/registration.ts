@@ -1,5 +1,4 @@
 import type { AgentContextOptions } from '../context.ts';
-import { Context } from '../context.ts';
 import { compileStepWorkflow, isAsyncGeneratorFunction } from '../step-context.ts';
 import type { StepWorkflowFunction, WorkflowFunction, WorkflowRegistration } from '../types.ts';
 import { collectToolVersions, type WorkflowVersionTuple } from '../workflow-version-tuple.ts';
@@ -72,8 +71,7 @@ export function register(
       if (agentDef.tools) agentOpts.tools = agentDef.tools;
       if (agentDef.maxTurns !== undefined) agentOpts.maxTurns = agentDef.maxTurns;
 
-      const result = yield* (ctx as Context).agent(agentOpts);
-      return result;
+      return yield* ctx.agent(agentOpts);
     };
 
     const agentRegistrationEntry: RegistrationEntry = {

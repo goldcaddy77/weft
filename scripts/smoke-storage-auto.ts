@@ -36,7 +36,8 @@ try {
   const handle = await engine.start('hello');
   const result = await handle.result();
   if (result !== 'world') {
-    throw new Error(`smoke-storage-auto: expected 'world', got ${String(result)}`);
+    const actual = JSON.stringify(result) ?? typeof result;
+    throw new Error(`smoke-storage-auto: expected 'world', got ${actual}`);
   }
   engine[Symbol.dispose]();
   if (typeof (storage as { [Symbol.dispose]?: () => void })[Symbol.dispose] === 'function') {

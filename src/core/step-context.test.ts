@@ -2,7 +2,6 @@ import { describe, expect, it } from 'bun:test';
 import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { MemoryStorage } from '../storage/memory';
-import type { Context } from './context';
 import { Engine } from './engine';
 import {
   compileStepWorkflow,
@@ -121,7 +120,7 @@ describe('step-context', () => {
 
     // Register a generator-based workflow
     engine.register('generator-workflow', async function* (ctx: WorkflowContext, input: unknown) {
-      const context = ctx as Context;
+      const context = ctx;
       const { name } = input as { name: string };
       const greeting = yield* context.run(async () => `Hello, ${name}!`);
       return greeting;

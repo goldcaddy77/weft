@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { sleepForTesting } from './testing/fake-timers.ts';
 
-import type { Context } from './core/context';
 import type { WorkflowContext } from './core/types';
 import { Engine, MemoryStorage, WorkflowCompletedEvent, WorkflowStartedEvent } from './index';
 
@@ -19,7 +18,7 @@ describe('integration: full workflow lifecycle', () => {
     const notify = async (...args: unknown[]) => `Notified: ${args[0] as string}`;
 
     engine.register('welcome', async function* (ctx: WorkflowContext, input: unknown) {
-      const c = ctx as Context;
+      const c = ctx;
       const { name } = input as { name: string };
       const greeting = yield* c.run(greet, name);
       yield* c.run(notify, greeting);
@@ -35,7 +34,7 @@ describe('integration: full workflow lifecycle', () => {
     const engine = new Engine();
 
     engine.register('approval', async function* (ctx: WorkflowContext, input: unknown) {
-      const c = ctx as Context;
+      const c = ctx;
       const { orderId } = input as { orderId: string };
       const approval = yield* c.waitForSignal<{ approved: boolean }>('approval');
       return { orderId, approved: approval.approved };
@@ -54,7 +53,7 @@ describe('integration: full workflow lifecycle', () => {
     const engine = new Engine();
 
     engine.register('long-running', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       yield* c.sleep(999999);
       return 'done';
     });
@@ -90,7 +89,7 @@ describe('integration: full workflow lifecycle', () => {
     const triple = async (...args: unknown[]) => (args[0] as number) * 3;
 
     engine.register('parallel', async function* (ctx: WorkflowContext, input: unknown) {
-      const c = ctx as Context;
+      const c = ctx;
       const n = input as number;
       const [doubled, tripled] = yield* c.all([c.run(double, n), c.run(triple, n)]);
       return { doubled, tripled };
@@ -111,7 +110,7 @@ describe('integration: full workflow lifecycle', () => {
     };
 
     engine.register('memo-test', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const a = yield* c.memo('val', expensive);
       const b = yield* c.memo('val', expensive);
       return { a, b };
@@ -127,7 +126,7 @@ describe('integration: full workflow lifecycle', () => {
     const engine = new Engine();
 
     engine.register('with-attrs', async function* (ctx: WorkflowContext, input: unknown) {
-      const c = ctx as Context;
+      const c = ctx;
       const { customerId } = input as { customerId: string };
       c.setAttribute('customerId', customerId);
       c.setAttribute('status', 'processing');
@@ -148,7 +147,7 @@ describe('integration: full workflow lifecycle', () => {
     const engine = new TestEngine({ startTime: 0 });
 
     engine.register('sleeper', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       yield* c.sleep(5000);
       return 'awake';
     });
