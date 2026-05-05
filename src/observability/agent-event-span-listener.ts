@@ -3,7 +3,7 @@ import {
   AgentToolReturnedEvent,
   AgentTurnCompletedEvent,
   AgentTurnStartedEvent,
-} from '../ai/events';
+} from '../ai/events/index.ts';
 import type { OtelSpan } from './no-op-telemetry';
 import type { ObservabilityState } from './types';
 
@@ -60,7 +60,6 @@ export class AgentEventSpanListener implements EventListenerObject {
 
     turnSpan.setAttribute('weft.agent.input_tokens', event.inputTokens);
     turnSpan.setAttribute('weft.agent.output_tokens', event.outputTokens);
-    turnSpan.setAttribute('weft.agent.cost', event.cost);
     turnSpan.setStatus({ code: this.#state.SpanStatusCode.OK });
     turnSpan.end();
     this.#turnSpans.delete(event.turnIndex);

@@ -1,4 +1,4 @@
-import type { Message } from '../providers/types.ts';
+import type { Message } from '../agent/types.ts';
 
 /**
  * Fired at the beginning of each LLM turn within an agent loop, before the
@@ -45,9 +45,9 @@ export class AgentTurnStartedEvent extends Event {
 }
 
 /**
- * Fired after each LLM turn completes, carrying token usage, cost, duration,
- * tool call count, and a snapshot of the conversation. Use this for real-time
- * cost monitoring, audit logging, and per-turn performance dashboards.
+ * Fired after each LLM turn completes, carrying token usage, duration, tool
+ * call count, and a snapshot of the conversation. Cost fields are retained as
+ * zero-valued event fields until the event surface is narrowed further.
  *
  * @example Track cumulative cost across turns
  * ```ts

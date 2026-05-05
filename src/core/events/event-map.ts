@@ -1,4 +1,4 @@
-import type { WeftAgentEventMap } from '../../ai/events.ts';
+import type { WeftAgentEventMap } from '../../ai/events/index.ts';
 import type {
   ActivityCompletedEvent,
   ActivityFailedEvent,

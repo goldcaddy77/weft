@@ -1,4 +1,8 @@
-import type { DebateOptions, HandoffOptions, SuperviseOptions } from '../../ai/coordination.ts';
+import type {
+  DebateOptions,
+  HandoffOptions,
+  SuperviseOptions,
+} from '../../ai/coordination/index.ts';
 import type { HumanReviewOptions } from '../../ai/human-review.ts';
 import type { ChildWorkflowOptions } from '../types.ts';
 import type { Context } from './index.ts';

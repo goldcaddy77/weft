@@ -10,13 +10,7 @@ import {
   executeActivityOperationResult,
   type ActivityOperationCallbacks,
 } from './operations-activity.ts';
-import {
-  checkAgentBudgetPolicy,
-  createAgentBudgetTracker,
-  recordAgentBudgetCost,
-  resolveAgentBudgetNamespace,
-  type AgentOperationCallbacks,
-} from './operations-agent.ts';
+import type { AgentOperationCallbacks } from './operations-agent.ts';
 import {
   executeRunAllOperationResult,
   type CoordinationOperationCallbacks,
@@ -144,32 +138,9 @@ export async function executeSubOperation(
         throw new Error('ctx.speculate() does not yet support ctx.agent()');
       }
       const agentOperationCallbacks = callbacks.createAgentOperationCallbacks();
-      const { executeAgentLoop } = await import('../../ai/agent.ts');
-      const {
-        prompt,
-        budget: budgetOptions,
-        budgetNamespace,
-        contextStrategy: _contextStrategy,
-        ...rest
-      } = operation.options;
-
-      const budgetTracker = await createAgentBudgetTracker(
-        internals,
-        workflowId,
-        operation,
-        budgetOptions,
-        agentOperationCallbacks,
-      );
+      const { executeAgentLoop } = await import('../../ai/agent/index.ts');
+      const { prompt, ...rest } = operation.options;
       await agentOperationCallbacks.ensureTerminalCleanupTracked(workflowId);
-
-      const resolvedBudgetNamespace = resolveAgentBudgetNamespace(internals, budgetNamespace);
-      await checkAgentBudgetPolicy(
-        internals,
-        workflowId,
-        budgetOptions,
-        resolvedBudgetNamespace,
-        agentOperationCallbacks,
-      );
 
       const { ToolEffectLog } = await import('../../ai/tool-effect-log.ts');
       const toolEffectLog = new ToolEffectLog(internals.storage, workflowId, operation.operationId);
@@ -177,19 +148,10 @@ export async function executeSubOperation(
         {
           ...rest,
           provider: rest.provider,
-          budget: budgetTracker,
           signal,
           toolEffectLog,
         },
         prompt,
-      );
-
-      await recordAgentBudgetCost(
-        internals,
-        workflowId,
-        operation.operationId,
-        resolvedBudgetNamespace,
-        agentResult.totalCost,
       );
 
       return agentResult.content;

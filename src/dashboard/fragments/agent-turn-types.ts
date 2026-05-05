@@ -1,4 +1,4 @@
-import type { Message } from '../../ai/providers/types.ts';
+import type { Message } from '../../ai/agent/index.ts';
 
 /**
  * Per-turn aggregate built from agent events. Held in `workflow-detail-agent.svelte`
@@ -9,7 +9,6 @@ export interface AgentTurnData {
   model: string;
   inputTokens: number;
   outputTokens: number;
-  cost: number;
   toolCalls: Array<{ name: string; input: unknown; output: unknown }>;
   response: string;
   /**

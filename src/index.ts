@@ -304,63 +304,44 @@ export type { RunNOptions, RunNResult } from './testing/test-engine';
 export { TimeControl } from './testing/time-control';
 
 // AI / Agent
-export { AgentLoopSuspendedError, executeAgentLoop } from './ai/agent';
+export { AgentLoopSuspendedError, executeAgentLoop } from './ai/agent/index.ts';
 export type {
   AgentOptions,
   AgentResult,
   AgentTool,
-  MCPToolSource,
   PendingProviderResumeState,
   PersistedAgentLoopState,
-  TurnCostEntry,
+  TurnUsageEntry,
   VerificationRecorder,
-} from './ai/agent';
-export { BudgetExceededError, BudgetTracker } from './ai/budget';
-export type { BudgetOptions, BudgetState, ModelPricing } from './ai/budget';
-export { BudgetPolicyEnforcer, OrganizationBudgetExceededError } from './ai/budget-policy';
-export type { BudgetPolicyOptions } from './ai/budget-policy';
-export { slidingWindowStrategy } from './ai/context-strategies/sliding-window';
-export { ContextWindowManager, composeStrategies, noopStrategy } from './ai/context-window';
-export type { ContextStrategy } from './ai/context-window';
-export { createChildHeaders, debate, handoff, supervise } from './ai/coordination';
+} from './ai/agent/index.ts';
+
+// Structural provider types (Weft owns the shapes; users supply implementations)
+export type {
+  ChatOptions,
+  ChatResponse,
+  ChatResumeContext,
+  ChatResumeHint,
+  LLMProvider,
+  Message,
+  MessageRole,
+  TokenUsage,
+  ToolCall,
+  ToolDefinition,
+  ToolResult,
+} from './ai/agent/index.ts';
+
+// Coordination
+export { createChildHeaders, debate, handoff, supervise } from './ai/coordination/index.ts';
+
+// Declaration
 export { defineAgent, isAgentDefinition } from './ai/declaration';
 export type { AgentDefinition, AgentToolDefinition, ToolIdentityResult } from './ai/declaration';
-export type { AgentHooks } from './ai/hooks';
+
+// Human Review
 export { ReviewCoordinator, ReviewTimeoutError } from './ai/human-review';
 export type { ReviewCoordinatorOptions } from './ai/human-review';
-export {
-  abTestRouter,
-  costTierRouter,
-  customRouter,
-  staticFallbackRouter,
-} from './ai/model-router';
-export type { ModelRouter, ModelSelection, RoutingContext } from './ai/model-router';
-export { PROMPT_CACHE_HIT_METRIC, PROMPT_CACHE_MISS_METRIC, PromptCache } from './ai/prompt-cache';
-export type {
-  AnnotateResult,
-  AnnotatedMessage,
-  AnthropicCacheControl,
-  PromptCacheProviderMetadata,
-} from './ai/prompt-cache';
-export { ProviderHealthTracker } from './ai/provider-health';
-export { ReconnectionBuffer, StreamMultiplexer, TokenBridge } from './ai/streaming';
-export type { AgentRegistrationOptions } from './core/engine';
 
-// AI Events
-export {
-  AgentBudgetExceededEvent,
-  AgentBudgetWarningEvent,
-  AgentCheckpointResumedEvent,
-  AgentContextCompactedEvent,
-  AgentModelFallbackEvent,
-  AgentProviderCircuitOpenEvent,
-  AgentToolCalledEvent,
-  AgentToolReturnedEvent,
-  AgentTurnCompletedEvent,
-  AgentTurnStartedEvent,
-  HumanReviewCompletedEvent,
-  HumanReviewRequestedEvent,
-} from './ai/events';
+// Tool Effect Log
 export {
   ToolCallReplayConflictError,
   ToolEffectLog,
@@ -368,40 +349,19 @@ export {
 } from './ai/tool-effect-log';
 export type { EffectRecord } from './ai/tool-effect-log';
 
-// Providers
-export { AnthropicProvider } from './ai/providers/anthropic';
-export type { ChatOptions, LLMProvider } from './ai/providers/interface';
-export { OpenAIProvider } from './ai/providers/openai';
-export type {
-  ChatResponse,
-  ChatResumeContext,
-  ChatResumeHint,
-  Message,
-  StreamChunk,
-  TokenUsage,
-  ToolDefinition,
-} from './ai/providers/types';
+// AI Events (durability-shaped only)
+export {
+  AgentCheckpointResumedEvent,
+  AgentToolCalledEvent,
+  AgentToolReturnedEvent,
+  AgentTurnCompletedEvent,
+  AgentTurnStartedEvent,
+  HumanReviewCompletedEvent,
+  HumanReviewRequestedEvent,
+} from './ai/events/index.ts';
 
-// MCP
-export { buildAuthHeaders } from './ai/mcp/authentication';
-export type { MCPAuthConfig, SyncMCPAuthConfig } from './ai/mcp/authentication';
-export { MCPClient, MCPServerUnavailableError, MCPToolTimeoutError } from './ai/mcp/client';
-export type {
-  MCPClientOptions,
-  MCPClientTransportOptions,
-  MCPClientUrlOptions,
-} from './ai/mcp/client';
-export { OAuth2TokenError, createOAuth2TokenManager } from './ai/mcp/oauth2-token-manager';
-export type { OAuth2Config, OAuth2TokenManager } from './ai/mcp/oauth2-token-manager';
-export { ToolNameConflictError, ToolRegistry } from './ai/mcp/registry';
-export type { RegistryTool } from './ai/mcp/registry';
-export { ToolSchemaValidationError, validateSchema } from './ai/mcp/schema-validator';
-export { MCPTransportError, inferTransportKind, parseStdioUrl } from './ai/mcp/transport';
-export type { MCPRequest, MCPResponse, MCPTransport, TransportKind } from './ai/mcp/transport';
-export { HttpTransport } from './ai/mcp/transport-http';
-export type { HeaderSource, HttpTransportOptions } from './ai/mcp/transport-http';
-export { HttpSseTransport } from './ai/mcp/transport-http-sse';
-export type { HttpSseTransportOptions } from './ai/mcp/transport-http-sse';
+// Engine agent registration (re-exported from core/engine)
+export type { AgentRegistrationOptions } from './core/engine';
 
 // Observability
 export { createObservabilityInterceptors } from './observability/index';

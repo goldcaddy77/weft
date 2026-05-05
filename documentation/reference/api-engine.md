@@ -31,7 +31,6 @@ Creates a new engine instance. All options are optional -- sensible defaults are
 | `compression`                    | `boolean`                  | `false`               | Enable checkpoint compression                                                  |
 | `workerExecution`                | `WorkerExecutionOptions`   | `undefined`           | Configuration for offloading workflow execution to Web Workers                 |
 | `activityExecution`              | `ActivityExecutionOptions` | `undefined`           | Configuration for activity execution behavior                                  |
-| `defaultModelRouter`             | `ModelRouter`              | `undefined`           | Default model router applied to all agent operations                           |
 | `alerts`                         | `AlertOptions[]`           | `undefined`           | Metric alert thresholds that fire `AlertFiredEvent` / `AlertResolvedEvent`     |
 
 ```ts
@@ -297,7 +296,6 @@ interface EngineOptions {
   compression?: boolean;
   workerExecution?: WorkerExecutionOptions;
   activityExecution?: ActivityExecutionOptions;
-  defaultModelRouter?: ModelRouter;
   alerts?: AlertOptions[];
 }
 ```

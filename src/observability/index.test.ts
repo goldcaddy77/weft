@@ -5,7 +5,7 @@ import {
   AgentToolReturnedEvent,
   AgentTurnCompletedEvent,
   AgentTurnStartedEvent,
-} from '../ai/events';
+} from '../ai/events/index.ts';
 import type { Context } from '../core/context';
 import { Engine } from '../core/engine';
 import {
@@ -1610,7 +1610,6 @@ describe('createObservabilityInterceptors', () => {
       expect(turnSpan!.attributes['weft.agent.model']).toBe('claude');
       expect(turnSpan!.attributes['weft.agent.input_tokens']).toBe(100);
       expect(turnSpan!.attributes['weft.agent.output_tokens']).toBe(50);
-      expect(turnSpan!.attributes['weft.agent.cost']).toBe(0.01);
       expect(turnSpan!.ended).toBe(true);
     });
 

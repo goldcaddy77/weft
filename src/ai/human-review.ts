@@ -10,7 +10,7 @@
 import { decode, encode } from '../core/codec.ts';
 import type { BatchOperation, Storage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
-import { HumanReviewRequestedEvent } from './events.ts';
+import { HumanReviewRequestedEvent } from './events/index.ts';
 
 // ---------------------------------------------------------------------------
 // Types

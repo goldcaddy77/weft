@@ -1,4 +1,3 @@
-import type { ModelRouter } from '../../ai/model-router.ts';
 import type { AlertingOptions } from '../../alerting/types.ts';
 import type { Storage as WeftStorage } from '../../storage/interface.ts';
 import type { CompressionAlgorithm, CompressionOptions } from '../compression.ts';
@@ -87,7 +86,7 @@ export interface ForkOptions {
  *
  * All fields are optional. Common overrides include `storage`, `retention`,
  * `development`, `serializer`, `compression`, `workerExecution`,
- * `defaultModelRouter`, `alerts`, and `tenantResolver`/`quotas` for
+ * `alerts`, and `tenantResolver`/`quotas` for
  * multi-tenant deployments.
  *
  * @example
@@ -151,12 +150,6 @@ export interface EngineOptions {
     /** Use Bun's `smol` worker option for smaller memory footprint. */
     smol?: boolean;
   };
-
-  /**
-   * Default model router applied to all `ctx.agent()` calls that don't
-   * provide their own `modelRouter`. Per-call routers override this.
-   */
-  defaultModelRouter?: ModelRouter | undefined;
 
   /**
    * When providers expose async resume hints, park inline `ctx.agent()` turns

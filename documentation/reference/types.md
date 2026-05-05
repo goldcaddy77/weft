@@ -252,7 +252,6 @@ interface EngineOptions {
   compression?: boolean;
   workerExecution?: WorkerExecutionOptions;
   activityExecution?: ActivityExecutionOptions;
-  defaultModelRouter?: ModelRouter;
   alerts?: AlertOptions[];
 }
 ```
@@ -661,27 +660,20 @@ interface MockCall<TArgs extends unknown[], TResult> {
 
 ### `AgentOptions`
 
-```ts partial
+```ts
 interface AgentOptions {
   model: string;
   provider: LLMProvider;
   systemPrompt?: string;
   tools?: AgentTool[];
   maxTurns?: number;
-  budget?: BudgetTracker;
-  modelRouter?: ModelRouter;
-  contextManager?: ContextWindowManager;
-  healthTracker?: ProviderHealthTracker;
-  toolCacheTTL?: number;
   signal?: AbortSignal;
-  hooks?: AgentHooks;
   eventTarget?: EventTarget;
   workflowId?: string;
   agentId?: string;
-  onTurnStarted?: (turn: TurnInfo) => void;
-  onTurnCompleted?: (turn: TurnResult) => void;
-  onToolCalled?: (call: ToolCallInfo) => void;
-  onToolReturned?: (result: ToolReturnInfo) => void;
+  toolEffectLog?: ToolEffectLogLike;
+  verificationRecorder?: VerificationRecorder;
+  checkpointSizeWarningThreshold?: number;
 }
 ```
 
@@ -692,29 +684,26 @@ interface AgentResult {
   content: string;
   conversation: Message[];
   totalTokens: TokenUsage;
-  totalCost: number;
   turnCount: number;
   reasoningTraces: string[];
-  turnCosts: TurnCostEntry[];
-  confidence?: number;
+  turnUsage: TurnUsageEntry[];
 }
 
-interface TurnCostEntry {
-  turnIndex: number;
-  model: string;
-  inputTokens: number;
-  outputTokens: number;
-  cost: number;
+interface TurnUsageEntry {
+  turnNumber: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  source: 'provider' | 'unavailable';
 }
 ```
 
 ### `AgentTool`
 
-```ts partial
+```ts
 interface AgentTool {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
-  verify?: (input: unknown, result: unknown) => boolean | Promise<boolean>;
+  verify?: (result: unknown) => boolean | Promise<boolean>;
   identity?: (input: unknown) => ToolIdentityResult;
 }
 ```
@@ -725,78 +714,33 @@ interface AgentTool {
 interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   name: string;
   model: string;
+  version?: string;
   systemPrompt?: string;
   tools?: AgentToolDefinition[];
   maxTurns?: number;
-  budget?: BudgetOptions;
-  modelRouter?: ModelRouter;
-  contextStrategy?: ContextStrategy;
-  hooks?: AgentHooks;
   description?: string;
 }
 ```
 
-### `AgentHooks`
+### `AgentToolDefinition`
 
 ```ts
-interface AgentHooks {
-  beforeTurn?: (context: BeforeTurnContext) => BeforeTurnResult | Promise<BeforeTurnResult>;
-  afterToolCall?: (
-    context: AfterToolCallContext,
-  ) => AfterToolCallResult | Promise<AfterToolCallResult>;
-  onBudgetWarning?: (context: BudgetWarningContext) => void | Promise<void>;
+interface AgentToolDefinition {
+  definition: ToolDefinition;
+  execute: (input: unknown) => Promise<unknown>;
+  verify?: (result: unknown) => boolean | Promise<boolean>;
+  version?: string;
+  identity?: (input: unknown) => ToolIdentityResult;
 }
 ```
 
-### `ContextStrategy`
+### `ToolIdentityResult`
 
 ```ts
-interface ContextStrategy {
-  compact(
-    messages: Message[],
-    options: CompactOptions,
-  ): AsyncGenerator<Message[], Message[], unknown>;
+interface ToolIdentityResult {
+  semanticHash: string;
+  intentCriticalFields: string[];
 }
-```
-
-### `ModelRouter`
-
-```ts
-interface ModelRouter {
-  select(context: RoutingContext): ModelSelection;
-}
-```
-
-### `ModelSelection`
-
-```ts
-interface ModelSelection {
-  model: string;
-  fallback?: string[];
-  reason?: string;
-}
-```
-
-### `RoutingContext`
-
-```ts
-interface RoutingContext {
-  workflowId: string;
-  turnIndex: number;
-  conversationLength: number;
-  budgetRemaining?: { tokensRemaining: number; costRemaining: number };
-  previousModels: string[];
-  metadata?: Record<string, unknown>;
-}
-```
-
-### `MCPAuthConfig`
-
-```ts partial
-type MCPAuthConfig =
-  | { type: 'bearer'; token: string }
-  | { type: 'api-key'; headerName: string; apiKey: string }
-  | { type: 'none' };
 ```
 
 ### `LLMProvider`
@@ -805,8 +749,11 @@ type MCPAuthConfig =
 interface LLMProvider {
   readonly name: string;
   chat(messages: Message[], options: ChatOptions): Promise<ChatResponse>;
-  stream(messages: Message[], options: ChatOptions): Promise<ReadableStream<StreamChunk>>;
-  countTokens(messages: Message[]): Promise<number>;
+  createChatResumeHint?(
+    messages: Message[],
+    options: ChatOptions,
+  ): Promise<ChatResumeHint | undefined>;
+  warmup?(): Promise<void>;
 }
 ```
 
@@ -820,6 +767,8 @@ interface ChatOptions {
   temperature?: number;
   signal?: AbortSignal;
   systemPrompt?: string;
+  turnIndex?: number;
+  resumeContext?: ChatResumeContext;
 }
 ```
 
@@ -832,6 +781,7 @@ interface ChatResponse {
   usage: TokenUsage;
   model: string;
   stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence';
+  reasoningTrace?: string;
 }
 ```
 
@@ -886,16 +836,5 @@ interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
-}
-```
-
-### `StreamChunk`
-
-```ts
-interface StreamChunk {
-  type: 'token' | 'tool_call_start' | 'tool_call_delta' | 'tool_call_end' | 'done';
-  token?: string;
-  toolCall?: Partial<ToolCall>;
-  usage?: TokenUsage;
 }
 ```

@@ -1,5 +1,5 @@
 /**
- * Durable ReAct agent loop with tool caching and budget enforcement.
+ * Durable ReAct agent loop with local tools and provider-resume suspension.
  *
  * Orchestrates multi-turn LLM conversations where the model can invoke
  * tools, receive their results, and continue reasoning until it produces
@@ -8,8 +8,7 @@
  * @module agent
  */
 
-import { AgentCheckpointResumedEvent } from '../events.ts';
-import { PendingProviderResumeError } from '../providers/suspending-provider.ts';
+import { AgentCheckpointResumedEvent } from '../events/index.ts';
 import { executeChatWithFallbacks } from './chat.ts';
 import { finalizeTurn } from './finalize.ts';
 import {
@@ -18,26 +17,35 @@ import {
   shouldStopBeforeTurn,
   snapshotAgentLoopState,
 } from './runtime.ts';
+import { PendingProviderResumeError } from './suspending-provider.ts';
 import { executeToolCalls } from './tool-execution.ts';
 import { prepareTurn } from './turn.ts';
 import type { AgentOptions, AgentResult, AgentRuntime, PersistedAgentLoopState } from './types.ts';
 import { AgentLoopSuspendedError } from './types.ts';
 
 export { initializeTools } from './tool-initialization.ts';
-export type { MCPClientFactory } from './tool-initialization.ts';
 export { AgentLoopSuspendedError } from './types.ts';
 export type {
   AgentOptions,
   AgentResult,
+  AgentRuntime,
   AgentTool,
-  MCPToolSource,
+  ChatOptions,
+  ChatResponse,
+  ChatResumeContext,
+  ChatResumeHint,
+  LLMProvider,
+  Message,
+  MessageRole,
   PendingProviderResumeState,
   PersistedAgentLoopState,
-  ToolCallInfo,
-  ToolReturnInfo,
-  TurnCostEntry,
-  TurnInfo,
-  TurnResult,
+  ResolvedAgentOptions,
+  TokenUsage,
+  ToolCall,
+  ToolDefinition,
+  ToolExecutionOutcome,
+  ToolResult,
+  TurnUsageEntry,
   VerificationRecorder,
 } from './types.ts';
 
@@ -46,13 +54,9 @@ async function executeAgentTurn(runtime: AgentRuntime, turnIndex: number): Promi
     return false;
   }
 
-  const preparedTurn = await prepareTurn(runtime, turnIndex);
-  if ('skippedResult' in preparedTurn) {
-    runtime.state.lastContent = preparedTurn.skippedResult;
-    return false;
-  }
+  const messagesToSend = prepareTurn(runtime, turnIndex);
+  const turnResult = await executeChatWithFallbacks(runtime, turnIndex, messagesToSend);
 
-  const turnResult = await executeChatWithFallbacks(runtime, turnIndex, preparedTurn);
   if (turnResult.response.toolCalls.length === 0) {
     finalizeTurn(runtime, turnIndex, turnResult, []);
     return false;
@@ -76,7 +80,7 @@ async function executeAgentTurn(runtime: AgentRuntime, turnIndex: number): Promi
 /**
  * Execute a tool-calling agent loop and return the final result. Durability
  * (checkpointing across crashes, tool-call dedup) is layered on by
- * `ctx.agent()` inside a registered workflow — calling `executeAgentLoop`
+ * `ctx.agent()` inside a registered workflow - calling `executeAgentLoop`
  * directly runs the loop in-memory without persistence.
  *
  * @example Basic agent with a local tool
@@ -102,6 +106,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
   return executeAgentLoopWithState(options, input);
 }
 
+/** Execute an agent loop, optionally restoring previously persisted state. */
 export async function executeAgentLoopWithState(
   options: AgentOptions,
   input: string,
@@ -121,8 +126,6 @@ export async function executeAgentLoopWithState(
       }
     }
 
-    // Dispatch a checkpoint-resumed event when the effect log prevented at
-    // least one duplicate tool call. Only fires when replays actually occurred.
     if (
       runtime.options.toolEffectLog &&
       runtime.options.eventTarget &&
@@ -144,7 +147,7 @@ export async function executeAgentLoopWithState(
   } catch (error) {
     if (error instanceof PendingProviderResumeError) {
       throw new AgentLoopSuspendedError(
-        snapshotAgentLoopState(runtime.state, runtime.options.budget),
+        snapshotAgentLoopState(runtime.state, runtime.options.agentId, runtime.options.workflowId),
         {
           turnIndex: error.turnIndex,
           hint: error.hint,

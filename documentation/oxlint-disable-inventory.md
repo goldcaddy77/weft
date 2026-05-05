@@ -21,20 +21,6 @@ naming the alternative that was rejected.
 - **Symbol**: `resolveToolExecution`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
-## `ai-agent-resolve-tool-execution-inner-complexity`
-
-- **File**: `src/ai/agent/tool-execution.ts`
-- **Rule**: `complexity`
-- **Symbol**: `resolveToolExecutionInner`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `ai-budget-record-usage-complexity`
-
-- **File**: `src/ai/budget.ts`
-- **Rule**: `complexity`
-- **Symbol**: `recordUsage`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
 ## `ai-coordination-supervise-complexity`
 
 - **File**: `src/ai/coordination/supervise.ts`
@@ -46,107 +32,6 @@ naming the alternative that was rejected.
 - **Rule**: `max-lines`
 - **Symbol**: `(whole file)`
 - **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
-
-## `ai-mcp-client-discover-tools-complexity`
-
-- **File**: `src/ai/mcp/client.ts`
-- **Rule**: `complexity`
-- **Symbol**: `discoverTools`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `ai-mcp-schema-validator-validate-value-complexity`
-
-- **File**: `src/ai/mcp/schema-validator.ts`
-- **Rule**: `complexity`
-- **Symbol**: `validateValue`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `ai-mcp-transport-http-send-complexity`
-
-- **File**: `src/ai/mcp/transport-http.ts`
-- **Rule**: `complexity`
-- **Symbol**: `send`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `ai-mcp-transport-http-sse-send-complexity`
-
-- **File**: `src/ai/mcp/transport-http-sse.ts`
-- **Rule**: `complexity`
-- **Symbol**: `send`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `ai-mcp-transport-stdio-start-read-loop-complexity`
-
-- **File**: `src/ai/mcp/transport-stdio.ts`
-- **Rule**: `complexity`
-- **Symbol**: `startReadLoop`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `ai-prompt-cache-evict-oldest-complexity`
-
-- **File**: `src/ai/prompt-cache/cache.ts`
-- **Rule**: `complexity`
-- **Symbol**: `evictOldest`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-- **File**: `src/ai/prompt-cache.ts`
-- **Rule**: `max-lines`
-- **Symbol**: `(whole file)`
-- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
-
-## `ai-provider-health-constructor-complexity`
-
-- **File**: `src/ai/provider-health.ts`
-- **Rule**: `complexity`
-- **Symbol**: `constructor`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `ai-providers-anthropic-start-complexity`
-
-- **File**: `src/ai/providers/anthropic.ts`
-- **Rule**: `complexity`
-- **Symbol**: `start`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `ai-providers-openai-start-complexity`
-
-- **File**: `src/ai/providers/openai.ts`
-- **Rule**: `complexity`
-- **Symbol**: `start`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `ai-streaming-agent-build-recovery-conversation-complexity`
-
-- **File**: `src/ai/streaming-agent/checkpoint.ts`
-- **Rule**: `complexity`
-- **Symbol**: `buildRecoveryConversation`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `ai-streaming-agent-build-stream-checkpoint-complexity`
-
-- **File**: `src/ai/streaming-agent/checkpoint.ts`
-- **Rule**: `complexity`
-- **Symbol**: `buildStreamCheckpoint`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-- **File**: `src/ai/streaming-agent.ts`
-- **Rule**: `max-lines`
-- **Symbol**: `(whole file)`
-- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
-
-## `ai-streaming-agent-handle-streaming-chunk-complexity`
-
-- **File**: `src/ai/streaming-agent/chunk-handler.ts`
-- **Rule**: `complexity`
-- **Symbol**: `handleStreamingChunk`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `ai-streaming-pump-complexity`
-
-- **File**: `src/ai/streaming.ts`
-- **Rule**: `complexity`
-- **Symbol**: `pump`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
 ## `benchmarks-memory-per-workflow-runner-measure-memory-per-workflow-complexity`
 
@@ -1028,3 +913,24 @@ naming the alternative that was rejected.
 - **Rule**: `complexity`
 - **Symbol**: `pickFairShare`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-operations-agent-suspension-file-length`
+
+- **File**: `src/core/engine/operations-agent-suspension.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Agent suspension module grew during the AI Surface Shrinkage refactor to accommodate the new PersistedAgentLoopState v2 validator, signal-waiter tracking, and crash-window repair logic. The functions are tightly coupled around the suspension lifecycle and splitting would fragment the durability contract.
+
+## `core-engine-operations-agent-suspension-is-persisted-state-complexity`
+
+- **File**: `src/core/engine/operations-agent-suspension.ts`
+- **Rule**: `complexity`
+- **Symbol**: `isPersistedAgentLoopStateValue`
+- **Reason**: Runtime type guard for PersistedAgentLoopState v2 — checks seven required fields plus schema version. Splitting into sub-validators adds indirection without clarity gain; the linear field checks are the complexity.
+
+## `ai-agent-types-file-length`
+
+- **File**: `src/ai/agent/types.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Canonical home for the structural agent types Weft owns post-shrinkage (LLMProvider, Message, ToolCall, ToolResult, ToolDefinition, ChatOptions, ChatResponse, ChatResumeHint, ChatResumeContext, TokenUsage, AgentOptions, AgentResult, AgentTool, MCPToolSource carve-out, TurnUsageEntry, PersistedAgentLoopState, AgentLoopSuspendedError, plus internal runtime shapes). JSDoc + `@example` blocks on each public type are required by the JSDoc audit and account for most of the line count. Splitting would fragment the structural-types contract that downstream consumers (Agent Bureau, armorer) target.

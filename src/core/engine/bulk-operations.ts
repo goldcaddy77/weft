@@ -385,23 +385,6 @@ function getWorkflowRetentionDeadline(
   return state.updatedAt + retentionMs;
 }
 
-export function releaseChargedAgentOperations(
-  internals: EngineInternals,
-  workflowId: string,
-): BatchOperation[] {
-  const workflowOperations = internals.chargedAgentOperationsByWorkflow.get(workflowId);
-  if (!workflowOperations) return [];
-
-  const budgetChargedDeletes: BatchOperation[] = [];
-  for (const operationId of workflowOperations) {
-    internals.chargedAgentOperations.delete(operationId);
-    budgetChargedDeletes.push({ type: 'delete', key: KEYS.budgetCharged(operationId) });
-  }
-
-  internals.chargedAgentOperationsByWorkflow.delete(workflowId);
-  return budgetChargedDeletes;
-}
-
 // oxlint-disable-next-line complexity -- ID:core-engine-purge-workflow-complexity
 async function purgeWorkflow(
   internals: EngineInternals,
@@ -452,8 +435,6 @@ async function purgeWorkflow(
   )) {
     if (operation.type === 'delete') deleteOperations.push(operation);
   }
-
-  deleteOperations.push(...releaseChargedAgentOperations(internals, workflowId));
 
   const updateRequestPrefix = KEYS.updatePrefix(workflowId);
   const updateRequestKeys = await collectKeysForPrefix(internals.storage, updateRequestPrefix);

@@ -15,8 +15,9 @@
  *    without one).
  * 3. The tenant is stored on the workflow state so it survives recovery, and
  *    surfaced to workflow code as `ctx.tenant`.
- * 4. Agents declared with {@link defineAgent} can opt in to per-tenant tool
- *    sets and input validation via `toolsForTenant` and `validateInput`.
+ * 4. Tenant-scoped agent tools are selected by workflow code at invocation
+ *    time. AgentDefinition no longer carries a central tenant tool-scoping
+ *    field.
  *
  * @module core/tenant
  */

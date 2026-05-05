@@ -1,83 +1,102 @@
 # Agent Overview
 
-You've built a workflow that calls an LLM. The model returns a response, you parse it, move on. That works—right up until the model needs to call a tool, read the result, decide what to do next, call another tool, loop five more times, and eventually produce an answer. At that point you don't have a workflow with an LLM step. You have an agent, and agents have a fundamentally different execution shape than traditional workflows.
+**Agent durability:** Weft adds durability to your agent loop. Bring your provider, bring your tools, and let Weft drive the ReAct loop through durable checkpoint boundaries.
 
-Weft is built for this from the ground up. Not agent-_compatible_—agent-_native_.
+That sentence is the whole pitch. Weft does not try to be your model platform, tool registry, provider gateway, or prompt operations layer. It gives the runtime shape that agent loops need when model-driven control flow meets real side effects.
 
-## Why agents are different
+## Why agent loops are different
 
-Traditional durable workflows are **static DAGs**. You know the steps at compile time: charge the card, reserve inventory, send the email. The graph is fixed. Temporal, Step Functions, and their peers were designed for exactly this shape.
+Static workflows are mostly known before they run. You can draw the graph, name the steps, and reason about retry behavior from the code alone.
 
-Agent loops are **dynamic, emergent graphs**. The LLM decides what to do next based on what it learned from the last step. You don't know at definition time whether the agent will make 3 tool calls or 30. You don't know _which_ tools it will call. The "workflow" is a loop where control flow is determined at runtime by a probabilistic model.
+Agent loops are not like that.
 
-That's only the first difference. There are four more:
+**Dynamic execution graph:** The next node is chosen at runtime. The model may call `search`, then `fetch_page`, then `summarize`, then call `search` again because the previous result changed its plan.
 
-- **Output mode.** Traditional workflows return a structured value at the end. Agents stream tokens in real time—a 45-second wait for a bulk response is unusable. Streaming isn't a nice-to-have; it's the core UX.
-- **Cost model.** Traditional workflow cost is compute time—linear, predictable, cheap. Agent cost is token consumption—non-linear (one bad tool call can balloon a 50,000-token context window), unpredictable (the model decides how many turns to take), and expensive (a single run can cost $5–$50).
-- **Interaction model.** Traditional workflows are fire-and-forget. Agents need human-in-the-loop review: structured approvals, multi-turn conversation with reviewers, escalation chains, partial approval per section.
-- **Coordination model.** Traditional workflows fan out and fan in. Agents need handoff (sequential delegation with context transfer), debate (adversarial multi-agent review), and supervision (a manager agent overseeing workers).
+**Probabilistic control flow:** The branch condition is not a deterministic `if` statement. It is a provider response. The same prompt may produce different tool calls after a model upgrade, a tool result change, or a recovered conversation.
 
-## Why you can't bolt agents onto replay-based systems
+**Real side effects:** Tool calls are not just computation. They can send email, charge a card, mutate a ticket, reserve inventory, or write a record. Retrying the wrong boundary can duplicate the effect.
 
-Temporal's determinism constraint creates a fundamental tension with LLM-based agent loops. LLM API calls must be activities (they're non-deterministic network calls), but activities are opaque to the workflow. This forces agent loops into one of two bad choices:
+That combination makes the usual "just replay it" answer uncomfortable. The thing you replay is partly controlled by a model, and the model is exactly the part you should avoid treating as a deterministic function.
 
-The first option is to run the _entire_ ReAct loop—LLM call, tool selection, tool execution, repeat—as a single activity. Tool calls within it aren't individually checkpointed. If the process crashes mid-loop after executing 5 of 10 tool calls, the entire agent conversation restarts from scratch, including re-executing all tool calls with their side effects.
+## The replay dilemma
 
-The second option is to make each LLM call a separate activity. But Temporal's replay model requires every activity result to be deterministically reproducible from the event history. LLM APIs are inherently non-deterministic—the same prompt produces different outputs. Storing and replaying every LLM response defeats the purpose of having a live model and creates enormous event histories.
+Replay-based systems usually force one of two shapes for an agent loop.
 
-## What agent-native means in practice
+**One big activity:** Put the whole loop inside one activity. This keeps the model and tool calls outside replay, but it also makes the loop opaque to the workflow runtime. If the process crashes on turn 14, the runtime knows only that the activity failed. You now need custom recovery inside the activity, custom progress storage, and custom idempotency around every tool call.
 
-Weft's generator model avoids this dilemma entirely. Each tool call within an agent loop is a separate `yield*` checkpoint boundary. Token streaming flows through the standard `EventTarget` and WebSocket systems in real time. The agent loop is simultaneously _durable_ (each tool call is individually checkpointed) and _live_ (tokens stream as they arrive).
+**Activity per turn:** Make each LLM turn an activity. This gives the runtime more checkpoints, but the awkward boundary remains. A single turn can contain several tool calls, and those calls are the side effects you most need to protect. If a crash happens after tool call 7 and before the turn returns, the runtime still sees an incomplete activity.
 
-The checkpoint stores only the current state—a single key containing the generator's local variables at the pause point. Whether the agent executed 3 tool calls or 300, checkpoint size depends only on what's in scope, not on execution history.
+Neither option matches the real fault line. The durable boundary is not "the whole loop" and it is not always "one provider turn." The durable boundary is the tool-call edge.
+
+## Tool-call checkpoint boundaries
+
+**Checkpoint boundary:** Every tool call is a durable pause point. In generator workflows, each `yield*` gives Weft a place to persist state before execution continues. The agent loop uses that same idea internally: model response, tool call, effect record, next message.
+
+When the model asks for a tool, Weft computes a semantic identity for that call, checks the effect log, and either:
+
+- returns a previously committed result, or
+- executes the tool, records the committed result, and continues the loop.
+
+**Effect log:** The `ToolEffectLog` is the recovery ledger for tool calls. It prevents duplicate execution when a process crashes after the side effect happened but before the surrounding conversation finished.
+
+The practical result is straightforward. If an agent plans 30 tool calls and the process crashes after tool call 7, recovery starts from tool call 8. The first seven committed effects are replayed from the log, not re-executed.
+
+## Minimal workflow usage
+
+Use `ctx.agent()` when the agent loop is one step inside a larger workflow:
 
 ```typescript
-import type { AgentTool, Context, LLMProvider } from 'weft';
+import { Engine, type AgentTool, type LLMProvider, type WorkflowContext } from 'weft';
 
 declare const provider: LLMProvider;
 declare const webSearch: AgentTool;
-declare const readDocument: AgentTool;
-declare const analyzeData: AgentTool;
+declare const factCheck: AgentTool;
 
-async function* researchAgent(ctx: Context, topic: string) {
-  let findings: string[] = [];
-  let confidence = 0;
+async function* researchWorkflow(ctx: WorkflowContext, topic: string) {
+  const result = yield* ctx.agent({
+    model: 'claude-sonnet-4-20250514',
+    provider,
+    systemPrompt: 'You are a careful research analyst.',
+    tools: [webSearch, factCheck],
+    maxTurns: 20,
+    prompt: topic,
+  });
 
-  while (confidence < 0.8) {
-    const result = (yield* ctx.agent({
-      model: 'claude-sonnet-4-20250514',
-      provider,
-      prompt: `Research "${topic}". Current findings:\n${findings.join('\n')}`,
-      tools: [webSearch, readDocument, analyzeData],
-      maxTurns: 5,
-    })) as { summary: string; confidence: number };
-
-    findings.push(result.summary);
-    confidence = result.confidence;
-
-    // Each iteration creates checkpoints at every tool call.
-    // Crash after 7 iterations? Resume at iteration 7—not restart from 0.
-  }
-
-  return { findings, confidence };
+  return result.content;
 }
+
+const engine = new Engine();
+engine.register('research-workflow', researchWorkflow);
 ```
 
-The loop runs until the agent is confident enough. We don't know how many iterations that takes. And it doesn't matter—the engine handles dynamic, emergent control flow natively.
+The agent call is durable like any other workflow operation, but its internal durability is more precise: each tool call creates its own checkpoint boundary.
 
-## What the agent subsystem provides
+## What the subsystem provides
 
-The rest of these guides cover each piece of the agent subsystem:
+**Agent declaration:** [`defineAgent()`](./agent-declaration.md) gives reusable names, prompts, tool lists, and turn limits. Definitions stay thin so workflow authors can make scoping decisions close to the workflow.
 
-- [**Agent declaration**](./agent-declaration.md)—`defineAgent()` for reusable agent definitions that work as standalone workflows or embedded steps
-- [**Tools and MCP**](./agent-tools-and-mcp.md)—local function tools, MCP server integration, and a unified tool registry
-- [**Budget and cost**](./agent-budget-and-cost.md)—token tracking, cost enforcement, warning thresholds, and `AbortController`-based budget limits
-- [**Streaming**](./agent-streaming.md)—`TokenBridge`, `StreamMultiplexer`, and `ReconnectionBuffer` for real-time token delivery
-- [**Context window**](./agent-context-window.md)—`ContextWindowManager` and composable strategies for keeping conversations within token limits
-- [**Model routing**](./agent-model-routing.md)—fallback chains, cost-tier routing, A/B testing, and custom routing logic
-- [**Human review**](./agent-human-review.md)—`ReviewCoordinator` for structured human-in-the-loop approval workflows
-- [**Multi-agent coordination**](./agent-coordination.md)—`handoff()`, `debate()`, and `supervise()` for orchestrating multiple agents
-- [**Provider health**](./agent-provider-health.md)—circuit breaker pattern for tracking and excluding unhealthy LLM providers
-- [**Observability**](./agent-observability.md)—13 agent-specific event types for logging, monitoring, and debugging
+**Tools:** [`AgentTool`](./agent-tools.md), `AgentToolDefinition`, `ToolEffectLog`, and `computeSemanticHash` define the structural tool surface and the deduplication mechanism that protects side effects.
 
-Every one of these primitives integrates with Weft's core durability model. Tool calls checkpoint. Streams survive crashes. Budgets persist across restarts. The 13 agent-specific event types expose that execution shape for logging, monitoring, and debugging. That's what agent-native means.
+**Human review:** [`ReviewCoordinator`](./agent-human-review.md) persists approval requests and decisions so humans can pause a workflow without losing the agent conversation.
+
+**Coordination:** [`handoff()`, `debate()`, and `supervise()`](./agent-coordination.md) compose multiple durable agent loops without turning coordination into a separate orchestration product.
+
+**Observability:** [Agent events](./agent-observability.md) report turn starts and completions, tool calls and returns, checkpoint resume behavior, and human review activity.
+
+**Ownership boundaries:** [What Weft owns](./what-weft-owns.md) spells out the narrow contract: Weft owns durable loop execution, tool-call effect logging, review coordination, and structural interfaces. Your application owns providers, tool discovery, tool scoping, and provider-specific policy.
+
+## The mental model
+
+Think of Weft as the durable frame around an agent loop:
+
+```text
+provider response
+  -> tool call requested
+  -> checkpoint
+  -> effect log lookup
+  -> execute or replay tool result
+  -> append tool result message
+  -> next provider response
+```
+
+The model remains your model. The tools remain your tools. Weft gives the loop a place to stand when the process disappears halfway through the conversation.

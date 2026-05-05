@@ -5,15 +5,16 @@
  * `workerExecution` and `tenantResolver` were configured because the worker
  * protocol dropped `tenant` across `postMessage`. This suite verifies the
  * full stack: (1) the constructor does not throw, (2) the resolved tenant
- * reaches the worker-side handler via its `ctx` argument, (3) a per-tenant
- * resolver selects the correct tool set for each tenant, and (4) an
- * unexpected tenant still fails via `validateInput` — proving the tenant
- * field is populated, not silently `undefined`.
+ * reaches the worker-side handler via its `ctx` argument, (3) the
+ * workflow author's per-tenant resolver selects the correct tool set for
+ * each tenant, and (4) an unexpected tenant still fails the workflow's
+ * tenant guard — proving the tenant field is populated, not silently
+ * `undefined`.
  *
  * The worker fixture at `src/workers/test-agent-tenant-worker.ts` inlines
- * the `validateInput` + `toolsForTenant` hooks and a stub provider because
- * `ctx.agent()` only exists on the engine-side `Context` class. The engine
- * still receives a matching workflow registration so `engine.start()` can
+ * a `pickToolsForTenant` helper and a stub provider because `ctx.agent()`
+ * only exists on the engine-side `Context` class. The engine still
+ * receives a matching workflow registration so `engine.start()` can
  * proceed — but the actual handler execution happens in the worker.
  *
  * @module ai/agent-worker-tenant-isolation
@@ -54,7 +55,7 @@ describe('agent tenant isolation in worker-execution mode', () => {
     expect(engine).toBeInstanceOf(Engine);
   });
 
-  it('propagates tenant context to the worker so toolsForTenant picks the right tool set', async () => {
+  it('propagates tenant context to the worker so pickToolsForTenant picks the right tool set', async () => {
     engine = new Engine({
       workerExecution: {
         workerUrl: testAgentTenantWorkerUrl,

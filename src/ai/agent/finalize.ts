@@ -1,27 +1,23 @@
-import { snapshotConversationForEvent } from '../event-message-snapshot.ts';
-import { AgentCheckpointSizeWarningEvent, AgentTurnCompletedEvent } from '../events.ts';
-import type { ChatResponse } from '../providers/types.ts';
+import { AgentCheckpointSizeWarningEvent, AgentTurnCompletedEvent } from '../events/index.ts';
+import { snapshotConversationForEvent } from './event-message-snapshot.ts';
 import { estimateConversationSizeBytes } from './tool-execution.ts';
-import type { AgentRuntime, ChatTurnResult } from './types.ts';
+import type { AgentRuntime, ChatResponse, ChatTurnResult } from './types.ts';
 
-export function recordTurnCostEntry(
+/** Record the provider-reported token usage for a completed turn. */
+export function recordTurnUsage(
   runtime: AgentRuntime,
   turnIndex: number,
   response: ChatResponse,
-  currentModel: string,
-  turnCost: number,
-  toolNames: string[],
 ): void {
-  runtime.state.turnCosts.push({
-    turn: turnIndex,
+  runtime.state.turnUsage.push({
+    turnNumber: turnIndex,
     inputTokens: response.usage.inputTokens,
     outputTokens: response.usage.outputTokens,
-    cost: turnCost,
-    model: currentModel,
-    tools: toolNames,
+    source: 'provider',
   });
 }
 
+/** Dispatch the agent turn-completed event. */
 export function dispatchTurnCompleted(
   runtime: AgentRuntime,
   turnIndex: number,
@@ -40,8 +36,8 @@ export function dispatchTurnCompleted(
         turnResult.currentModel,
         response.usage.inputTokens,
         response.usage.outputTokens,
-        turnResult.turnCost,
-        runtime.state.totalCost,
+        0,
+        0,
         turnResult.turnDuration,
         toolCallCount,
         turnResult.fallbackAttempts,
@@ -50,18 +46,9 @@ export function dispatchTurnCompleted(
       ),
     );
   }
-
-  runtime.options.onTurnCompleted?.({
-    turnIndex,
-    model: turnResult.currentModel,
-    inputTokens: response.usage.inputTokens,
-    outputTokens: response.usage.outputTokens,
-    cost: turnResult.turnCost,
-    duration: turnResult.turnDuration,
-    toolCallCount,
-  });
 }
 
+/** Dispatch a checkpoint-size warning once the conversation crosses the threshold. */
 export function maybeDispatchCheckpointWarning(runtime: AgentRuntime, turnIndex: number): void {
   if (!(runtime.options.eventTarget && runtime.options.workflowId)) {
     return;
@@ -87,20 +74,14 @@ export function maybeDispatchCheckpointWarning(runtime: AgentRuntime, turnIndex:
   );
 }
 
+/** Finalize bookkeeping and events for one completed agent turn. */
 export function finalizeTurn(
   runtime: AgentRuntime,
   turnIndex: number,
   turnResult: ChatTurnResult,
   toolNames: string[],
 ): void {
-  recordTurnCostEntry(
-    runtime,
-    turnIndex,
-    turnResult.response,
-    turnResult.currentModel,
-    turnResult.turnCost,
-    toolNames,
-  );
+  recordTurnUsage(runtime, turnIndex, turnResult.response);
   dispatchTurnCompleted(runtime, turnIndex, turnResult.response, turnResult, toolNames.length);
   maybeDispatchCheckpointWarning(runtime, turnIndex);
 }

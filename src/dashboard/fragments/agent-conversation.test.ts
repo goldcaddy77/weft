@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import type { Message } from '../../ai/providers/types.ts';
+import type { Message } from '../../ai/agent/index.ts';
 import { groupConversationMessages } from './agent-conversation';
 import type { AgentTurnData } from './agent-turn-types.ts';
 
@@ -10,7 +10,6 @@ function makeTurn(turnIndex: number, messages: Message[]): AgentTurnData {
     model: 'claude',
     inputTokens: 0,
     outputTokens: 0,
-    cost: 0,
     toolCalls: [],
     response: '',
     messages,

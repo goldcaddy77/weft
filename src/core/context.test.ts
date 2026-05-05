@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
-import { BudgetTracker } from '../ai/budget.ts';
-import type { LLMProvider } from '../ai/providers/interface.ts';
+import type { LLMProvider } from '../ai/agent/index.ts';
 import {
   Context,
   type AgentContextOptions,
@@ -845,12 +844,6 @@ describe('Context', () => {
           stopReason: 'end_turn' as const,
         };
       },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens() {
-        return 100;
-      },
     };
 
     function createAgentOptions(overrides?: Partial<AgentContextOptions>): AgentContextOptions {
@@ -1158,8 +1151,6 @@ describe('Context', () => {
           model: 'test',
           stopReason: 'end_turn',
         }),
-        stream: async () => new ReadableStream(),
-        countTokens: async () => 0,
       };
 
       const generator = context.agent({
@@ -1200,8 +1191,6 @@ describe('Context', () => {
           model: 'test',
           stopReason: 'end_turn',
         }),
-        stream: async () => new ReadableStream(),
-        countTokens: async () => 0,
       };
 
       const generator = context.agent({
@@ -1474,90 +1463,6 @@ describe('Context', () => {
       expect(request.callerStack).toBeDefined();
       expect(typeof request.callerStack).toBe('string');
       expect(request.callerStack!.length).toBeGreaterThan(0);
-    });
-  });
-
-  describe('ctx.setBudget', () => {
-    it('creates a budget tracker', () => {
-      const context = createContext();
-      expect(context.budgetRemaining()).toBeUndefined();
-
-      context.setBudget({
-        maxTokens: 10000,
-        maxCost: 5.0,
-        models: {
-          'gpt-4': { inputCostPer1K: 0.03, outputCostPer1K: 0.06 },
-        },
-      });
-
-      const state = context.budgetRemaining();
-      expect(state).toBeDefined();
-      expect(state!.tokensUsed).toBe(0);
-      expect(state!.tokensRemaining).toBe(10000);
-      expect(state!.costRemaining).toBe(5.0);
-    });
-
-    it('clones the budget tracker into speculative children', () => {
-      const context = createContext();
-      context.setBudget({
-        maxTokens: 10000,
-        maxCost: 5.0,
-        models: {
-          'gpt-4': { inputCostPer1K: 0.03, outputCostPer1K: 0.06 },
-        },
-      });
-
-      const cloneSpy = spyOn(BudgetTracker.prototype, 'clone');
-      context.createSpeculativeChild();
-
-      expect(cloneSpy).toHaveBeenCalledTimes(1);
-      mock.restore();
-    });
-  });
-
-  describe('ctx.budgetRemaining', () => {
-    it('returns undefined when no budget is set', () => {
-      const context = createContext();
-      expect(context.budgetRemaining()).toBeUndefined();
-    });
-
-    it('returns state after setBudget', () => {
-      const context = createContext();
-      context.setBudget({
-        maxTokens: 50000,
-        maxCost: 10.0,
-        models: {
-          'gpt-4': { inputCostPer1K: 0.03, outputCostPer1K: 0.06 },
-        },
-      });
-
-      const state = context.budgetRemaining();
-      expect(state).toBeDefined();
-      expect(state!.tokensUsed).toBe(0);
-      expect(state!.costUsed).toBe(0);
-      expect(state!.tokensRemaining).toBe(50000);
-      expect(state!.costRemaining).toBe(10.0);
-      expect(state!.breakdown).toEqual([]);
-    });
-  });
-
-  describe('ctx.budgetProjection', () => {
-    it('returns undefined when no budget is set', () => {
-      const context = createContext();
-      expect(context.budgetProjection()).toBeUndefined();
-    });
-
-    it('returns zero estimates before any usage', () => {
-      const context = createContext();
-      context.setBudget({
-        maxCost: 10.0,
-        models: { 'gpt-4': { inputCostPer1K: 0.03, outputCostPer1K: 0.06 } },
-      });
-
-      const projection = context.budgetProjection();
-      expect(projection).toBeDefined();
-      expect(projection!.estimatedTurnsRemaining).toBe(0);
-      expect(projection!.estimatedCostAtCompletion).toBe(0);
     });
   });
 });

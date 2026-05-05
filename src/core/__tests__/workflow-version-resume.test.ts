@@ -10,9 +10,8 @@ import { sleepForTesting } from '../../testing/fake-timers.ts';
 
 import { describe, expect, it } from 'bun:test';
 
+import type { ChatResponse, LLMProvider } from '../../ai/agent/index.ts';
 import { defineAgent } from '../../ai/declaration.ts';
-import type { LLMProvider } from '../../ai/providers/interface.ts';
-import type { ChatResponse } from '../../ai/providers/types.ts';
 import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { decode, encode } from '../codec.ts';
@@ -32,8 +31,6 @@ function makeBlockingProvider(): LLMProvider {
       new Promise<ChatResponse>(() => {
         /* never resolves */
       }),
-    stream: async () => new ReadableStream(),
-    countTokens: async () => 1,
   };
 }
 
@@ -49,12 +46,6 @@ function makeMockProvider(): LLMProvider {
         model: 'test-model',
         stopReason: 'end_turn',
       };
-    },
-    async stream() {
-      return new ReadableStream();
-    },
-    async countTokens(): Promise<number> {
-      return 1;
     },
   };
 }
@@ -214,18 +205,8 @@ describe('workflow version resume checks', () => {
     engine2[Symbol.dispose]();
   });
 
-  it('captures tenant-specific tool versions in workflow state at start', async () => {
+  it('captures static agent tool versions in workflow state at start', async () => {
     const storage = new MemoryStorage();
-
-    const freeTool = {
-      definition: {
-        name: 'free-tool',
-        description: 'Tool for free tenants',
-        inputSchema: { type: 'object' as const, properties: {} },
-      },
-      execute: async (_input: unknown) => 'free',
-      version: '1.0.0',
-    };
 
     const proTool = {
       definition: {
@@ -241,10 +222,7 @@ describe('workflow version resume checks', () => {
       name: 'tenant-aware-agent',
       model: 'test-model',
       version: '1.0.0',
-      tools: [freeTool],
-      toolsForTenant(tenant) {
-        return tenant?.id === 'pro' ? [proTool] : [freeTool];
-      },
+      tools: [proTool],
     });
 
     const engine = new Engine({

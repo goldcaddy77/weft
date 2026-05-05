@@ -57,13 +57,12 @@ expects fields to be assigned in this sequence.
 | 41  | `retentionSweepInterval`           | data (nullable)                            |
 | 42  | `retentionSweepInFlight`           | data (nullable)                            |
 | 43  | `nextRetentionSweepAt`             | data (nullable)                            |
-| 44  | `defaultModelRouter`               | data (optional)                            |
-| 45  | `reviewCoordinator`                | data                                       |
-| 46  | `reviewWaiters`                    | data                                       |
-| 47  | `reviewWaitersByWorkflow`          | data                                       |
-| 48  | `reviewEscalationHandlers`         | data                                       |
-| 49  | `workflowReviewIds`                | data                                       |
-| 50  | `parkedInlineWorkflows`            | data                                       |
+| 44  | `reviewCoordinator`                | data                                       |
+| 45  | `reviewWaiters`                    | data                                       |
+| 46  | `reviewWaitersByWorkflow`          | data                                       |
+| 47  | `reviewEscalationHandlers`         | data                                       |
+| 48  | `workflowReviewIds`                | data                                       |
+| 49  | `parkedInlineWorkflows`            | data                                       |
 | 51  | `terminalizingWorkflows`           | data                                       |
 | 52  | `reviewTimerIds`                   | data                                       |
 | 53  | `pendingWebhooks`                  | data                                       |

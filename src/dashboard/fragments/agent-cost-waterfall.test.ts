@@ -1,15 +1,27 @@
 import { describe, expect, it } from 'bun:test';
 
-import { computeWaterfallBars } from './agent-cost-waterfall';
+import {
+  buildTurnUsageRows,
+  buildTurnUsageRowsFromTurnData,
+  type TurnUsageEntry,
+} from './agent-cost-waterfall';
 import type { AgentTurnData } from './agent-turn-types.ts';
 
-function makeTurn(turnIndex: number, model: string, cost: number): AgentTurnData {
+function makeEntry(
+  turnNumber: number,
+  inputTokens: number | null,
+  outputTokens: number | null,
+  source: 'provider' | 'unavailable',
+): TurnUsageEntry {
+  return { turnNumber, inputTokens, outputTokens, source };
+}
+
+function makeTurn(turnIndex: number, inputTokens: number, outputTokens: number): AgentTurnData {
   return {
     turnIndex,
-    model,
-    inputTokens: 0,
-    outputTokens: 0,
-    cost,
+    model: 'claude',
+    inputTokens,
+    outputTokens,
     toolCalls: [],
     response: '',
     messages: [],
@@ -17,36 +29,52 @@ function makeTurn(turnIndex: number, model: string, cost: number): AgentTurnData
   };
 }
 
-describe('computeWaterfallBars', () => {
-  it('returns an empty array for no turns', () => {
-    expect(computeWaterfallBars([])).toEqual([]);
+describe('buildTurnUsageRows', () => {
+  it('returns an empty array for no entries', () => {
+    expect(buildTurnUsageRows([])).toEqual([]);
   });
 
-  it('renders a single turn at 100 percent', () => {
-    const bars = computeWaterfallBars([makeTurn(0, 'claude', 0.05)]);
-    expect(bars.length).toBe(1);
-    expect(bars[0]?.widthPercentage).toBe(100);
-    expect(bars[0]?.cost).toBe(0.05);
-  });
-
-  it('normalizes multiple turns relative to the maximum cost', () => {
-    const bars = computeWaterfallBars([
-      makeTurn(0, 'claude', 0.02),
-      makeTurn(1, 'claude', 0.04),
-      makeTurn(2, 'claude', 0.01),
+  it('maps provider entries with numeric tokens', () => {
+    const rows = buildTurnUsageRows([makeEntry(0, 120, 80, 'provider')]);
+    expect(rows).toEqual([
+      { turnNumber: 0, inputTokens: 120, outputTokens: 80, unavailable: false },
     ]);
-    expect(bars[0]?.widthPercentage).toBeCloseTo(50);
-    expect(bars[1]?.widthPercentage).toBeCloseTo(100);
-    expect(bars[2]?.widthPercentage).toBeCloseTo(25);
   });
 
-  it('emits zero widths when every turn cost is zero', () => {
-    const bars = computeWaterfallBars([makeTurn(0, 'a', 0), makeTurn(1, 'b', 0)]);
-    expect(bars.every((bar) => bar.widthPercentage === 0)).toBe(true);
+  it('marks unavailable entries with null tokens and unavailable flag', () => {
+    const rows = buildTurnUsageRows([makeEntry(1, null, null, 'unavailable')]);
+    expect(rows).toEqual([
+      { turnNumber: 1, inputTokens: null, outputTokens: null, unavailable: true },
+    ]);
   });
 
-  it('formats the aria label with turn number, model, and four-decimal cost', () => {
-    const bars = computeWaterfallBars([makeTurn(2, 'claude-sonnet-4', 0.0142)]);
-    expect(bars[0]?.ariaLabel).toBe('Turn 3, model claude-sonnet-4, $0.0142');
+  it('handles mixed provider and unavailable entries', () => {
+    const entries: TurnUsageEntry[] = [
+      makeEntry(0, 100, 50, 'provider'),
+      makeEntry(1, null, null, 'unavailable'),
+      makeEntry(2, 200, 100, 'provider'),
+    ];
+    const rows = buildTurnUsageRows(entries);
+    expect(rows[0]?.unavailable).toBe(false);
+    expect(rows[1]?.unavailable).toBe(true);
+    expect(rows[2]?.unavailable).toBe(false);
+  });
+});
+
+describe('buildTurnUsageRowsFromTurnData', () => {
+  it('returns an empty array for no turns', () => {
+    expect(buildTurnUsageRowsFromTurnData([])).toEqual([]);
+  });
+
+  it('maps turn data to rows', () => {
+    const rows = buildTurnUsageRowsFromTurnData([makeTurn(0, 120, 80)]);
+    expect(rows).toEqual([
+      { turnNumber: 0, inputTokens: 120, outputTokens: 80, unavailable: false },
+    ]);
+  });
+
+  it('marks turns with zero tokens as unavailable', () => {
+    const rows = buildTurnUsageRowsFromTurnData([makeTurn(1, 0, 0)]);
+    expect(rows[0]?.unavailable).toBe(true);
   });
 });
