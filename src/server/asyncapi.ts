@@ -14,9 +14,9 @@ import {
 import { isDiscoverable } from './discovery-filter.ts';
 import { applyDiscoveryInfo, type DiscoveryInfo } from './discovery-info.ts';
 import {
-  asPlainObject,
   compareStrings,
   isPlainObject,
+  normalizeJsonObject,
   zodToJsonSchema,
 } from './json-schema-utilities.ts';
 import { canonicalJson } from './openapi-canonical-json.ts';
@@ -136,10 +136,7 @@ function applyAsyncApiDocumentOptions(
 ): void {
   if (options.serverUrl !== undefined) {
     document['servers'] = {
-      default: {
-        host: serverHost(options.serverUrl),
-        protocol: 'ws',
-      },
+      default: createAsyncApiServer(options.serverUrl),
     };
   }
   if (options.discoveryInfo?.externalDocs !== undefined) {
@@ -183,15 +180,18 @@ function replaceMessageReferences(value: unknown, aliases: ReadonlyMap<string, s
   return replaced;
 }
 
-function serverHost(serverUrl: string): string {
+function createAsyncApiServer(serverUrl: string): Record<string, string> {
   try {
-    return new URL(serverUrl).host;
+    const parsedServerUrl = new URL(serverUrl);
+    return {
+      host: parsedServerUrl.host,
+      protocol:
+        parsedServerUrl.protocol === 'https:' || parsedServerUrl.protocol === 'wss:' ? 'wss' : 'ws',
+    };
   } catch {
-    return serverUrl;
+    return {
+      host: serverUrl,
+      protocol: 'ws',
+    };
   }
-}
-
-function normalizeJsonObject(value: unknown): Record<string, unknown> {
-  const parsed: unknown = JSON.parse(canonicalJson(value));
-  return asPlainObject(parsed);
 }

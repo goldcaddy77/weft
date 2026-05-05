@@ -7,7 +7,7 @@
 import { z } from 'zod';
 
 import { isDiscoverable } from './discovery-filter.ts';
-import { asPlainObject, compareStrings, zodToJsonSchema } from './json-schema-utilities.ts';
+import { compareStrings, normalizeJsonObject, zodToJsonSchema } from './json-schema-utilities.ts';
 import { canonicalJson } from './openapi-canonical-json.ts';
 import type { OperationRegistry } from './operation-catalog.ts';
 
@@ -128,9 +128,4 @@ function operationSlotToComponentName(operationName: string, slot: OpenApiSchema
       .map((segment) => `${segment.charAt(0).toUpperCase()}${segment.slice(1)}`)
       .join('') + slot
   );
-}
-
-function normalizeJsonObject(value: Record<string, unknown>): Record<string, unknown> {
-  const parsed: unknown = JSON.parse(canonicalJson(value));
-  return asPlainObject(parsed);
 }
