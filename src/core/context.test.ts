@@ -10,6 +10,7 @@ import {
   type StreamReference,
   type StreamSink,
 } from './context.ts';
+import { BranchTopologyChangedError } from './context/parallel-operations.ts';
 import {
   MAX_SESSION_STATE_SERIALIZED_BYTES,
   SessionStateValidationError,
@@ -416,7 +417,12 @@ describe('Context', () => {
             0,
             {
               __weftParallelOperationCache: true,
-              result: ['cached-a', 'cached-b'],
+              formatVersion: 2,
+              variant: 'all',
+              branches: [
+                { status: 'fulfilled', value: 'cached-a', operationId: 'parallel:0:0' },
+                { status: 'fulfilled', value: 'cached-b', operationId: 'parallel:0:1' },
+              ],
               subOperationCount: 2,
             },
           ],
@@ -433,6 +439,27 @@ describe('Context', () => {
       const nextStep = context.run(task).next();
       expect(nextStep.done).toBe(true);
       expect(nextStep.value).toBe('next-cached-result');
+    });
+
+    it('throws when a cached all entry has a malformed branch table', () => {
+      const context = createContext({
+        accumulatedResults: new Map<number, unknown>([
+          [
+            0,
+            {
+              __weftParallelOperationCache: true,
+              formatVersion: 2,
+              variant: 'all',
+              branches: [{ status: 'fulfilled', value: 'cached-a', operationId: 'parallel:0:0' }],
+              subOperationCount: 2,
+            },
+          ],
+        ]),
+      });
+
+      const generator = context.all([context.run(taskA), context.run(taskB)]);
+
+      expect(() => generator.next()).toThrow(BranchTopologyChangedError);
     });
   });
 
@@ -472,7 +499,9 @@ describe('Context', () => {
             0,
             {
               __weftParallelOperationCache: true,
-              result: 'winner',
+              formatVersion: 2,
+              variant: 'race',
+              branches: [{ status: 'fulfilled', value: 'winner', operationId: 'race:0:winner' }],
               subOperationCount: 2,
             },
           ],
@@ -489,6 +518,27 @@ describe('Context', () => {
       const nextStep = context.run(task).next();
       expect(nextStep.done).toBe(true);
       expect(nextStep.value).toBe('next-cached-result');
+    });
+
+    it('throws when cached race branch count changes on replay', () => {
+      const context = createContext({
+        accumulatedResults: new Map<number, unknown>([
+          [
+            0,
+            {
+              __weftParallelOperationCache: true,
+              formatVersion: 2,
+              variant: 'race',
+              branches: [{ status: 'fulfilled', value: 'winner', operationId: 'race:0:winner' }],
+              subOperationCount: 2,
+            },
+          ],
+        ]),
+      });
+
+      const generator = context.race([context.run(taskA), context.run(taskB), context.run(task)]);
+
+      expect(() => generator.next()).toThrow(BranchTopologyChangedError);
     });
   });
 
@@ -813,7 +863,9 @@ describe('Context', () => {
       const request = expectRequest(generator.next(), 'run-all');
 
       expect(request.branches).toBe(branches);
-      expect(request.operationId).toMatch(UUID_PATTERN);
+      // Operation IDs are deterministic (`run-all:<step>`) for stable
+      // observability across retries.
+      expect(request.operationId).toBe('run-all:0');
     });
 
     it('on recovery returns cached result without yielding', () => {

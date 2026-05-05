@@ -1,5 +1,9 @@
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
+import {
+  captureFirstRejection,
+  createFirstRejectionCapture,
+} from './engine/parallel-dispatch.ts';
 import type { AgentInterception } from './interceptor.ts';
 
 /** Apply callback handlers provided by an agent interceptor to the active interception. */
@@ -71,6 +75,61 @@ export async function cleanupPartialStreamChunks(
   await storage.batch(deleteOperations).catch((deleteError: unknown) => {
     onCleanupError('cleanupPartialStreamChunks', deleteError, workflowId);
   });
+}
+
+/**
+ * Settled outcome for a single `ctx.runAll` branch. Returned by
+ * `executeRunAllBranchesSettled` so callers can record partial-failure
+ * state in the parent operation's cache entry before propagating the
+ * first rejection.
+ */
+export type RunAllBranchOutcome =
+  | { status: 'fulfilled'; name: string; value: unknown }
+  | { status: 'rejected'; name: string; reason: unknown };
+
+/**
+ * Result of `executeRunAllBranchesSettled`. `firstError` carries the
+ * original rejection reason captured by settlement timing (matching
+ * native `Promise.all` behavior — whichever branch rejects first at
+ * runtime, not whichever appears first in branch insertion order).
+ * `hasFirstError` distinguishes "no rejection" from "rejected with
+ * `undefined`" (a workflow that threw `undefined` explicitly).
+ */
+export type RunAllSettledResult = {
+  outcomes: RunAllBranchOutcome[];
+  hasFirstError: boolean;
+  firstError: unknown;
+};
+
+/**
+ * Execute every `ctx.runAll()` branch and return per-branch settled
+ * outcomes plus the first rejection captured by settlement timing.
+ * Never rejects: callers inspect the result and decide how to surface
+ * failure. Used by the top-level run-all dispatch path so fulfilled
+ * branches can be persisted before any rejection propagates.
+ *
+ * The first-rejection-by-settlement-timing contract is shared with
+ * `dispatchBranchesAllSettled` via the `FirstRejectionCapture` helper
+ * to keep both fan-out paths consistent.
+ */
+export async function executeRunAllBranchesSettled(
+  branches: Record<string, [fn: Function, ...args: unknown[]]>,
+  callActivity: (fn: Function, args: unknown[]) => unknown,
+): Promise<RunAllSettledResult> {
+  const entries = Object.entries(branches);
+  const capture = createFirstRejectionCapture();
+  const outcomes = await Promise.all(
+    entries.map(async ([name, [fn, ...args]]): Promise<RunAllBranchOutcome> => {
+      try {
+        const value = await callActivity(fn, args);
+        return { status: 'fulfilled', name, value };
+      } catch (error) {
+        captureFirstRejection(capture, error);
+        return { status: 'rejected', name, reason: error };
+      }
+    }),
+  );
+  return { outcomes, hasFirstError: capture.hasFirstError, firstError: capture.firstError };
 }
 
 /** Execute the `ctx.runAll()` branches and return a name-keyed result record. */

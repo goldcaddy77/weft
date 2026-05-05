@@ -8,7 +8,7 @@ import type {
   WorkflowStartInterception,
 } from '../core/interceptor';
 import type { MetricsCollector as MetricsCollectorClass } from './metrics';
-import type { OtelApi, OtelSpan, OtelTracer } from './no-op-telemetry';
+import type { OpenTelemetryApi, OpenTelemetrySpan, OpenTelemetryTracer } from './no-op-telemetry';
 
 /**
  * Union of all interception context types the attributeExtractor receives.
@@ -39,7 +39,7 @@ export type InterceptionContext =
  * workflow and activity interceptors that propagate W3C trace context and emit
  * OpenTelemetry spans.
  *
- * All fields are optional. Omit `otelApi` in production — it is auto-detected
+ * All fields are optional. Omit `openTelemetryApi` in production — it is auto-detected
  * from `@opentelemetry/api` when installed, and all operations fall back to
  * no-ops when it is absent. Pass your `Engine` instance as `eventTarget` so
  * root workflow spans are closed correctly on terminal lifecycle events.
@@ -80,11 +80,11 @@ export type ObservabilityOptions = {
   /** Metrics collector for recording counters, histograms, and gauges. */
   metrics?: MetricsCollectorClass;
   /**
-   * Override the OTel API instance used by the interceptors.
-   * Primarily for testing—production code should omit this so `getOtelApi()`
+   * Override the OpenTelemetry API instance used by the interceptors.
+   * Primarily for testing—production code should omit this so `getOpenTelemetryApi()`
    * auto-detects whether `@opentelemetry/api` is installed.
    */
-  otelApi?: OtelApi;
+  openTelemetryApi?: OpenTelemetryApi;
   /**
    * Event target that the engine dispatches lifecycle events on.
    *
@@ -94,13 +94,13 @@ export type ObservabilityOptions = {
   eventTarget?: EventTarget;
 };
 
-export type WorkflowSpanEntry = { span: OtelSpan; createdAt: number };
+export type WorkflowSpanEntry = { span: OpenTelemetrySpan; createdAt: number };
 
 export type ObservabilityState = {
-  readonly api: OtelApi;
-  readonly trace: OtelApi['trace'];
-  readonly SpanStatusCode: OtelApi['SpanStatusCode'];
-  readonly tracer: OtelTracer;
+  readonly api: OpenTelemetryApi;
+  readonly trace: OpenTelemetryApi['trace'];
+  readonly SpanStatusCode: OpenTelemetryApi['SpanStatusCode'];
+  readonly tracer: OpenTelemetryTracer;
   readonly recordPayloads: boolean;
   readonly maxPayloadSize: number;
   readonly attributeExtractor: ObservabilityOptions['attributeExtractor'] | undefined;

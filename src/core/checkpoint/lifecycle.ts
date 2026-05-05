@@ -1,4 +1,5 @@
 import type { Checkpoint, SearchAttributeValue, Serializer, WorkflowId } from '../types.ts';
+import { CURRENT_CHECKPOINT_SCHEMA_VERSION } from '../types/checkpoint.ts';
 import { serializeCheckpoint } from './serialization.ts';
 
 /**
@@ -27,6 +28,7 @@ export function createCheckpoint(
     pendingSignals: [],
     searchAttributes: {},
     version,
+    schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
     createdAt: now ?? Date.now(),
   };
 }
@@ -64,6 +66,7 @@ export function advanceCheckpoint(
       ...options?.searchAttributes,
     },
     version: checkpoint.version,
+    schemaVersion: checkpoint.schemaVersion,
     createdAt: options?.now ?? Date.now(),
   };
 }

@@ -34,8 +34,49 @@ export interface Checkpoint {
   accumulatedResults: Array<[number, unknown]>;
   pendingSignals: string[];
   searchAttributes: Record<string, SearchAttributeValue>;
+  /** User-defined workflow code version. Used for code migrations. */
   version: string;
+  /**
+   * Checkpoint schema version. Distinct from `version` (which is the
+   * user's workflow code version). Bumped whenever the engine changes
+   * the on-disk checkpoint format. Pre-1.0: refuse to load older
+   * versions; post-1.0: every bump must ship a migration.
+   */
+  schemaVersion: number;
   createdAt: number;
+}
+
+/**
+ * Current checkpoint schema version. Skipped from `1` to `2` to make the
+ * discontinuity unambiguous — pre-versioned checkpoints (no field) are
+ * conceptually `< 1`, and v2 introduces the `ParallelOperationCacheEntry`
+ * format with per-branch slots for `ctx.all` / `ctx.runAll` partial
+ * persistence.
+ */
+export const CURRENT_CHECKPOINT_SCHEMA_VERSION = 2;
+
+/**
+ * Thrown by `validateCheckpointShape` when a checkpoint's
+ * `schemaVersion` does not match the engine's current version. Pre-1.0
+ * we refuse to load mismatched checkpoints rather than migrating.
+ */
+export class CheckpointSchemaVersionError extends Error {
+  override readonly name = 'CheckpointSchemaVersionError';
+  constructor(
+    public readonly found: number | 'pre-versioned',
+    public readonly expected: number,
+  ) {
+    super(
+      found === 'pre-versioned'
+        ? `Checkpoint has no schemaVersion field (pre-versioned format); engine expects schemaVersion ${expected}. ` +
+            `Pre-1.0: in-flight workflows must be drained before upgrade.`
+        : found > expected
+          ? `Checkpoint schemaVersion ${found} is newer than engine version ${expected}. ` +
+            `The engine is too old to read this checkpoint.`
+          : `Checkpoint schemaVersion ${found} is older than engine version ${expected}. ` +
+            `Pre-1.0: in-flight workflows must be drained before upgrade.`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

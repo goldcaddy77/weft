@@ -253,6 +253,9 @@ function resolveToSourceDeclaration(
     current = next;
   }
   // Bun-barrel workaround: `const exportedX = X; export { exportedX as X }`.
+  // `exportedX` resolves to a non-alias variable symbol, but its initializer
+  // is the original class/function. Follow the initializer chain to reach
+  // the underlying source declaration.
   while (
     current.flags & ts.SymbolFlags.Variable &&
     !seen.has(current) &&
