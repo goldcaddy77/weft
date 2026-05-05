@@ -75,25 +75,18 @@ function normalize(value: unknown): unknown {
 }
 
 /**
- * Error-response fixtures normalize the free-form `message` (Zod produces
- * dynamic strings per validation case) and `data` (issues array shape
- * drifts across Zod versions). The fixture pins the wire envelope shape
- * (`jsonrpc`, `id`, `error.code`); the message and data carry test-
- * version-specific detail.
+ * Error-response normalization. Only `subscriptionId`, `cursor`,
+ * `workflowId`, and `emittedAtMs` are non-deterministic and replaced
+ * with placeholders by the tree walker. `error.message` and `error.data`
+ * are PRESERVED in the fixture so a Zod issue-shape regression is
+ * caught (per Codex round-3 / round-4 feedback). If a future Zod upgrade
+ * legitimately changes the error shape, the fixture is updated in the
+ * same commit so the wire contract is reviewed end-to-end.
  */
 function normalizeErrorEnvelope(value: unknown): unknown {
-  if (value === null || typeof value !== 'object') return value;
-  const v = value as Record<string, unknown>;
-  if (v['error'] === null || typeof v['error'] !== 'object') return value;
-  const error = v['error'] as Record<string, unknown>;
-  return {
-    ...v,
-    error: {
-      code: error['code'],
-      message: '<error-message>',
-      data: '<error-data>',
-    },
-  };
+  // Reuse the standard tree walker; nothing inside an error envelope is
+  // non-deterministic in the same way subscription IDs are.
+  return normalize(value);
 }
 
 function makeEmitter(): JsonRpcWebSocketEmitter & { sent: string[] } {

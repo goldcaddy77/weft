@@ -87,7 +87,7 @@ describe('API catalog linkset', () => {
     expect(originFromRequest(request)).toBe('https://api.example.com');
   });
 
-  it('serves the route as application/linkset+json', async () => {
+  it('serves the route as application/linkset+json when configured with publicOrigin', async () => {
     engine = createEngine();
     const response = await handleRequest(
       new Request('https://api.example.com/.well-known/api-catalog', {
@@ -97,6 +97,7 @@ describe('API catalog linkset', () => {
         },
       }),
       engine,
+      { publicOrigin: 'https://api.example.com' },
     );
 
     expect(response.status).toBe(200);
@@ -118,9 +119,15 @@ describe('API catalog linkset', () => {
     expect(body.linkset?.[0]?.anchor).toBe('https://api.example.com');
   });
 
-  it('warns once when publicOrigin is unset and the route falls back to request-derived origin', async () => {
+  it('warns once when NODE_ENV=development and publicOrigin is unset', async () => {
+    // The unsafe Host-derived fallback is opt-in via NODE_ENV=development
+    // (or WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN=1). When opted in, the
+    // route logs a one-shot warning so operators see the misconfiguration
+    // before they ship.
     engine = createEngine();
     resetPublicOriginWarningForTesting();
+    const originalNodeEnv = Bun.env['NODE_ENV'];
+    Bun.env['NODE_ENV'] = 'development';
     const originalWarn = console.warn;
     const warnings: string[] = [];
     console.warn = (...args: unknown[]) => {
@@ -131,6 +138,8 @@ describe('API catalog linkset', () => {
       await handleRequest(new Request('https://api.example.com/.well-known/api-catalog'), engine);
     } finally {
       console.warn = originalWarn;
+      if (originalNodeEnv !== undefined) Bun.env['NODE_ENV'] = originalNodeEnv;
+      else delete Bun.env['NODE_ENV'];
     }
     const matching = warnings.filter((line) =>
       line.includes('/.well-known/api-catalog: `publicOrigin` is not configured'),
@@ -158,14 +167,17 @@ describe('API catalog linkset', () => {
     expect(matching).toHaveLength(0);
   });
 
-  it('returns 503 in production when neither publicOrigin nor trustedHosts is configured', async () => {
-    // Closes Codex round-3 finding: a one-shot warning is not mitigation.
-    // Bun.serve() resolves request.url from the Host header, so without
-    // publicOrigin or trustedHosts the route would emit attacker-supplied
-    // URLs. In production the route refuses to serve.
+  it('returns 503 by default when neither publicOrigin nor trustedHosts is configured', async () => {
+    // Default-secure: the unsafe Host-derived fallback is opt-in. NODE_ENV
+    // unset (or any value other than 'development'), with no
+    // WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN override, refuses to serve.
+    // Closes Codex round-4 finding: a `production`-only check was too
+    // narrow because deployments use staging/prod/preview/unset.
     engine = createEngine();
     const originalNodeEnv = Bun.env['NODE_ENV'];
-    Bun.env['NODE_ENV'] = 'production';
+    const originalOverride = Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'];
+    delete Bun.env['NODE_ENV'];
+    delete Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'];
     try {
       const response = await handleRequest(
         new Request('https://attacker.example/.well-known/api-catalog'),
@@ -177,7 +189,55 @@ describe('API catalog linkset', () => {
       expect(body.error).toContain('trustedHosts');
     } finally {
       if (originalNodeEnv !== undefined) Bun.env['NODE_ENV'] = originalNodeEnv;
+      if (originalOverride !== undefined) {
+        Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'] = originalOverride;
+      }
+    }
+  });
+
+  it('returns 503 when NODE_ENV=staging without publicOrigin/trustedHosts (not just NODE_ENV=production)', async () => {
+    // Codex round-4: the previous narrow `production`-only check let
+    // staging/prod/preview deployments fall through to the unsafe path.
+    // This test pins the default-secure behavior for non-development
+    // NODE_ENV values.
+    engine = createEngine();
+    const originalNodeEnv = Bun.env['NODE_ENV'];
+    Bun.env['NODE_ENV'] = 'staging';
+    try {
+      const response = await handleRequest(
+        new Request('https://attacker.example/.well-known/api-catalog'),
+        engine,
+      );
+      expect(response.status).toBe(503);
+    } finally {
+      if (originalNodeEnv !== undefined) Bun.env['NODE_ENV'] = originalNodeEnv;
       else delete Bun.env['NODE_ENV'];
+    }
+  });
+
+  it('serves the route when WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN=1 is the explicit operator override', async () => {
+    // Documented escape hatch for testbeds and CI environments that
+    // need the route to operate without configuring publicOrigin /
+    // trustedHosts.
+    engine = createEngine();
+    resetPublicOriginWarningForTesting();
+    const originalNodeEnv = Bun.env['NODE_ENV'];
+    const originalOverride = Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'];
+    delete Bun.env['NODE_ENV'];
+    Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'] = '1';
+    try {
+      const response = await handleRequest(
+        new Request('https://api.example.com/.well-known/api-catalog'),
+        engine,
+      );
+      expect(response.status).toBe(200);
+    } finally {
+      if (originalNodeEnv !== undefined) Bun.env['NODE_ENV'] = originalNodeEnv;
+      if (originalOverride !== undefined) {
+        Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'] = originalOverride;
+      } else {
+        delete Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'];
+      }
     }
   });
 

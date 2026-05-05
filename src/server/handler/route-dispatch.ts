@@ -194,16 +194,28 @@ export const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
         headers: { 'Content-Type': 'application/linkset+json' },
       });
     }
-    // Neither publicOrigin nor trustedHosts configured. In production
-    // refuse to serve absolute discovery URLs because Bun.serve resolves
-    // request.url from the (attacker-controllable) Host header. In
-    // development, fall back to the request origin and warn loudly so
-    // operators see the misconfiguration in logs before they ship.
-    if (Bun.env['NODE_ENV'] === 'production') {
+    // Neither publicOrigin nor trustedHosts configured. Bun.serve()
+    // resolves `request.url` from the incoming Host header (which an
+    // attacker controls), so deriving absolute service-desc URLs from
+    // the request is unsafe by default.
+    //
+    // We REFUSE the route by default and only fall back to header-
+    // derived origins when the operator has explicitly opted in. The
+    // earlier check (NODE_ENV === 'production' → refuse) was too narrow:
+    // deployments commonly set NODE_ENV=staging / prod / preview or
+    // leave it unset while still being internet-facing. Default-secure
+    // means they all get the refusal. The two opt-in escape hatches are:
+    //
+    //   - NODE_ENV='development' — explicit dev-quickstart signal.
+    //   - WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN=1 — explicit
+    //     "I know what I'm doing" override for testbeds and CI.
+    const isDevelopment = Bun.env['NODE_ENV'] === 'development';
+    const operatorOverride = Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'] === '1';
+    if (!isDevelopment && !operatorOverride) {
       return new Response(
         JSON.stringify({
           error:
-            "/.well-known/api-catalog refuses to emit absolute service-desc URLs without one of `publicOrigin` or `trustedHosts` configured. Set `serve({ publicOrigin: 'https://api.example.com' })` or `serve({ trustedHosts: ['api.example.com'] })`.",
+            "/.well-known/api-catalog refuses to emit absolute service-desc URLs without one of `publicOrigin` or `trustedHosts` configured. Set `serve({ publicOrigin: 'https://api.example.com' })` or `serve({ trustedHosts: ['api.example.com'] })`. For local development, set NODE_ENV=development; for CI/test overrides set WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN=1.",
         }),
         { status: 503, headers: { 'Content-Type': 'application/json; charset=utf-8' } },
       );
