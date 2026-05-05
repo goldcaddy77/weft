@@ -1,3 +1,23 @@
+/**
+ * Fired when the agent's conversation snapshot crosses the configured
+ * `checkpointSizeWarningThreshold` (default 64 KB). Carries `sizeBytes` and
+ * the `turnIndex` so consumers can correlate the warning with a specific
+ * turn boundary and decide whether to compact the conversation upstream.
+ *
+ * @example Listen for size-warning events on the engine event target
+ * ```ts
+ * import { AgentCheckpointSizeWarningEvent } from 'weft';
+ *
+ * const target = new EventTarget();
+ *
+ * target.addEventListener(AgentCheckpointSizeWarningEvent.type, (e) => {
+ *   const event = e as AgentCheckpointSizeWarningEvent;
+ *   console.warn(
+ *     `Agent ${event.agentId} reached ${event.sizeBytes} bytes at turn ${event.turnIndex}`,
+ *   );
+ * });
+ * ```
+ */
 export class AgentCheckpointSizeWarningEvent extends Event {
   static readonly type = 'agent:checkpoint-size-warning' as const;
   readonly workflowId: string;

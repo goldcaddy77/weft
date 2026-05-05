@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 
-import type { ActivityExecutionInterception, ActivityInterception } from './interception-contexts.ts';
+import type {
+  ActivityExecutionInterception,
+  ActivityInterception,
+} from './interception-contexts.ts';
 import type { Interceptor } from './interceptor-interfaces.ts';
 import { splitInterceptors } from './split.ts';
 

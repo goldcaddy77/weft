@@ -1,4 +1,4 @@
-import type { Message } from '../providers/types.ts';
+import type { Message } from '../agent/types.ts';
 
 /** Summarize a conversation to a single string (for context forwarding). */
 export function summarizeConversation(messages: Message[]): string {

@@ -8,7 +8,6 @@
  * @module client/local
  */
 
-import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
 import type { Engine, ScheduleHandle, WorkflowHandle } from '../core/engine.ts';
 import type {
   BulkCancelResult,
@@ -289,14 +288,6 @@ export class LocalClient implements WeftClient {
 
   async submitReview(reviewId: string, options: SubmitReviewOptions): Promise<void> {
     return this.#engine.submitReview(reviewId, options);
-  }
-
-  async setBudgetPolicy(options: BudgetPolicyOptions): Promise<void> {
-    return this.#engine.setBudgetPolicy(options);
-  }
-
-  async getBudgetPolicy(namespace: string): Promise<BudgetPolicyOptions | null> {
-    return this.#engine.getBudgetPolicy(namespace);
   }
 
   async getQuotaUsage(tenantId: string): Promise<TenantQuotaUsage> {

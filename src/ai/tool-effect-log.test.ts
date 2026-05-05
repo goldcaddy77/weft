@@ -17,8 +17,7 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 import { MemoryStorage } from '../storage/memory';
 import type { AgentTool } from './agent';
 import { executeAgentLoop } from './agent';
-import type { LLMProvider } from './providers/interface';
-import type { ChatResponse } from './providers/types';
+import type { ChatResponse, LLMProvider } from './agent/types.ts';
 import { computeSemanticHash, ToolCallReplayConflictError, ToolEffectLog } from './tool-effect-log';
 
 // ---------------------------------------------------------------------------
@@ -372,12 +371,6 @@ function createSingleToolProvider(toolName: string, toolInput: unknown): LLMProv
         stopReason: 'end_turn',
       };
     },
-    async stream() {
-      return new ReadableStream();
-    },
-    async countTokens() {
-      return 100;
-    },
   };
 }
 
@@ -570,38 +563,6 @@ describe('effect log: dangling in-flight guard', () => {
       'Go',
     );
 
-    const entry = await effectLog.lookup(hash);
-    expect(entry?.status).toBe('aborted');
-  });
-
-  it('aborts the in-flight record when resolveToolExecutionInner throws', async () => {
-    const storage = new MemoryStorage();
-    const effectLog = new ToolEffectLog(storage, 'wf-throw', 'agent-throw');
-
-    const tool = createSimpleTool('boom');
-    const provider = createSingleToolProvider('boom', {});
-
-    // afterToolCall hook throws — this propagates out of resolveToolExecutionInner
-    // since the hook is called without a surrounding try/catch there.
-    await expect(
-      executeAgentLoop(
-        {
-          model: 'test-model',
-          provider,
-          tools: [tool],
-          toolEffectLog: effectLog,
-          hooks: {
-            afterToolCall: async () => {
-              throw new Error('hook failure');
-            },
-          },
-        },
-        'Go',
-      ),
-    ).rejects.toThrow('hook failure');
-
-    // The in-flight record must have been aborted — not left dangling
-    const hash = computeSemanticHash({ name: 'boom', input: {} });
     const entry = await effectLog.lookup(hash);
     expect(entry?.status).toBe('aborted');
   });

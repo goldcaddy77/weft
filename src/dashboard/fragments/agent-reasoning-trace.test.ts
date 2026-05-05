@@ -9,7 +9,6 @@ function makeTurn(turnIndex: number, reasoningTrace: string, model = 'claude'): 
     model,
     inputTokens: 0,
     outputTokens: 0,
-    cost: 0,
     toolCalls: [],
     response: '',
     messages: [],

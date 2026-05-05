@@ -1,4 +1,3 @@
-import type { BudgetOptions, BudgetState } from '../../ai/budget.ts';
 import type {
   DebateOptions,
   DebateResult,
@@ -6,7 +5,7 @@ import type {
   HandoffResult,
   SuperviseOptions,
   SuperviseResult,
-} from '../../ai/coordination.ts';
+} from '../../ai/coordination/index.ts';
 import type { HumanReviewOptions, HumanReviewResult } from '../../ai/human-review.ts';
 import {
   cloneSessionStateStore,
@@ -29,7 +28,6 @@ import type {
 } from '../types.ts';
 import * as aiOperations from './ai-operations.ts';
 import * as contextAttributes from './attributes.ts';
-import * as contextBudget from './budget.ts';
 import * as childWorkflowPipe from './child-workflow-pipe.ts';
 import * as durableOperations from './durable-operations.ts';
 import { getInternals, initializeInternals } from './internals.ts';
@@ -186,7 +184,6 @@ export class Context implements WorkflowContext {
     childInternals.memoCache =
       internals.memoCache !== undefined ? new Map(internals.memoCache) : undefined;
     childInternals.explainMode = internals.explainMode;
-    childInternals.budgetTracker = internals.budgetTracker?.clone();
     return child;
   }
   commitSpeculativeChild(child: Context): void {
@@ -217,7 +214,6 @@ export class Context implements WorkflowContext {
         : undefined;
     internals.memoCache =
       childInternals.memoCache !== undefined ? new Map(childInternals.memoCache) : undefined;
-    internals.budgetTracker = childInternals.budgetTracker;
     internals.sleepReferenceTime = childInternals.sleepReferenceTime;
   }
   sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T> {
@@ -429,17 +425,6 @@ export class Context implements WorkflowContext {
     options: SuperviseOptions,
   ): Generator<ContextOperationRequest, SuperviseResult, unknown> {
     return yield* aiOperations.supervise(this, getInternals(this), options);
-  }
-  setBudget(options: BudgetOptions): void {
-    contextBudget.setBudget(getInternals(this), options);
-  }
-  budgetRemaining(): BudgetState | undefined {
-    return contextBudget.budgetRemaining(getInternals(this));
-  }
-  budgetProjection():
-    | { estimatedTurnsRemaining: number; estimatedCostAtCompletion: number }
-    | undefined {
-    return contextBudget.budgetProjection(getInternals(this));
   }
   setAttribute(key: string, value: SearchAttributeValue): void {
     contextAttributes.setAttribute(getInternals(this), key, value);

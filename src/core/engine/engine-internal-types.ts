@@ -1,4 +1,4 @@
-import type { LLMProvider } from '../../ai/providers/interface.ts';
+import type { LLMProvider } from '../../ai/agent/index.ts';
 import type { Storage as WeftStorage } from '../../storage/interface.ts';
 import type { ConstraintDefinition } from '../constraint.ts';
 import type { ExecutionStrategy } from '../execution-strategy.ts';

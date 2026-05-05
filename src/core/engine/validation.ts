@@ -236,9 +236,10 @@ export function normalizeScheduleFilter(
  * {@link import('../tenant.ts').TenantContext}. Returns true only when `tenant`
  * is `undefined`, or an object with a non-empty string `id` and (when present)
  * an `attributes` object. Defensive because `state.tenant` is fed directly
- * into agent `validateInput` and `toolsForTenant` hooks; a corrupt or tampered
- * storage record could otherwise inject a forged tenant identity into
- * security decisions.
+ * surfaced to workflow code as `ctx.tenant`; a corrupt or tampered storage
+ * record could otherwise inject a forged tenant identity into security
+ * decisions. AgentDefinition no longer carries central tenant validation or
+ * tool-scoping fields.
  *
  * `null` is rejected intentionally — the canonical "no tenant" value is
  * `undefined`. A stored `null` indicates corruption.

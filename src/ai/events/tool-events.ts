@@ -1,6 +1,6 @@
 /**
  * Fired immediately before a tool is executed within an agent turn. Carries the
- * tool name, raw input, source ('local' | 'mcp'), and a per-operation UUID that
+ * tool name, raw input, source ('local'), and a per-operation UUID that
  * correlates with the matching {@link AgentToolReturnedEvent}.
  *
  * @example Audit all tool calls with their inputs
@@ -22,7 +22,7 @@ export class AgentToolCalledEvent extends Event {
   readonly turnIndex: number;
   readonly toolName: string;
   readonly toolInput: unknown;
-  readonly source: 'local' | 'mcp';
+  readonly source: 'local';
   readonly operationId: string;
 
   constructor(
@@ -31,7 +31,7 @@ export class AgentToolCalledEvent extends Event {
     turnIndex: number,
     toolName: string,
     toolInput: unknown,
-    source: 'local' | 'mcp',
+    source: 'local',
     operationId: string,
   ) {
     super(AgentToolCalledEvent.type);
