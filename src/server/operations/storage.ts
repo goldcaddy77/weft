@@ -29,6 +29,13 @@ const storageWriteAccess: AccessPolicy = {
   scopes: { kind: 'anyOf', scopes: ['storage:write', 'storage:admin'] },
 };
 
+const httpOnlyStorageTransports = {
+  http: true,
+  jsonRpcHttp: false,
+  jsonRpcStdio: false,
+  jsonRpcWebSocket: false,
+} as const;
+
 async function authorizeStorageConditionalBatch({
   principal,
 }: {
@@ -124,14 +131,6 @@ function forbiddenUnscopedStorageFault(): OperationFault {
   };
 }
 
-function normalizedPrincipalTenantId(principal: Principal): string | undefined {
-  if (!isAuthenticated(principal) || principal.tenantId === undefined) {
-    return undefined;
-  }
-  const tenantId = principal.tenantId.trim();
-  return tenantId.length === 0 ? undefined : tenantId;
-}
-
 function resolveAuthorizedStorage(engine: Engine, principal: Principal): Storage {
   if (!isAuthenticated(principal)) {
     throw {
@@ -141,8 +140,8 @@ function resolveAuthorizedStorage(engine: Engine, principal: Principal): Storage
     } satisfies OperationFault;
   }
 
-  const tenantId = normalizedPrincipalTenantId(principal);
-  if (tenantId !== undefined) {
+  const tenantId = principal.tenantId?.trim();
+  if (tenantId !== undefined && tenantId.length > 0) {
     return scopedStorage(engine.storage, `tenant:${encodeStorageKeyComponent(tenantId)}`);
   }
 
@@ -307,7 +306,7 @@ export const storageGetOperation = defineOperation<StorageGetInput, Uint8Array |
   inputSchema: storageGetInput,
   outputSchema: storageGetOutput,
   access: storageReadAccess,
-  transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
+  transports: httpOnlyStorageTransports,
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }) => {
     const storage = resolveAuthorizedStorage(engine as Engine, principal);
@@ -322,7 +321,7 @@ export const storagePutOperation = defineOperation<StoragePutInput, null>({
   inputSchema: storagePutInput,
   outputSchema: emptyOutput,
   access: storageWriteAccess,
-  transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
+  transports: httpOnlyStorageTransports,
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }) => {
     const storage = resolveAuthorizedStorage(engine as Engine, principal);
@@ -338,7 +337,7 @@ export const storageDeleteOperation = defineOperation<StorageDeleteInput, null>(
   inputSchema: storageDeleteInput,
   outputSchema: emptyOutput,
   access: storageWriteAccess,
-  transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
+  transports: httpOnlyStorageTransports,
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }) => {
     const storage = resolveAuthorizedStorage(engine as Engine, principal);
@@ -354,7 +353,7 @@ export const storageScanOperation = defineOperation<StorageScanInput, StorageSca
   inputSchema: storageScanInput,
   outputSchema: storageScanOutput,
   access: storageReadAccess,
-  transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
+  transports: httpOnlyStorageTransports,
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }) => {
     const storage = resolveAuthorizedStorage(engine as Engine, principal);
@@ -369,7 +368,7 @@ export const storageBatchOperation = defineOperation<StorageBatchInput, null>({
   inputSchema: storageBatchInput,
   outputSchema: emptyOutput,
   access: storageWriteAccess,
-  transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
+  transports: httpOnlyStorageTransports,
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }) => {
     const storage = resolveAuthorizedStorage(engine as Engine, principal);
@@ -389,7 +388,7 @@ export const storageConditionalBatchOperation = defineOperation<
   outputSchema: storageConditionalBatchOutput,
   access: storageWriteAccess,
   authorize: authorizeStorageConditionalBatch,
-  transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
+  transports: httpOnlyStorageTransports,
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }) => {
     const storage = resolveAuthorizedStorage(engine as Engine, principal);

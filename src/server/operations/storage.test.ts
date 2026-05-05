@@ -4,6 +4,7 @@ import { Engine } from '../../core/engine.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { principalFromApiKey } from '../principal.ts';
+import { createLiveOperationRegistry } from '../rest-bindings.ts';
 
 function encode(value: string): Uint8Array {
   return new TextEncoder().encode(value);
@@ -88,6 +89,27 @@ function adminStorageOptions() {
 }
 
 describe('storage REST operations', () => {
+  it('exposes raw storage operations through REST only', () => {
+    const registry = createLiveOperationRegistry();
+    const storageOperationNames = [
+      'weft.storage.get',
+      'weft.storage.put',
+      'weft.storage.delete',
+      'weft.storage.scan',
+      'weft.storage.batch',
+      'weft.storage.conditionalbatch',
+    ];
+
+    for (const operationName of storageOperationNames) {
+      expect(registry.get(operationName)?.transports).toEqual({
+        http: true,
+        jsonRpcHttp: false,
+        jsonRpcStdio: false,
+        jsonRpcWebSocket: false,
+      });
+    }
+  });
+
   it('reads and writes bytes through tenant-scoped storage', async () => {
     const rawStorage = new MemoryStorage();
     const engine = new Engine({ storage: rawStorage });

@@ -105,7 +105,11 @@ describe('Track 8 discovery parity', () => {
     for (const pathItem of Object.values(openApiDocument.paths ?? {})) {
       for (const operation of Object.values(pathItem)) {
         if (operation.operationId?.startsWith('weft.')) {
-          expect(openRpcMethodNames.has(operation.operationId)).toBe(true);
+          const definition = registry.get(operation.operationId);
+          const expectsOpenRpcMethod =
+            definition?.transports.jsonRpcHttp === true ||
+            definition?.transports.jsonRpcWebSocket === true;
+          expect(openRpcMethodNames.has(operation.operationId)).toBe(expectsOpenRpcMethod);
         }
       }
     }

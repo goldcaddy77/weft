@@ -238,8 +238,8 @@ describe('WebExtensionStorage Chromium smoke', () => {
             `http://127.0.0.1:${server.port}/`,
           ],
           {
-            stderr: 'pipe',
-            stdout: 'pipe',
+            stderr: 'ignore',
+            stdout: 'ignore',
           },
         );
 
