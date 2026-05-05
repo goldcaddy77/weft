@@ -140,7 +140,14 @@ function extractListWorkflowsInput(request: Request): ListWorkflowsInput {
 
   const attributeFilters = parseAttributeFilters(url.searchParams);
   if (attributeFilters.length > 0) {
-    filter.attributes = attributeFilters;
+    filter.attributes = attributeFilters.map((attribute) => ({
+      key: attribute.key,
+      ...(attribute.value === undefined ? {} : { value: attribute.value }),
+      ...(attribute.gt === undefined ? {} : { gt: attribute.gt }),
+      ...(attribute.lt === undefined ? {} : { lt: attribute.lt }),
+      ...(attribute.gte === undefined ? {} : { gte: attribute.gte }),
+      ...(attribute.lte === undefined ? {} : { lte: attribute.lte }),
+    }));
   }
 
   return filter;

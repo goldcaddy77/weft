@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { sleepForTesting } from '../../testing/fake-timers.ts';
 
 import type { ChatResponse, LLMProvider } from '../../ai/agent/index.ts';
-import { defineAgent } from '../../ai/declaration.ts';
+import { agent as createAgentDefinition } from '../../ai/declaration.ts';
 import { KEYS } from '../../storage/interface.ts';
 import { TestEngine } from '../../testing/test-engine.ts';
 import { deserializeCheckpoint } from '../checkpoint.ts';
@@ -405,7 +405,7 @@ describe('workflow forking', () => {
       },
     };
 
-    const agent = defineAgent({ name: 'fork-warmup-agent', model: 'test-model' });
+    const agent = createAgentDefinition({ name: 'fork-warmup-agent', model: 'test-model' });
     engine.register(agent, { provider });
 
     const original = await engine.start('fork-warmup-agent', 'test', { id: 'wf-agent-fork-root' });

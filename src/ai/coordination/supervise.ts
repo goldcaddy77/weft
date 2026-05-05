@@ -12,13 +12,13 @@ import type { SuperviseOptions, SuperviseResult } from './types.ts';
  *
  * @example Run three workers in parallel and merge their answers
  * ```ts
- * import { supervise, defineAgent } from 'weft';
+ * import { supervise, agent } from 'weft';
  * import type { LLMProvider } from 'weft';
  *
  * declare const provider: LLMProvider;
  *
- * const worker     = defineAgent({ name: 'worker',     model: 'claude-haiku-3-5' });
- * const supervisor = defineAgent({ name: 'supervisor', model: 'claude-sonnet-4-5' });
+ * const worker     = agent({ name: 'worker',     model: 'claude-haiku-3-5' });
+ * const supervisor = agent({ name: 'supervisor', model: 'claude-sonnet-4-5' });
  *
  * const { finalResult, workerResults } = await supervise({
  *   workers: [worker, worker, worker],

@@ -38,8 +38,8 @@ export interface SagaStep<TInput = unknown, TOutput = unknown> {
 // be assigned to this erased interface.
 export interface ErasedActivityDefinition {
   name: string;
-  execute(...args: unknown[]): unknown;
-  compensate?(...args: unknown[]): unknown;
+  execute(input: unknown, context?: unknown): unknown;
+  compensate?(input: unknown, output?: unknown): unknown;
 }
 
 export interface ErasedSagaStep {

@@ -3,7 +3,7 @@ import { sleepForTesting, withTimeout } from '../testing/fake-timers.ts';
 
 import type { ChatResponse, LLMProvider } from '../ai/agent/index.ts';
 import type { PendingChatResumeState } from '../ai/agent/suspending-provider.ts';
-import { defineAgent } from '../ai/declaration.ts';
+import { agent as createAgentDefinition } from '../ai/declaration.ts';
 import type { ScanOptions, Storage as WeftStorage } from '../storage/interface.ts';
 import { encodeStorageKeyComponent, KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -95,7 +95,7 @@ describe('Engine', () => {
 
   it('simple workflow completes with ctx.run', async () => {
     const engine = new Engine();
-    const doubleActivity = async (...args: unknown[]) => (args[0] as number) * 2;
+    const doubleActivity = async (input: unknown) => (input as number) * 2;
 
     engine.register('double', async function* (ctx: WorkflowContext, input: unknown) {
       const result = yield* (ctx as Context).run(doubleActivity, input);
@@ -110,12 +110,12 @@ describe('Engine', () => {
 
   it('two-step workflow completes both ctx.run calls', async () => {
     const engine = new Engine();
-    const add = async (...args: unknown[]) => (args[0] as number) + (args[1] as number);
-    const multiply = async (...args: unknown[]) => (args[0] as number) * (args[1] as number);
+    const add = async (input: { left: number; right: number }) => input.left + input.right;
+    const multiply = async (input: { left: number; right: number }) => input.left * input.right;
 
     engine.register('math', async function* (ctx: WorkflowContext, input: unknown) {
-      const sum = yield* (ctx as Context).run(add, input, 3);
-      const product = yield* (ctx as Context).run(multiply, sum, 2);
+      const sum = yield* (ctx as Context).run(add, { left: input as number, right: 3 });
+      const product = yield* (ctx as Context).run(multiply, { left: sum, right: 2 });
       return product;
     });
 
@@ -4457,7 +4457,7 @@ describe('Engine', () => {
         },
       };
 
-      const agent = defineAgent({ name: 'tracked-agent-workflow', model: 'test-model' });
+      const agent = createAgentDefinition({ name: 'tracked-agent-workflow', model: 'test-model' });
       engine.register(agent, { provider });
 
       const handle = await engine.start('tracked-agent-workflow', null);
@@ -4500,7 +4500,7 @@ describe('Engine', () => {
       };
 
       const workflowId = 'cleanup-agent-workflow-id';
-      const agent = defineAgent({ name: 'cleanup-agent-workflow', model: 'test-model' });
+      const agent = createAgentDefinition({ name: 'cleanup-agent-workflow', model: 'test-model' });
       engine.register(agent, { provider });
 
       // The failing batch happens after in-memory start bookkeeping is populated,
@@ -4798,7 +4798,10 @@ describe('Engine', () => {
         },
       };
 
-      const agent = defineAgent({ name: 'compressed-agent-workflow', model: 'test-model' });
+      const agent = createAgentDefinition({
+        name: 'compressed-agent-workflow',
+        model: 'test-model',
+      });
       engine.register(agent, { provider });
 
       const handle = await engine.start('compressed-agent-workflow', null);

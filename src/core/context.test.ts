@@ -29,12 +29,12 @@ function createContext(overrides: Partial<ConstructorParameters<typeof Context>[
 const UUID_PATTERN = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
 
 // Helper functions used as activity stubs (at module scope to satisfy consistent-function-scoping)
-function greet(...args: unknown[]) {
-  return `Hello, ${String(args[0])}!`;
+function greet(input: unknown) {
+  return `Hello, ${String(input)}!`;
 }
 
-function sendEmail(...args: unknown[]) {
-  return `Sent to ${String(args[0])}`;
+function sendEmail(input: unknown) {
+  return `Sent to ${String(input)}`;
 }
 
 function taskA() {
@@ -73,7 +73,7 @@ describe('Context', () => {
 
       expect(request.activityName).toBe('greet');
       expect(request.fn).toBe(greet);
-      expect(request.args).toEqual(['Alice']);
+      expect(request.input).toBe('Alice');
     });
 
     it('returns the fed-back result', () => {
@@ -115,7 +115,7 @@ describe('Context', () => {
       const request = expectRequest(generator.next(), 'activity');
 
       expect(request.activityName).toBe('greet');
-      expect(request.args).toEqual(['Alice']);
+      expect(request.input).toBe('Alice');
       expect(request.options).toEqual({ queue: 'gpu' });
     });
 
@@ -126,7 +126,7 @@ describe('Context', () => {
       const request = expectRequest(generator.next(), 'activity');
 
       expect(request.activityName).toBe('task');
-      expect(request.args).toEqual([]);
+      expect(request.input).toBeUndefined();
       expect(request.options).toEqual({ queue: 'billing' });
     });
 
@@ -136,8 +136,17 @@ describe('Context', () => {
       const generator = context.run(greet, 'Alice', { queue: 'gpu', timeout: 5000 });
       const request = expectRequest(generator.next(), 'activity');
 
-      expect(request.args).toEqual(['Alice']);
+      expect(request.input).toBe('Alice');
       expect(request.options).toEqual({ queue: 'gpu', timeout: 5000 });
+    });
+
+    it('rejects multiple activity input values at runtime', () => {
+      const context = createContext();
+      const run = context.run as (...arguments_: unknown[]) => Generator<ContextOperationRequest>;
+
+      expect(() => run(greet, 'Alice', 'extra').next()).toThrow(
+        'ctx.run() accepts one activity input value plus optional ActivityCallOptions.',
+      );
     });
 
     it('does not include options when none are provided', () => {
@@ -155,7 +164,7 @@ describe('Context', () => {
       const generator = context.run(greet, { name: 'Alice', queue: 'not-options' });
       const request = expectRequest(generator.next(), 'activity');
 
-      expect(request.args).toEqual([{ name: 'Alice', queue: 'not-options' }]);
+      expect(request.input).toEqual({ name: 'Alice', queue: 'not-options' });
       expect(request.options).toBeUndefined();
     });
 
@@ -165,7 +174,7 @@ describe('Context', () => {
       const generator = context.run(greet, { timeout: 5000 });
       const request = expectRequest(generator.next(), 'activity');
 
-      expect(request.args).toEqual([{ timeout: 5000 }]);
+      expect(request.input).toEqual({ timeout: 5000 });
       expect(request.options).toBeUndefined();
     });
 
@@ -175,7 +184,7 @@ describe('Context', () => {
       const generator = context.run(greet, 'Alice', { sticky: true });
       const request = expectRequest(generator.next(), 'activity');
 
-      expect(request.args).toEqual(['Alice']);
+      expect(request.input).toBe('Alice');
       expect(request.options).toEqual({ sticky: true });
     });
 
@@ -185,7 +194,7 @@ describe('Context', () => {
       const generator = context.run(greet, 'Alice', { queue: 'gpu', sticky: true });
       const request = expectRequest(generator.next(), 'activity');
 
-      expect(request.args).toEqual(['Alice']);
+      expect(request.input).toBe('Alice');
       expect(request.options).toEqual({ queue: 'gpu', sticky: true });
     });
 
@@ -195,7 +204,7 @@ describe('Context', () => {
       const generator = context.run(greet, 'Alice', { visibilityTimeout: 60_000 });
       const request = expectRequest(generator.next(), 'activity');
 
-      expect(request.args).toEqual(['Alice']);
+      expect(request.input).toBe('Alice');
       expect(request.options).toEqual({ visibilityTimeout: 60_000 });
     });
 
@@ -265,7 +274,7 @@ describe('Context', () => {
         'activity',
       );
 
-      expect(request.args).toEqual(['Alice']);
+      expect(request.input).toBe('Alice');
       expect(request.options).toEqual({ queue: 'gpu', sticky: true });
     });
 
@@ -646,6 +655,15 @@ describe('Context', () => {
     });
   });
 
+  describe('ctx.onQuery', () => {
+    it('registers a query handler', () => {
+      const context = createContext();
+      context.onQuery('myQuery', handler);
+
+      expect(context.queryHandlers.get('myQuery')).toBe(handler);
+    });
+  });
+
   describe('ctx.expose', () => {
     it('stores accessor functions', () => {
       const context = createContext();
@@ -854,8 +872,8 @@ describe('Context', () => {
     it('yields a run-all operation request with named branches', () => {
       const context = createContext();
       const branches = {
-        charge: [taskA, 'arg1'] as [Function, ...unknown[]],
-        notify: [taskB] as [Function, ...unknown[]],
+        charge: [taskA, 'arg1'] as [Function, unknown],
+        notify: [taskB] as [Function],
       };
 
       const generator = context.runAll(branches);
@@ -874,8 +892,8 @@ describe('Context', () => {
       const context = createContext({ accumulatedResults });
 
       const generator = context.runAll({
-        charge: [taskA] as [Function, ...unknown[]],
-        notify: [taskB] as [Function, ...unknown[]],
+        charge: [taskA] as [Function],
+        notify: [taskB] as [Function],
       });
       const result = generator.next();
 
@@ -986,8 +1004,8 @@ describe('Context', () => {
     it('returns the fed-back result', () => {
       const context = createContext();
       const branches = {
-        charge: [taskA] as [Function, ...unknown[]],
-        notify: [taskB] as [Function, ...unknown[]],
+        charge: [taskA] as [Function],
+        notify: [taskB] as [Function],
       };
 
       const generator = context.runAll(branches);
@@ -1312,8 +1330,8 @@ describe('Context', () => {
       context.explain(true);
 
       const branches = {
-        fetch: [taskA] as [Function, ...unknown[]],
-        compute: [taskB] as [Function, ...unknown[]],
+        fetch: [taskA] as [Function],
+        compute: [taskB] as [Function],
       };
       const generator = context.runAll(branches);
       generator.next();
@@ -1436,8 +1454,8 @@ describe('Context', () => {
     it('ctx.runAll yields a request with callerStack', () => {
       const context = createContext();
       const branches = {
-        a: [taskA] as [Function, ...unknown[]],
-        b: [taskB] as [Function, ...unknown[]],
+        a: [taskA] as [Function],
+        b: [taskB] as [Function],
       };
       const generator = context.runAll(branches);
       const request = expectRequest(generator.next(), 'run-all');

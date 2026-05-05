@@ -16,6 +16,15 @@ export function onUpdate(
   internals.updateHandlers.set(name, handler);
 }
 
+export function onQuery(
+  internals: ContextInternals,
+  name: string,
+  handler: (input: unknown) => unknown,
+): void {
+  internals.queryHandlers ??= new Map();
+  internals.queryHandlers.set(name, handler);
+}
+
 export function expose(
   internals: ContextInternals,
   accessors: Record<string, () => unknown>,

@@ -141,15 +141,17 @@ engine.register('onboarding', async function* (ctx, input: { name: string }) {
 Workflows often need to wait for something external---a user clicking "approve," a webhook arriving, a payment confirmation. Signals handle this.
 
 ```typescript partial
+const approvalSignal = signal<{ approved: boolean }>('approval');
+
 engine.register('approval', async function* (ctx, input: { orderId: string }) {
-  const approval = yield* ctx.waitForSignal<{ approved: boolean }>('approval');
+  const approval = yield* ctx.waitForSignal(approvalSignal);
   return { orderId: input.orderId, approved: approval.approved };
 });
 
 const handle = await engine.start('approval', { orderId: 'order-1' });
 
 // Later, from an API handler or another process:
-await engine.signal(handle.id, 'approval', { approved: true });
+await engine.signal(handle.id, approvalSignal, { approved: true });
 
 const result = await handle.result();
 console.log(result);

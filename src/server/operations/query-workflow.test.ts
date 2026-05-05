@@ -12,7 +12,11 @@ import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
 import type { OperationFault } from '../operation-fault.ts';
-import { queryWorkflowOperation, queryWorkflowRestBinding } from './query-workflow.ts';
+import {
+  queryWorkflowOperation,
+  queryWorkflowRestBinding,
+  queryWorkflowWithInputRestBinding,
+} from './query-workflow.ts';
 
 function createEngine(): Engine {
   const storage = new MemoryStorage();
@@ -20,6 +24,7 @@ function createEngine(): Engine {
   engine.register('queryable', async function* (ctx: WorkflowContext) {
     const context = ctx as Context;
     context.expose({ counter: () => 42 });
+    context.onQuery('echoInput', (input) => input);
     yield* context.waitForSignal('done');
     return 42;
   });
@@ -44,7 +49,7 @@ async function waitForStatus(
 }
 
 const registry = createOperationRegistry([queryWorkflowOperation]);
-const bindings = [queryWorkflowRestBinding];
+const bindings = [queryWorkflowRestBinding, queryWorkflowWithInputRestBinding];
 
 describe('weft.workflows.query', () => {
   it('returns the query result on the happy path', async () => {
@@ -66,6 +71,29 @@ describe('weft.workflows.query', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('application/json');
     expect(await response.json()).toEqual({ result: 42 });
+  });
+
+  it('passes POST query input to workflow query handlers', async () => {
+    const engine = createEngine();
+    const handle = await engine.start('queryable', null, { id: 'query-workflow-input' });
+    await waitForStatus(engine, handle.id, 'running');
+
+    const response = await handleRequest(
+      new Request(`http://localhost/v1/workflows/${handle.id}/query/echoInput`, {
+        method: 'POST',
+        body: JSON.stringify({ input: { detail: true } }),
+        headers: { 'Content-Type': 'application/json' },
+      }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: bindings,
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('application/json');
+    expect(await response.json()).toEqual({ result: { detail: true } });
   });
 
   it('returns 501 with the legacy error body when queries are not supported', async () => {

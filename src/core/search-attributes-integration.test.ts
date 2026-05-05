@@ -12,6 +12,7 @@ import {
 import { decode } from './codec.ts';
 import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
+import { searchAttribute } from './search-attributes.ts';
 import type { SearchAttributeValue, WorkflowContext } from './types.ts';
 
 const waitForUpdateTestTimeoutMs = 90_000;
@@ -173,6 +174,79 @@ for (const backend of storageBackends) {
 
       expect(listResult.items.length).toBe(1);
       expect(listResult.items[0]!.id).toBe('wf-price-50');
+    });
+
+    it('searchAttribute() handles preserve exact, range, date, and array filters', async () => {
+      const result = backend.factory();
+      cleanup = result.cleanup;
+      engine = new Engine({ storage: result.storage });
+
+      const customerId = searchAttribute<string>('customerId', 'string');
+      const orderTotal = searchAttribute<number>('orderTotal', 'number');
+      const createdAt = searchAttribute<Date>('createdAt', { type: 'string', format: 'date-time' });
+      const labels = searchAttribute<string[]>('labels', {
+        type: 'array',
+        items: { type: 'string' },
+      });
+
+      engine.register('indexed-order', {
+        searchAttributes: {
+          customerId,
+          orderTotal,
+          createdAt,
+          labels,
+        },
+        handler: async function* (ctx: WorkflowContext) {
+          yield* (ctx as Context).waitForSignal('stop');
+          return 'done';
+        },
+      });
+
+      await engine.start('indexed-order', null, {
+        id: 'wf-indexed-a',
+        searchAttributes: {
+          customerId: 'cust-a',
+          orderTotal: 75,
+          createdAt: new Date('2026-01-15T00:00:00.000Z'),
+          labels: ['priority', 'manual-review'],
+        },
+      });
+      await engine.start('indexed-order', null, {
+        id: 'wf-indexed-b',
+        searchAttributes: {
+          customerId: 'cust-b',
+          orderTotal: 20,
+          createdAt: new Date('2026-02-15T00:00:00.000Z'),
+          labels: ['standard'],
+        },
+      });
+      await flush();
+
+      const exactMatch = await engine.list({
+        attributes: [{ key: customerId, value: 'cust-a' }],
+      });
+      expect(exactMatch.items.map((item) => item.id)).toEqual(['wf-indexed-a']);
+
+      const rangeMatch = await engine.list({
+        attributes: [{ key: orderTotal, gte: 50, lte: 100 }],
+      });
+      expect(rangeMatch.items.map((item) => item.id)).toEqual(['wf-indexed-a']);
+
+      const dateMatch = await engine.list({
+        attributes: [
+          {
+            key: createdAt,
+            gte: new Date('2026-01-01T00:00:00.000Z'),
+            lt: new Date('2026-02-01T00:00:00.000Z'),
+          },
+        ],
+      });
+      expect(dateMatch.items.map((item) => item.id)).toEqual(['wf-indexed-a']);
+
+      const arrayContainmentMatch = await engine.list({
+        attributes: [{ key: labels, value: 'priority' }],
+      });
+      expect(arrayContainmentMatch.items.map((item) => item.id)).toEqual(['wf-indexed-a']);
     });
 
     it('index entries are cleaned up on workflow completion', async () => {

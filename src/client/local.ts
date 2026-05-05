@@ -17,22 +17,27 @@ import type {
   CoordinatedUpdateResult,
   ForkOptions,
   ListFilter,
+  MessageName,
   PaginatedResult,
   PurgeResult,
+  QueryDefinition,
   RetentionOverview,
   ScheduleFilter,
   ScheduleOptions,
   ScheduleSummary,
   SearchAttributeValue,
+  SignalDefinition,
   StartOptions,
   SubmitReviewOptions,
   TenantQuotaUsage,
+  UpdateDefinition,
   WorkflowEvent,
   WorkflowReplay,
   WorkflowState,
   WorkflowSummary,
   WorkflowTimelineEntry,
 } from '../core/types.ts';
+import { messageName } from '../core/types.ts';
 import type { ClientHandle, ClientScheduleHandle, UpdateResult, WeftClient } from './interface.ts';
 
 // ---------------------------------------------------------------------------
@@ -58,16 +63,40 @@ class LocalHandle implements ClientHandle {
     return this.#client.cancel(this.id);
   }
 
-  async signal(name: string, payload?: unknown): Promise<void> {
-    return this.#client.signal(this.id, name, payload);
+  async signal(name: SignalDefinition): Promise<void>;
+  async signal<TInput>(name: SignalDefinition<TInput>, payload: TInput): Promise<void>;
+  async signal(name: string, payload?: unknown): Promise<void>;
+  async signal(nameOrDefinition: MessageName, payload?: unknown): Promise<void> {
+    return this.#client.signal(this.id, messageName(nameOrDefinition), payload);
   }
 
-  async update(name: string, payload?: unknown, options?: { timeout?: number }): Promise<unknown> {
-    return this.#client.update(this.id, name, payload, options);
+  async update<TOutput>(
+    name: UpdateDefinition<void, TOutput>,
+    payload?: void,
+    options?: { timeout?: number },
+  ): Promise<TOutput>;
+  async update<TInput, TOutput>(
+    name: UpdateDefinition<TInput, TOutput>,
+    payload: TInput,
+    options?: { timeout?: number },
+  ): Promise<TOutput>;
+  async update(name: string, payload?: unknown, options?: { timeout?: number }): Promise<unknown>;
+  async update(
+    nameOrDefinition: MessageName,
+    payload?: unknown,
+    options?: { timeout?: number },
+  ): Promise<unknown> {
+    return this.#client.update(this.id, messageName(nameOrDefinition), payload, options);
   }
 
-  async query(name: string): Promise<unknown> {
-    return this.#client.query(this.id, name);
+  async query<TOutput>(name: QueryDefinition<void, TOutput>): Promise<TOutput>;
+  async query<TInput, TOutput>(
+    name: QueryDefinition<TInput, TOutput>,
+    input: TInput,
+  ): Promise<TOutput>;
+  async query(name: string, input?: unknown): Promise<unknown>;
+  async query(nameOrDefinition: MessageName, input?: unknown): Promise<unknown> {
+    return this.#client.query(this.id, messageName(nameOrDefinition), input);
   }
 
   async getAttributes(): Promise<Record<string, SearchAttributeValue> | null> {
@@ -223,21 +252,49 @@ export class LocalClient implements WeftClient {
     return this.#engine.updateSchedule(id, newCronExpression);
   }
 
-  async signal(id: string, name: string, payload?: unknown): Promise<void> {
-    return this.#engine.signal(id, name, payload);
+  async signal(id: string, name: SignalDefinition): Promise<void>;
+  async signal<TInput>(id: string, name: SignalDefinition<TInput>, payload: TInput): Promise<void>;
+  async signal(id: string, name: string, payload?: unknown): Promise<void>;
+  async signal(id: string, nameOrDefinition: MessageName, payload?: unknown): Promise<void> {
+    return this.#engine.signal(id, messageName(nameOrDefinition), payload);
   }
 
-  async query(id: string, name: string): Promise<unknown> {
-    return this.#engine.query(id, name);
+  async query<TOutput>(id: string, name: QueryDefinition<void, TOutput>): Promise<TOutput>;
+  async query<TInput, TOutput>(
+    id: string,
+    name: QueryDefinition<TInput, TOutput>,
+    input: TInput,
+  ): Promise<TOutput>;
+  async query(id: string, name: string, input?: unknown): Promise<unknown>;
+  async query(id: string, nameOrDefinition: MessageName, input?: unknown): Promise<unknown> {
+    return this.#engine.query(id, messageName(nameOrDefinition), input);
   }
 
+  async update<TOutput>(
+    id: string,
+    name: UpdateDefinition<void, TOutput>,
+    payload?: void,
+    options?: { timeout?: number },
+  ): Promise<TOutput>;
+  async update<TInput, TOutput>(
+    id: string,
+    name: UpdateDefinition<TInput, TOutput>,
+    payload: TInput,
+    options?: { timeout?: number },
+  ): Promise<TOutput>;
   async update(
     id: string,
     name: string,
     payload?: unknown,
     options?: { timeout?: number },
+  ): Promise<unknown>;
+  async update(
+    id: string,
+    nameOrDefinition: MessageName,
+    payload?: unknown,
+    options?: { timeout?: number },
   ): Promise<unknown> {
-    return this.#engine.update(id, name, payload, options);
+    return this.#engine.update(id, messageName(nameOrDefinition), payload, options);
   }
 
   async resume(id: string): Promise<ClientHandle> {

@@ -106,24 +106,24 @@ The mock is type-safe---the implementation must match the original function's si
 `mock()` returns a `MockHandle` with call recording and override capabilities:
 
 ```typescript
-interface MockHandle<TArgs extends unknown[], TResult> {
-  readonly calls: ReadonlyArray<MockCall<TArgs, TResult>>;
+interface MockHandle<TInput, TResult> {
+  readonly calls: ReadonlyArray<MockCall<TInput, TResult>>;
   readonly callCount: number;
-  readonly lastCall: MockCall<TArgs, TResult> | undefined;
-  readonly currentImplementation: (...args: TArgs) => TResult | Promise<TResult>;
-  mockImplementation(impl: (...args: TArgs) => TResult | Promise<TResult>): void;
-  mockReturnValueOnce(value: TResult): MockHandle<TArgs, TResult>;
-  mockRejectionOnce(error: Error): MockHandle<TArgs, TResult>;
+  readonly lastCall: MockCall<TInput, TResult> | undefined;
+  readonly currentImplementation: (input: TInput) => TResult | Promise<TResult>;
+  mockImplementation(impl: (input: TInput) => TResult | Promise<TResult>): void;
+  mockReturnValueOnce(value: TResult): MockHandle<TInput, TResult>;
+  mockRejectionOnce(error: Error): MockHandle<TInput, TResult>;
   resetCalls(): void;
   restore(): void;
 }
 ```
 
-Each recorded call captures args, result (or error), and timestamp:
+Each recorded call captures input, result (or error), and timestamp:
 
 ```typescript
-interface MockCall<TArgs, TResult> {
-  readonly args: TArgs;
+interface MockCall<TInput, TResult> {
+  readonly input: TInput;
   readonly result: TResult | undefined;
   readonly error: Error | undefined;
   readonly timestamp: number;
@@ -134,7 +134,7 @@ Use it in assertions:
 
 ```typescript partial
 expect(mockCharge.callCount).toBe(1);
-expect(mockCharge.lastCall?.args).toEqual([{ items: ['widget'], total: 99 }]);
+expect(mockCharge.lastCall?.input).toEqual({ items: ['widget'], total: 99 });
 expect(mockCharge.lastCall?.result).toEqual({
   id: 'pay_test_123',
   amount: 99,

@@ -100,7 +100,11 @@ import {
   purgeWorkflowsOperation,
   purgeWorkflowsRestBinding,
 } from './operations/purge-workflows.ts';
-import { queryWorkflowOperation, queryWorkflowRestBinding } from './operations/query-workflow.ts';
+import {
+  queryWorkflowOperation,
+  queryWorkflowRestBinding,
+  queryWorkflowWithInputRestBinding,
+} from './operations/query-workflow.ts';
 import { recoverAllOperation, recoverAllRestBinding } from './operations/recover-all.ts';
 import {
   removeWorkflowTagsOperation,
@@ -203,6 +207,7 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
   setWorkflowAttributesRestBinding,
   signalWorkflowRestBinding,
   queryWorkflowRestBinding,
+  queryWorkflowWithInputRestBinding,
   resumeWorkflowRestBinding,
   forkWorkflowRestBinding,
   timeoutWorkflowRestBinding,

@@ -135,7 +135,7 @@ When JWT authentication is enabled, the quota endpoint limits tenant-scoped call
 Agent definitions are tenant-agnostic post-shrinkage. The workflow author scopes tools per tenant before invoking the agent — Weft no longer enforces tool isolation centrally. Use `ctx.tenant` inside the workflow body to compose the right tool set:
 
 ```typescript partial
-const supportAgent = defineAgent({
+const supportAgent = agent({
   name: 'support',
   model: 'claude-sonnet-4-20250514',
   systemPrompt: 'Help the customer support team resolve tickets.',

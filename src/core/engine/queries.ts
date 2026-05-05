@@ -5,6 +5,7 @@ export async function query(
   internals: EngineInternals,
   workflowId: string,
   name: string,
+  input?: unknown,
 ): Promise<unknown> {
   // Built-in query: return latest heartbeat details for this workflow
   if (name === 'activityProgress') {
@@ -19,6 +20,8 @@ export async function query(
   if (!context) {
     return undefined;
   }
+  const queryHandler = context.queryHandlers.get(name);
+  if (queryHandler) return queryHandler(input);
   const accessor = context.exposedAccessors.get(name);
   if (!accessor) return undefined;
   return accessor();

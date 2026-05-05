@@ -6,14 +6,14 @@ import type { DebateOptions, DebateResult, DebateRound } from './types.ts';
  *
  * @example Two-round debate between an advocate and a critic, judged by a third agent
  * ```ts
- * import { debate, defineAgent } from 'weft';
+ * import { debate, agent } from 'weft';
  * import type { LLMProvider } from 'weft';
  *
  * declare const provider: LLMProvider;
  *
- * const advocate = defineAgent({ name: 'advocate', model: 'claude-sonnet-4-5', systemPrompt: 'Argue for.' });
- * const critic   = defineAgent({ name: 'critic',   model: 'claude-sonnet-4-5', systemPrompt: 'Argue against.' });
- * const judge    = defineAgent({ name: 'judge',    model: 'claude-sonnet-4-5', systemPrompt: 'Render a verdict.' });
+ * const advocate = agent({ name: 'advocate', model: 'claude-sonnet-4-5', systemPrompt: 'Argue for.' });
+ * const critic   = agent({ name: 'critic',   model: 'claude-sonnet-4-5', systemPrompt: 'Argue against.' });
+ * const judge    = agent({ name: 'judge',    model: 'claude-sonnet-4-5', systemPrompt: 'Render a verdict.' });
  *
  * const { verdict, rounds } = await debate({ advocate, critic, judge, topic: 'AI is beneficial', rounds: 2, provider });
  * console.log('Verdict:', verdict);

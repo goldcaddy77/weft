@@ -48,13 +48,15 @@ This is fundamentally different from replay-based systems like Temporal. Weft do
 A **signal** is an external message sent _into_ a running workflow. Use signals when something outside the workflow needs to tell it something---a user clicking "approve," a webhook arriving, a timer in another system firing.
 
 ```typescript partial
+const approvalSignal = signal<{ approved: boolean }>('approval');
+
 async function* example(ctx: Context) {
   // Inside the workflow:
-  const approval = yield* ctx.waitForSignal<{ approved: boolean }>('approval');
+  const approval = yield* ctx.waitForSignal(approvalSignal);
 }
 
 // From outside:
-await engine.signal(workflowId, 'approval', { approved: true });
+await engine.signal(workflowId, approvalSignal, { approved: true });
 ```
 
 Signals are fire-and-forget from the sender's perspective. The workflow pauses at `waitForSignal()` until the signal arrives, which could be seconds or weeks.
@@ -107,7 +109,7 @@ An **interceptor** is a composable hook that wraps workflow context operations--
 
 ## Agent
 
-An **agent** is a durable LLM-powered execution loop that follows the ReAct pattern: one LLM call, then tool calls, then another LLM call, and so on. Agents are registered as workflows via `defineAgent()` or invoked as a step within a larger workflow via `ctx.agent()`. They manage context windows, respect token budgets, and support human-in-the-loop review.
+An **agent** is a durable LLM-powered execution loop that follows the ReAct pattern: one LLM call, then tool calls, then another LLM call, and so on. Agents are registered as workflows via `agent()` or invoked as a step within a larger workflow via `ctx.agent()`. They manage context windows, respect token budgets, and support human-in-the-loop review.
 
 ## Turn
 

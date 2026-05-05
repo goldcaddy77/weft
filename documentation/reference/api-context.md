@@ -42,7 +42,7 @@ Each durable method is a generator. Inside a workflow, call them with `yield*`:
 
 ```ts partial
 async function* example(context: Context) {
-  const result = yield* context.run(myActivity, 'arg1', 'arg2');
+  const result = yield* context.run(myActivity, { first: 'arg1', second: 'arg2' });
 }
 ```
 
@@ -50,24 +50,29 @@ async function* example(context: Context) {
 
 ```ts partial
 *run<TResult>(
-  fn: (...args: unknown[]) => Promise<TResult> | TResult,
-  ...args: unknown[]
+  fn: (input: unknown) => Promise<TResult> | TResult,
+  input?: unknown,
+  options?: ActivityCallOptions
 ): Generator<ContextOperationRequest, TResult, unknown>
 ```
 
 Execute an activity function durably. The engine checkpoints before the call and records the result. On replay, cached results are returned without re-executing the activity.
 
-| Parameter | Type        | Description                      |
-| --------- | ----------- | -------------------------------- |
-| `fn`      | `Function`  | The activity function to execute |
-| `...args` | `unknown[]` | Arguments passed to the activity |
+| Parameter | Type                  | Description                            |
+| --------- | --------------------- | -------------------------------------- |
+| `fn`      | `Function`            | The activity function to execute       |
+| `input`   | `unknown`             | Single input value passed to activity  |
+| `options` | `ActivityCallOptions` | Optional per-invocation activity rules |
 
 **Returns:** The activity's return value.
 
 ```ts partial
 async function* orderWorkflow(context: Context, order: Order) {
-  const receipt = yield* context.run(chargeCard, order.cardToken, order.total);
-  yield* context.run(sendConfirmation, order.email, receipt);
+  const receipt = yield* context.run(chargeCard, {
+    cardToken: order.cardToken,
+    total: order.total,
+  });
+  yield* context.run(sendConfirmation, { email: order.email, receipt });
   return receipt;
 }
 ```
@@ -208,16 +213,16 @@ async function* example(context: Context) {
 ### `runAll()`
 
 ```ts partial
-*runAll<T extends Record<string, [Function, ...unknown[]]>>(
+*runAll<T extends Record<string, [Function] | [Function, unknown]>>(
   branches: T,
 ): Generator<ContextOperationRequest, Record<keyof T, unknown>, unknown>
 ```
 
 Run multiple named activity branches in parallel. Returns a record mapping each branch name to its result.
 
-| Parameter  | Type                                  | Description                                           |
-| ---------- | ------------------------------------- | ----------------------------------------------------- |
-| `branches` | `Record<string, [Function, ...args]>` | Named branches, each a tuple of `[function, ...args]` |
+| Parameter  | Type                                              | Description                                                         |
+| ---------- | ------------------------------------------------- | ------------------------------------------------------------------- |
+| `branches` | `Record<string, [Function] \| [Function, input]>` | Named branches, each a tuple of `[function]` or `[function, input]` |
 
 **Returns:** A record with the same keys, each holding the branch's result.
 
@@ -226,8 +231,8 @@ Run multiple named activity branches in parallel. Returns a record mapping each 
 ```ts partial
 async function* example(context: Context) {
   const results = yield* context.runAll({
-    email: [sendEmail, user.email, 'Welcome!'],
-    slack: [notifySlack, '#signups', user.name],
+    email: [sendEmail, { email: user.email, subject: 'Welcome!' }],
+    slack: [notifySlack, { channel: '#signups', name: user.name }],
   });
   // results.email, results.slack
 }
@@ -546,7 +551,7 @@ A discriminated union describing the operation the workflow wants the engine to 
 
 ```ts partial
 type ContextOperationRequest =
-  | { type: 'activity'; operationId: string; activityName: string; fn: Function; args: unknown[]; ... }
+  | { type: 'activity'; operationId: string; activityName: string; fn: Function; input: unknown; ... }
   | { type: 'sleep'; operationId: string; duration: number; scheduledFireAt: number }
   | { type: 'wait-signal'; operationId: string; signalName: string }
   | { type: 'wait-update'; operationId: string; updateName: string }

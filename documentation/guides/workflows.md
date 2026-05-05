@@ -222,7 +222,7 @@ engine.register('order', async function* (ctx, input) {
   const { total, email } = input as { total: number; email: string };
 
   const receipt = yield* context.startChild('process-payment', { amount: total });
-  yield* context.run(sendConfirmation, email, receipt);
+  yield* context.run(sendConfirmation, { email, receipt });
   return { receipt, confirmed: true };
 });
 ```

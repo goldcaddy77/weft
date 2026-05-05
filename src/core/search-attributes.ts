@@ -2,6 +2,8 @@ import type { BatchOperation } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import type { SearchAttributeDefinition, SearchAttributeValue } from './types.ts';
 
+export { searchAttribute, searchAttributeName } from './types.ts';
+
 const SIGN_BIT = 1n << 63n;
 const ALL_BITS = (1n << 64n) - 1n;
 
@@ -134,6 +136,7 @@ export function decodeAttributeValue(encoded: string, type: string): SearchAttri
       return sortableHexToFloat(payload);
     case 'boolean':
       return payload === '1';
+    case 'date-time':
     case 'datetime':
       return new Date(payload);
     default:
@@ -155,9 +158,24 @@ export function validateAttributeType(
 
   switch (declaredType) {
     case 'string':
+      if (definition.format === 'date-time') {
+        if (!(value instanceof Date)) {
+          throw new Error(
+            `Search attribute "${attributeName}" is declared as "string" with format "date-time" but received ${typeof value}.`,
+          );
+        }
+        break;
+      }
       if (typeof value !== 'string') {
         throw new Error(
           `Search attribute "${attributeName}" is declared as "string" but received ${typeof value}.`,
+        );
+      }
+      break;
+    case 'integer':
+      if (typeof value !== 'number' || !Number.isInteger(value)) {
+        throw new Error(
+          `Search attribute "${attributeName}" is declared as "integer" but received ${typeof value}.`,
         );
       }
       break;
@@ -175,25 +193,20 @@ export function validateAttributeType(
         );
       }
       break;
-    case 'datetime':
-      if (!(value instanceof Date)) {
-        throw new Error(
-          `Search attribute "${attributeName}" is declared as "datetime" but received ${typeof value}.`,
-        );
-      }
-      break;
-    case 'keyword_list':
+    case 'array':
       if (!Array.isArray(value)) {
         throw new Error(
-          `Search attribute "${attributeName}" is declared as "keyword_list" but received ${typeof value}.`,
+          `Search attribute "${attributeName}" is declared as "array" but received ${typeof value}.`,
         );
       }
       if (!value.every((element) => typeof element === 'string')) {
         throw new Error(
-          `Search attribute "${attributeName}" is declared as "keyword_list" but array contains non-string elements.`,
+          `Search attribute "${attributeName}" is declared as "array" but array contains non-string elements.`,
         );
       }
       break;
+    case 'object':
+      throw new Error(`Search attribute "${attributeName}" cannot be indexed as "object".`);
     default: {
       const _exhaustive: never = declaredType;
       throw new Error(`Unknown search attribute type declaration: ${String(_exhaustive)}`);

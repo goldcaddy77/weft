@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines -- ID:client-http-client-public-surface */
 import { assertScopedBulkWorkflowFilter } from '../core/bulk-workflow-filter.ts';
 import type { StoredStreamChunk } from '../core/context.ts';
 import type {
@@ -8,22 +9,27 @@ import type {
   CoordinatedUpdateResult,
   ForkOptions,
   ListFilter,
+  MessageName,
   PaginatedResult,
   PurgeResult,
+  QueryDefinition,
   RetentionOverview,
   ScheduleFilter,
   ScheduleOptions,
   ScheduleSummary,
   SearchAttributeValue,
+  SignalDefinition,
   StartOptions,
   SubmitReviewOptions,
   TenantQuotaUsage,
+  UpdateDefinition,
   WorkflowEvent,
   WorkflowReplay,
   WorkflowState,
   WorkflowSummary,
   WorkflowTimelineEntry,
 } from '../core/types.ts';
+import { messageName } from '../core/types.ts';
 import { HttpHandle } from './http-handle.ts';
 import { HttpClientError, request, type HttpClientOptions } from './http-request.ts';
 import { HttpScheduleHandle } from './http-schedule-handle.ts';
@@ -167,7 +173,11 @@ export class HttpClient implements WeftClient {
     });
   }
 
-  async signal(id: string, name: string, payload?: unknown): Promise<void> {
+  async signal(id: string, name: SignalDefinition): Promise<void>;
+  async signal<TInput>(id: string, name: SignalDefinition<TInput>, payload: TInput): Promise<void>;
+  async signal(id: string, name: string, payload?: unknown): Promise<void>;
+  async signal(id: string, nameOrDefinition: MessageName, payload?: unknown): Promise<void> {
+    const name = messageName(nameOrDefinition);
     await request<unknown>(
       this.baseUrl,
       `/workflows/${encodeURIComponent(id)}/signal/${encodeURIComponent(name)}`,
@@ -179,7 +189,27 @@ export class HttpClient implements WeftClient {
     );
   }
 
-  async query(id: string, name: string): Promise<unknown> {
+  async query<TOutput>(id: string, name: QueryDefinition<void, TOutput>): Promise<TOutput>;
+  async query<TInput, TOutput>(
+    id: string,
+    name: QueryDefinition<TInput, TOutput>,
+    input: TInput,
+  ): Promise<TOutput>;
+  async query(id: string, name: string, input?: unknown): Promise<unknown>;
+  async query(id: string, nameOrDefinition: MessageName, input?: unknown): Promise<unknown> {
+    const name = messageName(nameOrDefinition);
+    if (input !== undefined) {
+      const response = await request<{ result: unknown }>(
+        this.baseUrl,
+        `/workflows/${encodeURIComponent(id)}/query/${encodeURIComponent(name)}`,
+        this.headers,
+        {
+          method: 'POST',
+          body: JSON.stringify({ input }),
+        },
+      );
+      return response?.result;
+    }
     const response = await request<{ result: unknown }>(
       this.baseUrl,
       `/workflows/${encodeURIComponent(id)}/query/${encodeURIComponent(name)}`,
@@ -190,10 +220,29 @@ export class HttpClient implements WeftClient {
 
   async update(
     id: string,
+    name: UpdateDefinition,
+    payload?: void,
+    options?: { timeout?: number },
+  ): Promise<unknown>;
+  async update<TInput, TOutput>(
+    id: string,
+    name: UpdateDefinition<TInput, TOutput>,
+    payload: TInput,
+    options?: { timeout?: number },
+  ): Promise<TOutput>;
+  async update(
+    id: string,
     name: string,
     payload?: unknown,
     options?: { timeout?: number },
+  ): Promise<unknown>;
+  async update(
+    id: string,
+    nameOrDefinition: MessageName,
+    payload?: unknown,
+    options?: { timeout?: number },
   ): Promise<unknown> {
+    const name = messageName(nameOrDefinition);
     const body: Record<string, unknown> = { payload };
     if (options?.timeout !== undefined) body['timeout'] = options.timeout;
 

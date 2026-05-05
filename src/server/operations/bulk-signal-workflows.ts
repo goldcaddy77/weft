@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { assertScopedBulkWorkflowFilter } from '../../core/bulk-workflow-filter.ts';
 import type { Engine } from '../../core/engine.ts';
 import { coerceStartWorkflowTags } from '../../core/start-workflow-validation.ts';
-import type { BulkSignalResult } from '../../core/types.ts';
+import type { BulkSignalResult, ListFilter } from '../../core/types.ts';
 import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
@@ -105,7 +105,7 @@ export const bulkSignalWorkflowsRestBinding: UnknownRestBinding = {
     }
 
     const body = raw as Record<string, unknown>;
-    let filter: BulkListFilterInput;
+    let filter: ListFilter;
     try {
       filter = { ...parseBulkListFilterFromBody(body) };
     } catch (error) {

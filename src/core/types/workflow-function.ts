@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines -- ID:core-types-workflow-function-public-api-surface */
 import type { ConstraintDefinition } from '../constraint.ts';
 import type { TenantContext } from '../tenant.ts';
 import type { WorkflowId } from './identity.ts';
@@ -462,6 +463,71 @@ export interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
    * (`workerExecution` option) will silently skip constraint evaluation.
    */
   constraints?: ConstraintDefinition[];
+}
+
+/**
+ * Named workflow definition returned by {@link workflow}. The runtime object
+ * carries the workflow name plus the same metadata accepted by
+ * {@link WorkflowRegistration}.
+ *
+ * @example
+ * ```ts
+ * import { workflow } from 'weft';
+ *
+ * const greet = workflow(async function* greet(ctx, input: string) {
+ *   return `hello ${input}`;
+ * });
+ * ```
+ */
+export interface WorkflowDefinition<
+  TInput = unknown,
+  TOutput = unknown,
+> extends WorkflowRegistration<TInput, TOutput> {
+  name: string;
+}
+
+export interface WorkflowDefinitionOptions<
+  TInput = unknown,
+  TOutput = unknown,
+> extends WorkflowRegistration<TInput, TOutput> {
+  name: string;
+}
+
+/**
+ * Create a named workflow definition.
+ *
+ * @example
+ * ```ts
+ * const checkout = workflow({
+ *   name: 'checkout',
+ *   handler: async function* checkout(ctx, input: { orderId: string }) {
+ *     return input.orderId;
+ *   },
+ * });
+ * ```
+ */
+export function workflow<TInput, TOutput>(
+  handler: WorkflowFunction<TInput, TOutput>,
+): WorkflowDefinition<TInput, TOutput>;
+export function workflow<TInput, TOutput>(
+  options: WorkflowDefinitionOptions<TInput, TOutput>,
+): WorkflowDefinition<TInput, TOutput>;
+export function workflow<TInput, TOutput>(
+  input: WorkflowFunction<TInput, TOutput> | WorkflowDefinitionOptions<TInput, TOutput>,
+): WorkflowDefinition<TInput, TOutput> {
+  const definition =
+    typeof input === 'function'
+      ? ({
+          name: input.name,
+          handler: input,
+        } satisfies WorkflowDefinition<TInput, TOutput>)
+      : input;
+
+  if (!definition.name) {
+    throw new Error('workflow() requires a named function or an options object with name.');
+  }
+
+  return definition;
 }
 
 // ---------------------------------------------------------------------------

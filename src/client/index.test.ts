@@ -19,7 +19,10 @@ async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
 }
 
 async function* waitForSignalWorkflow(ctx: WorkflowContext, input: unknown) {
-  const signal = yield* (ctx as Context).waitForSignal<string>('continue');
+  const context = ctx as Context;
+  context.expose({ ready: () => true });
+  context.onQuery('echoInput', (queryInput) => queryInput);
+  const signal = yield* context.waitForSignal<string>('continue');
   return `${String(input)}:${signal}`;
 }
 
@@ -36,6 +39,16 @@ function requestInputToUrl(input: RequestInfo | URL): string {
 }
 
 type FetchCall = { url: string; init: RequestInit | undefined };
+
+async function waitForQueryReady(client: WeftClient, workflowId: string): Promise<void> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if ((await client.query(workflowId, 'ready')) === true) {
+      return;
+    }
+    await sleepForTesting(5);
+  }
+  throw new Error(`Workflow ${workflowId} did not expose query handlers`);
+}
 
 function createFullSurfaceResponses(
   jsonResponse: (body: unknown, status?: number) => Response,
@@ -495,6 +508,23 @@ describe('HttpClient', () => {
 
       const state = await client.get('http-client-tags');
       expect(state?.tags).toEqual(['nightly', 'v2']);
+    });
+
+    it('posts query input through the HTTP client and workflow handle', async () => {
+      const handle = await client.start('wait-for-signal', 'payload', {
+        id: 'http-query-input',
+      });
+      await waitForQueryReady(client, handle.id);
+
+      await expect(client.query(handle.id, 'echoInput', { detail: true })).resolves.toEqual({
+        detail: true,
+      });
+      await expect(handle.query('echoInput', { source: 'handle' })).resolves.toEqual({
+        source: 'handle',
+      });
+
+      await client.signal(handle.id, 'continue', 'done');
+      await expect(handle.result()).resolves.toBe('payload:done');
     });
 
     it('persists handle.addTags(...tags) and handle.removeTags(...tags) through the HTTP routes', async () => {

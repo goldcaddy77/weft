@@ -1,7 +1,12 @@
 import type { AgentContextOptions } from '../context.ts';
 import { Context } from '../context.ts';
 import { compileStepWorkflow, isAsyncGeneratorFunction } from '../step-context.ts';
-import type { StepWorkflowFunction, WorkflowFunction, WorkflowRegistration } from '../types.ts';
+import type {
+  StepWorkflowFunction,
+  WorkflowDefinition,
+  WorkflowFunction,
+  WorkflowRegistration,
+} from '../types.ts';
 import { collectToolVersions, type WorkflowVersionTuple } from '../workflow-version-tuple.ts';
 import type { EngineInternals } from './internals.ts';
 import { normalizeRetentionPolicy } from './validation.ts';
@@ -36,6 +41,7 @@ export function register(
   handlerOrRegistrationOrOptions:
     | WorkflowFunction
     | StepWorkflowFunction
+    | WorkflowDefinition
     | WorkflowRegistration
     | AgentRegistrationOptionsLike
     | undefined,
@@ -87,6 +93,17 @@ export function register(
     internals.registrations.set(agentDef.name, agentRegistrationEntry);
     callbacks.ensureRetentionSweepInterval();
     internals.workflowTypesByHandler.set(handler, agentDef.name);
+    return;
+  }
+
+  if (
+    typeof nameOrAgent === 'object' &&
+    nameOrAgent !== null &&
+    'name' in nameOrAgent &&
+    'handler' in nameOrAgent
+  ) {
+    const definition = nameOrAgent as WorkflowDefinition;
+    register(internals, definition.name, definition, callbacks);
     return;
   }
 

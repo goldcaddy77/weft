@@ -299,33 +299,45 @@ describe('search-attributes', () => {
       );
     });
 
-    it('accepts a Date value for a datetime declaration', () => {
+    it('accepts a Date value for a date-time string declaration', () => {
       expect(() =>
-        validateAttributeType('createdAt', new Date(), { type: 'datetime' }),
+        validateAttributeType('createdAt', new Date(), { type: 'string', format: 'date-time' }),
       ).not.toThrow();
     });
 
-    it('rejects a string value for a datetime declaration', () => {
-      expect(() => validateAttributeType('createdAt', '2024-01-01', { type: 'datetime' })).toThrow(
-        'declared as "datetime" but received string',
-      );
+    it('rejects a string value for a date-time string declaration', () => {
+      expect(() =>
+        validateAttributeType('createdAt', '2024-01-01', {
+          type: 'string',
+          format: 'date-time',
+        }),
+      ).toThrow('declared as "string" with format "date-time" but received string');
     });
 
-    it('accepts an array value for a keyword_list declaration', () => {
+    it('accepts an array value for an array declaration', () => {
       expect(() =>
-        validateAttributeType('tags', ['a', 'b'], { type: 'keyword_list' }),
+        validateAttributeType('tags', ['a', 'b'], {
+          type: 'array',
+          items: { type: 'string' },
+        }),
       ).not.toThrow();
     });
 
-    it('rejects a string value for a keyword_list declaration', () => {
-      expect(() => validateAttributeType('tags', 'tag1', { type: 'keyword_list' })).toThrow(
-        'declared as "keyword_list" but received string',
-      );
+    it('rejects a string value for an array declaration', () => {
+      expect(() =>
+        validateAttributeType('tags', 'tag1', {
+          type: 'array',
+          items: { type: 'string' },
+        }),
+      ).toThrow('declared as "array" but received string');
     });
 
-    it('rejects keyword_list arrays that contain non-string elements', () => {
+    it('rejects string arrays that contain non-string elements', () => {
       expect(() =>
-        validateAttributeType('tags', ['ok', 42] as never, { type: 'keyword_list' }),
+        validateAttributeType('tags', ['ok', 42] as never, {
+          type: 'array',
+          items: { type: 'string' },
+        }),
       ).toThrow('array contains non-string elements');
     });
 

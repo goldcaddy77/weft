@@ -127,8 +127,9 @@ interface WorkflowSessionState<T> {
   update(updater: (current: T | undefined) => T): T;
   clear(): void;
   run<TResult>(
-    fn: (...args: unknown[]) => Promise<TResult> | TResult,
-    ...rest: unknown[]
+    fn: (input: unknown) => Promise<TResult> | TResult,
+    input?: unknown,
+    options?: ActivityCallOptions,
   ): WorkflowOperation<TResult>;
 }
 ```
@@ -292,7 +293,11 @@ type SearchAttributeValue = string | number | boolean | Date | string[];
 type SearchAttributeSchema = Record<string, SearchAttributeDefinition>;
 
 interface SearchAttributeDefinition {
-  type: 'string' | 'number' | 'boolean' | 'datetime' | 'keyword_list';
+  type: 'array' | 'boolean' | 'integer' | 'number' | 'object' | 'string';
+  format?: string;
+  items?: SearchAttributeDefinition;
+  properties?: Record<string, SearchAttributeDefinition>;
+  required?: string[];
 }
 ```
 
@@ -412,7 +417,7 @@ type ContextOperationRequest =
       operationId: string;
       activityName: string;
       fn: Function;
-      args: unknown[];
+      input: unknown;
       callerStack?: string;
       options?: Record<string, unknown>;
     }
@@ -631,13 +636,13 @@ interface WeftServer extends AsyncDisposable {
 ### `MockHandle`
 
 ```ts partial
-interface MockHandle<TArgs extends unknown[], TResult> {
-  readonly calls: ReadonlyArray<MockCall<TArgs, TResult>>;
+interface MockHandle<TInput, TResult> {
+  readonly calls: ReadonlyArray<MockCall<TInput, TResult>>;
   readonly callCount: number;
-  readonly lastCall: MockCall<TArgs, TResult> | undefined;
-  mockImplementation(implementation: (...args: TArgs) => TResult | Promise<TResult>): void;
-  mockReturnValueOnce(value: TResult): MockHandle<TArgs, TResult>;
-  mockRejectionOnce(error: Error): MockHandle<TArgs, TResult>;
+  readonly lastCall: MockCall<TInput, TResult> | undefined;
+  mockImplementation(implementation: (input: TInput) => TResult | Promise<TResult>): void;
+  mockReturnValueOnce(value: TResult): MockHandle<TInput, TResult>;
+  mockRejectionOnce(error: Error): MockHandle<TInput, TResult>;
   resetCalls(): void;
   restore(): void;
 }
@@ -646,8 +651,8 @@ interface MockHandle<TArgs extends unknown[], TResult> {
 ### `MockCall`
 
 ```ts partial
-interface MockCall<TArgs extends unknown[], TResult> {
-  readonly args: TArgs;
+interface MockCall<TInput, TResult> {
+  readonly input: TInput;
   readonly result: TResult | undefined;
   readonly error: Error | undefined;
   readonly timestamp: number;

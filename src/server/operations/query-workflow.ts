@@ -8,6 +8,7 @@ import type { UnknownRestBinding } from '../rest-bindings.ts';
 const queryWorkflowInput = z.object({
   workflowId: z.string().min(1),
   queryName: z.string().min(1),
+  input: z.unknown().optional(),
 });
 const queryWorkflowOutput = z.unknown();
 
@@ -29,7 +30,7 @@ export const queryWorkflowOperation = defineOperation<QueryWorkflowInput, QueryW
     const e = engine as Engine;
 
     try {
-      const result = await e.query(input.workflowId, input.queryName);
+      const result = await e.query(input.workflowId, input.queryName, input.input);
       return { result: result ?? null };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -95,6 +96,29 @@ export const queryWorkflowRestBinding: UnknownRestBinding = {
     workflowId: pathParams['id'] ?? '',
     queryName: pathParams['name'] ?? '',
   }),
+  success: { kind: 'json', status: 200 },
+  shapeSuccess: (output: QueryWorkflowOutput) => shapeQueryWorkflowSuccess(output),
+  shapeFault: shapeQueryWorkflowFault,
+};
+
+export const queryWorkflowWithInputRestBinding: UnknownRestBinding = {
+  method: 'POST',
+  path: '/v1/workflows/:id/query/:name',
+  pathParamNames: ['id', 'name'],
+  operationName: 'weft.workflows.query',
+  inputSources: {
+    workflowId: { kind: 'path', pathParam: 'id' },
+    queryName: { kind: 'path', pathParam: 'name' },
+    input: { kind: 'body-field', bodyField: 'input' },
+  },
+  extractInput: async (request, pathParams) => {
+    const body = (await request.json().catch(() => ({}))) as { input?: unknown };
+    return {
+      workflowId: pathParams['id'] ?? '',
+      queryName: pathParams['name'] ?? '',
+      input: body.input,
+    };
+  },
   success: { kind: 'json', status: 200 },
   shapeSuccess: (output: QueryWorkflowOutput) => shapeQueryWorkflowSuccess(output),
   shapeFault: shapeQueryWorkflowFault,

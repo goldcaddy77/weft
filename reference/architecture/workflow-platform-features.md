@@ -245,9 +245,10 @@ interface Context {
 type AttributeValue = string | number | boolean | Date;
 type SearchAttributeValue = AttributeValue | string[]; // string[] for multi-value tags
 
-interface SearchAttributeDefinition {
-  type: 'string' | 'number' | 'boolean' | 'datetime' | 'keyword_list';
-}
+type SearchAttributeDefinition =
+  | { type: 'string'; format?: 'date-time' }
+  | { type: 'number' | 'integer' | 'boolean' }
+  | { type: 'array'; items: { type: 'string' } };
 ```
 
 `setAttribute` and `setAttributes` are **synchronous in-workflow calls** — they do not yield. Persistence happens at the next checkpoint boundary, batched with the checkpoint write. This keeps the hot path to a single `batch()` operation.
@@ -261,7 +262,7 @@ engine.register('order', orderWorkflow, {
     orderTotal: { type: 'number' },
     region: { type: 'string' },
     priority: { type: 'number' },
-    tags: { type: 'keyword_list' },
+    tags: { type: 'array', items: { type: 'string' } },
   },
 });
 ```
@@ -345,7 +346,7 @@ function encodeAttributeValue(value: AttributeValue): string {
 }
 ```
 
-**Multi-value attributes (keyword_list):** Each element gets its own index entry. Setting `tags: ["charged", "processing"]` creates `idx:tags:s:charged:{id}` and `idx:tags:s:processing:{id}`.
+**String-array attributes:** Each element gets its own index entry. Setting `tags: ["charged", "processing"]` creates `idx:tags:s:charged:{id}` and `idx:tags:s:processing:{id}`.
 
 **Atomic updates at checkpoint boundary:** The engine diffs previous vs current attributes, computing add/delete index operations, and writes everything in the same `batch()` call as the checkpoint. No partial index states.
 

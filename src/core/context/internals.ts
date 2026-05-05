@@ -13,6 +13,7 @@ export interface ContextInternals {
   searchAttributeSchema: SearchAttributeSchema | undefined;
   pendingAttributeChanges: Record<string, SearchAttributeValue> | undefined;
   updateHandlers: Map<string, (payload: unknown) => unknown> | undefined;
+  queryHandlers: Map<string, (input: unknown) => unknown> | undefined;
   exposedValues: Map<string, () => unknown> | undefined;
   memoCache: Map<string, unknown> | undefined;
   deadline: number | undefined;
@@ -42,6 +43,7 @@ export function initializeInternals(
     searchAttributeSchema: options.searchAttributeSchema,
     pendingAttributeChanges: undefined,
     updateHandlers: undefined,
+    queryHandlers: undefined,
     exposedValues: undefined,
     memoCache: undefined,
     deadline: options.deadline,

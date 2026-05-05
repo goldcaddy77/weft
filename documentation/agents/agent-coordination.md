@@ -22,7 +22,7 @@ The `HandoffOptions`:
 
 | Field                | Type                   | Description                                                                               |
 | -------------------- | ---------------------- | ----------------------------------------------------------------------------------------- |
-| `agent`              | `AgentDefinition`      | The agent to hand off to (created via [`defineAgent()`](./agent-declaration.md))          |
+| `agent`              | `AgentDefinition`      | The agent to hand off to (created via [`agent()`](./agent-declaration.md))                |
 | `input`              | `string`               | The task description for the receiving agent                                              |
 | `provider`           | `LLMProvider`          | The LLM provider to use                                                                   |
 | `forwardContext`     | `ForwardContext`       | How much of the parent's conversation to include                                          |
@@ -85,17 +85,17 @@ Sometimes you want two agents to argue opposing positions before a third renders
 import { debate } from 'weft';
 
 const result = await debate({
-  advocate: defineAgent({
+  advocate: agent({
     name: 'advocate',
     model: 'claude-sonnet-4-20250514',
     systemPrompt: 'Argue in favor of the proposal. Be persuasive and thorough.',
   }),
-  critic: defineAgent({
+  critic: agent({
     name: 'critic',
     model: 'claude-sonnet-4-20250514',
     systemPrompt: 'Find weaknesses and flaws. Be rigorous and skeptical.',
   }),
-  judge: defineAgent({
+  judge: agent({
     name: 'judge',
     model: 'claude-sonnet-4-20250514',
     systemPrompt: 'Evaluate both arguments fairly and render a verdict.',
@@ -133,15 +133,15 @@ Debate is particularly useful for high-stakes decisions where you want the syste
 `supervise()` runs multiple worker agents in parallel on the same input, then asks a supervisor to synthesize their outputs.
 
 ```typescript partial
-import { supervise, defineAgent } from 'weft';
+import { supervise, agent } from 'weft';
 
 const result = await supervise({
   workers: [
-    defineAgent({ name: 'legal', model: 'claude-sonnet-4-20250514', tools: [legalDatabase] }),
-    defineAgent({ name: 'technical', model: 'claude-sonnet-4-20250514', tools: [codeAnalyzer] }),
-    defineAgent({ name: 'financial', model: 'claude-sonnet-4-20250514', tools: [financialModels] }),
+    agent({ name: 'legal', model: 'claude-sonnet-4-20250514', tools: [legalDatabase] }),
+    agent({ name: 'technical', model: 'claude-sonnet-4-20250514', tools: [codeAnalyzer] }),
+    agent({ name: 'financial', model: 'claude-sonnet-4-20250514', tools: [financialModels] }),
   ],
-  supervisor: defineAgent({
+  supervisor: agent({
     name: 'supervisor',
     model: 'claude-sonnet-4-20250514',
     systemPrompt: 'You synthesize expert analyses into a unified assessment.',

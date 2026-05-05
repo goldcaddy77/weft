@@ -5,7 +5,7 @@ import type { Interceptor } from '../interceptor.ts';
 import type { TenantResolver } from '../tenant.ts';
 import type { WorkflowStatus } from './identity.ts';
 import type { Duration, RetentionPolicy } from './retry-retention.ts';
-import type { SearchAttributeValue } from './search-attributes.ts';
+import type { SearchAttributeHandle, SearchAttributeValue } from './search-attributes.ts';
 import type { Serializer } from './serializer.ts';
 import type { TenantQuotaOptions } from './tenants.ts';
 
@@ -222,7 +222,7 @@ export interface ListFilter {
 }
 
 export interface AttributeFilter {
-  key: string;
+  key: string | SearchAttributeHandle;
   value?: SearchAttributeValue;
   gt?: SearchAttributeValue;
   lt?: SearchAttributeValue;

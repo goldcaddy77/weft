@@ -5,14 +5,16 @@ import type { ActivityDefinition } from './types.ts';
 import { activity as createConfiguredActivity } from './types.ts';
 
 describe('activity()', () => {
-  it('returns the definition unchanged', () => {
+  it('wraps a metadata definition as a callable activity', () => {
     const definition: ActivityDefinition<string, string> = {
       name: 'greet',
       execute: (input: string) => `Hello, ${input}!`,
     };
 
     const result = activity(definition);
-    expect(result).toBe(definition);
+    expect(result.name).toBe('greet');
+    expect(result.execute).toBe(definition.execute);
+    expect(result).not.toBe(definition);
   });
 
   it('preserves all fields including retry, timeout, queue, and idempotent', () => {

@@ -12,7 +12,7 @@ import type {
   PersistedAgentLoopState,
   TurnUsageEntry,
 } from '../../../index.ts';
-import { AgentLoopSuspendedError, defineAgent, isAgentDefinition } from '../../../index.ts';
+import { AgentLoopSuspendedError, agent, isAgentDefinition } from '../../../index.ts';
 
 const agentOptions: AgentOptions = {} as AgentOptions;
 const agentResult: AgentResult = {} as AgentResult;
@@ -40,7 +40,7 @@ void turnCompletedEvent;
 void toolCalledEvent;
 void toolReturnedEvent;
 void AgentLoopSuspendedError;
-void defineAgent;
+void agent;
 void isAgentDefinition;
 
 // @ts-expect-error Removed budget API must not be exported from the public surface.
@@ -51,8 +51,11 @@ const removedMcpToolSource = null as unknown as import('../../../index.ts').MCPT
 const removedRoutingContext = null as unknown as import('../../../index.ts').RoutingContext;
 // @ts-expect-error Removed streaming chunks must not be exported from the public surface.
 const removedStreamChunk = null as unknown as import('../../../index.ts').StreamChunk;
+// @ts-expect-error The public helper is `agent`; the pre-1.0 `defineAgent` name is removed.
+const removedDefineAgent = null as unknown as import('../../../index.ts').defineAgent;
 
 void removedBudgetTracker;
 void removedMcpToolSource;
 void removedRoutingContext;
 void removedStreamChunk;
+void removedDefineAgent;

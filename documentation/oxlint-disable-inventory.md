@@ -87,6 +87,13 @@ naming the alternative that was rejected.
 - **Symbol**: `start`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
+## `client-http-client-public-surface`
+
+- **File**: `src/client/http-client.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: HTTP client owns the public remote workflow surface. The definition-vocabulary cleanup adds typed signal, update, query, and schedule overloads alongside the existing string-based dynamic methods; splitting those method shims would make the public client contract harder to audit.
+
 ## `core-activity-registry-constructor-complexity`
 
 - **File**: `src/core/activity-registry.ts`
@@ -157,6 +164,20 @@ naming the alternative that was rejected.
 - **Rule**: `complexity`
 - **Symbol**: `fn`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-context-public-workflow-surface`
+
+- **File**: `src/core/context/index.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Context is the workflow authoring surface. The definition-vocabulary cleanup keeps activity, signal, update, query, and search-attribute overloads together so the public workflow contract stays inspectable in one place.
+
+## `core-types-workflow-function-public-api-surface`
+
+- **File**: `src/core/types/workflow-function.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Workflow function, workflow definition, and typed registry declarations form one public API surface. The workflow() helper overloads live here to keep inference and registry types colocated instead of splitting dependent type aliases across files.
 
 ## `core-debug-output-sanitize-object-complexity`
 
@@ -233,13 +254,6 @@ naming the alternative that was rejected.
 - **File**: `src/core/engine/constraints.ts`
 - **Rule**: `complexity`
 - **Symbol**: `evaluateConstraints`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `core-engine-execute-activity-complexity`
-
-- **File**: `src/core/engine/operations-activity.ts`
-- **Rule**: `complexity`
-- **Symbol**: `executeActivity`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
 ## `core-engine-execute-child-complexity`
@@ -450,13 +464,6 @@ naming the alternative that was rejected.
 - **File**: `src/core/engine/reviews.ts`
 - **Rule**: `complexity`
 - **Symbol**: `submitReview`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `core-engine-translate-operation-request-complexity`
-
-- **File**: `src/core/engine/index.ts`
-- **Rule**: `complexity`
-- **Symbol**: `translateOperationRequest`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
 ## `core-engine-update-complexity`

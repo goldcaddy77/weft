@@ -4,18 +4,18 @@ import type { ToolDefinition } from './agent/types.ts';
 const AGENT_DEFINITION_BRAND = '__weft_agent_definition__' as const;
 
 /**
- * The runtime shape of an agent definition returned by {@link defineAgent}.
+ * The runtime shape of an agent definition returned by {@link agent}.
  * Register it on an {@link import('../core/engine.ts').Engine} directly or
  * invoke it from inside a workflow via `ctx.agent()`.
  *
  * @example Create and register an agent definition
  * ```ts
- * import { Engine, defineAgent } from 'weft';
+ * import { Engine, agent } from 'weft';
  * import type { AgentDefinition, LLMProvider } from 'weft';
  *
  * declare const provider: LLMProvider;
  *
- * const assistant: AgentDefinition = defineAgent({
+ * const assistant: AgentDefinition = agent({
  *   name: 'summarizer',
  *   model: 'claude-sonnet-4-5',
  *   systemPrompt: 'Summarize the given text concisely.',
@@ -112,13 +112,13 @@ export interface AgentToolDefinition {
 }
 
 /**
- * Input options accepted by {@link defineAgent}.
+ * Input options accepted by {@link agent}.
  *
  * @example
  * ```ts
- * import { defineAgent } from 'weft';
+ * import { agent } from 'weft';
  *
- * const assistant = defineAgent({
+ * const assistant = agent({
  *   name: 'assistant',
  *   model: 'claude-sonnet-4-5',
  *   maxTurns: 5,
@@ -142,13 +142,13 @@ export interface AgentDefinitionOptions<TInput = unknown, TOutput = unknown> {
 }
 
 /**
- * Runtime check: is the value an AgentDefinition created by {@link defineAgent}?
+ * Runtime check: is the value an AgentDefinition created by {@link agent}?
  *
  * @example Guard before calling engine.register with an unknown value
  * ```ts
- * import { isAgentDefinition, defineAgent } from 'weft';
+ * import { isAgentDefinition, agent } from 'weft';
  *
- * const definition = defineAgent({ name: 'my-agent', model: 'claude-sonnet-4-5' });
+ * const definition = agent({ name: 'my-agent', model: 'claude-sonnet-4-5' });
  * console.log(isAgentDefinition(definition));
  * ```
  */
@@ -167,11 +167,11 @@ export function isAgentDefinition(value: unknown): value is AgentDefinition {
  *
  * @example Standalone agent registered on an engine
  * ```ts
- * import { Engine, defineAgent, type LLMProvider } from 'weft';
+ * import { Engine, agent, type LLMProvider } from 'weft';
  *
  * declare const provider: LLMProvider;
  *
- * const assistant = defineAgent({
+ * const assistant = agent({
  *   name: 'travel-assistant',
  *   model: 'claude-sonnet-4-5',
  *   systemPrompt: 'You help users book trips.',
@@ -182,7 +182,7 @@ export function isAgentDefinition(value: unknown): value is AgentDefinition {
  * engine.register(assistant, { provider });
  * ```
  */
-export function defineAgent<TInput = unknown, TOutput = unknown>(
+export function agent<TInput = unknown, TOutput = unknown>(
   options: AgentDefinitionOptions<TInput, TOutput>,
 ): AgentDefinition<TInput, TOutput> {
   return {

@@ -170,7 +170,7 @@ describe('activity-worker-entry', () => {
   it('rejects native handlers that cannot be serialized', () => {
     expect(() =>
       createActivityWorkerEntryUrl(
-        new Map([['native-handler', Math.max as (...args: unknown[]) => unknown]]),
+        new Map([['native-handler', Math.max as (input: unknown) => unknown]]),
       ),
     ).toThrow('is a native function');
   });

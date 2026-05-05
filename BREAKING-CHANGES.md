@@ -49,7 +49,7 @@ The following symbols are no longer exported from `weft`. Callers must supply th
 
 ## Shape Changes to Surviving Exports
 
-### `AgentDefinition` / `defineAgent`
+### `AgentDefinition` / `agent`
 
 Drops `budget`, `modelRouter`, `contextStrategy`, `hooks`, `toolsForTenant`, `validateInput`. The new shape is:
 

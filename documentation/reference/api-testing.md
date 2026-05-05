@@ -54,10 +54,10 @@ Current virtual time in milliseconds since epoch.
 ### `mock()`
 
 ```ts partial
-mock<TArgs extends unknown[], TResult>(
-  activity: (...args: TArgs) => Promise<TResult> | TResult,
-  implementation: (...args: TArgs) => TResult | Promise<TResult>,
-): MockHandle<TArgs, TResult>
+mock<TInput, TResult>(
+  activity: (input: TInput) => Promise<TResult> | TResult,
+  implementation: (input: TInput) => TResult | Promise<TResult>,
+): MockHandle<TInput, TResult>
 ```
 
 Register a mock implementation for an activity function. When the engine encounters this activity during workflow execution, it calls the mock instead. Returns a `MockHandle` for configuring behavior and inspecting calls.
@@ -68,7 +68,7 @@ Register a mock implementation for an activity function. When the engine encount
 | `implementation` | `Function` | The mock implementation to use instead |
 
 ```ts partial
-const handle = engine.mock(sendEmail, async (to, body) => {
+const handle = engine.mock(sendEmail, async (input) => {
   return { messageId: 'mock-123' };
 });
 ```
@@ -206,10 +206,10 @@ Registry for activity mocks. Manages mock implementations and provides lookup du
 ### `mock()`
 
 ```ts partial
-mock<TArgs extends unknown[], TResult>(
-  activity: (...args: TArgs) => Promise<TResult> | TResult,
-  implementation: (...args: TArgs) => TResult | Promise<TResult>,
-): MockHandle<TArgs, TResult>
+mock<TInput, TResult>(
+  activity: (input: TInput) => Promise<TResult> | TResult,
+  implementation: (input: TInput) => TResult | Promise<TResult>,
+): MockHandle<TInput, TResult>
 ```
 
 Register a mock for an activity function. Returns a `MockHandle` for configuring behavior and inspecting call history.
@@ -251,13 +251,13 @@ Remove all registered mocks.
 ## `MockHandle`
 
 ```ts
-interface MockHandle<TArgs extends unknown[], TResult> {
-  readonly calls: ReadonlyArray<MockCall<TArgs, TResult>>;
+interface MockHandle<TInput, TResult> {
+  readonly calls: ReadonlyArray<MockCall<TInput, TResult>>;
   readonly callCount: number;
-  readonly lastCall: MockCall<TArgs, TResult> | undefined;
-  mockImplementation(implementation: (...args: TArgs) => TResult | Promise<TResult>): void;
-  mockReturnValueOnce(value: TResult): MockHandle<TArgs, TResult>;
-  mockRejectionOnce(error: Error): MockHandle<TArgs, TResult>;
+  readonly lastCall: MockCall<TInput, TResult> | undefined;
+  mockImplementation(implementation: (input: TInput) => TResult | Promise<TResult>): void;
+  mockReturnValueOnce(value: TResult): MockHandle<TInput, TResult>;
+  mockRejectionOnce(error: Error): MockHandle<TInput, TResult>;
   resetCalls(): void;
   restore(): void;
 }
@@ -293,8 +293,8 @@ expect(handle.calls[1].result).toEqual({ messageId: 'retry-ok' });
 ## `MockCall`
 
 ```ts
-interface MockCall<TArgs extends unknown[], TResult> {
-  readonly args: TArgs;
+interface MockCall<TInput, TResult> {
+  readonly input: TInput;
   readonly result: TResult | undefined;
   readonly error: Error | undefined;
   readonly timestamp: number;
@@ -305,7 +305,7 @@ A single recorded call to a mocked activity.
 
 | Field       | Type                   | Description                                    |
 | ----------- | ---------------------- | ---------------------------------------------- |
-| `args`      | `TArgs`                | Arguments the mock was called with             |
+| `input`     | `TInput`               | Input the mock was called with                 |
 | `result`    | `TResult \| undefined` | Return value if the call succeeded             |
 | `error`     | `Error \| undefined`   | Error if the call threw                        |
 | `timestamp` | `number`               | When the call was recorded (real `Date.now()`) |
@@ -324,7 +324,7 @@ async function fetchPrice(symbol: string): Promise<number> {
   throw new Error('Not mocked');
 }
 
-async function sendAlert(message: string): Promise<void> {
+async function sendAlert(input: { symbol: string; price: number }): Promise<void> {
   // In production, this sends a notification
   throw new Error('Not mocked');
 }
@@ -333,7 +333,7 @@ async function sendAlert(message: string): Promise<void> {
 async function* priceAlertWorkflow(context, symbol: string) {
   const price = yield* context.run(fetchPrice, symbol);
   if (price > 100) {
-    yield* context.run(sendAlert, `${symbol} is at ${price}!`);
+    yield* context.run(sendAlert, { symbol, price });
   }
   yield* context.sleep('1h');
   return price;
@@ -353,7 +353,7 @@ describe('priceAlertWorkflow', () => {
     const result = await handle.result();
     expect(result).toBe(150);
     expect(alertMock.callCount).toBe(1);
-    expect(alertMock.lastCall?.args[0]).toBe('AAPL is at 150!');
+    expect(alertMock.lastCall?.input).toEqual({ symbol: 'AAPL', price: 150 });
   });
 });
 ```

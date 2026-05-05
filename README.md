@@ -38,6 +38,7 @@ import {
   Engine,
   WorkflowAlreadyExistsError,
   activity,
+  signal,
   type Context,
   type WorkflowContext,
   type WorkflowHandle,
@@ -109,7 +110,7 @@ A few consequences fall out of this:
 | **Search attribute** | Indexed metadata on a workflow (customer ID, region, status) set via `ctx.setAttribute()` and queryable through the list API. |
 | **Worker**           | A process or thread that executes activities. Inline by default; can run remote over WebSocket.                               |
 | **Interceptor**      | A composable hook that wraps context operations for tracing, validation, encryption, or any cross-cutting concern.            |
-| **Agent**            | A durable LLM execution loop registered via `defineAgent()` or invoked inline with `ctx.agent()`.                             |
+| **Agent**            | A durable LLM execution loop registered via `agent()` or invoked inline with `ctx.agent()`.                                   |
 | **Shared state**     | A compare-and-swap (CAS) durable mutable primitive for safe concurrent reads and writes across workflows.                     |
 
 ## Features
@@ -139,20 +140,22 @@ If `scheduleShipping` fails, `sendConfirmation`'s result is recorded in the pare
 Sleeps survive process restarts. Signals pause workflows for seconds, days, or weeks at no cost---the checkpoint just sits in storage.
 
 ```typescript
+const approvalSignal = signal<{ approved: boolean }>('approval');
+
 engine.register('approval', async function* (ctx, input: { orderId: string }) {
-  const approval = yield* ctx.waitForSignal<{ approved: boolean }>('approval');
+  const approval = yield* ctx.waitForSignal(approvalSignal);
   if (!approval.approved) {
     return { orderId: input.orderId, status: 'rejected' };
   }
 
   yield* ctx.sleep('24 hours');
-  yield* ctx.run(ship, input.orderId);
+  yield* ctx.run(ship, { orderId: input.orderId });
   return { orderId: input.orderId, status: 'shipped' };
 });
 
 // From an HTTP handler, another workflow, or anywhere with engine access:
 const handle = await engine.start('approval', { orderId: 'order-123' });
-await engine.signal(handle.id, 'approval', { approved: true });
+await engine.signal(handle.id, approvalSignal, { approved: true });
 ```
 
 ### Search Attributes
@@ -180,7 +183,7 @@ const orders = await engine.list({
 Weft adds durability to your agent loop. Bring your provider; bring your tools. Weft drives the loop, checkpoints at every tool-call boundary, and survives crashes mid-conversation.
 
 ```typescript
-import { Engine, defineAgent, type AgentTool, type LLMProvider } from 'weft';
+import { Engine, agent, type AgentTool, type LLMProvider } from 'weft';
 import { BunSQLiteStorage } from 'weft/storage/sqlite/bun';
 import Anthropic from '@anthropic-ai/sdk';
 
@@ -215,7 +218,7 @@ declare const webSearch: AgentTool;
 declare const factCheck: AgentTool;
 declare const dataQuery: AgentTool;
 
-const researcher = defineAgent({
+const researcher = agent({
   name: 'research',
   model: 'claude-sonnet-4-20250514',
   systemPrompt: 'You are a research analyst.',
@@ -396,7 +399,7 @@ Each `ctx.step()` is a checkpoint boundary. The engine compiles step-style workf
 | Signal                 | `setHandler` + `condition`        | `yield* ctx.waitForSignal(name)`                                           |
 | Versioning             | `patched()` / `deprecatePatch()`  | Deploy new code (migration optional)                                       |
 | Long-running workflows | `continueAsNew()`                 | None needed (checkpoint size is bounded by live state, not history length) |
-| Agent declaration      | N/A (build from primitives)       | `defineAgent()` or `ctx.agent()`—bring your own provider and tools         |
+| Agent declaration      | N/A (build from primitives)       | `agent()` or `ctx.agent()`—bring your own provider and tools               |
 | Durable agent loop     | Activity boundary only            | Every tool call is a checkpoint boundary                                   |
 | Dev environment        | Docker Compose + Temporal server  | `bun add weft`                                                             |
 | Bundling               | Webpack for workflow sandbox      | None                                                                       |

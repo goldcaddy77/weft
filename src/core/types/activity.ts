@@ -166,6 +166,32 @@ export interface ActivityDefinition<TInput = unknown, TOutput = unknown> {
 // ---------------------------------------------------------------------------
 
 /**
+ * Callable activity value returned by {@link activity}. It carries the activity
+ * metadata used for registration and can also be invoked directly in tests or
+ * helper code with the same single input value passed to `ctx.run`.
+ *
+ * @example
+ * ```ts
+ * import { activity, type ActivityCallable } from 'weft';
+ *
+ * const normalizeEmail: ActivityCallable<string, string> = activity(async function normalizeEmail(
+ *   input,
+ * ) {
+ *   return input.trim().toLowerCase();
+ * });
+ *
+ * const normalized = await normalizeEmail(' Ada@example.com ');
+ * void normalized;
+ * ```
+ */
+export type ActivityCallable<TInput, TOutput> = ActivityDefinition<TInput, TOutput> &
+  ([TInput] extends [void]
+    ? (input?: TInput) => Promise<TOutput>
+    : [unknown] extends [TInput]
+      ? (input?: TInput) => Promise<TOutput>
+      : (input: TInput) => Promise<TOutput>);
+
+/**
  * Create an activity with colocated configuration.
  * The returned value is both an ActivityDefinition and a callable function.
  *
@@ -187,19 +213,38 @@ export interface ActivityDefinition<TInput = unknown, TOutput = unknown> {
  * ```
  */
 export function activity<TOutput>(
-  options: ActivityDefinition<void, TOutput> & {
+  execute: () => Promise<TOutput> | TOutput,
+): ActivityCallable<void, TOutput>;
+export function activity<TInput, TOutput>(
+  execute: ActivityFunction<TInput, TOutput>,
+): ActivityCallable<TInput, TOutput>;
+export function activity<TOutput>(
+  options: Omit<ActivityDefinition<void, TOutput>, 'execute'> & {
     execute: () => Promise<TOutput> | TOutput;
   },
-): ActivityDefinition<void, TOutput> & (() => Promise<TOutput>);
+): ActivityCallable<void, TOutput>;
 export function activity<TInput, TOutput>(
   options: ActivityDefinition<TInput, TOutput>,
-): ActivityDefinition<TInput, TOutput> & ((...args: [TInput]) => Promise<TOutput>);
+): ActivityCallable<TInput, TOutput>;
 export function activity<TInput, TOutput>(
-  options: ActivityDefinition<TInput, TOutput>,
-): ActivityDefinition<TInput, TOutput> & ((...args: [TInput]) => Promise<TOutput>) {
-  const fn = ((...args: [TInput]) => options.execute(...args)) as (
-    ...args: [TInput]
-  ) => Promise<TOutput>;
+  input: ActivityDefinition<TInput, TOutput> | ActivityFunction<TInput, TOutput>,
+): ActivityCallable<TInput, TOutput> {
+  const options =
+    typeof input === 'function'
+      ? ({
+          name: input.name,
+          execute: input,
+        } satisfies ActivityDefinition<TInput, TOutput>)
+      : input;
+
+  if (!options.name) {
+    throw new Error('activity() requires a named function or an options object with name.');
+  }
+
+  const fn = ((inputValue?: TInput) => options.execute(inputValue as TInput)) as ActivityCallable<
+    TInput,
+    TOutput
+  >;
 
   // Assign non-function-builtin properties from options to the function
   const { name, execute, ...rest } = options;
@@ -210,5 +255,5 @@ export function activity<TInput, TOutput>(
   Object.defineProperty(fn, 'name', { value: name, configurable: true });
   Object.defineProperty(fn, 'execute', { value: execute, enumerable: true, configurable: true });
 
-  return fn as ActivityDefinition<TInput, TOutput> & ((...args: [TInput]) => Promise<TOutput>);
+  return fn;
 }

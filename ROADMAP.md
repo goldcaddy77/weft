@@ -82,7 +82,7 @@ This section unifies the public type surface, ergonomics, and definition helpers
 
   Verify TypeScript contextual typing flows when the user writes `async (ctx, input: { name: string }) => ...`; tighten overload signatures if it doesn't. Audit and rewrite every `as { ... }` cast in README, `documentation/getting-started/*`, `documentation/guides/*`, `documentation/agents/*`, JSDoc in `engine.ts` / `context.ts` / `types.ts`. Add a lint rule flagging `as <ObjectType>` directly inside `register` / `start` / `signal` / `update` / `query` callbacks.
 
-- [ ] **Unify `activity()` to handle both bare-function and metadata forms; add a peer `workflow()` helper; tighten the activity calling convention to single-input.**
+- [x] **Unify `activity()` to handle both bare-function and metadata forms; add a peer `workflow()` helper; tighten the activity calling convention to single-input.**
 
   **Where:** `src/core/types.ts:1943` (existing `activity()`), `types.ts:654` (`ActivityFunction<TInput, TOutput>`), `src/core/engine.ts:9180` (runtime args-spread), `engine.ts:2473-2483` (`register` overloads). New: `workflow()` helper.
 
@@ -95,7 +95,7 @@ This section unifies the public type surface, ergonomics, and definition helpers
 
   Lands _before_ the Unified Operation Catalog work — the catalog assumes single-input definitions with introspectable metadata.
 
-- [ ] **Add `signal()`, `update()`, `query()` typed handles for the message-shaped surfaces.**
+- [x] **Add `signal()`, `update()`, `query()` typed handles for the message-shaped surfaces.**
 
   **Where:** `src/core/types.ts` (new exports), `src/core/context.ts:1975` (`onUpdate` and the corresponding `onQuery`), `engine.ts` (`engine.signal` / `update` / `query` currently take `payload: unknown`).
 
@@ -113,7 +113,7 @@ This section unifies the public type surface, ergonomics, and definition helpers
 
   Overload `engine.signal` / `engine.update` / `engine.query`, `ctx.waitForSignal`, `ctx.onUpdate`, `ctx.onQuery` to accept either a string (legacy / dynamic) or a typed handle. Schema attachment via optional Zod is deferred to the Standard Schema item below. Lint rule flags `engine.signal(id, '<string-literal>', ...)` calls.
 
-- [ ] **Complete the definition vocabulary: `searchAttribute()`, `interceptor()`, `constraint()`, `schedule()`, and rename `defineAgent` → `agent`.**
+- [x] **Complete the definition vocabulary: `searchAttribute()`, `interceptor()`, `constraint()`, `schedule()`, and rename `defineAgent` → `agent`.**
 
   Family pattern — every primary primitive defined via a function named after the primitive.
   - **`searchAttribute(name, type)`** — accepts three forms, all converging on JSON Schema internally:

@@ -7,19 +7,25 @@ Your workflows are running, but you can't find the one you need. Filtering by st
 Search attributes are declared at registration time. This prevents typos and gives the engine enough type information to build correct indexes.
 
 ```typescript partial
+const customerId = searchAttribute<string>('customerId', 'string');
+const orderTotal = searchAttribute<number>('orderTotal', 'number');
+const region = searchAttribute<string>('region', 'string');
+const priority = searchAttribute<number>('priority', 'number');
+const tags = searchAttribute<string[]>('tags', { type: 'array', items: { type: 'string' } });
+
 engine.register('order', {
   handler: orderWorkflow,
   searchAttributes: {
-    customerId: { type: 'string' },
-    orderTotal: { type: 'number' },
-    region: { type: 'string' },
-    priority: { type: 'number' },
-    tags: { type: 'keyword_list' },
+    customerId,
+    orderTotal,
+    region,
+    priority,
+    tags,
   },
 });
 ```
 
-The supported types are `string`, `number`, `boolean`, `datetime`, and `keyword_list`. The `keyword_list` type stores an array of strings---useful for tags, labels, and other multi-value attributes.
+The helper accepts primitive JSON Schema type names such as `string`, `number`, and `boolean`, plus JSON Schema fragments. Use `{ type: 'string', format: 'date-time' }` for dates and `{ type: 'array', items: { type: 'string' } }` for string arrays.
 
 The TypeScript type backing these values is `SearchAttributeValue`:
 
@@ -34,20 +40,20 @@ type SearchAttributeValue = string | number | boolean | Date | string[];
 ```typescript partial
 async function* orderWorkflow(ctx: Context, order: Order) {
   ctx.setAttributes({
-    customerId: order.customerId,
-    region: order.region,
-    orderTotal: order.total,
-    tags: ['new', 'needs-review'],
+    [customerId.name]: order.customerId,
+    [region.name]: order.region,
+    [orderTotal.name]: order.total,
+    [tags.name]: ['new', 'needs-review'],
   });
 
   const payment = yield* ctx.run(charge, order);
 
-  ctx.setAttribute('tags', ['charged', 'processing']);
+  ctx.setAttribute(tags, ['charged', 'processing']);
   ctx.setAttribute('paymentId', payment.id);
 
   const shipment = yield* ctx.run(ship, { order, payment });
 
-  ctx.setAttribute('tags', ['completed', 'shipped']);
+  ctx.setAttribute(tags, ['completed', 'shipped']);
   ctx.setAttribute('trackingNumber', shipment.tracking);
 
   return { payment, shipment };
@@ -61,7 +67,7 @@ Notice how `setAttributes()` does a bulk set while `setAttribute()` sets a singl
 You can read attribute values within the workflow using `ctx.getAttribute()` and `ctx.getAttributes()`:
 
 ```typescript partial
-const region = ctx.getAttribute<string>('region');
+const currentRegion = ctx.getAttribute(region);
 const allAttributes = ctx.getAttributes(); // Readonly snapshot
 ```
 
@@ -74,23 +80,23 @@ The real payoff comes when you query. The `engine.list()` method accepts an `att
 ```typescript partial
 // Find all workflows for a specific customer
 const result = await engine.list({
-  attributes: [{ key: 'customerId', value: 'cust-123' }],
+  attributes: [{ key: customerId, value: 'cust-123' }],
 });
 
 // Find high-priority orders in a specific region
 const result = await engine.list({
   type: 'order',
   attributes: [
-    { key: 'region', value: 'us-east' },
-    { key: 'priority', gte: 8 },
+    { key: region, value: 'us-east' },
+    { key: priority, gte: 8 },
   ],
 });
 
 // Range query on order totals
 const result = await engine.list({
   attributes: [
-    { key: 'orderTotal', gte: 100 },
-    { key: 'orderTotal', lte: 500 },
+    { key: orderTotal, gte: 100 },
+    { key: orderTotal, lte: 500 },
   ],
 });
 ```
@@ -115,7 +121,7 @@ An **inverted index** at `idx:{attr_name}:{encoded_value}:{workflow_id}` enables
 
 Values are encoded into sortable strings so range scans produce correct results across all types. Strings get an `s:` prefix, booleans get `b:0` or `b:1`, dates use ISO 8601 with a `d:` prefix, and numbers use an IEEE 754 float-to-sortable-hex encoding that preserves numeric ordering in lexicographic comparisons. (Yes, `-1` sorts before `0` sorts before `100`---the `encodeAttributeValue` function handles the bit manipulation.)
 
-For `keyword_list` attributes, each element gets its own index entry. Setting `tags: ['charged', 'processing']` creates two index keys.
+For string-array attributes, each element gets its own index entry. Setting `tags: ['charged', 'processing']` creates two index keys.
 
 All index updates happen atomically at the checkpoint boundary. The engine diffs previous vs current attributes using `buildIndexOperations()`, computes the minimal set of add/delete operations, and writes everything in a single `batch()` call alongside the checkpoint. No partial index states, ever.
 

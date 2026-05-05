@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines -- ID:core-context-public-workflow-surface */
 import type {
   DebateOptions,
   DebateResult,
@@ -13,11 +14,17 @@ import {
   SESSION_STATE_LOCAL_KEY,
 } from '../session-state.ts';
 import type {
+  ActivityCallable,
   ActivityCallOptions,
   ChildWorkflowOptions,
   ChildWorkflowTarget,
   Duration,
+  MessageName,
+  QueryDefinition,
+  SearchAttributeHandle,
   SearchAttributeValue,
+  SignalDefinition,
+  UpdateDefinition,
   WorkflowContext,
   WorkflowMapOptions,
   WorkflowPipeStage,
@@ -26,6 +33,7 @@ import type {
   WorkflowReduceOptions,
   WorkflowSessionState,
 } from '../types.ts';
+import { messageName, searchAttributeName } from '../types.ts';
 import * as aiOperations from './ai-operations.ts';
 import * as contextAttributes from './attributes.ts';
 import * as childWorkflowPipe from './child-workflow-pipe.ts';
@@ -120,6 +128,11 @@ export class Context implements WorkflowContext {
     internals.updateHandlers ??= new Map();
     return internals.updateHandlers;
   }
+  get queryHandlers(): Map<string, (input: unknown) => unknown> {
+    const internals = getInternals(this);
+    internals.queryHandlers ??= new Map();
+    return internals.queryHandlers;
+  }
   get explainEnabled(): boolean {
     return getInternals(this).explainMode;
   }
@@ -208,6 +221,10 @@ export class Context implements WorkflowContext {
       childInternals.updateHandlers !== undefined
         ? new Map(childInternals.updateHandlers)
         : undefined;
+    internals.queryHandlers =
+      childInternals.queryHandlers !== undefined
+        ? new Map(childInternals.queryHandlers)
+        : undefined;
     internals.exposedValues =
       childInternals.exposedValues !== undefined
         ? new Map(childInternals.exposedValues)
@@ -219,24 +236,41 @@ export class Context implements WorkflowContext {
   sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T> {
     return sessionStateHelpers.sessionState(this, getInternals(this), key, initialValue);
   }
-  run<TArguments extends unknown[], TResult>(
-    fn: (...args: TArguments) => Promise<TResult> | TResult,
-    ...rest: TArguments
+  run<TResult>(
+    fn: ((input: unknown) => Promise<TResult> | TResult) & {
+      name: string;
+      execute: (input: unknown, context?: unknown) => Promise<TResult> | TResult;
+    },
+    options?: ActivityCallOptions,
   ): Generator<ContextOperationRequest, TResult, unknown>;
-  run<TArguments extends unknown[], TResult>(
-    fn: (...args: TArguments) => Promise<TResult> | TResult,
-    ...rest: [...TArguments, ActivityCallOptions]
+  run<TResult>(
+    fn: ActivityCallable<unknown, TResult>,
+    options?: ActivityCallOptions,
+  ): Generator<ContextOperationRequest, TResult, unknown>;
+  run<TResult>(
+    fn: () => Promise<TResult> | TResult,
+    options?: ActivityCallOptions,
+  ): Generator<ContextOperationRequest, TResult, unknown>;
+  run<TInput, TResult>(
+    fn: (input: TInput) => Promise<TResult> | TResult,
+    input: TInput,
+    options?: ActivityCallOptions,
   ): Generator<ContextOperationRequest, TResult, unknown>;
   // oxlint-disable-next-line complexity -- ID:core-context-fn-complexity
   *run<TResult>(
-    fn: (...args: unknown[]) => Promise<TResult> | TResult,
+    fn: (input: unknown, context?: unknown) => Promise<TResult> | TResult,
     ...rest: unknown[]
   ): Generator<ContextOperationRequest, TResult, unknown> {
     let options: ActivityCallOptions | undefined;
     if (rest.length > 0 && sessionStateHelpers.isActivityCallOptions(rest[rest.length - 1])) {
       options = rest.pop() as ActivityCallOptions;
     }
-    const args = rest;
+    if (rest.length > 1) {
+      throw new Error(
+        'ctx.run() accepts one activity input value plus optional ActivityCallOptions.',
+      );
+    }
+    const input = rest[0];
     const internals = getInternals(this);
     const step = internals.stepIndex++;
     if (internals.accumulatedResults?.has(step)) {
@@ -249,7 +283,7 @@ export class Context implements WorkflowContext {
     }
     const queue = options?.queue ?? 'default';
     if (internals.explainMode) {
-      console.log(`[weft] ctx.run(${fn.name || 'anonymous'}, ${JSON.stringify(args)})`);
+      console.log(`[weft] ctx.run(${fn.name || 'anonymous'}, ${JSON.stringify(input)})`);
       console.log(`  → Creating checkpoint at step ${step}`);
       console.log(`  → Dispatching activity "${fn.name || 'anonymous'}" to queue "${queue}"`);
     }
@@ -260,7 +294,7 @@ export class Context implements WorkflowContext {
       operationId,
       activityName: fn.name || 'anonymous',
       fn,
-      args,
+      input,
       callerStack,
       ...(options !== undefined ? { options: options as Record<string, unknown> } : {}),
     };
@@ -273,17 +307,45 @@ export class Context implements WorkflowContext {
   *suspendUntil<T = unknown>(resumeToken: string): Generator<ContextOperationRequest, T, unknown> {
     return yield* this.waitForSignal<T>(resumeToken);
   }
-  *waitForSignal<T = unknown>(name: string): Generator<ContextOperationRequest, T, unknown> {
-    return yield* durableOperations.waitForSignal<T>(this, getInternals(this), name);
+  waitForSignal<TInput>(
+    definition: SignalDefinition<TInput>,
+  ): Generator<ContextOperationRequest, TInput, unknown>;
+  waitForSignal<T = unknown>(name: string): Generator<ContextOperationRequest, T, unknown>;
+  *waitForSignal<T = unknown>(
+    nameOrDefinition: MessageName,
+  ): Generator<ContextOperationRequest, T, unknown> {
+    return yield* durableOperations.waitForSignal<T>(
+      this,
+      getInternals(this),
+      messageName(nameOrDefinition),
+    );
   }
-  *waitForUpdate<T = unknown>(
+  waitForUpdate<TInput, TOutput>(
+    definition: UpdateDefinition<TInput, TOutput>,
+  ): Generator<
+    ContextOperationRequest,
+    { payload: TInput; respond: (result: TOutput) => void },
+    unknown
+  >;
+  waitForUpdate<T = unknown>(
     name: string,
   ): Generator<
     ContextOperationRequest,
     { payload: T; respond: (result: unknown) => void },
     unknown
+  >;
+  *waitForUpdate<T = unknown>(
+    nameOrDefinition: MessageName,
+  ): Generator<
+    ContextOperationRequest,
+    { payload: T; respond: (result: unknown) => void },
+    unknown
   > {
-    return yield* durableOperations.waitForUpdate<T>(this, getInternals(this), name);
+    return yield* durableOperations.waitForUpdate<T>(
+      this,
+      getInternals(this),
+      messageName(nameOrDefinition),
+    );
   }
   *humanReview(
     options: HumanReviewOptions,
@@ -321,7 +383,7 @@ export class Context implements WorkflowContext {
   *archive(key: string, data: unknown): Generator<ContextOperationRequest, void, unknown> {
     return yield* durableOperations.archive(this, getInternals(this), key, data);
   }
-  *runAll<T extends Record<string, [Function, ...unknown[]]>>(
+  *runAll<T extends Record<string, [Function] | [Function, unknown]>>(
     branches: T,
   ): Generator<ContextOperationRequest, Record<keyof T, unknown>, unknown> {
     return yield* parallelOperations.runAll(this, getInternals(this), branches);
@@ -426,20 +488,46 @@ export class Context implements WorkflowContext {
   ): Generator<ContextOperationRequest, SuperviseResult, unknown> {
     return yield* aiOperations.supervise(this, getInternals(this), options);
   }
-  setAttribute(key: string, value: SearchAttributeValue): void {
-    contextAttributes.setAttribute(getInternals(this), key, value);
+  setAttribute<TValue extends SearchAttributeValue>(
+    key: SearchAttributeHandle<TValue>,
+    value: TValue,
+  ): void;
+  setAttribute(key: string, value: SearchAttributeValue): void;
+  setAttribute(key: string | SearchAttributeHandle, value: SearchAttributeValue): void {
+    contextAttributes.setAttribute(getInternals(this), searchAttributeName(key), value);
   }
   setAttributes(attributes: Record<string, SearchAttributeValue>): void {
     contextAttributes.setAttributes(getInternals(this), attributes);
   }
-  getAttribute<T extends SearchAttributeValue = SearchAttributeValue>(key: string): T | undefined {
-    return contextAttributes.getAttribute<T>(getInternals(this), key);
+  getAttribute<T extends SearchAttributeValue>(key: SearchAttributeHandle<T>): T | undefined;
+  getAttribute<T extends SearchAttributeValue = SearchAttributeValue>(key: string): T | undefined;
+  getAttribute<T extends SearchAttributeValue = SearchAttributeValue>(
+    key: string | SearchAttributeHandle<T>,
+  ): T | undefined {
+    return contextAttributes.getAttribute<T>(getInternals(this), searchAttributeName(key));
   }
   getAttributes(): Readonly<Record<string, SearchAttributeValue>> {
     return contextAttributes.getAttributes(getInternals(this));
   }
-  onUpdate(name: string, handler: (payload: unknown) => unknown): void {
-    contextUpdates.onUpdate(getInternals(this), name, handler);
+  onUpdate<TInput, TOutput>(
+    definition: UpdateDefinition<TInput, TOutput>,
+    handler: (payload: TInput) => TOutput | Promise<TOutput>,
+  ): void;
+  onUpdate(name: string, handler: (payload: unknown) => unknown): void;
+  onUpdate(nameOrDefinition: MessageName, handler: (payload: unknown) => unknown): void {
+    contextUpdates.onUpdate(getInternals(this), messageName(nameOrDefinition), handler);
+  }
+  onQuery<TInput, TOutput>(
+    definition: QueryDefinition<TInput, TOutput>,
+    handler: (input: TInput) => TOutput | Promise<TOutput>,
+  ): void;
+  onQuery<TOutput>(
+    definition: QueryDefinition<void, TOutput>,
+    handler: () => TOutput | Promise<TOutput>,
+  ): void;
+  onQuery(name: string, handler: (input: unknown) => unknown): void;
+  onQuery(nameOrDefinition: MessageName, handler: (input: unknown) => unknown): void {
+    contextUpdates.onQuery(getInternals(this), messageName(nameOrDefinition), handler);
   }
   expose(accessors: Record<string, () => unknown>): void {
     contextUpdates.expose(getInternals(this), accessors);

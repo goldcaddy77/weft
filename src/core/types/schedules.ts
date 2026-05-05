@@ -1,4 +1,5 @@
 import type { TenantContext } from '../tenant.ts';
+import type { WorkflowDefinition } from './workflow-function.ts';
 
 // ---------------------------------------------------------------------------
 // Recurring schedule state
@@ -50,6 +51,44 @@ export interface ScheduleOptions {
   id?: string;
   overlap?: ScheduleOverlapPolicy;
   backfill?: boolean;
+}
+
+/**
+ * Declarative recurring schedule definition returned by {@link schedule}.
+ *
+ * @example
+ * ```ts
+ * import { schedule } from 'weft';
+ *
+ * const dailyReport = schedule({
+ *   workflow: 'report',
+ *   cron: '0 9 * * *',
+ *   input: { day: 'today' },
+ *   overlapPolicy: 'skip',
+ * });
+ * ```
+ */
+export interface ScheduleDefinition<TInput = unknown> {
+  workflow: string | WorkflowDefinition<TInput>;
+  cron: string;
+  input: TInput;
+  id?: string;
+  overlapPolicy?: ScheduleOverlapPolicy;
+  backfill?: boolean;
+}
+
+/**
+ * Create a recurring schedule definition for `engine.schedule(definition)`.
+ *
+ * @example
+ * ```ts
+ * const definition = schedule({ workflow: 'report', cron: '0 9 * * *', input: null });
+ * ```
+ */
+export function schedule<TInput>(
+  definition: ScheduleDefinition<TInput>,
+): ScheduleDefinition<TInput> {
+  return definition;
 }
 
 /**

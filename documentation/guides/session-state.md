@@ -50,7 +50,7 @@ engine.register('survives-crashes', async function* (ctx: WorkflowContext) {
 
 ## Running activities with session-bound stickiness
 
-`run(fn, ...args)` executes a function as a generator-yielding durable operation that's automatically routed through sticky worker execution. This is the typical path for activities that need to be co-located with their session state---LLM calls, conversation-aware tool invocations, anything where moving between workers would lose useful warm context.
+`run(fn, input?, options?)` executes a function as a generator-yielding durable operation that's automatically routed through sticky worker execution. This is the typical path for activities that need to be co-located with their session state---LLM calls, conversation-aware tool invocations, anything where moving between workers would lose useful warm context.
 
 ```ts partial
 async function* example(ctx: Context) {

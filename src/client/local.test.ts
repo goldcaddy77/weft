@@ -18,7 +18,10 @@ async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
 }
 
 async function* waitingWorkflow(ctx: WorkflowContext, input: unknown) {
-  const signal = yield* (ctx as Context).waitForSignal<string>('continue');
+  const context = ctx as Context;
+  context.expose({ ready: () => true });
+  context.onQuery('echoInput', (queryInput) => queryInput);
+  const signal = yield* context.waitForSignal<string>('continue');
   return `${String(input)}:${signal}`;
 }
 
@@ -40,6 +43,31 @@ function createTestEngine(): Engine {
   engine.register('waiting', waitingWorkflow);
   engine.register('failing', failingWorkflow);
   return engine;
+}
+
+async function waitForWorkflowStatus(
+  engine: Engine,
+  workflowId: string,
+  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed-out',
+): Promise<void> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const state = await engine.get(workflowId);
+    if (state?.status === status) {
+      return;
+    }
+    await sleepForTesting(5);
+  }
+  throw new Error(`Workflow ${workflowId} did not reach ${status}`);
+}
+
+async function waitForQueryReady(client: WeftClient, workflowId: string): Promise<void> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if ((await client.query(workflowId, 'ready')) === true) {
+      return;
+    }
+    await sleepForTesting(5);
+  }
+  throw new Error(`Workflow ${workflowId} did not expose query handlers`);
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +142,24 @@ describe('LocalClient', () => {
       const handle = await client.start('echo', 42);
       const result = await handle.result();
       expect(result).toBe(42);
+    });
+  });
+
+  describe('query', () => {
+    it('passes input through local client and workflow handle queries', async () => {
+      const handle = await client.start('waiting', 'payload', { id: 'local-query-input' });
+      await waitForWorkflowStatus(engine, handle.id, 'running');
+      await waitForQueryReady(client, handle.id);
+
+      await expect(client.query(handle.id, 'echoInput', { detail: true })).resolves.toEqual({
+        detail: true,
+      });
+      await expect(handle.query('echoInput', { source: 'handle' })).resolves.toEqual({
+        source: 'handle',
+      });
+
+      await client.signal(handle.id, 'continue', 'done');
+      await expect(handle.result()).resolves.toBe('payload:done');
     });
   });
 

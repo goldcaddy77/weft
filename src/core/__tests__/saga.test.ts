@@ -390,9 +390,12 @@ describe('ctx.saga()', () => {
 
       // Patch ctx.run to record the function name it receives.
       const originalRun = c.run.bind(c);
-      c.run = function* (fn: (...args: unknown[]) => unknown, ...rest: unknown[]) {
+      c.run = function* (fn: (input?: unknown) => unknown, input?: unknown) {
         capturedNames.push(fn.name);
-        return yield* originalRun(fn, ...rest);
+        if (arguments.length === 1) {
+          return yield* originalRun(fn as () => unknown);
+        }
+        return yield* originalRun(fn as (input: unknown) => unknown, input);
       } as typeof c.run;
 
       yield* c.saga([{ definition: activity, input: 'test' }]);
