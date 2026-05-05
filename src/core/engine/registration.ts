@@ -15,6 +15,7 @@ type AgentDefinitionLike = {
   name: string;
   model: string;
   version?: string;
+  description?: string;
   systemPrompt?: string;
   tools?: AgentToolCollection;
   maxTurns?: number;
@@ -28,6 +29,10 @@ export type RegistrationCallbacks = {
   ensureRetentionSweepInterval: () => void;
   isAgentDefinition: (value: unknown) => value is AgentDefinitionLike;
 };
+
+function copiedTags(tags: ReadonlyArray<string> | undefined): string[] | undefined {
+  return tags === undefined ? undefined : [...tags];
+}
 
 // oxlint-disable-next-line complexity -- ID:core-engine-register-complexity
 export function register(
@@ -79,6 +84,7 @@ export function register(
     const agentRegistrationEntry: RegistrationEntry = {
       handler,
       version: workflowVersion,
+      ...(agentDef.description === undefined ? {} : { description: agentDef.description }),
       isAgent: true,
       provider: agentOptions.provider,
       versionTupleForTenant: resolveVersionTuple,
@@ -104,6 +110,7 @@ export function register(
 
   if (isRegistration) {
     const registration = handlerOrRegistration;
+    const tags = copiedTags(registration.tags);
     const normalizedRetention = normalizeRetentionPolicy(
       registration.retention,
       `registration("${name}").retention`,
@@ -111,6 +118,12 @@ export function register(
     const entry: RegistrationEntry = {
       handler: registration.handler,
       version: registration.version ?? '1',
+      ...(registration.description === undefined ? {} : { description: registration.description }),
+      ...(tags === undefined ? {} : { tags }),
+      ...(registration.inputSchema === undefined ? {} : { inputSchema: registration.inputSchema }),
+      ...(registration.outputSchema === undefined
+        ? {}
+        : { outputSchema: registration.outputSchema }),
       ...(normalizedRetention !== null && { retention: normalizedRetention }),
     };
     if (registration.migrate) {

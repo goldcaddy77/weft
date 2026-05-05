@@ -2,7 +2,7 @@
 
 A running list of issues, gaps, and follow-ups discovered while reading through the docs. Each item should carry enough context that we can pick it up cold later without re-doing the investigation.
 
-## 1. Type System & Definition Vocabulary 🚨
+## Type System & Definition Vocabulary 🚨
 
 This section unifies the public type surface, ergonomics, and definition helpers. Everything here is pre-1.0 hard rename — no aliases, no codemod, no changelog warnings.
 
@@ -59,7 +59,7 @@ This section unifies the public type surface, ergonomics, and definition helpers
   - **`searchAttribute(name, type)`** — accepts three forms, all converging on JSON Schema internally:
     - Tier 1: bare primitive name (`'string' | 'number' | 'integer' | 'boolean' | 'array' | 'object'`) — sugar for `{ type: <name> }`.
     - Tier 2: JSON Schema fragment (`{ type: 'string', format: 'date-time' }`, `{ type: 'array', items: { type: 'string' } }`).
-    - Tier 3: Standard Schema (Zod / Valibot / ArkType) — converted via `toJSONSchema(schema)`.
+    - Tier 3: [Standard Schema](https://standardschema.dev/) ([Zod](https://zod.dev/) / [Valibot](https://valibot.dev/) / [ArkType](https://arktype.io/)) — converted via `toJSONSchema(schema)`.
       Overload `ctx.setAttribute` and `engine.list({ attributes })` to accept either string keys (dynamic) or handles (typed). Replaces the legacy `'datetime'` / `'keyword_list'` tags.
   - **`interceptor(spec)`** — identity-with-inference. Optional `name` for observability.
   - **`constraint(spec)`** — identity helper; types narrow.
@@ -72,7 +72,7 @@ This section unifies the public type surface, ergonomics, and definition helpers
 
   **Where:** every helper above (`workflow`, `activity`, `agent`, `signal`, `update`, `query`, `searchAttribute`, `constraint`, `schedule`).
 
-  One declaration drives three artifacts: TypeScript type (compile-time), validator (runtime at boundaries), JSON Schema (registry, codegen, polyglot SDKs). Use the project's existing `toJSONSchema()` adapter (Zod via `zod-to-json-schema`, Valibot via `valibot-to-json-schema`, etc.). Schemas are optional for purely-internal definitions; required for anything crossing a process boundary (HTTP, MCP, codegen). Document the heuristic.
+  One declaration drives three artifacts: TypeScript type (compile-time), validator (runtime at boundaries), [JSON Schema](https://json-schema.org/) (registry, codegen, polyglot SDKs). Use the project's existing `toJSONSchema()` adapter ([Zod](https://zod.dev/) via [`zod-to-json-schema`](https://github.com/StefanTerdell/zod-to-json-schema), [Valibot](https://valibot.dev/) via `valibot-to-json-schema`, etc.). Schemas are optional for purely-internal definitions; required for anything crossing a process boundary (HTTP, [MCP](https://modelcontextprotocol.io/), codegen). Document the heuristic.
 
 - [ ] **Replace `SearchAttributeDefinition` with JSON Schema.**
 
@@ -101,7 +101,7 @@ This section unifies the public type surface, ergonomics, and definition helpers
 
   **Out of scope:** Proxy form, cross-process change notifications, automatic lifecycle binding, schema validation on writes (covered by Standard Schema item), Immer-style transactional draft.
 
-## 2. Cross-Process Type Generation
+## Cross-Process Type Generation
 
 - [ ] **Add typed `ctx.run` and `engine.start` via a module-augmentation activity registry.**
 
@@ -122,7 +122,7 @@ This section unifies the public type surface, ergonomics, and definition helpers
 
 - [ ] **Expose JSON Schema registries from the server.**
 
-  **Where:** new endpoint `GET /v1/registry` (or a JSON-RPC method); reuses the same `zod-to-json-schema` path the OpenRPC generator uses (`src/server/openrpc.ts:142-144`).
+  **Where:** new endpoint `GET /v1/registry` (or a JSON-RPC method); reuses the same [`zod-to-json-schema`](https://github.com/StefanTerdell/zod-to-json-schema) path the [OpenRPC](https://open-rpc.org/) generator uses (`src/server/openrpc.ts:142-144`).
 
   Returns `{ workflows: { name: { input, output, ... } }, activities: { name: { input, output, queue, ... } } }`. Gated behind an authenticated scope (schemas leak internal data shapes). Worker-supplied activity schemas: extend the `RemoteWorker` registration message (`src/worker/index.ts:137`) to carry schemas; the server unions them into the registry document. Snapshot, not stream — codegen is a build step.
 
@@ -142,27 +142,27 @@ This section unifies the public type surface, ergonomics, and definition helpers
 
   Gated by the JSON Schema registry endpoint above.
 
-## 3. Catalog Follow-Ups
+## Catalog Follow-Ups
 
 The transport-neutral operation catalog, dispatch audit, stream/subscription kinds, OpenAPI hydration, AsyncAPI, `/.well-known/api-catalog`, OpenRPC errors, discovery info, and the `mcpExposable` ratchet have landed. The remaining catalog work is about user-defined workflows and activities rather than the built-in server operations.
 
-- [ ] **Finish workflow and activity catalog citizenship for user definitions.**
+- [x] **Finish workflow and activity catalog citizenship for user definitions.**
 
   **Where:** `src/core/types/workflow-function.ts` (`WorkflowRegistration`), `src/core/activity-registry.ts` (`ActivityRegistrationOptions`), `src/server/operation-catalog/workflow-adapter.ts`, and any future activity adapter.
 
   Registered workflows and activities should carry `inputSchema`, `outputSchema`, transport-availability flags where relevant, access policies where relevant, user-facing descriptions, and an introspection surface. `catalogWorkflow()` currently proves the start-operation adapter shape, but `WorkflowRegistration` itself does not carry schema metadata and activities still live behind `ActivityRegistry` metadata rather than catalog-shaped definitions.
 
-  Schemas are opt-in in v1, then ratchet to "required for MCP-exposed workflows" once the MCP server lands. Use Standard Schema for the validator interface (cross-validator interop). This is the foundation for codegen, MCP tool input schemas, per-workflow AsyncAPI payloads, and the `/v1/registry` endpoint.
+  Schemas are opt-in in v1, then ratchet to "required for [MCP](https://modelcontextprotocol.io/)-exposed workflows" once the MCP server lands. Use [Standard Schema](https://standardschema.dev/) for the validator interface (cross-validator interop). This is the foundation for codegen, MCP tool input schemas, per-workflow AsyncAPI payloads, and the `/v1/registry` endpoint.
 
-## 4. MCP Server Support
+## MCP Server Support
 
-Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armorer` owns MCP-as-tool-source). Weft's _workflow_ surface is a separate concern: there's value in exposing Weft workflows as MCP tools/resources to external MCP clients (Claude Desktop, Cursor, Anthropic SDK).
+Per the AI Surface Shrinkage decision, Weft does not ship an [MCP](https://modelcontextprotocol.io/) _client_ (`armorer` owns MCP-as-tool-source). Weft's _workflow_ surface is a separate concern: there's value in exposing Weft workflows as MCP tools/resources to external MCP clients ([Claude Desktop](https://claude.ai/download), [Cursor](https://cursor.com/), [Anthropic SDK](https://docs.anthropic.com/en/api/client-sdks)).
 
 - [ ] **Implement an MCP server exposing Weft as a first-class MCP service — remote HTTP and local stdio (`npx weft-mcp`).**
 
   **Two deployment shapes, both first-class:**
-  1. **Remote MCP (HTTP)** — long-lived Weft server, MCP added to the existing transport surface. Uses **Streamable HTTP** (2025-03-26+ spec) — single endpoint accepting POST (client→server) and GET (server→client SSE), with session resumption via `Mcp-Session-Id` header. Multi-tenant, OAuth-authenticated.
-  2. **Local stdio (`npx weft-mcp`)** — standalone npm package (`weft-mcp` or `@weft/mcp`). Two modes:
+  1. **Remote MCP (HTTP)** — long-lived Weft server, MCP added to the existing transport surface. Uses **[Streamable HTTP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http)** (2025-03-26+ spec) — single endpoint accepting POST (client→server) and GET (server→client SSE), with session resumption via `Mcp-Session-Id` header. Multi-tenant, OAuth-authenticated.
+  2. **Local stdio (`npx weft-mcp`)** — standalone npm package (`weft-mcp` or `@weft/mcp`) launched with [`npx`](https://docs.npmjs.com/cli/v10/commands/npx). Two modes:
      - **Embedded** (`--db ./weft.db`): in-process engine against local SQLite. No auth; local user filesystem is the trust boundary.
      - **Proxy** (`--server https://... --token $WEFT_TOKEN`): forwards every MCP request to a remote Weft server. Local credential holder for hosted deployments.
 
@@ -178,7 +178,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
   - **Tools:** every registered workflow becomes an MCP tool; `inputSchema` is the workflow's `inputSchema`. Plus engine-control tools: `start_workflow`, `signal_workflow`, `update_workflow`, `query_workflow`, `cancel_workflow`, `list_workflows`, `get_workflow_state`. Per-workflow tools named `start_<workflow_name>` (lowercase, underscores).
   - **Resources:** read-only views — workflow state by ID, checkpoint history, event log, search-attribute query results. URIs like `weft://workflow/<id>/state`, `weft://workflow/<id>/checkpoints/<step>`, `weft://workflows?status=running`. Subscribable; uses the existing event-feed backend.
   - **Methods to handle:** `initialize`, `notifications/initialized`, `notifications/cancelled`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, `resources/subscribe`, `resources/unsubscribe`, `resources/templates/list`, `prompts/list`, `prompts/get`, `logging/setLevel`, `ping`, `completion/complete`. Outbound notifications: `tools/list_changed`, `resources/list_changed`, `resources/updated`, `progress`, `message`.
-  - **Auth:** Remote uses OAuth 2.1 with PKCE per MCP spec. Reuse `src/server/authentication.ts` and `src/server/authorization-scope.ts`. (The client-side OAuth helper at `src/ai/mcp/oauth2-token-manager.ts` is deleted by the shrinkage; the server reimplements the authorization-server half against existing infrastructure.) Local stdio: no auth on the wire.
+  - **Auth:** Remote uses [OAuth 2.1](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1) with PKCE per MCP spec. Reuse `src/server/authentication.ts` and `src/server/authorization-scope.ts`. (The client-side OAuth helper at `src/ai/mcp/oauth2-token-manager.ts` is deleted by the shrinkage; the server reimplements the authorization-server half against existing infrastructure.) Local stdio: no auth on the wire.
 
   **Implementation must follow:**
   - Tool input schemas are JSON Schema (convert via `zod-to-json-schema`).
@@ -197,7 +197,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
 
   Once the server exists, add an `x-weft-mcp` extension on the OpenRPC document plus a `/.well-known/mcp.json` route. Native MCP `tools/list` is the canonical answer for live introspection; the static catalog is for build-time consumers. Lean minimal — extension on OpenRPC + live `tools/list` is enough; separate static catalog is nice-to-have. Gated by the MCP server item.
 
-## 5. Polyglot Activity Workers (Path A)
+## Polyglot Activity Workers (Path A)
 
 **Architectural decision:** workflows are TypeScript-only by design (generators don't serialize across processes); activities are polyglot via the `RemoteWorker` wire protocol.
 
@@ -228,7 +228,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
 
   Without a documented ADR, a future contributor proposes a Python workflow runtime, no one remembers why we said no, and the codebase fragments. The ADR is the durable answer.
 
-## 6. Agent Bureau Compatibility 🚨
+## Agent Bureau Compatibility 🚨
 
 **Architectural commitment:** Agent Bureau (`/Users/stevekinney/Developer/agent-bureau`) consumes Weft, never the reverse. **Dependency arrow: Agent Bureau → Weft. Hard structural constraint.** Weft cannot import from `armorer`, `conversationalist`, or `interoperability` — `devDependencies` only, for type-compat tests. The two items below scope the Weft-side design that lets Agent Bureau extend Weft's narrow contracts as structural supersets.
 
@@ -283,7 +283,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
 
   Lands with or before the tool-types compat item. Both are pre-1.0; this locks in Weft's storage interface as the canonical shape for the agent ecosystem.
 
-## 7. Documentation
+## Documentation
 
 - [ ] **Update the Service Worker guide to lead with `setupServiceWorker()`.**
 

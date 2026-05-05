@@ -2909,6 +2909,70 @@
       "classification": "example-required"
     },
     {
+      "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "DefinitionSchema",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "DefinitionSchema",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "StandardJSONSchemaV1",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "StandardJSONSchemaV1",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "StandardSchemaV1",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "StandardSchemaV1",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "StandardTypedV1",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "StandardTypedV1",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "isDefinitionSchema",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
       "sourceFile": "src/core/types/identity.ts",
       "sourceName": "FailureCategory",
       "kind": "type",
@@ -3689,7 +3753,21 @@
       "classification": "example-required"
     },
     {
-      "sourceFile": "src/core/types/workflow-function.ts",
+      "sourceFile": "src/core/types/workflow-registry.ts",
+      "sourceName": "WorkflowDefinition",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "WorkflowDefinition",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/workflow-registry.ts",
       "sourceName": "WorkflowRegistry",
       "kind": "type",
       "subKind": "type-alias",

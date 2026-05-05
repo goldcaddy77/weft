@@ -1,3 +1,4 @@
+import type { DefinitionSchema } from './definition-schema.ts';
 import type { Duration, RetryPolicy } from './retry-retention.ts';
 
 // ---------------------------------------------------------------------------
@@ -124,7 +125,17 @@ export interface ActivityCallOptions {
  * ```
  */
 export interface ActivityDefinition<TInput = unknown, TOutput = unknown> {
+  /** Stable activity name used for registration, dispatch, and introspection. */
   name: string;
+  /** User-facing description for catalog, code generation, and tool surfaces. */
+  description?: string;
+  /** User-facing grouping tags for catalog and documentation surfaces. */
+  tags?: ReadonlyArray<string>;
+  /** Optional input schema metadata for introspection; core execution does not validate it. */
+  inputSchema?: DefinitionSchema<unknown, TInput>;
+  /** Optional output schema metadata for introspection; core execution does not validate it. */
+  outputSchema?: DefinitionSchema<unknown, TOutput>;
+  /** Activity implementation called by the engine or worker. */
   execute: ActivityFunction<TInput, TOutput>;
   /**
    * Optional post-execution verifier.

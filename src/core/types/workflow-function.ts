@@ -1,5 +1,6 @@
 import type { ConstraintDefinition } from '../constraint.ts';
 import type { TenantContext } from '../tenant.ts';
+import type { DefinitionSchema } from './definition-schema.ts';
 import type { WorkflowId } from './identity.ts';
 import type { RetentionPolicy } from './retry-retention.ts';
 import type { SearchAttributeSchema } from './search-attributes.ts';
@@ -447,10 +448,23 @@ export interface WorkflowContext {
  * ```
  */
 export interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
+  /** Version recorded with workflow state and used for checkpoint migration. */
   version?: string;
+  /** User-facing description for catalog, code generation, and tool surfaces. */
+  description?: string;
+  /** User-facing grouping tags for catalog and documentation surfaces. */
+  tags?: ReadonlyArray<string>;
+  /** Optional input schema metadata for introspection; core execution does not validate it. */
+  inputSchema?: DefinitionSchema<unknown, TInput>;
+  /** Optional output schema metadata for introspection; core execution does not validate it. */
+  outputSchema?: DefinitionSchema<unknown, TOutput>;
+  /** Workflow generator function executed by the engine. */
   handler: WorkflowFunction<TInput, TOutput>;
+  /** Optional checkpoint migration from a prior workflow version. */
   migrate?: (checkpoint: unknown, fromVersion: string) => unknown;
+  /** Search-attribute schema used to validate indexed workflow metadata. */
   searchAttributes?: SearchAttributeSchema;
+  /** Retention policy for terminal workflow records. */
   retention?: RetentionPolicy;
   /**
    * Domain constraints evaluated at every checkpoint commit. When a constraint's
@@ -463,28 +477,3 @@ export interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
    */
   constraints?: ConstraintDefinition[];
 }
-
-// ---------------------------------------------------------------------------
-// Workflow registry for typed Engine<TRegistry>
-// ---------------------------------------------------------------------------
-
-/**
- * Type-level map of workflow names to their input and output shapes. Pass as
- * the generic parameter to `Engine<TRegistry>` to get type-safe `start`,
- * `get`, and `getHandle` calls. Each key is a workflow name; each value
- * declares the `input` type and `output` type.
- *
- * @example
- * ```ts
- * import { Engine, type WorkflowRegistry } from 'weft';
- *
- * type MyRegistry = WorkflowRegistry & {
- *   greet: { input: string; output: string };
- * };
- *
- * // WorkflowRegistry documents the shape contract for type-safe engine wrappers
- * const _registry: MyRegistry = { greet: { input: '', output: '' } };
- * void _registry;
- * ```
- */
-export type WorkflowRegistry = Record<string, { input: unknown; output: unknown }>;
