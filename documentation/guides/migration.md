@@ -62,7 +62,7 @@ The following symbols are no longer exported from `weft`. Callers must supply th
 
 Drops `budget`, `modelRouter`, `contextStrategy`, `hooks`, `toolsForTenant`, `validateInput`. New shape:
 
-```ts
+```ts partial
 type AgentDefinition<TInput = unknown, TOutput = unknown> = {
   readonly _brand: string;
   name: string;
@@ -85,7 +85,7 @@ The single subscription mechanism is `eventTarget`. Callers add listeners for `A
 
 `turnCosts: TurnCostEntry[]` becomes `turnUsage: TurnUsageEntry[]`. Drops `totalCost` and `confidence`. New entry shape:
 
-```ts
+```ts partial
 type TurnUsageEntry =
   | {
       turnNumber: number;

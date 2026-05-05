@@ -59,7 +59,7 @@ It does not handle, and you still need to configure yourself:
 
 The minimal worker entry:
 
-```typescript
+```typescript partial
 /// <reference lib="webworker" />
 
 import { activity } from 'weft';
@@ -99,7 +99,7 @@ If `setupServiceWorker` is called outside a Service Worker scope (for example, a
 
 Register the Service Worker from page code, wait until it's ready, register Periodic Background Sync when available, then use the HTTP client against the local path prefix.
 
-```typescript
+```typescript partial
 import { HttpClient } from 'weft/client';
 
 const registration = await navigator.serviceWorker.register('/sw.js', {
@@ -224,7 +224,9 @@ const uploadDraft = activity({
   },
 });
 
-void uploadDraft;
+// Register inside the setupServiceWorker register callback (or before
+// engine.recoverAll() in the manual-setup path).
+engine.registerActivity(uploadDraft.name, uploadDraft);
 ```
 
 ## Debugging
@@ -253,7 +255,7 @@ Hot reload can create confusing lifecycle races. During development, unregister 
 
 When you need synchronous workflow registration before any `await`, an existing engine instance, or fine-grained listener control, drop down to the lower-level factories. The example below is the `setupServiceWorker()` equivalent, expanded:
 
-```typescript
+```typescript partial
 /// <reference lib="webworker" />
 
 import { Engine, activity } from 'weft';

@@ -325,7 +325,7 @@ Delete a value by key. No-op if the key does not exist.
 Stream key-value pairs whose keys start with a prefix.
 
 - **Query parameters** (verified against `extractStorageScanInput`):
-  - `prefix` (required) — prefix to scan. Empty string scans everything visible to the principal.
+  - `prefix` (optional) — prefix to scan. Defaults to empty string, which scans everything visible to the principal.
   - `limit` (optional) — positive integer; maximum number of entries returned.
   - `reverse` (optional) — `"true"` or `"false"` (string-typed in the query). Reverses lexicographic order.
   - `gt`, `gte`, `lt`, `lte` (optional) — string bounds on the key.

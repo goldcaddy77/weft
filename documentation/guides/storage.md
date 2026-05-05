@@ -227,7 +227,7 @@ LMDB excels at zero-copy reads, which is unbeatable for hot-path operations like
 
 libSQL/Turso backend for edge or serverless deployments. Optional dependency: `@libsql/client`.
 
-```ts
+```ts partial
 import { TursoStorage } from 'weft/storage/turso';
 
 await using storage = new TursoStorage({

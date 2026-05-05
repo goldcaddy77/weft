@@ -24,11 +24,11 @@ ws://server.example.com/v1/tasks/:queue/stream
 wss://server.example.com/v1/tasks/:queue/stream
 ```
 
-`:queue` is URL-encoded. The default queue is `default`. A worker connects to exactly one queue per WebSocket connection — to serve multiple queues, open one connection per queue.
+`:queue` must consist only of word characters and hyphens (`[\w-]+`). The server's worker-stream route regex rejects queue names containing other characters — a percent-encoded name with `%` won't be recognized as a worker connection and the worker will never receive tasks. The default queue is `default`. A worker connects to exactly one queue per WebSocket connection — to serve multiple queues, open one connection per queue.
 
 The TypeScript `RemoteWorker` accepts the full URL via its `serverUrl` option:
 
-```ts
+```ts partial
 import { RemoteWorker } from 'weft';
 
 using worker = new RemoteWorker({
@@ -42,13 +42,14 @@ await worker.connect();
 
 ### Authentication
 
-Authentication is **not currently specified at the protocol envelope** — there is no auth field on `register` and no auth handshake message. Any auth must happen at the WebSocket transport layer:
+Authentication is **not currently specified at the protocol envelope** — there is no auth field on `register` and no auth handshake message. Auth happens at the WebSocket transport layer via the HTTP upgrade request. The built-in Weft server authenticator accepts:
 
-- A token in the connection URL (`?token=...`), or
-- An HTTP `Authorization` header on the upgrade request, or
-- A cookie set on the same origin.
+- `Authorization: Bearer <token>` — JWT or API key in the HTTP Authorization header.
+- `X-API-Key: <key>` — API key in a dedicated header.
 
-Production deployments should use TLS (`wss://`) and pin auth to whichever transport mechanism the server enforces.
+The server does not currently support token-in-query-string (`?token=...`) or cookie-based auth by default. Supporting either would require a custom authenticator or reverse-proxy layer in front of the Weft server.
+
+Production deployments should use TLS (`wss://`) and pass credentials via one of the supported header mechanisms.
 
 ## Lifecycle
 

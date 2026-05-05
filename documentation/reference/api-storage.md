@@ -389,7 +389,7 @@ type TursoStorageOptions = {
 
 If the `@libsql/client` package is not installed, the module import fails with the upstream package's missing-module error.
 
-```ts
+```ts partial
 import { TursoStorage } from 'weft/storage/turso';
 
 await using storage = new TursoStorage({
@@ -432,7 +432,7 @@ type WebExtensionStorageOptions = {
 | ------ | --------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------- |
 | `area` | `'local' \| 'sync' \| 'session' \| 'managed'` | `'local'` | Which storage area to use. `managed` is read-only; `sync` writes are checked against quota first. |
 
-The constructor resolves either `globalThis.browser` or `globalThis.chrome` and accesses the matching `storage` namespace. If neither is present, methods throw at first use rather than at construction.
+The constructor resolves either `globalThis.browser` or `globalThis.chrome` and accesses the matching `storage` namespace. If neither is present, the constructor throws immediately with: `WebExtensionStorage requires globalThis.browser.storage or globalThis.chrome.storage.`
 
 ```ts
 import { WebExtensionStorage } from 'weft/storage/web-extension';
@@ -482,7 +482,7 @@ type HTTPStorageOptions = {
 | `baseUrl` | `string \| URL`          | —       | Base URL of the Weft server. Routes are appended (`/v1/storage/...`).                         |
 | `headers` | `Record<string, string>` | `{}`    | Headers sent with every request. Use this for `authorization` and any tenant-context headers. |
 
-```ts
+```ts partial
 import { HTTPStorage } from 'weft/storage/http';
 
 using storage = new HTTPStorage({
