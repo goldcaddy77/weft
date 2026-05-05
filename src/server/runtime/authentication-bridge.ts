@@ -5,6 +5,7 @@ import type { Engine } from '../../core/engine.ts';
 import type { MetricsCollector, PrometheusExporter } from '../../observability/metrics.ts';
 import { KEYS } from '../../storage/interface.ts';
 import type { AuthConfig, AuthContext } from '../authentication.ts';
+import type { HandlerOptions } from '../handler.ts';
 import { handleRequest } from '../handler.ts';
 import { handleJsonRpcHttpRequestSafely } from '../json-rpc-transport-helpers.ts';
 import {
@@ -25,6 +26,9 @@ type ServerFetchOptions = {
   engine: Engine;
   prometheusExporter?: PrometheusExporter;
   metricsCollector?: MetricsCollector;
+  discoveryInfo?: import('../discovery-info.ts').DiscoveryInfo;
+  publicOrigin?: string;
+  trustedHosts?: ReadonlyArray<string>;
 };
 
 export function deriveSupportedOpenApiSecuritySchemes(
@@ -140,11 +144,25 @@ export async function handleServerFetchRequest(
     });
   }
 
-  // API routes via existing platform-agnostic handler. Under
-  // `exactOptionalPropertyTypes` we can't spread `undefined` values into
-  // an options object whose fields are `T?: U` (not `T?: U | undefined`),
-  // so each optional field is attached only when present.
-  return handleRequest(request, options.engine, {
+  return handleRequest(
+    request,
+    options.engine,
+    buildHandlerOptions(context, options, authentication),
+  );
+}
+
+/**
+ * Assemble the platform-agnostic `handleRequest` options. Under
+ * `exactOptionalPropertyTypes` we can't spread `undefined` values into
+ * an options object whose fields are `T?: U` (not `T?: U | undefined`),
+ * so each optional field is attached only when present.
+ */
+function buildHandlerOptions(
+  context: ServerContext,
+  options: ServerFetchOptions,
+  authentication: { authContext?: AuthContext },
+): HandlerOptions {
+  return {
     ...(authentication.authContext !== undefined
       ? { authContext: authentication.authContext }
       : {}),
@@ -154,10 +172,13 @@ export async function handleServerFetchRequest(
     ...(options.metricsCollector !== undefined
       ? { metricsCollector: options.metricsCollector }
       : {}),
+    ...(options.discoveryInfo !== undefined ? { discoveryInfo: options.discoveryInfo } : {}),
+    ...(options.publicOrigin !== undefined ? { publicOrigin: options.publicOrigin } : {}),
+    ...(options.trustedHosts !== undefined ? { trustedHosts: options.trustedHosts } : {}),
     operationRegistry: context.liveOperationRegistry,
     restBindings: context.liveRestBindings,
     supportedAuthenticationSchemes: context.supportedAuthenticationSchemes,
-  });
+  };
 }
 
 export function createServerWebSocketHandlers(

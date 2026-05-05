@@ -38,6 +38,25 @@ export class BulkDeleteRequiresTerminalWorkflowsError extends Error {
   }
 }
 
+/**
+ * Thrown by engine APIs that need a workflow to be present in storage but
+ * cannot find one with the given ID. Inspect `workflowId` to identify the
+ * missing record.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowNotFoundError } from 'weft';
+ *
+ * const engine = new Engine();
+ * try {
+ *   await engine.cancel('does-not-exist');
+ * } catch (err) {
+ *   if (err instanceof WorkflowNotFoundError) {
+ *     console.error('cannot cancel — no such workflow:', err.workflowId);
+ *   }
+ * }
+ * ```
+ */
 export class WorkflowNotFoundError extends Error {
   readonly workflowId: string;
 
@@ -45,5 +64,35 @@ export class WorkflowNotFoundError extends Error {
     super(`Workflow "${workflowId}" not found`);
     this.name = 'WorkflowNotFoundError';
     this.workflowId = workflowId;
+  }
+}
+
+/**
+ * Thrown by {@link Engine.start} and other registry-driven entry points when
+ * the caller asks for a workflow type that was never registered. Distinct
+ * from `WorkflowNotFoundError`, which signals an unknown workflow ID at
+ * runtime.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowNotRegisteredError } from 'weft';
+ *
+ * const engine = new Engine();
+ * try {
+ *   await engine.start('checkout', { orderId: 'order-1' });
+ * } catch (err) {
+ *   if (err instanceof WorkflowNotRegisteredError) {
+ *     console.error('register the workflow first:', err.workflowType);
+ *   }
+ * }
+ * ```
+ */
+export class WorkflowNotRegisteredError extends Error {
+  readonly workflowType: string;
+
+  constructor(workflowType: string) {
+    super(`No workflow registered with name "${workflowType}"`);
+    this.name = 'WorkflowNotRegisteredError';
+    this.workflowType = workflowType;
   }
 }

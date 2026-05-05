@@ -24,8 +24,10 @@ const VALID_SCHEDULE_OVERLAP_POLICIES = new Set<NonNullable<ScheduleOptions['ove
 // `invoke()` rather than being rejected by Zod with a different error path.
 // All field validation lives in `invoke()` to keep one cross-transport contract.
 const createScheduleInput = z.object({
-  type: z.unknown(),
-  cronExpression: z.unknown(),
+  type: z.unknown().describe('Workflow type name. Runtime validation requires a non-empty string.'),
+  cronExpression: z
+    .unknown()
+    .describe('Cron expression. Runtime validation requires a non-empty string.'),
   input: z.unknown().optional(),
   id: z.unknown().optional(),
   overlap: z.unknown().optional(),
@@ -41,11 +43,13 @@ export type CreateScheduleOutput = z.infer<typeof createScheduleOutput>;
 
 export const createScheduleOperation = defineOperation<CreateScheduleInput, CreateScheduleOutput>({
   name: 'weft.schedules.create',
+  mcpExposable: false,
   summary: 'Create a recurring schedule',
   tags: ['Schedules'],
   inputSchema: createScheduleInput,
   outputSchema: createScheduleOutput,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound', 'Conflict'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   // oxlint-disable-next-line complexity -- ID:server-operations-create-schedule-invoke-complexity

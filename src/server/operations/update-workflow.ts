@@ -32,11 +32,13 @@ export type UpdateWorkflowOutput = z.infer<typeof updateWorkflowOutput>;
 
 export const updateWorkflowOperation = defineOperation<UpdateWorkflowInput, UpdateWorkflowOutput>({
   name: 'weft.workflows.update',
+  mcpExposable: false,
   summary: 'Send a synchronous update to a workflow',
   tags: ['Updates'],
   inputSchema: updateWorkflowInput,
   outputSchema: updateWorkflowOutput,
   access: { kind: 'public' },
+  producibleFaults: ['Unprocessable', 'Timeout'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<UpdateWorkflowOutput> => {

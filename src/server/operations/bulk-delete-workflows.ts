@@ -29,11 +29,13 @@ export const bulkDeleteWorkflowsOperation = defineOperation<
   BulkDeleteWorkflowsOutput
 >({
   name: 'weft.workflows.bulk.delete',
+  mcpExposable: false,
   summary: 'Delete terminal workflows in bulk',
   tags: ['Workflows'],
   inputSchema: bulkListFilterInputSchema,
   outputSchema: bulkDeleteWorkflowsOutput as z.ZodType<BulkDeleteWorkflowsOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['Unprocessable'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<BulkDeleteWorkflowsOutput> => {

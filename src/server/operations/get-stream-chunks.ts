@@ -28,6 +28,7 @@ export const getStreamChunksOperation = defineOperation<
   GetStreamChunksOutput
 >({
   name: 'weft.workflows.streams.chunks',
+  mcpExposable: false,
   summary: 'Read stored stream chunks for a workflow stream key',
   tags: ['Streams'],
   inputSchema: getStreamChunksInput,

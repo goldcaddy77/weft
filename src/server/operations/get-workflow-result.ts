@@ -18,11 +18,13 @@ export const getWorkflowResultOperation = defineOperation<
   GetWorkflowResultOutput
 >({
   name: 'weft.workflows.result.get',
+  mcpExposable: false,
   summary: 'Get workflow result by id',
   tags: ['Workflows'],
   inputSchema: getWorkflowResultInput,
   outputSchema: getWorkflowResultOutput as z.ZodType<GetWorkflowResultOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound', 'Unprocessable', 'Timeout'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<GetWorkflowResultOutput> => {

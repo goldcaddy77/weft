@@ -50,6 +50,34 @@ function openWebSocket(url: string): Promise<WebSocket> {
   });
 }
 
+/**
+ * `weft.workflows.events` (the operation that `weft.workflows.subscribe`
+ * wraps) requires the `workflows:read` scope. Tests that subscribe must
+ * authenticate with a key that carries that scope; tests that only call
+ * public operations (e.g. `weft.workflows.get`) keep using the no-auth
+ * `serve({ engine, port: 0 })` form.
+ */
+const SUBSCRIBE_TEST_API_KEY = 'weft_test_subscribe_workflows_read_scope_key_xxx';
+const subscribeServeOptions = {
+  port: 0,
+  auth: {
+    apiKeys: [SUBSCRIBE_TEST_API_KEY],
+    defaultApiKeyScopes: ['workflows:read'] as const,
+  },
+};
+function openAuthenticatedWebSocket(url: string): Promise<WebSocket> {
+  return new Promise((resolve, reject) => {
+    // Bun's WebSocket constructor accepts a `{ headers }` options object,
+    // but the WHATWG type only types the second arg as a subprotocols
+    // array. The `as any` cast matches the existing project pattern.
+    const ws = new WebSocket(url, {
+      headers: { authorization: `Bearer ${SUBSCRIBE_TEST_API_KEY}` },
+    } as any);
+    ws.addEventListener('open', () => resolve(ws));
+    ws.addEventListener('error', (event) => reject(event));
+  });
+}
+
 function createHoldEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
@@ -122,9 +150,9 @@ describe('serve() — WebSocket /jsonrpc', () => {
     const handle = await engine.start('hold', {}, {});
     await waitForStatus(engine, handle.id, 'running');
 
-    server = serve({ engine, port: 0 });
+    server = serve({ engine, ...subscribeServeOptions });
     const wsUrl = `${server.url.replace('http://', 'ws://')}/jsonrpc`;
-    const ws = await openWebSocket(wsUrl);
+    const ws = await openAuthenticatedWebSocket(wsUrl);
 
     const subscribeResponsePromise = waitForMessage(
       ws,
@@ -172,9 +200,9 @@ describe('serve() — WebSocket /jsonrpc', () => {
     const handle = await engine.start('hold', {}, {});
     await waitForStatus(engine, handle.id, 'running');
 
-    server = serve({ engine, port: 0 });
+    server = serve({ engine, ...subscribeServeOptions });
     const wsUrl = `${server.url.replace('http://', 'ws://')}/jsonrpc`;
-    const ws = await openWebSocket(wsUrl);
+    const ws = await openAuthenticatedWebSocket(wsUrl);
 
     const subscribeResponsePromise = waitForMessage(
       ws,
@@ -332,9 +360,9 @@ describe('serve() — WebSocket /jsonrpc', () => {
     const handle = await engine.start('hold', {}, {});
     await waitForStatus(engine, handle.id, 'running');
 
-    server = serve({ engine, port: 0 });
+    server = serve({ engine, ...subscribeServeOptions });
     const wsUrl = `${server.url.replace('http://', 'ws://')}/jsonrpc`;
-    const ws = await openWebSocket(wsUrl);
+    const ws = await openAuthenticatedWebSocket(wsUrl);
 
     const subscribeResponsePromise = waitForMessage(
       ws,
@@ -446,10 +474,13 @@ describe('serve() — WebSocket /jsonrpc', () => {
     const handle = await engine.start('hold', {}, {});
     await waitForStatus(engine, handle.id, 'running');
 
-    server = serve({ engine, port: 0 });
+    server = serve({ engine, ...subscribeServeOptions });
     const wsUrl = `${server.url.replace('http://', 'ws://')}/jsonrpc`;
 
-    const [wsA, wsB] = await Promise.all([openWebSocket(wsUrl), openWebSocket(wsUrl)]);
+    const [wsA, wsB] = await Promise.all([
+      openAuthenticatedWebSocket(wsUrl),
+      openAuthenticatedWebSocket(wsUrl),
+    ]);
 
     async function subscribeAndAwaitId(ws: WebSocket, correlationId: number): Promise<string> {
       const responsePromise = waitForMessage(
@@ -516,9 +547,9 @@ describe('serve() — WebSocket /jsonrpc', () => {
     const handle = await engine.start('hold', {}, {});
     await waitForStatus(engine, handle.id, 'running');
 
-    server = serve({ engine, port: 0 });
+    server = serve({ engine, ...subscribeServeOptions });
     const wsUrl = `${server.url.replace('http://', 'ws://')}/jsonrpc`;
-    const ws = await openWebSocket(wsUrl);
+    const ws = await openAuthenticatedWebSocket(wsUrl);
 
     const subscribeResponsePromise = waitForMessage(
       ws,

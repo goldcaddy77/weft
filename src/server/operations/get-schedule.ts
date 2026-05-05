@@ -31,11 +31,14 @@ export type GetScheduleOutput = ScheduleSummary;
 
 export const getScheduleOperation = defineOperation<GetScheduleInput, GetScheduleOutput>({
   name: 'weft.schedules.get',
+  mcpExposable: false,
   summary: 'Get a recurring schedule by id',
   tags: ['Schedules'],
   inputSchema: getScheduleInput,
   outputSchema: getScheduleOutput as z.ZodType<GetScheduleOutput>,
   access: { kind: 'authenticated' },
+  producibleFaults: ['NotFound', 'Conflict'],
+  discoverable: true,
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }): Promise<GetScheduleOutput> => {

@@ -19,11 +19,13 @@ export type SignalWorkflowOutput = z.infer<typeof signalWorkflowOutput>;
 
 export const signalWorkflowOperation = defineOperation<SignalWorkflowInput, SignalWorkflowOutput>({
   name: 'weft.workflows.signal',
+  mcpExposable: false,
   summary: 'Send a signal to a workflow',
   tags: ['Signals'],
   inputSchema: signalWorkflowInput,
   outputSchema: signalWorkflowOutput as z.ZodType<SignalWorkflowOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<SignalWorkflowOutput> => {

@@ -31,6 +31,7 @@ import {
   createJsonRpcWebSocketSession,
   type JsonRpcWebSocketEmitter,
 } from './json-rpc-websocket.ts';
+import { isPlainObject } from './json-schema-utilities.ts';
 import type { OperationRegistry } from './operation-catalog.ts';
 import { principalFromStdioLocal, type Principal } from './principal.ts';
 import type { WorkflowEventFeed } from './workflow-event-feed.ts';
@@ -416,10 +417,6 @@ async function closeWriterSilent(writer: WritableStreamDefaultWriter<Uint8Array>
   } catch {
     // Writer may already be closed/errored; nothing to do.
   }
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function asId(value: unknown): JsonRpcId {

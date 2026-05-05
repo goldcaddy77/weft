@@ -161,6 +161,7 @@ import {
   updateWorkflowOperation,
   updateWorkflowRestBinding,
 } from './operations/update-workflow.ts';
+import { workflowEventsSubscriptionOperation } from './operations/workflow-events-subscription.ts';
 import type { RestBinding } from './rest-binding.ts';
 
 /**
@@ -299,6 +300,7 @@ export function createLiveOperationRegistry(options?: {
     resumeScheduleOperation,
     getStreamChunksOperation,
     streamWorkflowSseOperation,
+    workflowEventsSubscriptionOperation,
     // Wave 1 — previously legacy direct handlers
     listSchedulesOperation,
     getScheduleOperation,

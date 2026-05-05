@@ -34,6 +34,7 @@ export type ReplayWorkflowOutput = WorkflowReplay;
 
 export const replayWorkflowOperation = defineOperation<ReplayWorkflowInput, ReplayWorkflowOutput>({
   name: 'weft.workflows.replay',
+  mcpExposable: false,
   summary: 'Replay a workflow to a historical checkpoint step',
   tags: ['Checkpoints'],
   inputSchema: replayWorkflowInput,
@@ -42,6 +43,8 @@ export const replayWorkflowOperation = defineOperation<ReplayWorkflowInput, Repl
     kind: 'scoped',
     scopes: { kind: 'anyOf', scopes: ['workflows:read'] },
   },
+  producibleFaults: ['NotFound', 'Conflict'],
+  discoverable: true,
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<ReplayWorkflowOutput> => {

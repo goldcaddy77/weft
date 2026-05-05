@@ -20,11 +20,13 @@ export const getWorkflowTimelineOperation = defineOperation<
   GetWorkflowTimelineOutput
 >({
   name: 'weft.workflows.timeline.get',
+  mcpExposable: false,
   summary: 'Get the structured execution timeline for a workflow',
   tags: ['Checkpoints'],
   inputSchema: getWorkflowTimelineInput,
   outputSchema: getWorkflowTimelineOutput as z.ZodType<GetWorkflowTimelineOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   // Operation contract is transport-neutral: returns the array of

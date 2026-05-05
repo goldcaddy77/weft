@@ -28,6 +28,7 @@ export const bulkCancelWorkflowsOperation = defineOperation<
   BulkCancelWorkflowsOutput
 >({
   name: 'weft.workflows.bulk.cancel',
+  mcpExposable: false,
   summary: 'Cancel workflows in bulk',
   tags: ['Workflows'],
   inputSchema: bulkListFilterInputSchema,

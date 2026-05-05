@@ -8,8 +8,11 @@
  * @module server/openapi
  */
 
-import { z } from 'zod';
-
+import { isDiscoverable } from './discovery-filter.ts';
+import { applyDiscoveryInfo, type DiscoveryInfo } from './discovery-info.ts';
+import { asPlainObject, compareStrings, zodToJsonSchema } from './json-schema-utilities.ts';
+import { buildErrorResponses, ERROR_SCHEMA } from './openapi-error-responses.ts';
+import { extractComponentsSchemas, type OpenApiSchemaHelper } from './openapi-schemas.ts';
 import type { ErasedOperation, OperationRegistry } from './operation-catalog.ts';
 import type { ParamSource } from './rest-binding.ts';
 import type { UnknownRestBinding } from './rest-bindings.ts';
@@ -28,6 +31,8 @@ export type OpenApiOptions = {
   title?: string;
   /** API version. Defaults to `'0.0.1'`. */
   version?: string;
+  /** Operator-supplied discovery metadata applied to the generated document. */
+  discoveryInfo?: DiscoveryInfo;
   /** Operation registry used to emit migrated REST bindings. */
   registry?: OperationRegistry;
   /**
@@ -51,12 +56,13 @@ export type OpenApiOptions = {
 // ---------------------------------------------------------------------------
 
 type OpenApiSchema = Record<string, unknown>;
-type OpenApiContent = Record<string, { schema: OpenApiSchema }>;
-type OpenApiResponse = {
-  description: string;
-  content?: OpenApiContent;
-};
 
+const DEFAULT_SCHEMA_HELPER: OpenApiSchemaHelper = {
+  components: {},
+  refFor() {
+    return undefined;
+  },
+};
 const JSON_MEDIA_TYPE = 'application/json';
 const OCTET_STREAM_MEDIA_TYPE = 'application/octet-stream';
 
@@ -78,18 +84,7 @@ function buildPathParameters(paramNames: readonly string[]): Array<Record<string
 function inputSourceEntries(binding: UnknownRestBinding): Array<[string, ParamSource]> {
   return Object.entries(binding.inputSources)
     .filter((entry): entry is [string, ParamSource] => entry[1] !== undefined)
-    .toSorted(([left], [right]) => byString(left, right));
-}
-
-function zodToJsonSchema(schema: z.ZodType): OpenApiSchema {
-  // Zod 4 ships native JSON Schema conversion. Unrepresentable runtime
-  // values degrade to `{}` so discovery stays available for custom types.
-  const result = z.toJSONSchema(schema, { unrepresentable: 'any' }) as OpenApiSchema;
-  if ('$schema' in result) {
-    const { $schema: _unused, ...rest } = result;
-    return rest;
-  }
-  return result;
+    .toSorted(([left], [right]) => compareStrings(left, right));
 }
 
 function inputJsonSchema(operation: ErasedOperation): OpenApiSchema {
@@ -102,7 +97,26 @@ function fieldSchema(operation: ErasedOperation, field: string): OpenApiSchema {
 }
 
 function requiredInputFields(operation: ErasedOperation): Set<string> {
-  return new Set(asStringArray(inputJsonSchema(operation)['required']));
+  const required = inputJsonSchema(operation)['required'];
+  if (!Array.isArray(required)) return new Set();
+  return new Set(required.filter((entry): entry is string => typeof entry === 'string'));
+}
+
+function binaryBodySchema(): OpenApiSchema {
+  return { type: 'string', format: 'binary' };
+}
+
+function streamingResponseSchema(mediaType: string): OpenApiSchema {
+  if (mediaType === OCTET_STREAM_MEDIA_TYPE) return binaryBodySchema();
+  return { type: 'string' };
+}
+
+function outputCanBeNull(operation: ErasedOperation): boolean {
+  try {
+    return operation.outputSchema.safeParse(null).success;
+  } catch {
+    return false;
+  }
 }
 
 function buildBindingParameters(
@@ -131,7 +145,7 @@ function buildBindingParameters(
   return parameters;
 }
 
-function buildRequestBody(
+function buildRequestBodyFromInputSources(
   binding: UnknownRestBinding,
   operation: ErasedOperation,
 ): Record<string, unknown> | undefined {
@@ -168,7 +182,7 @@ function buildRequestBody(
     properties,
     additionalProperties: operation.unknownKeyPolicy.http !== 'reject',
   };
-  if (required.length > 0) schema['required'] = required.toSorted(byString);
+  if (required.length > 0) schema['required'] = required.toSorted(compareStrings);
 
   return {
     required: true,
@@ -176,69 +190,73 @@ function buildRequestBody(
   };
 }
 
-function buildResponses(
+function buildRequestBody(
   binding: UnknownRestBinding,
   operation: ErasedOperation,
-): Record<string, OpenApiResponse> {
-  const responses: Record<string, OpenApiResponse> = {};
-  const success = binding.success;
-
-  if (success.kind === 'json') {
-    responses[String(success.status)] = {
-      description: 'Successful response',
-      content: { [JSON_MEDIA_TYPE]: { schema: zodToJsonSchema(operation.outputSchema) } },
-    };
-    return responses;
+  schemaHelper: OpenApiSchemaHelper,
+): Record<string, unknown> | undefined {
+  const requestBody = buildRequestBodyFromInputSources(binding, operation);
+  if (requestBody !== undefined) return requestBody;
+  if (inputSourceEntries(binding).length > 0) return undefined;
+  if (binding.method !== 'POST' && binding.method !== 'PUT' && binding.method !== 'PATCH') {
+    return undefined;
   }
 
-  if (success.kind === 'empty') {
-    responses[String(success.status)] = { description: 'No content' };
-    return responses;
-  }
-
-  responses['200'] = {
-    description: 'Streaming response',
-    content: { [success.mediaType]: { schema: streamingResponseSchema(success.mediaType) } },
+  return {
+    content: {
+      [JSON_MEDIA_TYPE]: {
+        schema: schemaHelper.refFor(operation.name, 'Input') ?? { type: 'object' },
+      },
+    },
   };
+}
 
-  if (success.mediaType === OCTET_STREAM_MEDIA_TYPE && outputCanBeNull(operation)) {
-    responses['404'] = { description: 'Storage key not found' };
+/**
+ * Build the success-response object for a binding, branching on its
+ * declared `success.kind`. JSON bindings emit `application/json` with
+ * the operation's output schema. Streaming bindings emit the binding's
+ * declared `mediaType` and document the payload as either binary or a
+ * string. Empty (204) bindings emit a no-content response.
+ */
+function buildSuccessResponse(
+  binding: UnknownRestBinding,
+  operation: ErasedOperation,
+  schemaHelper: OpenApiSchemaHelper,
+): Record<string, unknown> {
+  const success = binding.success;
+  if (success.kind === 'empty') {
+    return {
+      [String(success.status)]: {
+        description: 'No content',
+      },
+    };
   }
-
-  return responses;
-}
-
-function binaryBodySchema(): OpenApiSchema {
-  return { type: 'string', format: 'binary' };
-}
-
-function streamingResponseSchema(mediaType: string): OpenApiSchema {
-  if (mediaType === OCTET_STREAM_MEDIA_TYPE) return binaryBodySchema();
-  return { type: 'string' };
-}
-
-function outputCanBeNull(operation: ErasedOperation): boolean {
-  try {
-    return operation.outputSchema.safeParse(null).success;
-  } catch {
-    return false;
+  if (success.kind === 'streaming') {
+    const responses: Record<string, unknown> = {
+      '200': {
+        description: 'Streaming response',
+        content: {
+          [success.mediaType]: {
+            schema: streamingResponseSchema(success.mediaType),
+          },
+        },
+      },
+    };
+    if (success.mediaType === OCTET_STREAM_MEDIA_TYPE && outputCanBeNull(operation)) {
+      responses['404'] = { description: 'Storage key not found' };
+    }
+    return responses;
   }
-}
-
-function asPlainObject(value: unknown): Record<string, unknown> {
-  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  return {};
-}
-
-function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((entry): entry is string => typeof entry === 'string');
-}
-
-function byString(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
+  return {
+    [String(success.status)]: {
+      description: 'Successful response',
+      content: {
+        [JSON_MEDIA_TYPE]: {
+          schema: schemaHelper.refFor(operation.name, 'Output') ?? { type: 'object' },
+        },
+      },
+    },
+  };
 }
 
 /**
@@ -247,30 +265,44 @@ function byString(left: string, right: string): number {
  *
  * @internal
  */
+// oxlint-disable-next-line complexity -- ID:server-openapi-emit-bindings-complexity
 export function emitBindings(
   paths: Record<string, Record<string, unknown>>,
   tagSet: Set<string>,
   bindings: ReadonlyArray<UnknownRestBinding> = createLiveRestBindings(),
   registry: OperationRegistry = createLiveOperationRegistry(),
+  schemaHelper: OpenApiSchemaHelper = DEFAULT_SCHEMA_HELPER,
 ): Set<string> {
   const boundMethodPaths = new Set<string>();
   for (const binding of bindings) {
     const operation: ErasedOperation | undefined = registry.get(binding.operationName);
     if (operation === undefined) continue;
     const openApiPath = toOpenApiPath(binding.path);
+    // Order matters: skipping non-discoverable bindings BEFORE adding to
+    // `boundMethodPaths` is intentional. `boundMethodPaths` suppresses
+    // legacy `ROUTES` entries that share the same path; not adding here
+    // means a non-discoverable binding does NOT shadow its corresponding
+    // legacy route. If a future non-discoverable binding has no legacy
+    // fallback its path is intentionally absent from the doc — that is
+    // what `discoverable: false` means.
+    if (!isDiscoverable(operation)) continue;
     boundMethodPaths.add(`${binding.method} ${openApiPath}`);
     if (!paths[openApiPath]) paths[openApiPath] = {};
 
     const parameters = buildBindingParameters(binding, operation);
+    const successResponse = buildSuccessResponse(binding, operation, schemaHelper);
     const entry: Record<string, unknown> = {
       summary: operation.summary,
       operationId: operation.name,
       tags: operation.tags,
-      responses: buildResponses(binding, operation),
+      responses: {
+        ...successResponse,
+        ...buildErrorResponses(operation),
+      },
     };
     if (parameters.length > 0) entry['parameters'] = parameters;
 
-    const requestBody = buildRequestBody(binding, operation);
+    const requestBody = buildRequestBody(binding, operation, schemaHelper);
     if (requestBody !== undefined) entry['requestBody'] = requestBody;
 
     paths[openApiPath][binding.method.toLowerCase()] = entry;
@@ -312,15 +344,17 @@ function emitRoutes(
 export function generateOpenApiDocument(options?: OpenApiOptions): Record<string, unknown> {
   const title = options?.title ?? 'Weft Workflow Engine';
   const version = options?.version ?? '0.0.1';
+  const infoBlock = applyDiscoveryInfo({ title, version }, options?.discoveryInfo);
   const registry = options?.registry ?? createLiveOperationRegistry();
   const restBindings = options?.restBindings;
 
   const paths: Record<string, Record<string, unknown>> = {};
   const tagSet = new Set<string>();
+  const schemaHelper = extractComponentsSchemas(registry);
 
   // REST_BINDINGS win against any stale ROUTES entry covering the same
   // (method, path) — a migrated operation owns its OpenAPI description.
-  const boundMethodPaths = emitBindings(paths, tagSet, restBindings, registry);
+  const boundMethodPaths = emitBindings(paths, tagSet, restBindings, registry, schemaHelper);
   emitRoutes(paths, tagSet, boundMethodPaths);
 
   const tags = [...tagSet].toSorted().map((name) => ({ name }));
@@ -345,17 +379,24 @@ export function generateOpenApiDocument(options?: OpenApiOptions): Record<string
 
   const document: Record<string, unknown> = {
     openapi: '3.1.0',
-    info: { title, version },
+    info: infoBlock,
     paths,
     tags,
     security,
     components: {
+      schemas: {
+        ...schemaHelper.components,
+        Error: ERROR_SCHEMA,
+      },
       securitySchemes: emittedSecuritySchemes,
     },
   };
 
   if (options?.serverUrl) {
     document['servers'] = [{ url: options.serverUrl }];
+  }
+  if (options?.discoveryInfo?.externalDocs !== undefined) {
+    document['externalDocs'] = { ...options.discoveryInfo.externalDocs };
   }
 
   return document;

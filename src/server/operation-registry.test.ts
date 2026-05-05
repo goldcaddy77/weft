@@ -102,6 +102,7 @@ describe('defineOperation + createOperationRegistry (compile-time interop)', () 
     // regression of the variance trick in createOperationRegistry's signature.
     const op = defineOperation({
       name: 'weft.test.echo',
+      mcpExposable: false,
       summary: 'echo',
       inputSchema: z.object({ value: z.string() }),
       outputSchema: z.object({ echoed: z.string() }),
@@ -139,6 +140,7 @@ describe('defineOperation (typed builder)', () => {
   it('returns a fully-typed OperationDefinition with sensible defaults', () => {
     const op = defineOperation({
       name: 'weft.test.echo',
+      mcpExposable: false,
       summary: 'echo the input',
       inputSchema: z.object({ value: z.string() }),
       outputSchema: z.object({ echoed: z.string() }),
@@ -156,6 +158,7 @@ describe('defineOperation (typed builder)', () => {
     expect(() =>
       defineOperation({
         name: 'BadName',
+        mcpExposable: false,
         summary: 's',
         inputSchema: z.object({}),
         outputSchema: z.object({}),
@@ -170,6 +173,7 @@ describe('defineOperation (typed builder)', () => {
   it('preserves tags when supplied', () => {
     const op = defineOperation({
       name: 'weft.test.tagged',
+      mcpExposable: false,
       summary: 's',
       tags: ['workflows', 'beta'],
       inputSchema: z.object({}),
@@ -186,6 +190,7 @@ describe('defineOperation (typed builder)', () => {
     const callerTags = ['workflows', 'beta'];
     const op = defineOperation({
       name: 'weft.test.tagscopy',
+      mcpExposable: false,
       summary: 's',
       tags: callerTags,
       inputSchema: z.object({}),
@@ -203,6 +208,7 @@ describe('defineOperation (typed builder)', () => {
   it('preserves the optional authorize hook when supplied', () => {
     const op = defineOperation({
       name: 'weft.test.authorized',
+      mcpExposable: false,
       summary: 's',
       inputSchema: z.object({}),
       outputSchema: z.object({}),
@@ -225,6 +231,7 @@ describe('defineOperation (typed builder)', () => {
     const callerScopes: [string, ...string[]] = ['workflows:read'];
     const op = defineOperation({
       name: 'weft.test.scopedcopy',
+      mcpExposable: false,
       summary: 's',
       inputSchema: z.object({}),
       outputSchema: z.object({}),
@@ -248,6 +255,7 @@ describe('defineOperation (typed builder)', () => {
     const callerScopes: [string, ...string[]] = ['workflows:write'];
     const op = defineOperation({
       name: 'weft.test.optauthcopy',
+      mcpExposable: false,
       summary: 's',
       inputSchema: z.object({}),
       outputSchema: z.object({}),
@@ -272,6 +280,7 @@ describe('defineOperation (typed builder)', () => {
     const callerScopes: [string, ...string[]] = ['workflows:read'];
     const op = defineOperation({
       name: 'weft.test.alternativescopy',
+      mcpExposable: false,
       summary: 's',
       inputSchema: z.object({}),
       outputSchema: z.object({}),

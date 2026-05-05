@@ -19,11 +19,13 @@ export const getWorkflowEventsOperation = defineOperation<
   GetWorkflowEventsOutput
 >({
   name: 'weft.workflows.events.list',
+  mcpExposable: false,
   summary: 'Get workflow events by id',
   tags: ['Events'],
   inputSchema: getWorkflowEventsInput,
   outputSchema: getWorkflowEventsOutput as z.ZodType<GetWorkflowEventsOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<GetWorkflowEventsOutput> => {

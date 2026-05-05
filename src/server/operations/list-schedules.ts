@@ -48,11 +48,14 @@ export type ListSchedulesOutput = PaginatedResult<ScheduleSummary>;
 
 export const listSchedulesOperation = defineOperation<ListSchedulesInput, ListSchedulesOutput>({
   name: 'weft.schedules.list',
+  mcpExposable: false,
   summary: 'List recurring schedules',
   tags: ['Schedules'],
   inputSchema: listSchedulesInput,
   outputSchema: listSchedulesOutput as z.ZodType<ListSchedulesOutput>,
   access: { kind: 'authenticated' },
+  producibleFaults: ['Conflict'],
+  discoverable: true,
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   // oxlint-disable-next-line eslint(complexity) -- ID:server-operations-list-schedules-validation-complexity -- preserves the legacy query-validation order at one transport-neutral invoke boundary.

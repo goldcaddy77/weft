@@ -21,11 +21,13 @@ export const getCheckpointAtOperation = defineOperation<
   GetCheckpointAtOutput
 >({
   name: 'weft.workflows.checkpoints.get',
+  mcpExposable: false,
   summary: 'Get a specific checkpoint by step number',
   tags: ['Checkpoints'],
   inputSchema: getCheckpointAtInput,
   outputSchema: getCheckpointAtOutput as z.ZodType<GetCheckpointAtOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   // Operation contract is transport-neutral: returns the

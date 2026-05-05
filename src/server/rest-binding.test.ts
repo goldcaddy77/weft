@@ -22,6 +22,7 @@ import {
 // A minimal operation used as the lookup target for most binding tests.
 const startWorkflowOperation = defineOperation({
   name: 'weft.workflows.start',
+  mcpExposable: false,
   summary: 'Start a workflow',
   inputSchema: z.object({
     workflowType: z.string(),
@@ -183,6 +184,7 @@ describe('isRestBindingCompatibleWithOperation', () => {
   it('returns false when the operation disables http transport', () => {
     const wsOnly = defineOperation({
       name: 'weft.workflows.subscribe',
+      mcpExposable: false,
       summary: 'Subscribe (not REST-mountable)',
       inputSchema: z.object({}),
       outputSchema: z.object({}),

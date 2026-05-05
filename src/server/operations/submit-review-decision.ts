@@ -31,11 +31,13 @@ export const submitReviewDecisionOperation = defineOperation<
   SubmitReviewDecisionOutput
 >({
   name: 'weft.reviews.decision.submit',
+  mcpExposable: false,
   summary: 'Submit a decision for a human review',
   tags: ['Reviews'],
   inputSchema: submitReviewDecisionInput,
   outputSchema: submitReviewDecisionOutput as z.ZodType<SubmitReviewDecisionOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   // oxlint-disable-next-line complexity -- ID:server-operations-submit-review-decision-invoke-complexity

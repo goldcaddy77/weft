@@ -2,6 +2,10 @@ import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
 import {
+  WorkflowAlreadyExistsError,
+  WorkflowNotRegisteredError,
+} from '../../core/engine/errors.ts';
+import {
   assertExclusiveStartWorkflowOptions,
   coerceStartWorkflowDuration,
   coerceStartWorkflowId,
@@ -21,7 +25,7 @@ import { invalidParamsFault, shapeRestFault } from './operation-helpers.ts';
 // `invoke()` rather than being rejected by Zod with a different error path.
 // All field validation lives in `invoke()` to keep one cross-transport contract.
 const startWorkflowInput = z.object({
-  type: z.unknown(),
+  type: z.unknown().describe('Workflow type name. Runtime validation requires a non-empty string.'),
   input: z.unknown().optional(),
   id: z.unknown().optional(),
   executionTimeout: z.unknown().optional(),
@@ -39,11 +43,13 @@ export type StartWorkflowOutput = z.infer<typeof startWorkflowOutput>;
 
 export const startWorkflowOperation = defineOperation<StartWorkflowInput, StartWorkflowOutput>({
   name: 'weft.workflows.start',
+  mcpExposable: false,
   summary: 'Start a new workflow',
   tags: ['Workflows'],
   inputSchema: startWorkflowInput,
   outputSchema: startWorkflowOutput,
   access: { kind: 'public' },
+  producibleFaults: ['RateLimited', 'Conflict'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   // oxlint-disable-next-line complexity -- ID:server-operations-start-workflow-invoke-complexity
@@ -70,6 +76,21 @@ export const startWorkflowOperation = defineOperation<StartWorkflowInput, StartW
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
 
+      // Typed engine errors first; the engine throws these for the
+      // canonical failure modes (workflow type not registered, workflow
+      // ID collision). String-matching the message would silently
+      // misclassify the fault if the message text is ever changed.
+      if (error instanceof WorkflowNotRegisteredError) {
+        throw invalidParamsFault(message);
+      }
+      if (error instanceof WorkflowAlreadyExistsError) {
+        const fault: OperationFault = {
+          code: 'Conflict',
+          message,
+          data: { reason: message },
+        };
+        throw fault;
+      }
       if (error instanceof StartWorkflowValidationError) {
         throw invalidParamsFault(message);
       }
@@ -78,17 +99,6 @@ export const startWorkflowOperation = defineOperation<StartWorkflowInput, StartW
           code: 'RateLimited',
           message,
           data: {},
-        };
-        throw fault;
-      }
-      if (message.includes('No workflow registered')) {
-        throw invalidParamsFault(message);
-      }
-      if (message.includes('already exists')) {
-        const fault: OperationFault = {
-          code: 'Conflict',
-          message,
-          data: { reason: message },
         };
         throw fault;
       }

@@ -13,6 +13,7 @@ import { WorkerRegistry } from '../worker/registry.ts';
 import type { AuthConfig } from './authentication.ts';
 import { buildTLSOptions, createAuthenticator, validateAuthConfig } from './authentication.ts';
 import { DeadlineTracker } from './deadline-tracker.ts';
+import type { DiscoveryInfo } from './discovery-info.ts';
 import { createEngineEventFeedBackend } from './engine-event-feed-backend.ts';
 import {
   closeJsonRpcSessionsForShutdown,
@@ -121,6 +122,28 @@ export interface ServeOptions {
    * path and has lower precedence if both are set.
    */
   metricsCollector?: MetricsCollector;
+  /**
+   * Optional metadata applied uniformly to all three discovery documents
+   * (`/openapi.json`, `/openrpc.json`, `/asyncapi.json`). When set, the
+   * description, contact, license, and externalDocs fields appear in every
+   * discovery surface from one source — ensuring zero drift across the
+   * three documents.
+   */
+  discoveryInfo?: DiscoveryInfo;
+  /**
+   * Explicit public origin used by `/.well-known/api-catalog` (e.g.
+   * `https://api.example.com`). Recommended in production. Either this
+   * or `trustedHosts` MUST be set or the catalog route returns 503.
+   */
+  publicOrigin?: string;
+  /**
+   * Allowlist of `Host` values trusted to source absolute URLs in
+   * `/.well-known/api-catalog`. Required (with `publicOrigin` as the
+   * alternative) in production — Bun.serve() resolves `request.url`
+   * from the incoming Host header so attackers can otherwise poison
+   * the discovery URLs.
+   */
+  trustedHosts?: ReadonlyArray<string>;
 }
 
 /**

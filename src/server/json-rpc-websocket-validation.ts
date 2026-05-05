@@ -4,6 +4,7 @@ import {
   isValidJsonRpcId,
   type JsonRpcId,
 } from './json-rpc-protocol.ts';
+import { isPlainObject } from './json-schema-utilities.ts';
 import type { Cursor, EventSelector } from './workflow-event-feed.ts';
 
 type JsonRpcErrorPayload = {
@@ -146,8 +147,4 @@ function invalidParams(message: string): SubscribeParamsValidation {
       data: { weftCode: 'InvalidParams', httpStatus: 400 },
     },
   };
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

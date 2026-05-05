@@ -23,6 +23,7 @@ export type PurgeWorkflowsOutput = PurgeResult;
 
 export const purgeWorkflowsOperation = defineOperation<PurgeWorkflowsInput, PurgeWorkflowsOutput>({
   name: 'weft.workflows.purge',
+  mcpExposable: false,
   summary: 'Purge terminal workflows',
   tags: ['Workflows'],
   inputSchema: bulkListFilterInputSchema,

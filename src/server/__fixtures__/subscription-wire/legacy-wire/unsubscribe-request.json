@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "id": "unsub-1",
+  "method": "weft.workflows.unsubscribe",
+  "params": {
+    "subscriptionId": "<subscription-id>"
+  }
+}

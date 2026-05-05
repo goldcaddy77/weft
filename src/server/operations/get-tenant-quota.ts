@@ -28,6 +28,7 @@ export type GetTenantQuotaOutput = TenantQuotaUsage;
 
 export const getTenantQuotaOperation = defineOperation<GetTenantQuotaInput, GetTenantQuotaOutput>({
   name: 'weft.tenants.quota.get',
+  mcpExposable: false,
   summary: 'Get quota usage for a tenant',
   tags: ['Budget'],
   inputSchema: getTenantQuotaInput,
@@ -36,6 +37,8 @@ export const getTenantQuotaOperation = defineOperation<GetTenantQuotaInput, GetT
     kind: 'scoped',
     scopes: { kind: 'anyOf', scopes: ['quota:read'] },
   },
+  producibleFaults: ['Conflict'],
+  discoverable: true,
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }): Promise<GetTenantQuotaOutput> => {

@@ -23,11 +23,13 @@ export type ForkWorkflowOutput = z.infer<typeof forkWorkflowOutput>;
 
 export const forkWorkflowOperation = defineOperation<ForkWorkflowInput, ForkWorkflowOutput>({
   name: 'weft.workflows.fork',
+  mcpExposable: false,
   summary: 'Fork a workflow from a checkpoint',
   tags: ['Workflows'],
   inputSchema: forkWorkflowInput,
   outputSchema: forkWorkflowOutput,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   // oxlint-disable-next-line complexity -- ID:server-operations-fork-workflow-invoke-complexity

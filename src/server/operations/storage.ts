@@ -12,7 +12,7 @@ import {
 } from '../../storage/interface.ts';
 import { scopedStorage } from '../../storage/scoped-storage.ts';
 import type { AccessPolicy } from '../authorization.ts';
-import type { OperationFault } from '../operation-fault.ts';
+import { raiseFault } from '../operation-catalog.ts';
 import { defineOperation } from '../operation-registry.ts';
 import { isAuthenticated, type Principal } from '../principal.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
@@ -43,20 +43,16 @@ const httpOnlyStorageTransports = {
   jsonRpcWebSocket: false,
 } as const;
 
-const binaryValueSchema = z.instanceof(Uint8Array);
+const binaryValueSchema = z.instanceof(Uint8Array).meta({ type: 'string', format: 'binary' });
 
-const storageGetInput = z.object({
-  key: z.string().min(1),
-});
+const storageGetInput = z.object({ key: z.string().min(1) });
 
 const storagePutInput = z.object({
   key: z.string().min(1),
   value: binaryValueSchema,
 });
 
-const storageDeleteInput = z.object({
-  key: z.string().min(1),
-});
+const storageDeleteInput = z.object({ key: z.string().min(1) });
 
 const storageScanInput = z.object({
   prefix: z.string(),
@@ -78,9 +74,7 @@ const storageConditionInput = z.object({
   expectedValue: z.string().nullable(),
 });
 
-const storageBatchInput = z.object({
-  operations: z.array(storageBatchOperationInput),
-});
+const storageBatchInput = z.object({ operations: z.array(storageBatchOperationInput) });
 
 const storageConditionalBatchInput = z.object({
   conditions: z.array(storageConditionInput),
@@ -97,9 +91,7 @@ const storageScanOutput = z.custom<StorageScanOutput>(
     typeof value[Symbol.asyncIterator] === 'function',
   'Storage scan output must be an async iterable.',
 );
-const storageConditionalBatchOutput = z.object({
-  applied: z.boolean(),
-});
+const storageConditionalBatchOutput = z.object({ applied: z.boolean() });
 
 export type StorageGetInput = z.infer<typeof storageGetInput>;
 export type StoragePutInput = z.infer<typeof storagePutInput>;
@@ -111,21 +103,17 @@ export type StorageBatchInput = z.infer<typeof storageBatchInput>;
 export type StorageConditionalBatchInput = z.infer<typeof storageConditionalBatchInput>;
 export type StorageConditionalBatchOutput = z.infer<typeof storageConditionalBatchOutput>;
 
-function forbiddenUnscopedStorageFault(): OperationFault {
-  return {
-    code: 'Forbidden',
-    message: 'Raw storage access requires storage:admin or a tenant-scoped principal.',
-    data: { reason: 'Raw storage access requires storage:admin or a tenant-scoped principal.' },
-  };
-}
-
-function resolveAuthorizedStorage(engine: Engine, principal: Principal): Storage {
+function resolveAuthorizedStorage(
+  engine: Engine,
+  principal: Principal,
+  operation: Parameters<typeof raiseFault>[0],
+): Storage {
   if (!isAuthenticated(principal)) {
-    throw {
+    raiseFault(operation, {
       code: 'Unauthorized',
       message: 'authentication required',
       data: { reason: 'authentication required' },
-    } satisfies OperationFault;
+    });
   }
 
   const tenantId = principal.tenantId?.trim();
@@ -137,7 +125,11 @@ function resolveAuthorizedStorage(engine: Engine, principal: Principal): Storage
     return engine.storage;
   }
 
-  throw forbiddenUnscopedStorageFault();
+  raiseFault(operation, {
+    code: 'Forbidden',
+    message: 'Raw storage access requires storage:admin or a tenant-scoped principal.',
+    data: { reason: 'Raw storage access requires storage:admin or a tenant-scoped principal.' },
+  });
 }
 
 function scanOptions(input: StorageScanInput): ScanOptions {
@@ -289,30 +281,34 @@ async function* scanStorage(
 
 export const storageGetOperation = defineOperation<StorageGetInput, Uint8Array | null>({
   name: 'weft.storage.get',
+  mcpExposable: false,
   summary: 'Get a raw storage value',
   tags: ['Storage'],
   inputSchema: storageGetInput,
   outputSchema: storageGetOutput,
   access: storageReadAccess,
+  discoverable: true,
   transports: httpOnlyStorageTransports,
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }) => {
-    const storage = resolveAuthorizedStorage(engine as Engine, principal);
+    const storage = resolveAuthorizedStorage(engine as Engine, principal, storageGetOperation);
     return storage.get(input.key);
   },
 });
 
 export const storagePutOperation = defineOperation<StoragePutInput, null>({
   name: 'weft.storage.put',
+  mcpExposable: false,
   summary: 'Put a raw storage value',
   tags: ['Storage'],
   inputSchema: storagePutInput,
   outputSchema: emptyOutput,
   access: storageWriteAccess,
+  discoverable: true,
   transports: httpOnlyStorageTransports,
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }) => {
-    const storage = resolveAuthorizedStorage(engine as Engine, principal);
+    const storage = resolveAuthorizedStorage(engine as Engine, principal, storagePutOperation);
     await storage.put(input.key, input.value);
     return null;
   },
@@ -320,15 +316,17 @@ export const storagePutOperation = defineOperation<StoragePutInput, null>({
 
 export const storageDeleteOperation = defineOperation<StorageDeleteInput, null>({
   name: 'weft.storage.delete',
+  mcpExposable: false,
   summary: 'Delete a raw storage value',
   tags: ['Storage'],
   inputSchema: storageDeleteInput,
   outputSchema: emptyOutput,
   access: storageWriteAccess,
+  discoverable: true,
   transports: httpOnlyStorageTransports,
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }) => {
-    const storage = resolveAuthorizedStorage(engine as Engine, principal);
+    const storage = resolveAuthorizedStorage(engine as Engine, principal, storageDeleteOperation);
     await storage.delete(input.key);
     return null;
   },
@@ -336,30 +334,34 @@ export const storageDeleteOperation = defineOperation<StorageDeleteInput, null>(
 
 export const storageScanOperation = defineOperation<StorageScanInput, StorageScanOutput>({
   name: 'weft.storage.scan',
+  mcpExposable: false,
   summary: 'Scan raw storage values',
   tags: ['Storage'],
   inputSchema: storageScanInput,
   outputSchema: storageScanOutput,
   access: storageReadAccess,
+  discoverable: true,
   transports: httpOnlyStorageTransports,
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }) => {
-    const storage = resolveAuthorizedStorage(engine as Engine, principal);
+    const storage = resolveAuthorizedStorage(engine as Engine, principal, storageScanOperation);
     return scanStorage(storage, input.prefix, scanOptions(input));
   },
 });
 
 export const storageBatchOperation = defineOperation<StorageBatchInput, null>({
   name: 'weft.storage.batch',
+  mcpExposable: false,
   summary: 'Apply a raw storage batch',
   tags: ['Storage'],
   inputSchema: storageBatchInput,
   outputSchema: emptyOutput,
   access: storageWriteAccess,
+  discoverable: true,
   transports: httpOnlyStorageTransports,
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }) => {
-    const storage = resolveAuthorizedStorage(engine as Engine, principal);
+    const storage = resolveAuthorizedStorage(engine as Engine, principal, storageBatchOperation);
     await storage.batch(input.operations.map(decodeBatchOperation));
     return null;
   },
@@ -370,15 +372,21 @@ export const storageConditionalBatchOperation = defineOperation<
   StorageConditionalBatchOutput
 >({
   name: 'weft.storage.conditionalbatch',
+  mcpExposable: false,
   summary: 'Apply a raw storage conditional batch',
   tags: ['Storage'],
   inputSchema: storageConditionalBatchInput,
   outputSchema: storageConditionalBatchOutput,
   access: storageConditionalBatchAccess,
+  discoverable: true,
   transports: httpOnlyStorageTransports,
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }) => {
-    const storage = resolveAuthorizedStorage(engine as Engine, principal);
+    const storage = resolveAuthorizedStorage(
+      engine as Engine,
+      principal,
+      storageConditionalBatchOperation,
+    );
     const applied = await storageConditionalBatch(
       storage,
       input.conditions.map(decodeCondition),

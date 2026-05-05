@@ -33,6 +33,7 @@ export const bulkMutateWorkflowTagsOperation = defineOperation<
   BulkMutateWorkflowTagsOutput
 >({
   name: 'weft.workflows.bulk.tags',
+  mcpExposable: false,
   summary: 'Add or remove workflow tags in bulk',
   tags: ['Workflows'],
   inputSchema: bulkMutateWorkflowTagsInput,

@@ -70,7 +70,14 @@ it('All live views share the same sequence and cursor semantics. Replay, resume,
 
   const backend = createEngineEventFeedBackend(engine);
   const feed = createWorkflowEventFeed(backend);
-  const server = serve({ engine, port: 0 });
+  const server = serve({
+    engine,
+    port: 0,
+    auth: {
+      apiKeys: [SUBSCRIBE_TEST_API_KEY],
+      defaultApiKeyScopes: ['workflows:read'],
+    },
+  });
   servers.push(server);
 
   try {
@@ -112,9 +119,15 @@ it('All live views share the same sequence and cursor semantics. Replay, resume,
   }
 });
 
+// `weft.workflows.events` requires `workflows:read`. The test serve()
+// above issues a key with that scope; this connection presents it.
+const SUBSCRIBE_TEST_API_KEY = 'weft_test_sequence_cursor_workflows_read_key_xxxxxxxx';
+
 function openWebSocket(url: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
-    const webSocket = new WebSocket(url);
+    const webSocket = new WebSocket(url, {
+      headers: { authorization: `Bearer ${SUBSCRIBE_TEST_API_KEY}` },
+    } as any);
     webSocket.addEventListener('open', () => resolve(webSocket));
     webSocket.addEventListener('error', (event) => reject(event));
   });

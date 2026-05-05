@@ -68,12 +68,34 @@ try {
 // to system load and fail intermittently when run alongside 3,400+ other
 // tests. They are verified in CI and can be run in isolation via
 // `bun test src/benchmarks/`.
+//
+// Two benchmark-shaped suites live outside `src/benchmarks/` for historical
+// reasons and exhibit the same load sensitivity: they assert raw
+// throughput numbers (`bun-sql-benchmark.test.ts`) or depend on tight
+// timing windows (`bulk-operations.test.ts > snapshots workflow ids
+// before bulk signal …`). CI runs them in isolation; pre-commit excludes
+// them so a quality-of-throughput regression doesn't masquerade as a
+// failed local commit.
+const LOAD_SENSITIVE_TEST_PATHS = [
+  'src/storage/bun-sql-benchmark.test.ts',
+  'src/core/bulk-operations.test.ts',
+] as const;
 info('Running test…');
 try {
   const glob = new Bun.Glob('{src,tests}/**/*.test.ts');
   const testFiles = [];
   for await (const file of glob.scan('.')) {
-    if (!file.includes('/benchmarks/')) testFiles.push(file);
+    // Normalize the path before any allow-list comparison: strip `./` prefix
+    // and collapse runs of slashes. Without this, a run-on-load-sensitive
+    // test could slip through if the glob ever returns `./src/...` or
+    // produces a path with redundant separators.
+    const normalized = file.replace(/^\.\//, '').replace(/\/+/g, '/');
+    if (normalized.includes('/benchmarks/')) continue;
+    if (
+      LOAD_SENSITIVE_TEST_PATHS.includes(normalized as (typeof LOAD_SENSITIVE_TEST_PATHS)[number])
+    )
+      continue;
+    testFiles.push(file);
   }
   await $`bun test --timeout 15000 ${testFiles}`;
   success('test passed');

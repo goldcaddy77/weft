@@ -16,11 +16,13 @@ export type QueryWorkflowOutput = { result: unknown };
 
 export const queryWorkflowOperation = defineOperation<QueryWorkflowInput, QueryWorkflowOutput>({
   name: 'weft.workflows.query',
+  mcpExposable: false,
   summary: 'Query workflow state by id',
   tags: ['Workflows'],
   inputSchema: queryWorkflowInput,
   outputSchema: queryWorkflowOutput as z.ZodType<QueryWorkflowOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotImplemented'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<QueryWorkflowOutput> => {

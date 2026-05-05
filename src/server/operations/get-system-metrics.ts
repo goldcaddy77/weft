@@ -38,6 +38,7 @@ export type GetSystemMetricsOutput = MetricsSnapshot;
 export function createGetSystemMetricsOperation(options?: { metricsCollector?: MetricsCollector }) {
   return defineOperation<GetSystemMetricsInput, GetSystemMetricsOutput>({
     name: 'weft.system.metrics',
+    mcpExposable: false,
     summary: 'Get JSON-shaped system metrics',
     tags: ['Observability'],
     inputSchema: getSystemMetricsInput,
@@ -46,6 +47,8 @@ export function createGetSystemMetricsOperation(options?: { metricsCollector?: M
       kind: 'scoped',
       scopes: { kind: 'anyOf', scopes: ['system:read'] },
     },
+    producibleFaults: ['RateLimited'],
+    discoverable: true,
     transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
     unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
     invoke: async (): Promise<GetSystemMetricsOutput> => {
