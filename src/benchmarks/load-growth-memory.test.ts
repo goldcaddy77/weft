@@ -10,8 +10,9 @@ const TARGET_WORKFLOWS_PER_SECOND = IS_CONSTRAINED_CODEX_RUNNER ? 500 : 10_000;
 const MAX_MEDIAN_RSS_GROWTH_BYTES_PER_SECOND = (IS_CONSTRAINED_CODEX_RUNNER ? 5 : 1) * 1024 * 1024;
 const MAX_MEDIAN_POST_WARMUP_RSS_DELTA_BYTES = (IS_CONSTRAINED_CODEX_RUNNER ? 32 : 8) * 1024 * 1024;
 const MAX_MEDIAN_POST_WARMUP_RSS_RANGE_BYTES = (IS_CONSTRAINED_CODEX_RUNNER ? 64 : 8) * 1024 * 1024;
-const MAX_POST_WARMUP_RSS_DELTA_BYTES = 64 * 1024 * 1024;
-const MAX_POST_WARMUP_RSS_RANGE_BYTES = 64 * 1024 * 1024;
+const MAX_SINGLE_TRIAL_RSS_GROWTH_BYTES_PER_SECOND = MAX_MEDIAN_RSS_GROWTH_BYTES_PER_SECOND * 2;
+const MAX_SINGLE_TRIAL_POST_WARMUP_RSS_DELTA_BYTES = MAX_MEDIAN_POST_WARMUP_RSS_DELTA_BYTES * 2;
+const MAX_SINGLE_TRIAL_POST_WARMUP_RSS_RANGE_BYTES = MAX_MEDIAN_POST_WARMUP_RSS_RANGE_BYTES * 2;
 const SAMPLE_INTERVAL_MILLISECONDS = 500;
 const WARMUP_SAMPLES = 4;
 const WORKFLOW_BATCH_SIZE = 500;
@@ -107,6 +108,9 @@ describe('Load-growth memory stability', () => {
     const medianAbsoluteRssGrowthRatePerSecond = median(
       measurements.map((measurement) => Math.abs(measurement.rssGrowthRatePerSecond)),
     );
+    const maximumAbsoluteRssGrowthRatePerSecond = Math.max(
+      ...measurements.map((measurement) => Math.abs(measurement.rssGrowthRatePerSecond)),
+    );
     const medianPostWarmupRssDeltaBytes = median(
       measurements.map((measurement) => Math.abs(measurement.postWarmupRssDeltaBytes)),
     );
@@ -132,6 +136,7 @@ describe('Load-growth memory stability', () => {
         ),
         `    Median throughput: ${medianThroughput.toLocaleString()} workflows/sec`,
         `    Median RSS slope:  ${medianAbsoluteRssGrowthRatePerSecond.toFixed(0)} bytes/sec`,
+        `    Max RSS slope:     ${maximumAbsoluteRssGrowthRatePerSecond.toFixed(0)} bytes/sec`,
         `    Median RSS delta:  ${medianPostWarmupRssDeltaBytes.toLocaleString()} bytes`,
         `    Median RSS band:   ${medianPostWarmupRssRangeBytes.toLocaleString()} bytes`,
         `    Max RSS delta:     ${maximumPostWarmupRssDeltaBytes.toLocaleString()} bytes`,
@@ -143,13 +148,20 @@ describe('Load-growth memory stability', () => {
     expect(medianAbsoluteRssGrowthRatePerSecond).toBeLessThanOrEqual(
       MAX_MEDIAN_RSS_GROWTH_BYTES_PER_SECOND,
     );
+    expect(maximumAbsoluteRssGrowthRatePerSecond).toBeLessThanOrEqual(
+      MAX_SINGLE_TRIAL_RSS_GROWTH_BYTES_PER_SECOND,
+    );
     expect(medianPostWarmupRssDeltaBytes).toBeLessThanOrEqual(
       MAX_MEDIAN_POST_WARMUP_RSS_DELTA_BYTES,
     );
     expect(medianPostWarmupRssRangeBytes).toBeLessThanOrEqual(
       MAX_MEDIAN_POST_WARMUP_RSS_RANGE_BYTES,
     );
-    expect(maximumPostWarmupRssDeltaBytes).toBeLessThanOrEqual(MAX_POST_WARMUP_RSS_DELTA_BYTES);
-    expect(maximumPostWarmupRssRangeBytes).toBeLessThanOrEqual(MAX_POST_WARMUP_RSS_RANGE_BYTES);
+    expect(maximumPostWarmupRssDeltaBytes).toBeLessThanOrEqual(
+      MAX_SINGLE_TRIAL_POST_WARMUP_RSS_DELTA_BYTES,
+    );
+    expect(maximumPostWarmupRssRangeBytes).toBeLessThanOrEqual(
+      MAX_SINGLE_TRIAL_POST_WARMUP_RSS_RANGE_BYTES,
+    );
   }, 120_000);
 });
