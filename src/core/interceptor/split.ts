@@ -7,7 +7,7 @@ import { WORKFLOW_INTERCEPTOR_HOOKS } from './interceptor-interfaces.ts';
  * Interceptors with both workflow-side hooks and `execute` appear in both
  * arrays. Interceptors without recognized callable hooks are skipped.
  */
-export function splitInterceptors(list: Interceptor[]): {
+export function splitInterceptors(list: readonly Interceptor[]): {
   workflow: WorkflowInterceptor[];
   activity: ActivityInterceptor[];
 } {

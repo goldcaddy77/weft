@@ -76,8 +76,14 @@ export interface EngineInternals {
   sleepResolvers: Map<string, () => void>;
   sleepResolversByWorkflow: Map<string, Set<string>>;
   interceptors: Interceptor[];
-  composedWorkflowInterceptor: ComposedWorkflowInterceptor | null;
-  composedActivityInterceptor: ComposedActivityInterceptor | null;
+  // `undefined` means "not yet computed". `null` means "computed and empty —
+  // no interceptor implements hooks for this side". Distinguishing the two
+  // lets `getComposed*Interceptor` cache the empty-slice result instead of
+  // re-running `splitInterceptors` on every call when only one side has
+  // hooks (e.g. an observability interceptor with workflow hooks but no
+  // `execute`).
+  composedWorkflowInterceptor: ComposedWorkflowInterceptor | null | undefined;
+  composedActivityInterceptor: ComposedActivityInterceptor | null | undefined;
   updateCoordinator: UpdateCoordinator;
   activityRegistry: ActivityRegistry;
   activityWorkerDispatcher: ActivityWorkerDispatcher | null;

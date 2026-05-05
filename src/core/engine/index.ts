@@ -399,8 +399,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     getInternals(this).sleepResolvers = new Map();
     getInternals(this).sleepResolversByWorkflow = new Map();
     getInternals(this).interceptors = resolveEngineInterceptors(options);
-    getInternals(this).composedWorkflowInterceptor = null;
-    getInternals(this).composedActivityInterceptor = null;
+    getInternals(this).composedWorkflowInterceptor = undefined;
+    getInternals(this).composedActivityInterceptor = undefined;
     getInternals(this).updateCoordinator = new UpdateCoordinator(storage);
     getInternals(this).activityRegistry = new ActivityRegistry();
     getInternals(this).activityWorkerDispatcher = null;
@@ -578,9 +578,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   addInterceptor(interceptor: Interceptor): void {
     getInternals(this).interceptors.push(interceptor);
     // Adding ANY interceptor invalidates BOTH composed caches because the
-    // unified list feeds both pipelines.
-    getInternals(this).composedWorkflowInterceptor = null;
-    getInternals(this).composedActivityInterceptor = null;
+    // unified list feeds both pipelines. Use `undefined` to mean
+    // "uncomputed" so the next call recomputes; `null` would be
+    // indistinguishable from a legitimate computed-empty result.
+    getInternals(this).composedWorkflowInterceptor = undefined;
+    getInternals(this).composedActivityInterceptor = undefined;
   }
   registerActivity(
     name: string,

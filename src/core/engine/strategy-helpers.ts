@@ -72,10 +72,15 @@ export function getComposedWorkflowInterceptor(
   internals: EngineInternals,
 ): ComposedWorkflowInterceptor | null {
   if (internals.interceptors.length === 0) return null;
-  if (internals.composedWorkflowInterceptor) return internals.composedWorkflowInterceptor;
+  // Tri-state cache: `undefined` = uncomputed; `null` = computed-empty;
+  // a value = computed-non-empty. Distinguishes "we already checked and
+  // there are no workflow-side hooks" from "we haven't checked yet".
+  if (internals.composedWorkflowInterceptor !== undefined) {
+    return internals.composedWorkflowInterceptor;
+  }
   const workflowSlice = splitInterceptors(internals.interceptors).workflow;
-  if (workflowSlice.length === 0) return null;
-  internals.composedWorkflowInterceptor = composeWorkflowInterceptors(workflowSlice);
+  internals.composedWorkflowInterceptor =
+    workflowSlice.length === 0 ? null : composeWorkflowInterceptors(workflowSlice);
   return internals.composedWorkflowInterceptor;
 }
 
@@ -83,9 +88,11 @@ export function getComposedActivityInterceptor(
   internals: EngineInternals,
 ): ComposedActivityInterceptor | null {
   if (internals.interceptors.length === 0) return null;
-  if (internals.composedActivityInterceptor) return internals.composedActivityInterceptor;
+  if (internals.composedActivityInterceptor !== undefined) {
+    return internals.composedActivityInterceptor;
+  }
   const activitySlice = splitInterceptors(internals.interceptors).activity;
-  if (activitySlice.length === 0) return null;
-  internals.composedActivityInterceptor = composeActivityInterceptors(activitySlice);
+  internals.composedActivityInterceptor =
+    activitySlice.length === 0 ? null : composeActivityInterceptors(activitySlice);
   return internals.composedActivityInterceptor;
 }
