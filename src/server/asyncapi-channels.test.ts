@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import {
   buildOperationEntry,
+  buildSseChannel,
   buildSseMessages,
   buildWebSocketMessages,
 } from './asyncapi-channels.ts';
@@ -54,6 +55,15 @@ describe('AsyncAPI channel builders', () => {
       'weft_workflows_streams_sse_errorEvent',
       'weft_workflows_streams_sse_tokenEvent',
     ]);
+  });
+
+  it('omits empty bindings from SSE channels', () => {
+    const channel = buildSseChannel(
+      operation('weft.workflows.streams.sse'),
+      '/v1/workflows/{id}/streams/sse',
+    );
+
+    expect(channel).not.toHaveProperty('bindings');
   });
 
   it('builds message payloads as JSON Schema objects', () => {

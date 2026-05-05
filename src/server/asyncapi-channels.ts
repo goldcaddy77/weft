@@ -73,9 +73,6 @@ export function buildSseChannel(
   const address = restBindingPath ?? `/x-weft-unbound/${operation.name.replaceAll('.', '/')}`;
   return {
     address,
-    bindings: {
-      ws: undefined,
-    },
     description:
       `Server-Sent Events stream channel for ${operation.name}. ` +
       'Responses use text/event-stream; charset=utf-8.',

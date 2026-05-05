@@ -206,6 +206,40 @@ describe('emitBindings — body-accepting methods', () => {
     expect(entry).toBeDefined();
     expect(entry).not.toHaveProperty('requestBody');
   });
+
+  it('does not let non-discoverable bindings suppress matching legacy routes', () => {
+    const operation = defineOperation({
+      name: 'weft.test.hiddenhealth',
+      mcpExposable: false,
+      summary: 'hidden health binding',
+      inputSchema: z.object({}),
+      outputSchema: z.object({ ok: z.boolean() }),
+      access: { kind: 'authenticated' },
+      discoverable: false,
+      transports: { http: true, jsonRpcHttp: false, jsonRpcWebSocket: false, jsonRpcStdio: false },
+      unknownKeyPolicy: { http: 'reject', jsonRpc: 'reject' },
+      invoke: async () => ({ ok: true }),
+    });
+    const binding: UnknownRestBinding = {
+      method: 'GET',
+      path: '/v1/health',
+      pathParamNames: [],
+      operationName: 'weft.test.hiddenhealth',
+      inputSources: {},
+      extractInput: async () => ({}),
+      success: { kind: 'json', status: 200 },
+    };
+    const document = generateOpenApiDocument({
+      registry: createOperationRegistry([operation]),
+      restBindings: [binding],
+    });
+
+    const legacyHealthRoute = (document['paths'] as Record<string, Record<string, unknown>>)[
+      '/v1/health'
+    ]?.['get'] as Record<string, unknown> | undefined;
+    expect(legacyHealthRoute).toBeDefined();
+    expect(legacyHealthRoute?.['operationId']).not.toBe('weft.test.hiddenhealth');
+  });
 });
 
 describe('route-model helpers', () => {

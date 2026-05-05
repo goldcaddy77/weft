@@ -94,8 +94,8 @@ export function emitBindings(
     const operation: ErasedOperation | undefined = registry.get(binding.operationName);
     if (operation === undefined) continue;
     const openApiPath = toOpenApiPath(binding.path);
-    boundMethodPaths.add(`${binding.method} ${openApiPath}`);
     if (!isDiscoverable(operation)) continue;
+    boundMethodPaths.add(`${binding.method} ${openApiPath}`);
     if (!paths[openApiPath]) paths[openApiPath] = {};
 
     const parameters = buildPathParameters(binding.pathParamNames);
