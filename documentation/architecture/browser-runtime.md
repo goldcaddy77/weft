@@ -2,11 +2,11 @@
 
 Weft runs in the browser. Not a stripped-down client library that talks to a server---the actual engine, executing workflows in Web Workers, persisting state to IndexedDB, all inside the browser.
 
-The key enabler is the Service Worker.
+The key enabler is the Service Worker. See the [Service Worker guide](../guides/service-worker.md) for the hands-on setup path.
 
 ## Service Worker as the browser server
 
-A Service Worker is a special kind of Web Worker that acts as a proxy between your web app and the network. It intercepts `fetch` events, can cache responses, and crucially---it runs in the background even when the tab is closed. It has access to IndexedDB for persistent storage and scheduling primitives for periodic wakeup.
+A Service Worker is a special kind of Web Worker that acts as a proxy between your web app and the network. It intercepts `fetch` events, can cache responses, and can be woken by browser events even when no tab is actively running. It has access to IndexedDB for persistent storage and scheduling primitives for periodic wakeup.
 
 For Weft, a Service Worker is the browser equivalent of the Bun server process.
 
@@ -25,11 +25,8 @@ For Weft, a Service Worker is the browser equivalent of the Bun server process.
 ┌──────────────────▼───────────────────────────────────┐
 │ Service Worker (weft-sw.ts)                          │
 │                                                      │
-│  self.addEventListener("fetch", (event) => {         │
-│    if (event.request.url.includes("/weft/")) {       │
-│      event.respondWith(engine.handleRequest(event)); │
-│    }                                                 │
-│  });                                                 │
+│  self.addEventListener("fetch", handleWeftFetch);    │
+│  self.addEventListener("periodicsync", tickTimers);  │
 │                                                      │
 │  Engine(IndexedDBStorage) ← same engine code!        │
 │                                                      │
@@ -87,6 +84,8 @@ const scheduler = new ServiceWorkerScheduler({
   onTimerFired: (entry) => engine.fireTimer(entry),
 });
 
+await engine.recoverAll();
+
 const { install, activate } = createLifecycleHandlers();
 self.addEventListener('install', install);
 self.addEventListener('activate', activate);
@@ -94,24 +93,24 @@ self.addEventListener('fetch', createFetchHandler({ engine, pathPrefix: '/weft/'
 self.addEventListener('periodicsync', createPeriodicSyncHandler(scheduler));
 ```
 
+`createFetchHandler()` takes an `engine` and an optional `pathPrefix` (default `'/weft/'`). It returns a `fetch` event listener that intercepts matching requests and delegates to `handleRequest()`. Non-matching requests pass through to the network. `createLifecycleHandlers()` returns `install` and `activate` handlers that call `skipWaiting()` and `clients.claim()` respectively, ensuring the Service Worker takes control immediately. `createPeriodicSyncHandler()` returns a `periodicsync` listener for timer wakeups and calls `scheduler.tick()` inside `event.waitUntil(...)`.
+
 ## Durable timers with Periodic Background Sync
 
 Workflows need timers---`yield* ctx.sleep("1 hour")` has to actually wake up an hour later. In Bun, the scheduler polls the database. In the browser, the **Periodic Background Sync API** serves the same purpose.
 
-`ServiceWorkerScheduler` manages timer wakeup. It checks IndexedDB for expired timers and advances waiting workflows. When Periodic Background Sync is available, the browser wakes the Service Worker at the registered interval. When it is not available (Firefox, Safari), the scheduler falls back to `setTimeout`-based polling---which only works while a tab is open.
+The engine scheduler manages timer wakeup. It checks IndexedDB for expired timers and advances waiting workflows. When Periodic Background Sync is available, the browser wakes the Service Worker at the registered interval. When it is not available, you need a page-controlled fallback that calls `engine.scheduler.tick()` while a tab is open.
 
 ```typescript partial
-const scheduler = new ServiceWorkerScheduler({
-  storage,
-  onTimerFired: (entry) => {
-    // The engine wires this internally; provide your own integration
-    // if creating ServiceWorkerScheduler outside of the engine factory.
-  },
-  periodicSyncTag: 'weft-timers', // default
-  fallbackIntervalMilliseconds: 60_000, // default
+self.addEventListener('periodicsync', (event) => {
+  if (event.tag !== 'weft-timers') return;
+  event.waitUntil(engine.scheduler.tick());
 });
 
-self.addEventListener('periodicsync', createPeriodicSyncHandler(scheduler));
+self.addEventListener('message', (event) => {
+  if (event.data?.type !== 'weft:tick') return;
+  event.waitUntil(engine.scheduler.tick());
+});
 ```
 
 ## What this enables

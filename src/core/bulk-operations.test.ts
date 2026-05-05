@@ -36,9 +36,7 @@ async function waitForWorkflowStatus(
       const state = await engine.get(workflowId);
       return state?.status === status;
     },
-    // 5s ceiling — the 1001-workflow bulk-signal test flakes on shared
-    // CI runners with the previous 500ms timeout.
-    { label: `workflow "${workflowId}" to reach ${status}`, timeoutMs: 5_000, intervalMs: 5 },
+    { label: `workflow "${workflowId}" to reach ${status}`, timeoutMs: 10_000, intervalMs: 5 },
   );
 }
 

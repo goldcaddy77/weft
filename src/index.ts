@@ -223,7 +223,10 @@ export { StepContext, compileStepWorkflow, isAsyncGeneratorFunction } from './co
 export type { StepWorkflowContext, StepWorkflowFunction } from './core/types';
 
 // Interceptors
-export { composeActivityInterceptors, composeWorkflowInterceptors } from './core/interceptor';
+export {
+  composeActivityInterceptors,
+  composeWorkflowInterceptors,
+} from './core/interceptor';
 export type {
   ActivityExecutionInterception,
   ActivityInterception,
@@ -232,6 +235,7 @@ export type {
   ChildWorkflowInterception,
   ComposedActivityInterceptor,
   ComposedWorkflowInterceptor,
+  Interceptor,
   QueryInterception,
   SignalInterception,
   SignalReceivedInterception,

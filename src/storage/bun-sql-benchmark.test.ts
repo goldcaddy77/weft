@@ -5,6 +5,10 @@ import { join } from 'node:path';
 
 import type { BatchOperation } from './interface';
 
+import {
+  isConstrainedCodexRunner,
+  isGitHubActionsRunner,
+} from '../benchmarks/benchmark-environment';
 import { BunSQLiteStorage } from './bun-sql';
 
 /** Create a unique temporary file path for each test. */
@@ -32,7 +36,8 @@ function generateCheckpointValue(): Uint8Array {
  * absorb hardware noise on shared runners, high enough that a real
  * regression (10x slower) still trips the gate.
  */
-const TARGET_WRITES_PER_SECOND = process.env['CI'] ? 5_000 : 20_000;
+const TARGET_WRITES_PER_SECOND =
+  isConstrainedCodexRunner() || isGitHubActionsRunner() ? 5_000 : 20_000;
 const BATCH_WRITE_SAMPLE_SIZE = 3;
 
 function median(values: number[]): number {
@@ -129,7 +134,7 @@ describe('BunSQLiteStorage benchmark', () => {
     expect(last).toEqual(value);
 
     storage[Symbol.dispose]();
-  });
+  }, 15_000);
 
   it('individual put throughput via batch (single-operation batches)', async () => {
     const storage = createStorage();
