@@ -5,10 +5,10 @@ import {
   METRICS,
   MetricsCollector,
   createMetricsCollectorExporter,
-  createOtelMetrics,
+  createOpenTelemetryMetrics,
   serializeMetricsSnapshotForPrometheus,
 } from './metrics';
-import type { OtelMeter } from './no-op-telemetry';
+import type { OpenTelemetryMeter } from './no-op-telemetry';
 
 describe('metrics', () => {
   const entries = Object.entries(METRICS) as [string, MetricDefinition][];
@@ -210,12 +210,12 @@ describe('MetricsCollector', () => {
 });
 
 // ---------------------------------------------------------------------------
-// createOtelMetrics
+// createOpenTelemetryMetrics
 // ---------------------------------------------------------------------------
 
 /** Build a recording meter that captures all instrument creation and calls. */
 function createRecordingMeter(): {
-  meter: OtelMeter;
+  meter: OpenTelemetryMeter;
   created: Array<{ type: string; name: string; options?: { unit?: string } }>;
   recordings: Array<{
     instrument: string;
@@ -230,7 +230,7 @@ function createRecordingMeter(): {
     attributes?: Record<string, string | number | boolean>;
   }> = [];
 
-  const meter: OtelMeter = {
+  const meter: OpenTelemetryMeter = {
     createHistogram(name: string, options?: { unit?: string }) {
       created.push({ type: 'histogram', name, ...(options ? { options } : {}) });
       return {
@@ -260,16 +260,16 @@ function createRecordingMeter(): {
   return { meter, created, recordings };
 }
 
-describe('createOtelMetrics', () => {
-  it('creates the expected OTel instruments when given a meter', () => {
+describe('createOpenTelemetryMetrics', () => {
+  it('creates the expected OpenTelemetry instruments when given a meter', () => {
     const { meter, created } = createRecordingMeter();
-    const otelMetrics = createOtelMetrics(meter);
+    const openTelemetryMetrics = createOpenTelemetryMetrics(meter);
 
-    expect(otelMetrics).toBeDefined();
-    expect(otelMetrics.workflowDuration).toBeDefined();
-    expect(otelMetrics.activityDuration).toBeDefined();
-    expect(otelMetrics.activityAttempts).toBeDefined();
-    expect(otelMetrics.activeWorkflows).toBeDefined();
+    expect(openTelemetryMetrics).toBeDefined();
+    expect(openTelemetryMetrics.workflowDuration).toBeDefined();
+    expect(openTelemetryMetrics.activityDuration).toBeDefined();
+    expect(openTelemetryMetrics.activityAttempts).toBeDefined();
+    expect(openTelemetryMetrics.activeWorkflows).toBeDefined();
 
     const names = created.map((c) => c.name);
     expect(names).toContain('weft.workflow.duration');
@@ -280,7 +280,7 @@ describe('createOtelMetrics', () => {
 
   it('creates histograms with correct units', () => {
     const { meter, created } = createRecordingMeter();
-    createOtelMetrics(meter);
+    createOpenTelemetryMetrics(meter);
 
     const workflowDuration = created.find((c) => c.name === 'weft.workflow.duration');
     expect(workflowDuration).toBeDefined();
@@ -293,13 +293,13 @@ describe('createOtelMetrics', () => {
 
   it('instruments are callable', () => {
     const { meter, recordings } = createRecordingMeter();
-    const otelMetrics = createOtelMetrics(meter);
+    const openTelemetryMetrics = createOpenTelemetryMetrics(meter);
 
-    otelMetrics.workflowDuration.record(150);
-    otelMetrics.activityDuration.record(42);
-    otelMetrics.activityAttempts.add(1);
-    otelMetrics.activeWorkflows.add(1);
-    otelMetrics.activeWorkflows.add(-1);
+    openTelemetryMetrics.workflowDuration.record(150);
+    openTelemetryMetrics.activityDuration.record(42);
+    openTelemetryMetrics.activityAttempts.add(1);
+    openTelemetryMetrics.activeWorkflows.add(1);
+    openTelemetryMetrics.activeWorkflows.add(-1);
 
     expect(recordings).toHaveLength(5);
     expect(recordings[0]!.instrument).toBe('weft.workflow.duration');
@@ -308,17 +308,17 @@ describe('createOtelMetrics', () => {
 
   it('uses the no-op meter when called without arguments', () => {
     // Should not throw even without @opentelemetry/api installed
-    const otelMetrics = createOtelMetrics();
-    expect(otelMetrics).toBeDefined();
-    expect(() => otelMetrics.workflowDuration.record(100)).not.toThrow();
-    expect(() => otelMetrics.activityAttempts.add(1)).not.toThrow();
+    const openTelemetryMetrics = createOpenTelemetryMetrics();
+    expect(openTelemetryMetrics).toBeDefined();
+    expect(() => openTelemetryMetrics.workflowDuration.record(100)).not.toThrow();
+    expect(() => openTelemetryMetrics.activityAttempts.add(1)).not.toThrow();
   });
 
   it('accepts a string meter name', () => {
-    // Should use getOtelApi().metrics.getMeter(name) under the hood
-    const otelMetrics = createOtelMetrics('my-service');
-    expect(otelMetrics).toBeDefined();
-    expect(() => otelMetrics.workflowDuration.record(100)).not.toThrow();
+    // Should use getOpenTelemetryApi().metrics.getMeter(name) under the hood
+    const openTelemetryMetrics = createOpenTelemetryMetrics('my-service');
+    expect(openTelemetryMetrics).toBeDefined();
+    expect(() => openTelemetryMetrics.workflowDuration.record(100)).not.toThrow();
   });
 });
 

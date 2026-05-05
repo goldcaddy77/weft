@@ -256,9 +256,9 @@ const engine = new Engine({
 Built-in event system (`EventTarget`-based, so it composes with everything), W3C `traceparent` propagation, and OpenTelemetry-compatible metrics. Composable interceptors layer cross-cutting concerns---tracing, validation, encryption---without any of them knowing about each other.
 
 ```typescript
-import { createObservabilityInterceptors, createOtelMetrics } from 'weft';
+import { createObservabilityInterceptors, createOpenTelemetryMetrics } from 'weft';
 
-const metrics = createOtelMetrics({
+const metrics = createOpenTelemetryMetrics({
   /* your meter provider */
 });
 const interceptors = createObservabilityInterceptors({ metrics });

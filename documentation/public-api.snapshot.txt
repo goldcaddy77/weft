@@ -172,15 +172,15 @@ interface NormalizedRetentionPolicy { cancelled?: number; completed?: number; fa
 type OAuth2Config = { tokenEndpoint: string; clientId: string; clientSecret: string; scope?: string; }
 class OAuth2TokenError { readonly statusCode: number; readonly tokenEndpoint: string }
 type OAuth2TokenManager = { getAccessToken(): Promise<string>; }
-type ObservabilityOptions = { tracerName?: string; tracerVersion?: string; recordPayloads?: boolean; maxPayloadSize?: number; attributeExtractor?: (interception: InterceptionContext) => Record<string, string | number | boolean>; metrics?: MetricsCollectorClass; otelApi?: OtelApi; eventTarget?: EventTarget; }
+type ObservabilityOptions = { tracerName?: string; tracerVersion?: string; recordPayloads?: boolean; maxPayloadSize?: number; attributeExtractor?: (interception: InterceptionContext) => Record<string, string | number | boolean>; metrics?: MetricsCollectorClass; openTelemetryApi?: OpenTelemetryApi; eventTarget?: EventTarget; }
 interface OffloadReference { key: string; sizeBytes: number; workflowId: string }
 class OpenAIProvider { chat(messages: Message[], options: ChatOptions): Promise<ChatResponse>; countTokens(messages: Message[]): Promise<number>; readonly name: "openai"; stream(messages: Message[], options: ChatOptions): Promise<ReadableStream<StreamChunk>>; warmup(): Promise<void> }
 class OrganizationBudgetExceededError { readonly costUsed: number; readonly limit: number; readonly namespace: string; readonly period: "daily" | "monthly" }
-type OtelApi = { trace: { getTracer(name: string, version?: string): OtelTracer; setSpan(context: unknown, span: OtelSpan): unknown; }; metrics: { getMeter(name: string, version?: string): OtelMeter; }; context: { ROOT_CONTEXT: unknown; with<T>(ctx: unknown, fn: () => T): T; }; SpanStatusCode: { OK: number; ERROR: number; UNSET: number; }; }
-type OtelMeter = { createHistogram(name: string, options?: InstrumentOptions): OtelHistogram; createCounter(name: string, options?: InstrumentOptions): OtelCounter; createUpDownCounter(name: string, options?: InstrumentOptions): OtelUpDownCounter; }
-type OtelMetrics = { workflowDuration: { record(value: number, attributes?: Record<string, string | number | boolean>): void; }; activityDuration: { record(value: number, attributes?: Record<string, string | number | boolean>): void; }; activityAttempts: { add(value: number, attributes?: Record<string, string | number | boolean>): void; }; activeWorkflows: { add(value: number, attributes?: Record<string, string | number | boolean>): void; }; }
-type OtelSpan = { setAttribute(key: string, value: string | number | boolean): void; setStatus(status: SpanStatus): void; recordException(exception: Error | string): void; end(endTime?: number): void; spanContext(): SpanContext; }
-type OtelTracer = { startSpan(name: string, options?: SpanOptions, context?: unknown): OtelSpan; }
+type OpenTelemetryApi = { trace: { getTracer(name: string, version?: string): OpenTelemetryTracer; setSpan(context: unknown, span: OpenTelemetrySpan): unknown; }; metrics: { getMeter(name: string, version?: string): OpenTelemetryMeter; }; context: { ROOT_CONTEXT: unknown; with<T>(ctx: unknown, fn: () => T): T; }; SpanStatusCode: { OK: number; ERROR: number; UNSET: number; }; }
+type OpenTelemetryMeter = { createHistogram(name: string, options?: InstrumentOptions): OpenTelemetryHistogram; createCounter(name: string, options?: InstrumentOptions): OpenTelemetryCounter; createUpDownCounter(name: string, options?: InstrumentOptions): OpenTelemetryUpDownCounter; }
+type OpenTelemetryMetrics = { workflowDuration: { record(value: number, attributes?: Record<string, string | number | boolean>): void; }; activityDuration: { record(value: number, attributes?: Record<string, string | number | boolean>): void; }; activityAttempts: { add(value: number, attributes?: Record<string, string | number | boolean>): void; }; activeWorkflows: { add(value: number, attributes?: Record<string, string | number | boolean>): void; }; }
+type OpenTelemetrySpan = { setAttribute(key: string, value: string | number | boolean): void; setStatus(status: SpanStatus): void; recordException(exception: Error | string): void; end(endTime?: number): void; spanContext(): SpanContext; }
+type OpenTelemetryTracer = { startSpan(name: string, options?: SpanOptions, context?: unknown): OpenTelemetrySpan; }
 const PROMPT_CACHE_HIT_METRIC: "weft.prompt_cache.hits"
 const PROMPT_CACHE_MISS_METRIC: "weft.prompt_cache.misses"
 interface PaginatedResult { items: T[]; limit: number; offset: number; total: number }
@@ -355,7 +355,7 @@ function createDeadlineOperations(workflowId: string, startedAt: number, executi
 function createMetricsCollectorExporter(collector: MetricsCollector): PrometheusExporter
 function createOAuth2TokenManager(config: OAuth2Config): OAuth2TokenManager
 function createObservabilityInterceptors(options?: ObservabilityOptions): { workflow: WorkflowInterceptor; activity: ActivityInterceptor; metrics: MetricsCollectorClass; endWorkflowSpan: (workflowId: string, status: "ok" | "error", errorMessage?: string) => void; evictStaleSpans: (maxAgeMs?: number) => number; dispose: () => void; }
-function createOtelMetrics(meterOrName?: string | OtelMeter): OtelMetrics
+function createOpenTelemetryMetrics(meterOrName?: string | OpenTelemetryMeter): OpenTelemetryMetrics
 function customRouter(fn: (context: RoutingContext) => ModelSelection): ModelRouter
 function debate(options: DebateOptions): Promise<DebateResult>
 function decode(bytes: Uint8Array<ArrayBufferLike>): unknown
@@ -376,7 +376,7 @@ function formatVersionCheckReport(report: VersionCheckReport): string
 function generateRecommendations(report: { database: DatabaseHealth; workflows: WorkflowStatistics; queues: QueueStatistics[]; }, thresholds?: Partial<{ readonly fragmentationVacuumPercent: number; readonly walSizeWarningBytes: number; readonly databaseSizeWarningFraction: number; readonly databaseSizeCriticalFraction: number; readonly longRunningWorkflowMilliseconds: number; readonly largeCheckpointBytes: number; readonly defaultDatabaseSizeLimitBytes: number; }>): Recommendation[]
 function generateSpanId(): string
 function generateTraceId(): string
-function getOtelApi(loader?: (moduleName: string) => unknown): OtelApi
+function getOpenTelemetryApi(loader?: (moduleName: string) => unknown): OpenTelemetryApi
 function handleRequest(request: Request, engine: Engine, options?: HandlerOptions): Promise<Response>
 function handoff(options: HandoffOptions): Promise<HandoffResult>
 function hashBytes(data: Uint8Array<ArrayBufferLike>): string
