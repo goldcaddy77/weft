@@ -1,4 +1,8 @@
-import type { ActivityMetadata, ActivityRegistry } from '../../core/activity-registry.ts';
+import {
+  copyActivityMetadata,
+  type ActivityMetadata,
+  type ActivityRegistry,
+} from '../../core/activity-registry.ts';
 
 /**
  * Catalog-shaped activity metadata for discovery and code generation.
@@ -10,30 +14,9 @@ import type { ActivityMetadata, ActivityRegistry } from '../../core/activity-reg
 export type CatalogActivityDefinition = ActivityMetadata;
 
 export function catalogActivity(metadata: ActivityMetadata): CatalogActivityDefinition {
-  return {
-    name: metadata.name,
-    queue: metadata.queue,
-    ...(metadata.description === undefined ? {} : { description: metadata.description }),
-    ...(metadata.tags === undefined ? {} : { tags: [...metadata.tags] }),
-    ...(metadata.inputSchema === undefined ? {} : { inputSchema: metadata.inputSchema }),
-    ...(metadata.outputSchema === undefined ? {} : { outputSchema: metadata.outputSchema }),
-    ...(metadata.retry === undefined ? {} : { retry: copyRetryPolicy(metadata.retry) }),
-    ...(metadata.timeout === undefined ? {} : { timeout: metadata.timeout }),
-    ...(metadata.idempotent === undefined ? {} : { idempotent: metadata.idempotent }),
-  };
+  return copyActivityMetadata(metadata);
 }
 
 export function catalogActivities(registry: ActivityRegistry): CatalogActivityDefinition[] {
   return registry.listDefinitions().map(catalogActivity);
-}
-
-function copyRetryPolicy(
-  retry: NonNullable<ActivityMetadata['retry']>,
-): NonNullable<ActivityMetadata['retry']> {
-  return {
-    ...retry,
-    ...(retry.nonRetryableErrors === undefined
-      ? {}
-      : { nonRetryableErrors: [...retry.nonRetryableErrors] }),
-  };
 }

@@ -145,7 +145,7 @@ function extractDefinitionMetadata(fn: object): Partial<ActivityRegistrationOpti
   return result;
 }
 
-function copyActivityMetadata(metadata: ActivityMetadata): ActivityMetadata {
+export function copyActivityMetadata(metadata: ActivityMetadata): ActivityMetadata {
   return {
     name: metadata.name,
     queue: metadata.queue,
