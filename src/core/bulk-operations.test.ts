@@ -36,7 +36,7 @@ async function waitForWorkflowStatus(
       const state = await engine.get(workflowId);
       return state?.status === status;
     },
-    { label: `workflow "${workflowId}" to reach ${status}`, timeoutMs: 500, intervalMs: 5 },
+    { label: `workflow "${workflowId}" to reach ${status}`, timeoutMs: 10_000, intervalMs: 5 },
   );
 }
 

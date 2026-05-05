@@ -4,21 +4,30 @@ Your [workflow](workflows.md) is the orchestrator. It decides _what_ happens and
 
 ## Calling an activity
 
-You invoke an activity with `yield* ctx.run(fn, ...args)`. The function you pass is a real function reference, not a proxy or a type stub. "Go to definition" takes you to the implementation.
+You invoke an activity with `yield* ctx.run(activity, input)`. The function you pass is a real function reference, not a proxy or a type stub, so "Go to definition" still takes you to the implementation. But the durable operation is keyed by the activity name. In remote-worker mode, the worker receives that name and a serialized input payload; your in-process closure does not travel over the WebSocket.
 
 ```typescript partial
-const greet = async (name: string) => `Hello, ${name}!`;
-const notify = async (message: string) => `Notified: ${message}`;
+const greet = activity({
+  name: 'greet',
+  execute: async (input: { name: string }) => `Hello, ${input.name}!`,
+});
 
-engine.register('welcome', async function* (ctx, input) {
-  const { name } = input as { name: string };
-  const greeting = yield* ctx.run(greet, name);
-  yield* ctx.run(notify, greeting);
+const notify = activity({
+  name: 'notify',
+  execute: async (input: { message: string }) => `Notified: ${input.message}`,
+});
+
+engine.registerActivity(greet.name, greet);
+engine.registerActivity(notify.name, notify);
+
+engine.register('welcome', async function* (ctx, input: { name: string }) {
+  const greeting = yield* ctx.run(greet, { name: input.name });
+  yield* ctx.run(notify, { message: greeting });
   return { greeting, notified: true };
 });
 ```
 
-Each `yield* ctx.run()` is a checkpoint boundary. If the process crashes after `greet` completes but before `notify` starts, recovery picks up at the second call---`greet` does not run again.
+Each `yield* ctx.run()` is a checkpoint boundary. If the process crashes after `greet` completes but before `notify` starts, recovery picks up at the second call---`greet` does not run again. For that to be true in a fresh process, register the same activity names before calling `engine.recoverAll()` or `engine.resume(id)`.
 
 ## Retry policies
 
@@ -157,7 +166,7 @@ Now the workflow call is clean---configuration travels with the activity.
 
 ```typescript partial
 async function* example(ctx: Context) {
-  const payment = yield* ctx.run(charge.execute, order);
+  const payment = yield* ctx.run(charge, order);
 }
 ```
 
@@ -166,12 +175,21 @@ async function* example(ctx: Context) {
 When activities are independent of each other, run them concurrently with `ctx.all()`.
 
 ```typescript partial
-const double = async (n: number) => n * 2;
-const triple = async (n: number) => n * 3;
+const double = activity({
+  name: 'double',
+  execute: async (input: number) => input * 2,
+});
 
-engine.register('parallel', async function* (ctx, input) {
-  const n = input as number;
-  const [doubled, tripled] = yield* ctx.all([ctx.run(double, n), ctx.run(triple, n)]);
+const triple = activity({
+  name: 'triple',
+  execute: async (input: number) => input * 3,
+});
+
+engine.registerActivity(double.name, double);
+engine.registerActivity(triple.name, triple);
+
+engine.register('parallel', async function* (ctx, input: number) {
+  const [doubled, tripled] = yield* ctx.all([ctx.run(double, input), ctx.run(triple, input)]);
   return { doubled, tripled };
 });
 ```
@@ -181,7 +199,7 @@ For named concurrent branches where each needs its own error handling, use `ctx.
 ```typescript partial
 async function* example(ctx: Context) {
   const results = yield* ctx.runAll({
-    payment: [charge.execute, order],
+    payment: [charge, order],
     inventory: [reserveInventory, order.items],
     email: [sendConfirmation, order],
   });

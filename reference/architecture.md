@@ -4561,7 +4561,7 @@ interface ActivityInterception<TInput = unknown> {
   readonly attempt: number;
   readonly queue: string;
   input: TInput; // mutable: interceptors can transform input
-  headers: Map<string, string>; // propagated metadata (trace context, auth tokens, etc.)
+  headers: Map<string, string>; // propagated metadata (trace context, tenant IDs, scoped claims)
 }
 
 interface SleepInterception {
@@ -4602,7 +4602,7 @@ The `headers` field is a `Map<string, string>` that travels with each operation 
 - Engine serializes headers into `postMessage` (local Workers) or the WebSocket `task` message (remote Workers).
 - Activity interceptor reads headers from `ActivityExecutionInterception`.
 
-This is how trace context (W3C `traceparent`/`tracestate`), auth tokens, tenant IDs, and encryption keys propagate — without special-casing any of them.
+This is how trace context (W3C `traceparent`/`tracestate`), tenant IDs, short-lived authorization claims, and opaque credential references propagate without special-casing any of them. Do not put raw bearer tokens, encryption keys, or long-lived secrets in interceptor headers; resolve those inside the worker after validating the propagated claim.
 
 #### Composition
 
@@ -5104,7 +5104,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Handle registry uses `WeakRef`.** Engine doesn't prevent GC of dropped handles.
 - [x] **`Transferable` used for Worker communication.** Checkpoint `ArrayBuffer` is transferred, not copied, to/from Workers.
 - [x] **Memory per idle workflow ≤ 2KB.** Verified by benchmark with 100K concurrent workflows; `src/benchmarks/memory-per-workflow.test.ts` reports a max durable footprint of ~743 bytes/workflow and a max current checkpoint size of ~132 bytes/workflow.
-- [x] **No unbounded growth under load.** Short sustained-load regression benchmark keeps post-warmup RSS within a bounded band while sustaining >10K workflows/sec. `src/benchmarks/load-growth-memory.test.ts` now runs three fresh-subprocess trials against the SQLite storage backend, using zero terminal retention to isolate steady-state engine churn from intentionally retained history. The gate requires a median throughput above 10K workflows/sec, a bounded post-warmup RSS delta, and a bounded post-warmup RSS band.
+- [x] **No unbounded growth under load.** Short sustained-load regression benchmark keeps post-warmup RSS within a bounded band while sustaining >10K workflows/sec. `src/benchmarks/load-growth-memory.test.ts` now runs three fresh-subprocess trials against the SQLite storage backend, using zero terminal retention to isolate steady-state engine churn from intentionally retained history. The gate requires a median throughput above 10K workflows/sec, median RSS slope below 1MB/sec, median post-warmup RSS delta below 8MB, median post-warmup RSS band below 8MB, and every trial's post-warmup RSS delta/band below 64MB.
 
 ### Storage
 

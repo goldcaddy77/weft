@@ -231,6 +231,7 @@ export type {
   ChildWorkflowInterception,
   ComposedActivityInterceptor,
   ComposedWorkflowInterceptor,
+  Interceptor,
   QueryInterception,
   SignalInterception,
   SignalReceivedInterception,

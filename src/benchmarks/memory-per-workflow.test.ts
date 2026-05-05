@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
+import { isConstrainedCodexRunner } from './benchmark-environment.ts';
 import type { MemoryPerWorkflowMeasurement } from './memory-per-workflow-runner.ts';
 
 /**
@@ -15,6 +16,7 @@ import type { MemoryPerWorkflowMeasurement } from './memory-per-workflow-runner.
  */
 
 const TARGET_BYTES_PER_WORKFLOW = 2 * 1024;
+const TEST_TIMEOUT_MILLISECONDS = isConstrainedCodexRunner() ? 240_000 : 120_000;
 
 function runMemoryPerWorkflowBenchmark(totalWorkflows: number): MemoryPerWorkflowMeasurement {
   const result = Bun.spawnSync(
@@ -36,34 +38,38 @@ function runMemoryPerWorkflowBenchmark(totalWorkflows: number): MemoryPerWorkflo
 }
 
 describe('Memory per workflow', () => {
-  it(`idle workflow durable footprint stays ≤${(TARGET_BYTES_PER_WORKFLOW / 1024).toFixed(0)}KB`, async () => {
-    const totalWorkflows = 100_000;
-    const measurement = runMemoryPerWorkflowBenchmark(totalWorkflows);
+  it(
+    `idle workflow durable footprint stays ≤${(TARGET_BYTES_PER_WORKFLOW / 1024).toFixed(0)}KB`,
+    async () => {
+      const totalWorkflows = 100_000;
+      const measurement = runMemoryPerWorkflowBenchmark(totalWorkflows);
 
-    console.log(
-      [
-        `\n  Memory per workflow benchmark:`,
-        `    Workflows:       ${totalWorkflows.toLocaleString()}`,
-        `    Counted:         ${measurement.countedWorkflows.toLocaleString()}`,
-        `    Checkpoint total:${measurement.checkpointBytesTotal.toLocaleString()} bytes`,
-        `    Durable total:   ${measurement.durableBytesTotal.toLocaleString()} bytes`,
-        `    Checkpoint avg:  ${measurement.averageCheckpointBytesPerWorkflow.toLocaleString()} bytes (${(measurement.averageCheckpointBytesPerWorkflow / 1024).toFixed(2)}KB)`,
-        `    Checkpoint max:  ${measurement.maxCheckpointBytesPerWorkflow.toLocaleString()} bytes (${(measurement.maxCheckpointBytesPerWorkflow / 1024).toFixed(2)}KB)`,
-        `    Durable avg:     ${measurement.averageDurableBytesPerWorkflow.toLocaleString()} bytes (${(measurement.averageDurableBytesPerWorkflow / 1024).toFixed(2)}KB)`,
-        `    Durable max:     ${measurement.maxDurableBytesPerWorkflow.toLocaleString()} bytes (${(measurement.maxDurableBytesPerWorkflow / 1024).toFixed(2)}KB)`,
-        `    Workflow state:  ${measurement.workflowStateBytesTotal.toLocaleString()} bytes`,
-        `    Checkpoint hist: ${measurement.checkpointHistoryBytesTotal.toLocaleString()} bytes`,
-        `    Timeline bytes:  ${measurement.timelineBytesTotal.toLocaleString()} bytes`,
-        `    Event bytes:     ${measurement.eventBytesTotal.toLocaleString()} bytes`,
-        `    Other bytes:     ${measurement.otherBytesTotal.toLocaleString()} bytes`,
-        `    Target:          ≤${(TARGET_BYTES_PER_WORKFLOW / 1024).toFixed(0)}KB\n`,
-      ].join('\n'),
-    );
+      console.log(
+        [
+          `\n  Memory per workflow benchmark:`,
+          `    Workflows:       ${totalWorkflows.toLocaleString()}`,
+          `    Counted:         ${measurement.countedWorkflows.toLocaleString()}`,
+          `    Checkpoint total:${measurement.checkpointBytesTotal.toLocaleString()} bytes`,
+          `    Durable total:   ${measurement.durableBytesTotal.toLocaleString()} bytes`,
+          `    Checkpoint avg:  ${measurement.averageCheckpointBytesPerWorkflow.toLocaleString()} bytes (${(measurement.averageCheckpointBytesPerWorkflow / 1024).toFixed(2)}KB)`,
+          `    Checkpoint max:  ${measurement.maxCheckpointBytesPerWorkflow.toLocaleString()} bytes (${(measurement.maxCheckpointBytesPerWorkflow / 1024).toFixed(2)}KB)`,
+          `    Durable avg:     ${measurement.averageDurableBytesPerWorkflow.toLocaleString()} bytes (${(measurement.averageDurableBytesPerWorkflow / 1024).toFixed(2)}KB)`,
+          `    Durable max:     ${measurement.maxDurableBytesPerWorkflow.toLocaleString()} bytes (${(measurement.maxDurableBytesPerWorkflow / 1024).toFixed(2)}KB)`,
+          `    Workflow state:  ${measurement.workflowStateBytesTotal.toLocaleString()} bytes`,
+          `    Checkpoint hist: ${measurement.checkpointHistoryBytesTotal.toLocaleString()} bytes`,
+          `    Timeline bytes:  ${measurement.timelineBytesTotal.toLocaleString()} bytes`,
+          `    Event bytes:     ${measurement.eventBytesTotal.toLocaleString()} bytes`,
+          `    Other bytes:     ${measurement.otherBytesTotal.toLocaleString()} bytes`,
+          `    Target:          ≤${(TARGET_BYTES_PER_WORKFLOW / 1024).toFixed(0)}KB\n`,
+        ].join('\n'),
+      );
 
-    expect(measurement.countedWorkflows).toBe(totalWorkflows);
-    expect(measurement.maxCheckpointBytesPerWorkflow).toBeLessThanOrEqual(
-      TARGET_BYTES_PER_WORKFLOW,
-    );
-    expect(measurement.maxDurableBytesPerWorkflow).toBeLessThanOrEqual(TARGET_BYTES_PER_WORKFLOW);
-  }, 120_000);
+      expect(measurement.countedWorkflows).toBe(totalWorkflows);
+      expect(measurement.maxCheckpointBytesPerWorkflow).toBeLessThanOrEqual(
+        TARGET_BYTES_PER_WORKFLOW,
+      );
+      expect(measurement.maxDurableBytesPerWorkflow).toBeLessThanOrEqual(TARGET_BYTES_PER_WORKFLOW);
+    },
+    TEST_TIMEOUT_MILLISECONDS,
+  );
 });

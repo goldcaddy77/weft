@@ -1,6 +1,6 @@
 # Engine field initialization order
 
-This document lists the 59 instance fields of `Engine` (formerly `#private`) in
+This document lists the 58 instance fields of `Engine` (formerly `#private`) in
 the order they were declared in the pre-PR-8 `src/core/engine.ts`. The
 `initializeInternals(engine)` function in
 `src/core/engine/internals.ts` creates an empty skeleton; the Engine
@@ -32,49 +32,48 @@ expects fields to be assigned in this sequence.
 | 16  | `sleepResolvers`                   | data                                       |
 | 17  | `sleepResolversByWorkflow`         | data                                       |
 | 18  | `interceptors`                     | data                                       |
-| 19  | `activityInterceptors`             | data                                       |
-| 20  | `composedWorkflowInterceptor`      | data (nullable)                            |
-| 21  | `composedActivityInterceptor`      | data (nullable)                            |
-| 22  | `updateCoordinator`                | data                                       |
-| 23  | `activityRegistry`                 | data                                       |
-| 24  | `activityWorkerDispatcher`         | data (nullable)                            |
-| 25  | `checkpoints`                      | data                                       |
-| 26  | `broadcastChannel`                 | data (nullable)                            |
-| 27  | `pendingNestingDepth`              | data (optional)                            |
-| 28  | `pendingParentHeaders`             | data (optional)                            |
-| 29  | `workflowNestingDepths`            | data                                       |
-| 30  | `workflowHeaders`                  | data                                       |
-| 31  | `workflowStateWriteChains`         | data                                       |
-| 32  | `budgetPolicyEnforcer`             | data (nullable)                            |
-| 33  | `tenantQuotaManager`               | data                                       |
-| 34  | `heartbeatDetails`                 | data                                       |
-| 35  | `pendingStarts`                    | data                                       |
-| 36  | `pendingScheduleCreations`         | data                                       |
-| 37  | `chargedAgentOperations`           | data                                       |
-| 38  | `chargedAgentOperationsByWorkflow` | data                                       |
-| 39  | `workflowsNeedingTerminalCleanup`  | data                                       |
-| 40  | `cleanupInterval`                  | data (nullable)                            |
-| 41  | `retentionSweepInterval`           | data (nullable)                            |
-| 42  | `retentionSweepInFlight`           | data (nullable)                            |
-| 43  | `nextRetentionSweepAt`             | data (nullable)                            |
-| 44  | `defaultModelRouter`               | data (optional)                            |
-| 45  | `reviewCoordinator`                | data                                       |
-| 46  | `reviewWaiters`                    | data                                       |
-| 47  | `reviewWaitersByWorkflow`          | data                                       |
-| 48  | `reviewEscalationHandlers`         | data                                       |
-| 49  | `workflowReviewIds`                | data                                       |
-| 50  | `parkedInlineWorkflows`            | data                                       |
-| 51  | `terminalizingWorkflows`           | data                                       |
-| 52  | `reviewTimerIds`                   | data                                       |
-| 53  | `pendingWebhooks`                  | data                                       |
-| 54  | `alertManager`                     | data (nullable)                            |
-| 55  | `agentWorkflowIds`                 | inline initializer (`= new Set<string>()`) |
-| 56  | `eventLogHeads`                    | inline initializer (`= new Map()`)         |
-| 57  | `workflowFeedListeners`            | inline initializer (`= new Map()`)         |
-| 58  | `workflowVersionTuples`            | inline initializer (`= new Map()`)         |
-| 59  | `pendingTimelineEntries`           | data                                       |
+| 19  | `composedWorkflowInterceptor`      | data (nullable)                            |
+| 20  | `composedActivityInterceptor`      | data (nullable)                            |
+| 21  | `updateCoordinator`                | data                                       |
+| 22  | `activityRegistry`                 | data                                       |
+| 23  | `activityWorkerDispatcher`         | data (nullable)                            |
+| 24  | `checkpoints`                      | data                                       |
+| 25  | `broadcastChannel`                 | data (nullable)                            |
+| 26  | `pendingNestingDepth`              | data (optional)                            |
+| 27  | `pendingParentHeaders`             | data (optional)                            |
+| 28  | `workflowNestingDepths`            | data                                       |
+| 29  | `workflowHeaders`                  | data                                       |
+| 30  | `workflowStateWriteChains`         | data                                       |
+| 31  | `budgetPolicyEnforcer`             | data (nullable)                            |
+| 32  | `tenantQuotaManager`               | data                                       |
+| 33  | `heartbeatDetails`                 | data                                       |
+| 34  | `pendingStarts`                    | data                                       |
+| 35  | `pendingScheduleCreations`         | data                                       |
+| 36  | `chargedAgentOperations`           | data                                       |
+| 37  | `chargedAgentOperationsByWorkflow` | data                                       |
+| 38  | `workflowsNeedingTerminalCleanup`  | data                                       |
+| 39  | `cleanupInterval`                  | data (nullable)                            |
+| 40  | `retentionSweepInterval`           | data (nullable)                            |
+| 41  | `retentionSweepInFlight`           | data (nullable)                            |
+| 42  | `nextRetentionSweepAt`             | data (nullable)                            |
+| 43  | `defaultModelRouter`               | data (optional)                            |
+| 44  | `reviewCoordinator`                | data                                       |
+| 45  | `reviewWaiters`                    | data                                       |
+| 46  | `reviewWaitersByWorkflow`          | data                                       |
+| 47  | `reviewEscalationHandlers`         | data                                       |
+| 48  | `workflowReviewIds`                | data                                       |
+| 49  | `parkedInlineWorkflows`            | data                                       |
+| 50  | `terminalizingWorkflows`           | data                                       |
+| 51  | `reviewTimerIds`                   | data                                       |
+| 52  | `pendingWebhooks`                  | data                                       |
+| 53  | `alertManager`                     | data (nullable)                            |
+| 54  | `agentWorkflowIds`                 | inline initializer (`= new Set<string>()`) |
+| 55  | `eventLogHeads`                    | inline initializer (`= new Map()`)         |
+| 56  | `workflowFeedListeners`            | inline initializer (`= new Map()`)         |
+| 57  | `workflowVersionTuples`            | inline initializer (`= new Map()`)         |
+| 58  | `pendingTimelineEntries`           | data                                       |
 
-**Note on inline-initializer fields (#55–#58)**: in the pre-PR-8 code these
+**Note on inline-initializer fields (#54–#57)**: in the pre-PR-8 code these
 ran automatically at instance-creation time, before the constructor body. In
 the WeakMap pattern they are populated explicitly in the constructor body
 near the other field assignments.
