@@ -13,6 +13,38 @@ function decode(value: Uint8Array | null): string | null {
   return value === null ? null : new TextDecoder().decode(value);
 }
 
+class TrackingScanStorage extends MemoryStorage {
+  entriesPulled = 0;
+
+  override scan(prefix: string): AsyncIterable<[string, Uint8Array]> {
+    const entries: Array<[string, Uint8Array]> = [
+      [`${prefix}a`, encode('a')],
+      [`${prefix}b`, encode('b')],
+      [`${prefix}c`, encode('c')],
+    ];
+    let index = 0;
+
+    return {
+      [Symbol.asyncIterator]: (): AsyncIterator<[string, Uint8Array]> => ({
+        next: async (): Promise<IteratorResult<[string, Uint8Array]>> => {
+          const entry = entries[index];
+          if (entry === undefined) {
+            return { done: true, value: undefined };
+          }
+
+          index += 1;
+          this.entriesPulled += 1;
+          return { done: false, value: entry };
+        },
+        return: async (): Promise<IteratorResult<[string, Uint8Array]>> => ({
+          done: true,
+          value: undefined,
+        }),
+      }),
+    };
+  }
+}
+
 function request(path: string, init?: RequestInit): Request {
   return new Request(`http://localhost${path}`, init);
 }
@@ -122,6 +154,40 @@ describe('storage REST operations', () => {
       { key: 'wf:a', value: btoa('a') },
       { key: 'wf:b', value: btoa('b') },
     ]);
+  });
+
+  it('does not pull scan entries until the NDJSON response body is read', async () => {
+    const rawStorage = new TrackingScanStorage();
+    const engine = new Engine({ storage: rawStorage });
+
+    const response = await handleRequest(
+      request('/v1/storage?prefix=wf:', { method: 'GET' }),
+      engine,
+      adminStorageOptions(),
+    );
+
+    expect(response.status).toBe(200);
+    if (response.body === null) {
+      throw new Error('Expected storage scan response to have a body.');
+    }
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(rawStorage.entriesPulled).toBe(0);
+
+    const reader = response.body.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    expect(rawStorage.entriesPulled).toBe(1);
+    expect(new TextDecoder().decode(first.value)).toBe(
+      `${JSON.stringify({ key: 'wf:a', value: btoa('a') })}\n`,
+    );
+
+    const second = await reader.read();
+    expect(second.done).toBe(false);
+    expect(rawStorage.entriesPulled).toBe(2);
+
+    await reader.cancel();
   });
 
   it('applies tenant-scoped batch writes and deletes without touching raw keys', async () => {

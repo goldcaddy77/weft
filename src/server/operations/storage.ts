@@ -110,7 +110,8 @@ export type StorageGetInput = z.infer<typeof storageGetInput>;
 export type StoragePutInput = z.infer<typeof storagePutInput>;
 export type StorageDeleteInput = z.infer<typeof storageDeleteInput>;
 export type StorageScanInput = z.infer<typeof storageScanInput>;
-export type StorageScanOutput = AsyncIterable<{ readonly key: string; readonly value: string }>;
+type StorageScanEntry = { readonly key: string; readonly value: string };
+export type StorageScanOutput = AsyncIterable<StorageScanEntry>;
 export type StorageBatchInput = z.infer<typeof storageBatchInput>;
 export type StorageConditionalBatchInput = z.infer<typeof storageConditionalBatchInput>;
 export type StorageConditionalBatchOutput = z.infer<typeof storageConditionalBatchOutput>;
@@ -251,18 +252,28 @@ function createBinaryResponse(value: Uint8Array | null): Response {
 
 function createNdjsonResponse(entries: StorageScanOutput): Response {
   const encoder = new TextEncoder();
-  const body = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        for await (const entry of entries) {
-          controller.enqueue(encoder.encode(`${JSON.stringify(entry)}\n`));
+  const iterator = entries[Symbol.asyncIterator]();
+  const body = new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        try {
+          const entry = await iterator.next();
+          if (entry.done === true) {
+            controller.close();
+            return;
+          }
+
+          controller.enqueue(encoder.encode(`${JSON.stringify(entry.value)}\n`));
+        } catch (error) {
+          controller.error(error);
         }
-        controller.close();
-      } catch (error) {
-        controller.error(error);
-      }
+      },
+      async cancel() {
+        await iterator.return?.();
+      },
     },
-  });
+    { highWaterMark: 0 },
+  );
 
   return new Response(body, {
     status: 200,

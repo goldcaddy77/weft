@@ -135,6 +135,15 @@ function logActivityCompletionBenchmark(
 
 describe('Activity completion throughput', () => {
   it('records completion throughput in a non-gating smoke benchmark', async () => {
+    // Warm the subprocess runner once so the smoke sample measures the engine's
+    // steady-state hot path instead of Bun's first-run transpilation/cache setup.
+    runActivityCompletionBenchmark(
+      TOTAL_WORKFLOWS,
+      ACTIVITIES_PER_WORKFLOW,
+      START_BATCH_SIZE,
+      MEASUREMENT_ROUNDS,
+    );
+
     const samples = collectActivityCompletionSamples(1);
 
     logActivityCompletionBenchmark(samples, getTargetCompletionsPerSecond());
