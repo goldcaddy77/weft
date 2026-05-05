@@ -381,6 +381,13 @@ if (foundTestingBundleTokens.length > 0) {
 
   for (const { entrypoint, label, expectedExports } of cases) {
     try {
+      if (label === 'weft/storage') {
+        const barrelText = readFileSync(entrypoint, 'utf8');
+        if (/export\s*\{[^}]+\}\s*from\s*['"]\.\//.test(barrelText)) {
+          fail('weft/storage barrel must keep the local-binding export workaround');
+        }
+      }
+
       const module = (await import(entrypoint)) as Record<string, unknown>;
       const missing = expectedExports.filter((name) => module[name] === undefined);
       if (missing.length > 0) {

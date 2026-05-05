@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-import type { AccessPolicy } from '../authorization.ts';
+import type { AuthorizationScope } from '../authorization-scope.ts';
+import type { AccessPolicy, ScopeRequirement } from '../authorization.ts';
 import { UNSAFE_PROTOTYPE_KEYS } from './pipeline-helpers.ts';
 import {
   type ErasedOperation,
@@ -10,29 +11,43 @@ import {
 } from './types.ts';
 
 /**
- * Recursively freeze an `AccessPolicy`. The `scoped` and `optionalAuth`
- * variants nest a `ScopeRequirement` whose `scopes` array is itself mutable.
+ * Recursively freeze an `AccessPolicy`. The scope-bearing variants nest
+ * `ScopeRequirement` objects whose `scopes` arrays are themselves mutable.
  */
 function freezeAccessPolicy(policy: AccessPolicy): AccessPolicy {
   if (policy.kind === 'scoped') {
     return Object.freeze({
       kind: 'scoped',
-      scopes: Object.freeze({
-        kind: policy.scopes.kind,
-        scopes: Object.freeze([...policy.scopes.scopes]),
-      }),
+      scopes: freezeScopeRequirement(policy.scopes),
+    }) as AccessPolicy;
+  }
+  if (policy.kind === 'scopedAlternatives') {
+    return Object.freeze({
+      kind: 'scopedAlternatives',
+      alternatives: Object.freeze(policy.alternatives.map(freezeScopeRequirement)) as [
+        ScopeRequirement,
+        ...ScopeRequirement[],
+      ],
     }) as AccessPolicy;
   }
   if (policy.kind === 'optionalAuth') {
     return Object.freeze({
       kind: 'optionalAuth',
-      authenticatedScopes: Object.freeze({
-        kind: policy.authenticatedScopes.kind,
-        scopes: Object.freeze([...policy.authenticatedScopes.scopes]),
-      }),
+      authenticatedScopes: freezeScopeRequirement(policy.authenticatedScopes),
     }) as AccessPolicy;
   }
   return Object.freeze({ ...policy });
+}
+
+function freezeScopeRequirement(requirement: ScopeRequirement): ScopeRequirement {
+  const scopes = Object.freeze([...requirement.scopes]) as [
+    AuthorizationScope,
+    ...AuthorizationScope[],
+  ];
+  return Object.freeze({
+    kind: requirement.kind,
+    scopes,
+  }) as ScopeRequirement;
 }
 
 function objectInputSchema(operation: RegistrableOperation): z.ZodObject {

@@ -19,7 +19,8 @@
 
 import type { z } from 'zod';
 
-import type { AccessPolicy } from './authorization.ts';
+import type { AuthorizationScope } from './authorization-scope.ts';
+import type { AccessPolicy, ScopeRequirement } from './authorization.ts';
 import {
   validateOperationName,
   type OperationDefinition,
@@ -102,8 +103,8 @@ export function defineOperation<Input, Output>(
 }
 
 /**
- * Deep-copy an `AccessPolicy`. For `scoped` and `optionalAuth` variants,
- * copies the nested `ScopeRequirement` object AND its `scopes` array.
+ * Deep-copy an `AccessPolicy`. For scope-bearing variants, copies every
+ * nested `ScopeRequirement` object AND its `scopes` array.
  * Mirrors `freezeAccessPolicy` in `operation-catalog.ts` but returns
  * mutable structures (the registry applies the freeze at insertion).
  */
@@ -111,26 +112,30 @@ function copyAccessPolicy(policy: AccessPolicy): AccessPolicy {
   if (policy.kind === 'scoped') {
     return {
       kind: 'scoped',
-      scopes: {
-        kind: policy.scopes.kind,
-        scopes: [...policy.scopes.scopes] as [
-          (typeof policy.scopes.scopes)[number],
-          ...(typeof policy.scopes.scopes)[number][],
-        ],
-      },
+      scopes: copyScopeRequirement(policy.scopes),
+    };
+  }
+  if (policy.kind === 'scopedAlternatives') {
+    return {
+      kind: 'scopedAlternatives',
+      alternatives: policy.alternatives.map(copyScopeRequirement) as [
+        ScopeRequirement,
+        ...ScopeRequirement[],
+      ],
     };
   }
   if (policy.kind === 'optionalAuth') {
     return {
       kind: 'optionalAuth',
-      authenticatedScopes: {
-        kind: policy.authenticatedScopes.kind,
-        scopes: [...policy.authenticatedScopes.scopes] as [
-          (typeof policy.authenticatedScopes.scopes)[number],
-          ...(typeof policy.authenticatedScopes.scopes)[number][],
-        ],
-      },
+      authenticatedScopes: copyScopeRequirement(policy.authenticatedScopes),
     };
   }
   return { ...policy };
+}
+
+function copyScopeRequirement(requirement: ScopeRequirement): ScopeRequirement {
+  return {
+    kind: requirement.kind,
+    scopes: [...requirement.scopes] as [AuthorizationScope, ...AuthorizationScope[]],
+  };
 }

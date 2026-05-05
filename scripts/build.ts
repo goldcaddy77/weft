@@ -34,15 +34,40 @@ await Bun.build({
   external: ['lmdb', '@libsql/client', '@opentelemetry/api', 'bun:sqlite', 'better-sqlite3'],
 });
 
-// Keep the storage barrel as direct re-exports. Bun 1.3.13 can incorrectly
-// strip imported bindings that are only used by a bundled barrel export list.
+// Keep the storage barrel as local binding re-exports. Bun 1.3.13 can
+// incorrectly strip imported bindings that are only used by a bundled barrel
+// export list, so this mirrors the workaround in src/storage/index.ts.
 await Bun.write(
   './dist/storage/index.js',
-  `export { KEYS, storageConditionalBatch, storageValuesEqual } from './interface.js';
-export { MemoryStorage } from './memory.js';
-export { resolveStorage } from './resolve.js';
-export { ScopedStorage, scopedStorage } from './scoped-storage.js';
-export { jsonCodec, msgpackCodec, withCodec } from './typed-storage.js';
+  `import { KEYS, storageConditionalBatch, storageValuesEqual } from './interface.js';
+import { MemoryStorage } from './memory.js';
+import { resolveStorage } from './resolve.js';
+import { ScopedStorage, scopedStorage } from './scoped-storage.js';
+import { jsonCodec, msgpackCodec, withCodec } from './typed-storage.js';
+
+const exportedJsonCodec = jsonCodec;
+const exportedKeys = KEYS;
+const exportedMemoryStorage = MemoryStorage;
+const exportedMsgpackCodec = msgpackCodec;
+const exportedResolveStorage = resolveStorage;
+const exportedScopedStorage = ScopedStorage;
+const exportedScopedStorageFactory = scopedStorage;
+const exportedStorageConditionalBatch = storageConditionalBatch;
+const exportedStorageValuesEqual = storageValuesEqual;
+const exportedWithCodec = withCodec;
+
+export {
+  exportedJsonCodec as jsonCodec,
+  exportedKeys as KEYS,
+  exportedMemoryStorage as MemoryStorage,
+  exportedMsgpackCodec as msgpackCodec,
+  exportedResolveStorage as resolveStorage,
+  exportedScopedStorage as ScopedStorage,
+  exportedScopedStorageFactory as scopedStorage,
+  exportedStorageConditionalBatch as storageConditionalBatch,
+  exportedStorageValuesEqual as storageValuesEqual,
+  exportedWithCodec as withCodec,
+};
 `,
 );
 await $`rm -f dist/storage/index.js.map`;

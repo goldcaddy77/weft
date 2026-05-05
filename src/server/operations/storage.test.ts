@@ -110,6 +110,17 @@ describe('storage REST operations', () => {
     }
   });
 
+  it('declares conditional batch access as storage admin or read plus write', () => {
+    const registry = createLiveOperationRegistry();
+    expect(registry.get('weft.storage.conditionalbatch')?.access).toEqual({
+      kind: 'scopedAlternatives',
+      alternatives: [
+        { kind: 'anyOf', scopes: ['storage:admin'] },
+        { kind: 'allOf', scopes: ['storage:read', 'storage:write'] },
+      ],
+    });
+  });
+
   it('reads and writes bytes through tenant-scoped storage', async () => {
     const rawStorage = new MemoryStorage();
     const engine = new Engine({ storage: rawStorage });
@@ -346,10 +357,9 @@ describe('storage REST operations', () => {
     );
 
     expect(response.status).toBe(403);
-    expect(await response.json()).toEqual({
-      error:
-        'Storage conditional batch requires storage:admin or both storage:read and storage:write.',
-    });
+    const body = (await response.json()) as { error?: string };
+    expect(body.error).toContain('storage:admin');
+    expect(body.error).toContain('storage:read');
     expect(decode(await rawStorage.get('tenant:acme:wf:key'))).toBe('existing');
   });
 

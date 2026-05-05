@@ -12,7 +12,6 @@ import {
 } from '../../storage/interface.ts';
 import { scopedStorage } from '../../storage/scoped-storage.ts';
 import type { AccessPolicy } from '../authorization.ts';
-import type { AuthorizationDecision } from '../operation-catalog.ts';
 import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import { isAuthenticated, type Principal } from '../principal.ts';
@@ -29,31 +28,20 @@ const storageWriteAccess: AccessPolicy = {
   scopes: { kind: 'anyOf', scopes: ['storage:write', 'storage:admin'] },
 };
 
+const storageConditionalBatchAccess: AccessPolicy = {
+  kind: 'scopedAlternatives',
+  alternatives: [
+    { kind: 'anyOf', scopes: ['storage:admin'] },
+    { kind: 'allOf', scopes: ['storage:read', 'storage:write'] },
+  ],
+};
+
 const httpOnlyStorageTransports = {
   http: true,
   jsonRpcHttp: false,
   jsonRpcStdio: false,
   jsonRpcWebSocket: false,
 } as const;
-
-async function authorizeStorageConditionalBatch({
-  principal,
-}: {
-  principal: Principal;
-}): Promise<AuthorizationDecision> {
-  if (!isAuthenticated(principal)) {
-    return { allowed: false, reason: 'authentication required' };
-  }
-  if (principal.hasScope('storage:admin')) return { allowed: true };
-  if (principal.hasScope('storage:read') && principal.hasScope('storage:write')) {
-    return { allowed: true };
-  }
-  return {
-    allowed: false,
-    reason:
-      'Storage conditional batch requires storage:admin or both storage:read and storage:write.',
-  };
-}
 
 const binaryValueSchema = z.instanceof(Uint8Array);
 
@@ -386,8 +374,7 @@ export const storageConditionalBatchOperation = defineOperation<
   tags: ['Storage'],
   inputSchema: storageConditionalBatchInput,
   outputSchema: storageConditionalBatchOutput,
-  access: storageWriteAccess,
-  authorize: authorizeStorageConditionalBatch,
+  access: storageConditionalBatchAccess,
   transports: httpOnlyStorageTransports,
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }) => {

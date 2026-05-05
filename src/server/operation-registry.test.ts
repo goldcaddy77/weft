@@ -267,4 +267,30 @@ describe('defineOperation (typed builder)', () => {
     expect(op.access.authenticatedScopes.scopes).toEqual(['workflows:write']);
     expect(op.access.authenticatedScopes.scopes).not.toBe(callerScopes);
   });
+
+  it('deep-copies scopedAlternatives requirements too', () => {
+    const callerScopes: [string, ...string[]] = ['workflows:read'];
+    const op = defineOperation({
+      name: 'weft.test.alternativescopy',
+      summary: 's',
+      inputSchema: z.object({}),
+      outputSchema: z.object({}),
+      access: {
+        kind: 'scopedAlternatives',
+        alternatives: [
+          { kind: 'allOf', scopes: callerScopes as ['workflows:read'] },
+          { kind: 'anyOf', scopes: ['workflows:admin'] },
+        ],
+      },
+      transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
+      unknownKeyPolicy: { http: 'reject', jsonRpc: 'reject' },
+      invoke: async () => ({}),
+    });
+    callerScopes.push('workflows:write');
+    if (op.access.kind !== 'scopedAlternatives') {
+      throw new Error('expected scopedAlternatives');
+    }
+    expect(op.access.alternatives[0].scopes).toEqual(['workflows:read']);
+    expect(op.access.alternatives[0].scopes).not.toBe(callerScopes);
+  });
 });
