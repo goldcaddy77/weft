@@ -3891,8 +3891,8 @@ describe('handleRequest', () => {
 
     // Pre-seed checkpoint history entries
     const { serializeCheckpoint } = await import('../core/checkpoint.ts');
+    const { CURRENT_CHECKPOINT_SCHEMA_VERSION } = await import('../core/types.ts');
     for (const step of [1, 2, 3]) {
-      const { CURRENT_CHECKPOINT_SCHEMA_VERSION } = await import('../core/types.ts');
       const checkpoint = {
         workflowId: 'test-wf',
         step,

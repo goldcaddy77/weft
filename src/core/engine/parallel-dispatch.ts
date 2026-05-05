@@ -1,25 +1,29 @@
 /**
- * Shared dispatch helper for `ctx.all` and `ctx.runAll`. Runs branches with
- * `Promise.allSettled` semantics so successful branches' results can be
- * persisted to the parent operation's cache entry before any rejection
- * propagates. The returned partial entry is written to the workflow's
- * `accumulatedResults` map by the caller, so on retry the workflow's
- * generator can reuse fulfilled slots and re-dispatch the rest.
+ * Shared dispatch helper for top-level `ctx.all` and `ctx.runAll`. Runs
+ * branches with `Promise.allSettled` semantics, captures every branch's
+ * outcome, and returns the slot table plus the first observed rejection
+ * reason. Callers (`processParallelOperation` for `ctx.all`,
+ * `processRunAllOperation` for `ctx.runAll`) build the v2 cache entry
+ * from those slots and persist it to the workflow's
+ * `accumulatedResults`.
  *
- * Why this is a separate module: the same `Promise.allSettled` pattern is
- * needed in three places — `processParallelOperation` (top-level
- * `ctx.all`), `executeSubOperation` (`ctx.all` nested inside another
- * sub-operation), and `executeRunAllBranches` (`ctx.runAll`). One helper
- * means one place to maintain the slot/error contract.
+ * The helper itself has no access to a `Context` and does not mutate
+ * any workflow state directly — slot construction is its only job. The
+ * "persist before rethrow" contract lives in the callers.
  *
- * Persistence model: the helper does NOT call `persistCheckpoint`
- * directly. It mutates `context.accumulatedResults[parentStep]` in place
- * with the partial entry; the existing checkpoint-persistence path picks
- * it up on the next yield boundary (whether that's the user's catch
- * block re-yielding or the workflow failing on the next operation). This
- * trades some durability under hard process crashes for a much smaller
- * blast radius into the engine's checkpoint-write machinery — see the
- * `parallel-execution.md` guide for the precise durability contract.
+ * Nested `ctx.all` (inside another sub-operation, like `ctx.race`) does
+ * NOT go through this helper. `executeSubOperation` keeps `Promise.all`
+ * semantics for that case so the outer parent's slot captures the inner
+ * value verbatim — partial-failure preservation is documented as
+ * top-level only.
+ *
+ * Persistence model in the callers: the engine writes the partial entry
+ * into `context.accumulatedResults` in place at the operation's parent
+ * step; the existing checkpoint-persistence path picks it up on the
+ * next yield boundary. This trades some durability under hard process
+ * crashes for a much smaller blast radius into the engine's
+ * checkpoint-write machinery — see the `parallel-execution.md` guide
+ * for the precise durability contract.
  */
 
 import type {

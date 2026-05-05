@@ -277,13 +277,20 @@ function mergeRunAllSlots(
   resumedSlotsByName: Map<string, ParallelBranchSlot> | undefined,
   outcomes: RunAllBranchOutcome[],
 ): ParallelBranchSlot[] {
+  // Index outcomes by name once so per-branch lookup is O(1) instead of
+  // O(n) per branch (which would make this O(n^2) overall — fine for a
+  // few branches but unnecessary work for runAll with many).
+  const outcomesByName = new Map<string, RunAllBranchOutcome>();
+  for (const outcome of outcomes) {
+    outcomesByName.set(outcome.name, outcome);
+  }
   return branchNames.map((name, i) => {
     const operationId = operationIds[i]!;
     const resumed = resumedSlotsByName?.get(name);
     if (resumed?.status === 'fulfilled') {
       return resumed;
     }
-    const outcome = outcomes.find((candidate) => candidate.name === name);
+    const outcome = outcomesByName.get(name);
     if (outcome === undefined) {
       return { status: 'pending', operationId };
     }

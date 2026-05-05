@@ -1,6 +1,7 @@
 import type { ContextOperationRequest } from '../context.ts';
 import type { OperationOutcome } from '../types.ts';
 import type { EngineInternals } from './internals.ts';
+import type { CapturedRejectionReason } from './strategy-helpers.ts';
 
 export type OperationWithCallerStack = {
   callerStack?: string;
@@ -91,7 +92,7 @@ export type OperationRouterCallbacks = {
   feedOperationResult: (
     workflowId: string,
     result: OperationOutcome,
-    originalReason?: { value: unknown },
+    originalReason?: CapturedRejectionReason,
   ) => void;
 };
 

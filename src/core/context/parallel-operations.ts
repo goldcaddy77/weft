@@ -97,7 +97,12 @@ function hasValidBranchTopology(
   branchNames: unknown,
 ): boolean {
   if (variant === 'race') {
-    return branches.length <= subOperationCount;
+    // Race always caches exactly one fulfilled winner; anything else is
+    // malformed and would skip the stepIndex advance on resume.
+    if (branches.length !== 1 || subOperationCount < 1) return false;
+    const winner = branches[0] as Record<string, unknown> | null | undefined;
+    if (winner == null || typeof winner !== 'object') return false;
+    return winner['status'] === 'fulfilled' && branchNames === undefined;
   }
   if (branches.length !== subOperationCount) {
     return false;
@@ -308,13 +313,19 @@ export function* race(
           `ctx.race branch count changed across retry: expected ${cached.subOperationCount}, got ${operations.length}. Branch count must be deterministic.`,
         );
       }
-      // Race only ever caches a fulfilled winner; partial entries are not
-      // a thing for race because losers are intentionally cancelled.
-      const fulfilledSlot = cached.branches.find((slot) => slot.status === 'fulfilled');
-      if (fulfilledSlot && fulfilledSlot.status === 'fulfilled') {
-        internals.stepIndex += cached.subOperationCount;
-        return fulfilledSlot.value;
+      // Race only ever caches a fulfilled winner. The topology guard in
+      // hasValidBranchTopology requires race entries to have exactly one
+      // fulfilled slot, so by the time we reach this code the winner is
+      // guaranteed to exist — but assert defensively to make the
+      // invariant readable at the call site.
+      const winner = cached.branches[0];
+      if (winner?.status !== 'fulfilled') {
+        throw new BranchTopologyChangedError(
+          `ctx.race step ${step} cached entry has no fulfilled winner slot — entry is malformed.`,
+        );
       }
+      internals.stepIndex += cached.subOperationCount;
+      return winner.value;
     }
 
     return cached;
