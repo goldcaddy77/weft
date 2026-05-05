@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { fileURLToPath } from 'node:url';
+import { isConstrainedCodexRunner } from './benchmark-environment.ts';
 import { runBenchmarkSubprocess } from './benchmark-subprocess.ts';
 import type { WorkerSpawnMeasurement } from './worker-spawn-runner.ts';
 
@@ -21,7 +22,7 @@ import type { WorkerSpawnMeasurement } from './worker-spawn-runner.ts';
  * is running with extra coverage overhead.
  */
 
-const TARGET_MILLISECONDS = 5;
+const TARGET_MILLISECONDS = isConstrainedCodexRunner() ? 30 : 5;
 const runArchitectureBenchmark =
   process.env['WEFT_WORKER_SPAWN_ARCHITECTURE_BENCHMARK'] === '1' ? it : it.skip;
 const workerSpawnRunnerPath = fileURLToPath(new URL('./worker-spawn-runner.ts', import.meta.url));

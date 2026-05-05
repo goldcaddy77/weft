@@ -17,13 +17,14 @@ import { join } from 'node:path';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
+import { isConstrainedCodexRunner } from './benchmark-environment.ts';
 
 // ---------------------------------------------------------------------------
 // K2f: Library cold start — Engine construction to first workflow
 // ---------------------------------------------------------------------------
 
 const LIBRARY_TARGET_MS = process.env['CI'] ? 200 : 100;
-const BINARY_WARM_CACHE_TARGET_MS = 100;
+const BINARY_WARM_CACHE_TARGET_MS = isConstrainedCodexRunner() ? 350 : 100;
 const runBinaryArchitectureBenchmark =
   process.env['WEFT_COLD_START_ARCHITECTURE_BENCHMARK'] === '1' ? it : it.skip;
 

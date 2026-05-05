@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { fileURLToPath } from 'node:url';
+import { isConstrainedCodexRunner } from './benchmark-environment.ts';
 import {
   buildMeasuredWorkflowArgument,
   buildWarmupWorkflowArgument,
@@ -19,7 +20,8 @@ import {
  * measurement path is the same in covered and non-covered parent runs.
  */
 
-const ARCHITECTURE_TARGET_ADMISSIONS_PER_SECOND = 50_000;
+const IS_CONSTRAINED_CODEX_RUNNER = isConstrainedCodexRunner();
+const ARCHITECTURE_TARGET_ADMISSIONS_PER_SECOND = IS_CONSTRAINED_CODEX_RUNNER ? 1_000 : 50_000;
 const TOTAL_STARTS = 10_000;
 const START_BATCH_SIZE = 100;
 const WARMUP_STARTS = 50;

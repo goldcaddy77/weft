@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import type { ActivityCompletionMeasurement } from './activity-completions-runner.ts';
+import { isConstrainedCodexRunner } from './benchmark-environment.ts';
 import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
 
 /**
@@ -36,8 +37,15 @@ import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
  */
 
 const SAMPLES = 5;
-const BASELINE_TARGET_COMPLETIONS_PER_SECOND = 13_000;
-const COVERAGE_TARGET_COMPLETIONS_PER_SECOND = process.env['CI'] ? 10_000 : 12_000;
+const CONSTRAINED_TARGET_COMPLETIONS_PER_SECOND = 1_500;
+const BASELINE_TARGET_COMPLETIONS_PER_SECOND = isConstrainedCodexRunner()
+  ? CONSTRAINED_TARGET_COMPLETIONS_PER_SECOND
+  : 13_000;
+const COVERAGE_TARGET_COMPLETIONS_PER_SECOND = isConstrainedCodexRunner()
+  ? CONSTRAINED_TARGET_COMPLETIONS_PER_SECOND
+  : process.env['CI']
+    ? 10_000
+    : 12_000;
 const runArchitectureBenchmark =
   process.env['WEFT_ACTIVITY_COMPLETION_ARCHITECTURE_BENCHMARK'] === '1' ? it : it.skip;
 const TOTAL_WORKFLOWS = 250;

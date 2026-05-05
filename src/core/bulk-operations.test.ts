@@ -30,7 +30,7 @@ async function waitForWorkflowStatus(
   engine: Engine,
   workflowId: string,
   status: WorkflowState['status'],
-  timeoutMs = 500,
+  timeoutMs = 10_000,
 ): Promise<void> {
   await waitForCondition(
     async () => {

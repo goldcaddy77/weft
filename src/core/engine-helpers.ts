@@ -1,9 +1,6 @@
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
-import {
-  captureFirstRejection,
-  createFirstRejectionCapture,
-} from './engine/parallel-dispatch.ts';
+import { captureFirstRejection, createFirstRejectionCapture } from './engine/parallel-dispatch.ts';
 import type { AgentInterception } from './interceptor.ts';
 
 /** Apply callback handlers provided by an agent interceptor to the active interception. */

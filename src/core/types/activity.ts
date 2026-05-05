@@ -186,6 +186,14 @@ export interface ActivityDefinition<TInput = unknown, TOutput = unknown> {
  * void fetchUser;
  * ```
  */
+export function activity<TOutput>(
+  options: ActivityDefinition<void, TOutput> & {
+    execute: () => Promise<TOutput> | TOutput;
+  },
+): ActivityDefinition<void, TOutput> & (() => Promise<TOutput>);
+export function activity<TInput, TOutput>(
+  options: ActivityDefinition<TInput, TOutput>,
+): ActivityDefinition<TInput, TOutput> & ((...args: [TInput]) => Promise<TOutput>);
 export function activity<TInput, TOutput>(
   options: ActivityDefinition<TInput, TOutput>,
 ): ActivityDefinition<TInput, TOutput> & ((...args: [TInput]) => Promise<TOutput>) {
