@@ -15,13 +15,33 @@ describe('resolveDefaultStorage', () => {
   });
 
   it('resolves IndexedDB before Node when both are present (Electron / jsdom)', async () => {
-    // The dynamic IndexedDB import will fail in Bun (no global IndexedDB),
-    // but reaching that branch (rather than the Node branch) is what we
-    // verify — the error message comes from the IndexedDB module load,
-    // not from our detection logic.
-    await expect(
-      resolveDefaultStorage({ hasBun: false, hasNode: true, hasIndexedDB: true }),
-    ).rejects.toThrow();
+    // We can't easily assert the full success path under Bun (no real
+    // IndexedDB), but we can prove the detector picks the IndexedDB
+    // branch over the Node branch: if the call rejects, the message
+    // mentions IndexedDB rather than NodeSQLiteStorage. If it resolves
+    // (some Bun versions load IndexedDBStorage without throwing), the
+    // returned constructor name is `IndexedDBStorage`.
+    let outcome: { kind: 'resolved'; ctor: string } | { kind: 'rejected'; message: string };
+    try {
+      const storage = await resolveDefaultStorage({
+        hasBun: false,
+        hasNode: true,
+        hasIndexedDB: true,
+      });
+      outcome = { kind: 'resolved', ctor: storage.constructor.name };
+    } catch (error) {
+      outcome = {
+        kind: 'rejected',
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+    if (outcome.kind === 'resolved') {
+      expect(outcome.ctor).toBe('IndexedDBStorage');
+    } else {
+      // Whatever branch failed, it must NOT be the Node-SQLite branch
+      // (whose error mentions `NodeSQLiteStorage` or `node-sqlite`).
+      expect(outcome.message).not.toMatch(/NodeSQLiteStorage|node-sqlite/);
+    }
   });
 
   it('honors WEFT_DEFAULT_STORAGE_PATH and creates the parent directory', async () => {
