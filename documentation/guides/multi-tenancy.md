@@ -45,7 +45,8 @@ const tenantResolver: TenantResolver = {
       throw new Error(`Missing organization for workflow ${workflowId}`);
     }
 
-    const organization = await lookupOrganization(input.organizationSlug);
+    const organizationSlug = input.organizationSlug;
+    const organization = await lookupOrganization(organizationSlug);
     if (!organization || !canStartWorkflowForOrganization(organization.id)) {
       throw new Error(`Unknown organization for workflow ${workflowId}`);
     }
@@ -53,7 +54,7 @@ const tenantResolver: TenantResolver = {
     return {
       id: organization.id,
       attributes: {
-        slug: record.organizationSlug,
+        slug: organizationSlug,
         tier: organization.tier,
         workflowType,
       },
