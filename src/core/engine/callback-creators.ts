@@ -94,6 +94,11 @@ import {
   type OperationRouterCallbacks,
   type OperationWithCallerStack,
 } from './operations-router.ts';
+import {
+  processStateCommitOperation,
+  processStateReadOperation,
+  type StateOperationCallbacks,
+} from './operations-state.ts';
 import { processStreamOperation, type StreamOperationCallbacks } from './operations-stream.ts';
 import { processSleepOperation, type TimeOperationCallbacks } from './operations-time.ts';
 import {
@@ -529,6 +534,20 @@ export function createOperationRouterCallbacks(engine: Engine): OperationRouterC
         operation,
         createDataOperationCallbacks(engine),
       ),
+    processStateReadOperation: (workflowId, operation) =>
+      processStateReadOperation(
+        getInternals(engine),
+        workflowId,
+        operation,
+        createStateOperationCallbacks(engine),
+      ),
+    processStateCommitOperation: (workflowId, operation) =>
+      processStateCommitOperation(
+        getInternals(engine),
+        workflowId,
+        operation,
+        createStateOperationCallbacks(engine),
+      ),
     processRunAllOperation: (workflowId, operation) =>
       processRunAllOperation(
         getInternals(engine),
@@ -700,6 +719,14 @@ export function createDataOperationCallbacks(engine: Engine): DataOperationCallb
       runOperationWithResultForEngine(engine, workflowId, operation, execute),
   };
 }
+export function createStateOperationCallbacks(engine: Engine): StateOperationCallbacks {
+  return {
+    runOperationWithResult: (workflowId, operation, execute) =>
+      runOperationWithResultForEngine(engine, workflowId, operation, execute),
+    ensureTerminalCleanupTracked: (workflowId) =>
+      ensureTerminalCleanupTracked(getInternals(engine), workflowId),
+  };
+}
 export function createStreamOperationCallbacks(engine: Engine): StreamOperationCallbacks {
   return {
     runOperationWithResult: (workflowId, operation, execute) =>
@@ -724,6 +751,7 @@ export function createTimeOperationCallbacks(engine: Engine): TimeOperationCallb
       checkpoint,
       executionDeadline,
       tenant,
+      executionStateOwnerId,
       registration,
     ) =>
       beginWorkflowExecution(
@@ -734,6 +762,7 @@ export function createTimeOperationCallbacks(engine: Engine): TimeOperationCallb
         checkpoint,
         executionDeadline,
         tenant,
+        executionStateOwnerId,
         registration,
         createLifecycleCallbacks(engine),
       ),
@@ -823,6 +852,7 @@ export async function executeSubOperationForEngine(
       createChildWorkflowOperationCallbacks: () => createChildWorkflowOperationCallbacks(engine),
       createCoordinationOperationCallbacks: () => createCoordinationOperationCallbacks(engine),
       createAgentOperationCallbacks: () => createAgentOperationCallbacks(engine),
+      createStateOperationCallbacks: () => createStateOperationCallbacks(engine),
     },
     signal,
     speculativeState,

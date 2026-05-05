@@ -70,5 +70,6 @@ export type QueuedInlineWorkflowExecutionStart = {
   checkpoint: Checkpoint;
   nestingDepth: number;
   executionDeadline: number | undefined;
+  executionStateOwnerId: string;
   tenant: TenantContext | undefined;
 };

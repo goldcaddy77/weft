@@ -91,6 +91,7 @@ export interface EngineInternals {
   broadcastChannel: BroadcastChannel | null;
   pendingNestingDepth: number | undefined;
   pendingParentHeaders: Map<string, string> | undefined;
+  pendingExecutionStateOwnerId: string | undefined;
   workflowNestingDepths: Map<string, number>;
   workflowHeaders: Map<string, Map<string, string>>;
   workflowStateWriteChains: Map<string, Promise<void>>;

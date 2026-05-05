@@ -89,11 +89,11 @@ engine.register('order', async function* (ctx, input) {
 
 ## Session State
 
-**Session state** is per-workflow durable state addressable by key, returned as a typed `WorkflowSessionState<T>` slot from `ctx.sessionState(key, initialValue?)`. Unlike search attributes (which are queryable indexes), session state is private to the workflow and survives checkpoint recovery. Access it with `.get()`, `.set()`, `.update()`, `.clear()`, or `.run()` for memoized operations over the slot's value.
+**Session state** is checkpoint-local durable state addressable by key, returned as a typed `WorkflowSessionState<T>` slot from `ctx.state.session(key, options?)`. Unlike search attributes (which are queryable indexes), session state is private to the workflow and survives checkpoint recovery. Access it with `.get()`, `.set()`, `.update()`, `.delete()`, or `.run()` for memoized operations over the slot's value.
 
 ```typescript partial
 engine.register('counter', async function* (ctx, input) {
-  const counter = ctx.sessionState<number>('count', 0);
+  const counter = ctx.state.session<number>('count', { initial: 0 });
   counter.set((counter.get() ?? 0) + 1);
   return counter.get();
 });

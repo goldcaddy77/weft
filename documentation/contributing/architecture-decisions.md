@@ -106,7 +106,7 @@ See [Synchronous Updates guide](../guides/synchronous-updates.md).
 
 ## Session State
 
-Per-workflow session state (added in PR #149) provides a virtual-object-style mutable store scoped to a single workflow execution. Workflows access it through `ctx.sessionState<T>(key, initialValue?)`, which returns a handle over a value serialized atomically with the checkpoint. Session state is capped at 256 keys, 256-byte key names, and 32 KB total serialized size. Mutations are validated against these invariants at each checkpoint boundary.
+Per-workflow session state (added in PR #149) provides a virtual-object-style mutable store scoped to a single workflow execution. Workflows access it through `ctx.state.session<T>(key, options?)`, which returns a handle over a value serialized atomically with the checkpoint. Session state is capped at 256 keys, 256-byte key names, and 32 KB total serialized size. Mutations are validated against these invariants at each checkpoint boundary.
 
 This covers the use case of workflows that accumulate small amounts of evolving metadata (counters, flags, lookup tables) without requiring a separate `ctx.setAttribute()` round-trip or bespoke local variable discipline.
 

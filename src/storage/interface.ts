@@ -452,10 +452,12 @@ export const KEYS = {
     `offload:${encodeStorageKeyComponent(workflowId)}:${key}`,
   archive: (workflowId: string, key: string) =>
     `archive:${encodeStorageKeyComponent(workflowId)}:${key}`,
-  sharedState: (workflowId: string, stateKey: string) =>
-    `shared:${encodeStorageKeyComponent(workflowId)}:${stateKey}`,
-  sharedStateVersion: (workflowId: string, stateKey: string) =>
-    `shared:${encodeStorageKeyComponent(workflowId)}:${stateKey}:version`,
+  stateExecution: (ownerWorkflowId: string, key: string) =>
+    `state:execution:${encodeStorageKeyComponent(ownerWorkflowId)}:${encodeStorageKeyComponent(key)}`,
+  stateWorkflow: (tenantId: string, workflowType: string, key: string) =>
+    `state:workflow:${encodeStorageKeyComponent(tenantId)}:${encodeStorageKeyComponent(workflowType)}:${encodeStorageKeyComponent(key)}`,
+  stateTenant: (tenantId: string, key: string) =>
+    `state:tenant:${encodeStorageKeyComponent(tenantId)}:${encodeStorageKeyComponent(key)}`,
   streamChunkPrefix: (workflowId: string, key: string) =>
     `blob:${encodeStorageKeyComponent(workflowId)}:${key}:chunk:`,
   streamChunk: (workflowId: string, key: string, chunkIndex: number) =>

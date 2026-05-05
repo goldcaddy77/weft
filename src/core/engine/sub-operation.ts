@@ -1,4 +1,10 @@
 import type { HumanReviewOptions } from '../../ai/human-review.ts';
+import {
+  atomicStateDataKey,
+  commitAtomicStateDelete,
+  commitAtomicStateValue,
+  readAtomicStateSnapshot,
+} from '../atomic-state.ts';
 import type { ContextOperationRequest } from '../context.ts';
 import {
   assertChildWorkflowNestingDepth,
@@ -16,6 +22,7 @@ import {
   type CoordinationOperationCallbacks,
 } from './operations-coordination.ts';
 import type { OperationWithCallerStack } from './operations-router.ts';
+import type { StateOperationCallbacks } from './operations-state.ts';
 import type { SpeculativeExecutionState } from './speculative-execution-state.ts';
 import { callMemoFunction } from './state-utilities.ts';
 
@@ -24,6 +31,7 @@ type SubOperationCallbacks = {
   createChildWorkflowOperationCallbacks: () => ChildWorkflowOperationCallbacks;
   createCoordinationOperationCallbacks: () => CoordinationOperationCallbacks;
   createAgentOperationCallbacks: () => AgentOperationCallbacks;
+  createStateOperationCallbacks: () => StateOperationCallbacks;
 };
 
 type WaitReviewOperationCallbacks = {
@@ -80,6 +88,33 @@ export async function executeSubOperation(
     case 'memo':
       signal?.throwIfAborted();
       return callMemoFunction(operation.fn);
+    case 'state-read': {
+      signal?.throwIfAborted();
+      return readAtomicStateSnapshot(
+        internals.storage,
+        atomicStateDataKey(operation.scope, operation.key),
+        operation,
+      );
+    }
+    case 'state-commit': {
+      signal?.throwIfAborted();
+      const dataKey = atomicStateDataKey(operation.scope, operation.key);
+      const result =
+        operation.mode === 'delete'
+          ? await commitAtomicStateDelete(internals.storage, dataKey, operation.expectedVersion)
+          : await commitAtomicStateValue(
+              internals.storage,
+              dataKey,
+              operation.expectedVersion,
+              operation.value,
+            );
+      if (result.applied && operation.scope.type === 'execution') {
+        await callbacks
+          .createStateOperationCallbacks()
+          .ensureTerminalCleanupTracked(operation.scope.ownerWorkflowId);
+      }
+      return result;
+    }
     case 'parallel': {
       signal?.throwIfAborted();
       // Nested ctx.all (inside ctx.race or another sub-op): partial

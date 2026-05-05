@@ -1,3 +1,4 @@
+import type { ContextOperationRequest } from '../context/operation-request.ts';
 import type { TenantContext } from '../tenant.ts';
 import type { FailureCategory, OperationId, WorkflowId } from './identity.ts';
 import type { Duration, RetryPolicy } from './retry-retention.ts';
@@ -168,6 +169,7 @@ export type WorkerInboundMessage =
       workflowType: string;
       checkpoint: ArrayBuffer;
       input: unknown;
+      executionStateOwnerId?: string;
       deadline?: number;
       headers?: [string, string][];
       /**
@@ -192,7 +194,7 @@ export type WorkerOutboundMessage =
       type: 'checkpoint';
       workflowId: WorkflowId;
       checkpoint: ArrayBuffer;
-      operationRequest: OperationRequest;
+      operationRequest: OperationRequest | ContextOperationRequest;
     }
   | { type: 'completed'; workflowId: WorkflowId; result: unknown }
   | {

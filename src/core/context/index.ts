@@ -7,11 +7,7 @@ import type {
   SuperviseResult,
 } from '../../ai/coordination/index.ts';
 import type { HumanReviewOptions, HumanReviewResult } from '../../ai/human-review.ts';
-import {
-  cloneSessionStateStore,
-  normalizeSessionStateRecord,
-  SESSION_STATE_LOCAL_KEY,
-} from '../session-state.ts';
+import { cloneSessionStateStore, normalizeSessionStateLocals } from '../session-state.ts';
 import type {
   ActivityArguments,
   ActivityCallOptions,
@@ -28,7 +24,7 @@ import type {
   WorkflowPipeStageDefinition,
   WorkflowReduceInput,
   WorkflowReduceOptions,
-  WorkflowSessionState,
+  WorkflowStateNamespace,
 } from '../types.ts';
 import * as aiOperations from './ai-operations.ts';
 import * as contextAttributes from './attributes.ts';
@@ -38,7 +34,8 @@ import { getInternals, initializeInternals } from './internals.ts';
 import type { ContextOperationRequest } from './operation-request.ts';
 import * as parallelOperations from './parallel-operations.ts';
 import * as sagaHelpers from './saga.ts';
-import * as sessionStateHelpers from './session-state.ts';
+import * as stateSessionHelpers from './session-state.ts';
+import * as stateNamespaceHelpers from './state-namespace.ts';
 import type {
   AgentContextOptions,
   ContextOptions,
@@ -82,9 +79,7 @@ export class Context implements WorkflowContext {
     this.workflowType = options.workflowType;
     this.startedAt = options.startedAt;
     this.signal = options.abortController.signal;
-    const initialSessionState = normalizeSessionStateRecord(
-      options.locals?.[SESSION_STATE_LOCAL_KEY],
-    );
+    const initialSessionState = normalizeSessionStateLocals(options.locals);
     initializeInternals(this, options, initialSessionState);
   }
   get tenant(): import('../tenant.ts').TenantContext | undefined {
@@ -168,6 +163,7 @@ export class Context implements WorkflowContext {
         ? { searchAttributeSchema: internals.searchAttributeSchema }
         : {}),
       ...(internals.tenant !== undefined ? { tenant: internals.tenant } : {}),
+      executionStateOwnerId: internals.executionStateOwnerId,
       ...(internals.sleepReferenceTime !== undefined
         ? { sleepReferenceTime: internals.sleepReferenceTime }
         : {}),
@@ -198,9 +194,9 @@ export class Context implements WorkflowContext {
       childInternals.accumulatedResults !== undefined
         ? new Map(childInternals.accumulatedResults)
         : undefined;
-    internals.sessionState = cloneSessionStateStore(childInternals.sessionState);
-    internals.checkpointLocals = sessionStateHelpers.createCheckpointLocals(
-      internals.sessionState,
+    internals.stateSession = cloneSessionStateStore(childInternals.stateSession);
+    internals.checkpointLocals = stateSessionHelpers.createCheckpointLocals(
+      internals.stateSession,
       childInternals.checkpointLocals,
     );
     internals.searchAttributes = { ...childInternals.searchAttributes };
@@ -220,8 +216,8 @@ export class Context implements WorkflowContext {
       childInternals.memoCache !== undefined ? new Map(childInternals.memoCache) : undefined;
     internals.sleepReferenceTime = childInternals.sleepReferenceTime;
   }
-  sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T> {
-    return sessionStateHelpers.sessionState(this, getInternals(this), key, initialValue);
+  get state(): WorkflowStateNamespace {
+    return stateNamespaceHelpers.createStateNamespace(this, getInternals(this));
   }
   run<TName extends Extract<keyof ActivityTypes, string>>(
     name: TName,
@@ -249,7 +245,7 @@ export class Context implements WorkflowContext {
     ...rest: unknown[]
   ): Generator<ContextOperationRequest, TResult, unknown> {
     let options: ActivityCallOptions | undefined;
-    if (rest.length > 0 && sessionStateHelpers.isActivityCallOptions(rest[rest.length - 1])) {
+    if (rest.length > 0 && stateSessionHelpers.isActivityCallOptions(rest[rest.length - 1])) {
       options = rest.pop() as ActivityCallOptions;
     }
     const args = rest;

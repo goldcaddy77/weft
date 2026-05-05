@@ -7,6 +7,7 @@ import { defineAgent } from '../ai/declaration.ts';
 import type { ScanOptions, Storage as WeftStorage } from '../storage/interface.ts';
 import { encodeStorageKeyComponent, KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
+import { AtomicStateConflictEvent } from './atomic-state.ts';
 import { decode, encode } from './codec.ts';
 import type { Context, StreamReference } from './context.ts';
 import {
@@ -28,6 +29,7 @@ import {
 } from './events.ts';
 import { InlineExecutionStrategy } from './inline-execution-strategy.ts';
 import type { ActivityInterceptor, WorkflowInterceptor } from './interceptor.ts';
+import { tenantFromInputField } from './tenant.ts';
 import { WorkflowTimeoutError } from './timeouts.ts';
 import type { WorkerOutboundMessage, WorkflowContext, WorkflowState } from './types.ts';
 import { activity } from './types.ts';
@@ -4922,11 +4924,9 @@ describe('Engine', () => {
 
       const handle = await engine.start('cleanup-emitter', null);
 
-      // Pre-seed: a pending signal (internal state) and a shared-state entry
-      // (output artifact), plus a synthetic event-history key to verify
-      // retention.
+      // Pre-seed: a pending signal (internal state) and durable output
+      // artifacts, plus a synthetic event-history key to verify retention.
       await engine.signal(handle.id, 'pre', { ignored: true });
-      await storage.put(`shared:${handle.id}:counter`, encode({ value: 1 }));
       await storage.put(`ev:${handle.id}:0000000000`, encode({ kind: 'synthetic' }));
 
       await handle.result();
@@ -4941,12 +4941,7 @@ describe('Engine', () => {
 
       // Output artifacts are preserved so consumers can still read them
       // after `handle.result()` resolves.
-      for (const prefix of [
-        `offload:${handle.id}:`,
-        `blob:${handle.id}:`,
-        `shared:${handle.id}:`,
-        `ev:${handle.id}:`,
-      ]) {
+      for (const prefix of [`offload:${handle.id}:`, `blob:${handle.id}:`, `ev:${handle.id}:`]) {
         let count = 0;
         for await (const _ of storage.scan(prefix)) count++;
         expect(count).toBeGreaterThan(0);
@@ -4957,8 +4952,8 @@ describe('Engine', () => {
 
     it('completing a workflow drops tool-effect log entries', async () => {
       // Regression test for the tool-effect cleanup bug: `#cleanupWorkflowStorage`
-      // previously swept `sig:`, `offload:`, `blob:`, and `shared:` prefixes but
-      // omitted `tool-effect:`, so every completed workflow left its per-tool-call
+      // previously swept `sig:`, `offload:`, and `blob:` prefixes but omitted
+      // `tool-effect:`, so every completed workflow left its per-tool-call
       // dedup records behind forever.
       const storage = new MemoryStorage();
       const engine = new Engine({ storage });
@@ -5321,7 +5316,7 @@ describe('Engine', () => {
       // Pre-seed all four workflow-keyed prefixes.
       await storage.put(`offload:${handle.id}:data`, encode({ rows: [1] }));
       await storage.put(`blob:${handle.id}:stream:meta`, encode({ chunks: 1 }));
-      await storage.put(`shared:${handle.id}:counter`, encode({ value: 1 }));
+      await storage.put(KEYS.stateExecution(handle.id, 'counter'), encode({ value: 1 }));
       await storage.put(`sig:${handle.id}:pre:entry`, encode({ ignored: true }));
       await storage.put(`ev:${handle.id}:0000000000`, encode({ kind: 'synthetic' }));
 
@@ -5334,7 +5329,7 @@ describe('Engine', () => {
       for (const prefix of [
         `offload:${handle.id}:`,
         `blob:${handle.id}:`,
-        `shared:${handle.id}:`,
+        `state:execution:${encodeStorageKeyComponent(handle.id)}:`,
         `sig:${handle.id}:`,
       ]) {
         const remaining: string[] = [];
@@ -6048,6 +6043,38 @@ describe('Engine tenant-isolation guards', () => {
     }
   });
 
+  it('decodeWorkflowState falls back to workflow id when execution owner is malformed', async () => {
+    const storage = new MemoryStorage();
+    const tamperedState = {
+      id: 'wf-tampered-owner',
+      type: 'tampered-owner-workflow',
+      status: 'completed',
+      input: null,
+      version: '1',
+      createdAt: 1000,
+      updatedAt: 2000,
+      executionStateOwnerId: 'x'.repeat(129),
+    };
+    await storage.put(KEYS.workflow('wf-tampered-owner'), encode(tamperedState));
+
+    const warnings: string[] = [];
+    const warnSpy = spyOn(console, 'warn').mockImplementation((message: unknown) => {
+      warnings.push(String(message));
+    });
+
+    try {
+      const engine = new Engine({ storage: storage as WeftStorage });
+      const fetched = await engine.get('wf-tampered-owner');
+
+      expect(fetched?.executionStateOwnerId).toBeUndefined();
+      expect(warnings.some((w) => w.includes('invalid executionStateOwnerId field'))).toBe(true);
+
+      engine[Symbol.dispose]();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it('decodeWorkflowState accepts a well-formed tenant unchanged', async () => {
     const storage = new MemoryStorage();
     const validState: WorkflowState = {
@@ -6074,5 +6101,160 @@ describe('Engine tenant-isolation guards', () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+
+  it('engine.state exposes tenant, workflow, and execution scoped AtomicState handles', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    expect(
+      await engine.state.tenant<number>('tenant-a', 'counter', { initial: 0 }).increment(),
+    ).toBe(1);
+    expect(await engine.state.tenant<number>('tenant-a', 'counter').get()).toBe(1);
+    expect(await engine.state.tenant<number>('tenant-b', 'counter').get()).toBeUndefined();
+
+    expect(
+      await engine.state
+        .workflow<number>('tenant-a', 'invoice', 'counter', {
+          initial: 0,
+        })
+        .increment(),
+    ).toBe(1);
+    expect(await engine.state.workflow<number>('tenant-a', 'invoice', 'counter').get()).toBe(1);
+    expect(
+      await engine.state.workflow<number>('tenant-a', 'receipt', 'counter').get(),
+    ).toBeUndefined();
+
+    expect(
+      await engine.state.execution<number>('wf-owner', 'counter', { initial: 0 }).increment(),
+    ).toBe(1);
+    expect(await engine.state.execution<number>('wf-owner', 'counter').get()).toBe(1);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('ctx.state conflict diagnostics use the same scoped key as engine.state', async () => {
+    const storage = new MemoryStorage();
+    const originalConditionalBatch = storage.conditionalBatch.bind(storage);
+    const dataKey = KEYS.stateExecution('wf-conflict-key', 'counter');
+    storage.conditionalBatch = async (conditions, operations) => {
+      if (operations.some((operation) => operation.key === dataKey)) {
+        return false;
+      }
+      return originalConditionalBatch(conditions, operations);
+    };
+    const engine = new Engine({ storage });
+    let conflictStateKey: string | undefined;
+
+    engine.register('ctx-conflict-key', async function* (ctx: WorkflowContext) {
+      const state = (ctx as Context).state.execution<number>('counter', {
+        initial: 0,
+        maxRetries: 1,
+      });
+      state.addEventListener('conflict', (event) => {
+        conflictStateKey = (event as AtomicStateConflictEvent).stateKey;
+      });
+      return yield* state.increment();
+    });
+
+    const handle = await engine.start('ctx-conflict-key', null, { id: 'wf-conflict-key' });
+
+    await expect(handle.result()).rejects.toThrow(
+      `AtomicState conflict: failed to update "${dataKey}" after 1 attempts`,
+    );
+    expect(conflictStateKey).toBe(dataKey);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('ctx.state shares tenant and workflow state while preserving tenant isolation', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({
+      storage,
+      tenantResolver: tenantFromInputField('tenantId'),
+    });
+
+    engine.register('scoped-state', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      const tenant = yield* context.state.tenant<number>('counter', { initial: 0 }).increment();
+      const workflow = yield* context.state.workflow<number>('counter', { initial: 0 }).increment();
+      return { tenant, workflow };
+    });
+
+    const first = await engine.start('scoped-state', { tenantId: 'tenant-a' });
+    const second = await engine.start('scoped-state', { tenantId: 'tenant-a' });
+    const isolated = await engine.start('scoped-state', { tenantId: 'tenant-b' });
+
+    expect(await first.result()).toEqual({ tenant: 1, workflow: 1 });
+    expect(await second.result()).toEqual({ tenant: 2, workflow: 2 });
+    expect(await isolated.result()).toEqual({ tenant: 1, workflow: 1 });
+
+    engine[Symbol.dispose]();
+  });
+
+  it('ctx.state.execution is shared by parent, child, and parallel branches', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    engine.register('execution-child', async function* (ctx: WorkflowContext) {
+      return yield* (ctx as Context).state.execution<number>('counter', { initial: 0 }).increment();
+    });
+
+    engine.register('execution-parent', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      const before = yield* context.state.execution<number>('counter', { initial: 0 }).increment();
+      const children = yield* context.all([
+        context.startChild<number>('execution-child', null),
+        context.startChild<number>('execution-child', null),
+      ]);
+      const after = yield* context.state.execution<number>('counter').get();
+      const sortedChildren = children
+        .map((value) => {
+          if (typeof value !== 'number') {
+            throw new Error('Expected child workflow result to be a number');
+          }
+          return value;
+        })
+        .toSorted((left, right) => left - right);
+      return { before, children: sortedChildren, after };
+    });
+
+    const handle = await engine.start('execution-parent', null, { id: 'wf-execution-owner' });
+
+    expect(await handle.result()).toEqual({ before: 1, children: [2, 3], after: 3 });
+    expect(await engine.state.execution<number>('wf-execution-owner', 'counter').get()).toBe(3);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('purge deletes execution-scoped state and preserves tenant and workflow state', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({
+      storage,
+      tenantResolver: tenantFromInputField('tenantId'),
+    });
+
+    engine.register('state-cleanup', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      yield* context.state.execution<number>('counter', { initial: 0 }).increment();
+      yield* context.state.tenant<number>('counter', { initial: 0 }).increment();
+      yield* context.state.workflow<number>('counter', { initial: 0 }).increment();
+    });
+
+    const handle = await engine.start(
+      'state-cleanup',
+      { tenantId: 'tenant-a' },
+      { id: 'wf-state-cleanup' },
+    );
+    await handle.result();
+    await engine.purge();
+
+    expect(await storage.get(KEYS.stateExecution('wf-state-cleanup', 'counter'))).toBeNull();
+    expect(await engine.state.tenant<number>('tenant-a', 'counter').get()).toBe(1);
+    expect(await engine.state.workflow<number>('tenant-a', 'state-cleanup', 'counter').get()).toBe(
+      1,
+    );
+
+    engine[Symbol.dispose]();
   });
 });

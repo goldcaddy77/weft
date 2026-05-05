@@ -536,7 +536,7 @@ async function* researchWorkflow(ctx: Context, topic: string) {
 }
 ```
 
-Beyond fan-out, the agent-native engine supports `ctx.handoff()` for delegation with context transfer, `ctx.debate()` for adversarial multi-agent review, and `SharedState` for concurrent mutable state. See [Agent-Native Engine: Multi-Agent Coordination](#127-multi-agent-coordination) for the full treatment.
+Beyond fan-out, the agent-native engine supports `ctx.handoff()` for delegation with context transfer, `ctx.debate()` for adversarial multi-agent review, and `ctx.state.execution()` for concurrent mutable state. See [Agent-Native Engine: Multi-Agent Coordination](#127-multi-agent-coordination) for the full treatment.
 
 **Going further: cost observability with `ctx.setBudget()`.** Budget state is stored in the checkpoint and enforced via `AbortController`. Each `ctx.agent()` call reports token usage back to the budget tracker:
 
@@ -705,7 +705,7 @@ Restate competes on architecture and latency. Virtual Objects provide session-sc
 
 **Where Restate leads:** Virtual Objects provide built-in session affinity with co-located state—no sticky routing configuration needed. User code suspension during async waits (similar to Inngest) allows processes to be shut down during LLM calls.
 
-**Where Weft leads:** Agent-native primitives. Restate provides durable execution primitives; Weft provides agent-level abstractions (budget enforcement, context window management, model routing, human-in-the-loop, multi-agent coordination) built into the core. Restate requires building these from scratch. Weft's `SharedState` with optimistic concurrency provides similar concurrent state access to Virtual Objects but within the checkpoint model.
+**Where Weft leads:** Agent-native primitives. Restate provides durable execution primitives; Weft provides agent-level abstractions (budget enforcement, context window management, model routing, human-in-the-loop, multi-agent coordination) built into the core. Restate requires building these from scratch. Weft's `ctx.state` ladder keeps session state checkpoint-local while execution, workflow, and tenant scopes use durable storage-backed state.
 
 ### Hatchet
 
@@ -3667,12 +3667,12 @@ const results =
   });
 ```
 
-**`SharedState` — concurrent mutable state.** When multiple agents run in parallel via `ctx.all()`, they may need shared, mutable state. `ctx.sharedState()` provides a CAS (compare-and-swap) primitive backed by storage:
+**Execution state — concurrent mutable state.** When multiple agents run in parallel via `ctx.all()`, they may need shared, mutable state. `ctx.state.execution()` provides a CAS (compare-and-swap) primitive backed by storage:
 
 ```typescript
 async function* collaborativeResearch(ctx: Context, topics: string[]) {
-  // Shared state for concurrent agents
-  const findings = yield* ctx.sharedState('research-findings', {
+  // Execution state for concurrent agents in this execution tree.
+  const findings = ctx.state.execution('research-findings', {
     initial: { articles: [], totalCost: 0 },
   });
 
@@ -3702,7 +3702,7 @@ async function* collaborativeResearch(ctx: Context, topics: string[]) {
 }
 ```
 
-`SharedState` writes are serialized via optimistic concurrency control. On conflict (another agent wrote between read and write), the update function is retried with the latest state. Writes are committed atomically with the agent turn checkpoint via `batch()`.
+Execution state writes are serialized via optimistic concurrency control. On conflict (another agent wrote between read and write), the update function is retried with the latest state. Writes are committed through a conditional storage batch.
 
 **Agent-to-agent messaging.** Agents running in parallel can communicate through their workflow handles via `ctx.signal()`. A supervisor agent can signal a worker to change strategy mid-execution.
 
@@ -4041,13 +4041,15 @@ review:{workflowId}:{reviewId}           → Pending human review request (JSON:
 review-resp:{reviewId}                    → Human review response (JSON: decision, reviewer, feedback)
 budget:{namespace}:daily:{YYYY-MM-DD}    → Organization daily budget counter (number: cumulative cost)
 budget:{namespace}:monthly:{YYYY-MM}     → Organization monthly budget counter (number: cumulative cost)
-shared:{workflowId}:{stateKey}           → SharedState data (JSON: current state)
-shared:{workflowId}:{stateKey}:version   → SharedState version counter (number: CAS version for optimistic concurrency)
+state:execution:{ownerWorkflowId}:{key}  → Execution state data (MessagePack: current state)
+state:execution:{ownerWorkflowId}:{key}:version → Execution state version counter (number: CAS version)
+state:workflow:{tenantId}:{workflowType}:{key} → Workflow-scoped state data (MessagePack: current state)
+state:tenant:{tenantId}:{key}            → Tenant-scoped state data (MessagePack: current state)
 mcp-tools:{serverUrl}:{cacheKey}         → Cached MCP tool definitions (JSON: tool schemas, TTL)
 provider-health:{provider}:{window}      → Provider error rate tracking (JSON: error count, request count, window start)
 ```
 
-Review requests and shared state entries are cleaned up when the parent workflow reaches a terminal state. Organization budget counters are retained for billing and audit. MCP tool caches expire based on their configured TTL.
+Review requests and execution-scoped state entries are cleaned up when the owning workflow reaches a terminal state. Workflow- and tenant-scoped state persists until explicitly deleted. Organization budget counters are retained for billing and audit. MCP tool caches expire based on their configured TTL.
 
 ### 13. Additional Platform Patterns
 
@@ -4837,14 +4839,14 @@ weft/
 │   ├── context.ts         # ctx.run, ctx.sleep, ctx.signal, ctx.agent, ctx.all,
 │   │                      # ctx.setAttribute, ctx.onUpdate, ctx.waitForUpdate,
 │   │                      # ctx.humanReview, ctx.handoff, ctx.debate, ctx.supervise,
-│   │                      # ctx.sharedState, ctx.setBudget, ctx.budgetRemaining
+│   │                      # ctx.state, ctx.setBudget, ctx.budgetRemaining
 │   ├── checkpoint.ts      # Generator serialization via structuredClone
 │   ├── scheduler.ts       # Timer/retry scheduling logic (no I/O)
 │   ├── interceptor.ts     # WorkflowInterceptor, ActivityInterceptor interfaces + chain composition
 │   ├── search-attributes.ts # Attribute index encoding, diff logic, sortable key encoding
 │   ├── updates.ts         # Synchronous update request/response coordination
 │   ├── codec.ts           # MessagePack encode/decode (pure JS)
-│   ├── shared-state.ts    # SharedState primitive: durable concurrent KV with optimistic concurrency
+│   ├── atomic-state.ts    # AtomicState primitive: durable concurrent KV with optimistic concurrency
 │   └── types.ts           # TypeScript types
 │
 ├── storage/               # Storage adapters (one per platform)
@@ -5276,8 +5278,8 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Selective context forwarding in handoff.** `forwardContext: "summary"` sends compressed history. `forwardContext: "none"` sends only structured input.
 - [x] **`ctx.debate()` runs adversarial multi-agent review.** Alternates between agents for N rounds. Each round is a checkpoint. Judge agent resolves. Returns verdict plus full transcript.
 - [x] **`ctx.supervise()` runs multiple agents with synthesis strategy.** Strategies: `"consensus"` (all agree), `"best-of-n"` (supervisor picks), `"merge"` (combine outputs).
-- [x] **`SharedState` primitive with durable CAS operations.** `ctx.sharedState(name, { initial })` returns a handle for concurrent read/write. Optimistic concurrency control with automatic retry on conflict.
-- [x] **`SharedState` uses `batch()` for atomic updates.** Writes committed atomically with checkpoint.
+- [x] **Execution state primitive with durable CAS operations.** `ctx.state.execution(name, { initial })` returns a handle for concurrent read/write. Optimistic concurrency control with automatic retry on conflict.
+- [x] **Execution state uses conditional batches for atomic updates.** Writes commit through storage compare-and-swap.
 - [x] **`ctx.handoff()` preserves OpenTelemetry trace context.** Child workflow spans link back to parent agent's span. `createChildHeaders()` utility in coordination module; engine injects parent headers into handoff options.
 - [x] **`ctx.all()` with agent-typed branches.** Parallel agents with independent checkpointing, token budgets, and context windows. Each branch's cost tracked independently.
 - [x] **Agent-to-agent message passing via signals.** Agents within same workflow communicate via `ctx.signal()` on child handles.
@@ -5489,7 +5491,7 @@ The Temporal-derived pain points above are architecturally solved. This section 
 - [x] **Tenant context in worker-execution mode.** `WorkerInboundMessage.run` carries an optional `tenant` field across `postMessage`; `WorkerExecutionStrategy.startWorkflow` forwards the resolved tenant; and `src/workers/workflow-runner.ts` builds a worker-side `WorkerWorkflowContext` (`workflowId`, `tenant`, `signal`, `startedAt`) that is passed as the first argument to registered handlers. The constructor stop-gap is gone — `workerExecution` and `tenantResolver` can be combined. Engine-side fields like `executionTimeRemaining` are stub values inside the worker because the worker has no clock authority; user code that needs them should stay on inline mode. Regression test in `src/ai/agent-worker-tenant-isolation.test.ts` runs three workflows through a real `Worker` and asserts that `tenant-a` sees `toolA`, `tenant-b` sees `toolB`, and an unexpected tenant fails via `validateInput`.
 - [x] **Routing policies.** `RoutingPolicy = 'least-loaded' | 'round-robin' | 'fair-share'` in `src/worker/registry.ts`. `WorkerRegistry` constructor accepts `{ policy }`; `findWorker(activity, { fairShareKey })` consults per-worker per-key counts. All three policies are plumbed end-to-end: `TaskDispatch.fairShareKey` is threaded through `dispatchTaskImpl` → `findWorker` → `assignTask` in `src/server/index.ts`, and a server-level integration test asserts fair-share distributes across keys when dispatched via `serve()`.
 - [x] **Task queue scheduling policies.** `TaskQueueOptions.schedulingPolicy: 'priority' | 'fifo' | 'lifo'` in `src/server/task-queue.ts`, default `'priority'` (current behavior). Plumbed through `serve({ schedulingPolicy })`.
-- [x] **Virtual-Object-style session state.** `ctx.sessionState(key)` co-located with the sticky worker. Builds on existing `workerAffinity` in `src/server/index.ts`; session state survives worker restart via checkpoint.
+- [x] **Virtual-Object-style session state.** `ctx.state.session(key)` co-located with the sticky worker. Builds on existing `workerAffinity` in `src/server/index.ts`; session state survives worker restart via checkpoint.
 - [x] **AI dashboard detail view (core).** `src/dashboard/views/workflow-detail-agent.svelte` composes `AgentTurn`, `AgentBudgetGauge`, `EventTimeline`, `JsonViewer`, and `ExecutionDeadline` into a dedicated agent workflow detail page. Reachable via `/ui/workflows/:id/agent` (router entry in `src/dashboard/router.svelte.ts`). Per-turn model, token counts, cost, and tool-call results are already rendered; live token streaming shows current output.
 - [x] **AI dashboard detail view (enhancements).** Three new fragments now ship alongside the existing agent detail view: `src/dashboard/fragments/agent-cost-waterfall.svelte` renders a per-turn cost bar chart normalized against the max-cost turn; `src/dashboard/fragments/agent-conversation.svelte` renders the rolling conversation history grouped by turn with collapsible system/tool blocks and truncation badges; `src/dashboard/fragments/agent-reasoning-trace.svelte` renders an accordion of provider reasoning traces. Each fragment pairs with a pure `.ts` helper (`computeWaterfallBars`, `groupConversationMessages`, `buildReasoningEntries`) unit-tested via `bun:test`. Backing event plumbing: `AgentTurnCompletedEvent` carries a `messages` snapshot produced by `src/ai/event-message-snapshot.ts` (caps at 8KB per message, 4KB per tool result, 200 messages per snapshot) and the existing `reasoningTrace` field is now consumed by the dashboard.
 - [x] **OTel standard Prometheus exporter.** `PrometheusExporter` interface in `src/observability/metrics.ts` with a default `createMetricsCollectorExporter(collector)` implementation. `/v1/metrics` handler delegates to `options.prometheusExporter` when provided, letting projects plug in `@opentelemetry/exporter-prometheus` (or any OTel reader) without forcing it as a runtime dependency. Server `ServeOptions` exposes the plug point.
