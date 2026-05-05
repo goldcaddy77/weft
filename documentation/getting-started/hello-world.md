@@ -22,59 +22,33 @@ import {
   WorkflowAlreadyExistsError,
   activity,
   type Context,
-  type WorkflowFunction,
   type WorkflowHandle,
+  type WorkflowContext,
 } from 'weft';
 import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
 
 const engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
 
-function readName(input: unknown): string {
-  if (typeof input !== 'object' || input === null || !('name' in input)) {
-    throw new Error('Expected input with a name');
-  }
-
-  if (typeof input.name !== 'string') {
-    throw new Error('Expected name to be a string');
-  }
-
-  return input.name;
-}
-
-function readMessage(input: unknown): string {
-  if (typeof input !== 'object' || input === null || !('message' in input)) {
-    throw new Error('Expected input with a message');
-  }
-
-  if (typeof input.message !== 'string') {
-    throw new Error('Expected message to be a string');
-  }
-
-  return input.message;
-}
-
 const formatGreeting = activity({
   name: 'formatGreeting',
-  execute: async (input: unknown) => `Hello, ${readName(input)}!`,
+  execute: async (input: { name: string }) => `Hello, ${input.name}!`,
 });
 
 const sendNotification = activity({
   name: 'sendNotification',
-  execute: async (input: unknown) => `Notified: ${readMessage(input)}`,
+  execute: async (input: { message: string }) => `Notified: ${input.message}`,
 });
 
 engine.registerActivity(formatGreeting.name, formatGreeting);
 engine.registerActivity(sendNotification.name, sendNotification);
 
-const welcomeWorkflow: WorkflowFunction = async function* (ctx, input) {
+engine.register('welcome', async function* (ctx: WorkflowContext, input: { name: string }) {
   const context = ctx as Context;
-  const greeting = yield* context.run(formatGreeting, { name: readName(input) });
+  const greeting = yield* context.run(formatGreeting, { name: input.name });
   yield* context.sleep('1s');
   yield* context.run(sendNotification, { message: greeting });
   return { greeting, notified: true };
-};
-
-engine.register('welcome', welcomeWorkflow);
+});
 
 await engine.recoverAll();
 

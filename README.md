@@ -34,7 +34,14 @@ Weft is a ground-up rethink: what would durable execution look like if you desig
 ## Hello, World
 
 ```typescript
-import { Engine, WorkflowAlreadyExistsError, activity, type WorkflowHandle } from 'weft';
+import {
+  Engine,
+  WorkflowAlreadyExistsError,
+  activity,
+  type Context,
+  type WorkflowContext,
+  type WorkflowHandle,
+} from 'weft';
 import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
 
 const engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
@@ -46,9 +53,10 @@ const formatGreeting = activity({
 
 engine.registerActivity(formatGreeting.name, formatGreeting);
 
-engine.register('welcome', async function* (ctx, user: { name: string }) {
-  const greeting = yield* ctx.run(formatGreeting, { name: user.name });
-  yield* ctx.sleep('1s');
+engine.register('welcome', async function* (ctx: WorkflowContext, user: { name: string }) {
+  const context = ctx as Context;
+  const greeting = yield* context.run(formatGreeting, { name: user.name });
+  yield* context.sleep('1s');
   return { greeting, onboarded: true };
 });
 
