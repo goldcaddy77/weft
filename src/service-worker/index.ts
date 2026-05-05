@@ -10,27 +10,19 @@
 import type { Engine } from '../core/engine';
 import { handleRequest } from '../server/handler';
 import type { ServiceWorkerScheduler } from './scheduler';
+import type {
+  MinimalExtendableEvent,
+  MinimalFetchEvent,
+  MinimalPeriodicSyncEvent,
+} from './shared.ts';
+import { buildDelegatedRequest, DEFAULT_PERIODIC_SYNC_TAG, normalizePathPrefix } from './shared.ts';
 
-// ---------------------------------------------------------------------------
-// Minimal Service Worker type interfaces
-// (avoids conflicts between webworker and Bun type libs)
-// ---------------------------------------------------------------------------
-
-/** Minimal FetchEvent shape for Service Worker compatibility. */
-interface MinimalFetchEvent {
-  request: Request;
-  respondWith(response: Response | Promise<Response>): void;
-}
-
-/** Minimal ExtendableEvent shape for Service Worker compatibility. */
-interface MinimalExtendableEvent {
-  waitUntil(promise: Promise<unknown>): void;
-}
-
-/** Periodic sync event shape. */
-interface MinimalPeriodicSyncEvent extends MinimalExtendableEvent {
-  tag: string;
-}
+export { buildDelegatedRequest, DEFAULT_PERIODIC_SYNC_TAG, normalizePathPrefix } from './shared.ts';
+export type {
+  MinimalExtendableEvent,
+  MinimalFetchEvent,
+  MinimalPeriodicSyncEvent,
+} from './shared.ts';
 
 // ---------------------------------------------------------------------------
 // Options
@@ -67,9 +59,6 @@ export interface ServiceWorkerOptions {
 // Default constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_PATH_PREFIX = '/weft/';
-const DEFAULT_PERIODIC_SYNC_TAG = 'weft-timers';
-
 // ---------------------------------------------------------------------------
 // createFetchHandler
 // ---------------------------------------------------------------------------
@@ -104,31 +93,11 @@ export function createFetchHandler(
   options: ServiceWorkerOptions,
 ): (event: MinimalFetchEvent) => void {
   const { engine } = options;
-  let pathPrefix = options.pathPrefix ?? DEFAULT_PATH_PREFIX;
-
-  // Normalize: ensure it ends with /
-  if (!pathPrefix.endsWith('/')) {
-    pathPrefix += '/';
-  }
+  const pathPrefix = normalizePathPrefix(options.pathPrefix);
 
   return (event: MinimalFetchEvent) => {
-    const url = new URL(event.request.url);
-    const pathname = url.pathname;
-
-    if (!pathname.startsWith(pathPrefix)) return;
-
-    // Strip the prefix to produce the path that handleRequest expects.
-    // e.g. /weft/v1/health -> /v1/health
-    const strippedPathname = '/' + pathname.slice(pathPrefix.length);
-    const strippedUrl = new URL(strippedPathname, url.origin);
-    strippedUrl.search = url.search;
-
-    const delegatedRequest = new Request(strippedUrl.toString(), {
-      method: event.request.method,
-      headers: event.request.headers,
-      body: event.request.body,
-    });
-
+    const delegatedRequest = buildDelegatedRequest(event, pathPrefix);
+    if (delegatedRequest === null) return;
     event.respondWith(handleRequest(delegatedRequest, engine));
   };
 }
@@ -232,3 +201,9 @@ export function createLifecycleHandlers(): {
     },
   };
 }
+
+export {
+  setupServiceWorker,
+  type SetupServiceWorkerOptions,
+  type SetupServiceWorkerResult,
+} from './setup.ts';

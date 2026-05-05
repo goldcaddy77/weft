@@ -176,6 +176,7 @@ export {
 
 // Scheduler
 export { Scheduler, calculateBackoff, parseDuration } from './core/scheduler';
+export type { TimerEntry } from './core/types/checkpoint';
 
 // Constraint
 export { constraint } from './core/constraint';
