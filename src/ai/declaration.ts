@@ -11,11 +11,11 @@ const AGENT_DEFINITION_BRAND = '__weft_agent_definition__' as const;
  * @example Create and register an agent definition
  * ```ts
  * import { Engine, defineAgent } from 'weft';
- * import type { LLMProvider } from 'weft';
+ * import type { AgentDefinition, LLMProvider } from 'weft';
  *
  * declare const provider: LLMProvider;
  *
- * const assistant = defineAgent({
+ * const assistant: AgentDefinition = defineAgent({
  *   name: 'summarizer',
  *   model: 'claude-sonnet-4-5',
  *   systemPrompt: 'Summarize the given text concisely.',
