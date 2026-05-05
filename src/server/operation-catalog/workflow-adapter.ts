@@ -27,9 +27,10 @@ const StartHandleSchema = z.object({
 
 type StartHandle = z.infer<typeof StartHandleSchema>;
 
-type CatalogWorkflowRegistrationMetadata = Pick<WorkflowRegistration, 'description' | 'tags'> & {
-  readonly inputSchema?: z.ZodObject<z.ZodRawShape>;
-};
+type CatalogWorkflowRegistrationMetadata<Input> = Pick<
+  WorkflowRegistration<Input>,
+  'description' | 'inputSchema' | 'tags'
+>;
 
 /**
  * Options accepted by {@link catalogWorkflow}.
@@ -59,7 +60,7 @@ export type CatalogWorkflowOptions<Input> = {
   readonly summary?: string;
   readonly tags?: ReadonlyArray<string>;
   readonly inputSchema?: z.ZodObject<z.ZodRawShape>;
-  readonly registration?: CatalogWorkflowRegistrationMetadata;
+  readonly registration?: CatalogWorkflowRegistrationMetadata<Input>;
   readonly access: AccessPolicy;
   readonly transports: TransportAvailability;
   readonly unknownKeyPolicy: UnknownKeyPolicy;

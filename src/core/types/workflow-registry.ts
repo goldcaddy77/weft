@@ -22,9 +22,9 @@ export interface WorkflowDefinition<TInput = unknown, TOutput = unknown> {
   tags: ReadonlyArray<string>;
   /** User-facing description for catalog, code generation, and tool surfaces. */
   description?: string;
-  /** Optional input schema metadata for introspection; core execution does not validate it. */
+  /** Optional input schema metadata for introspection; core execution does not validate input against it. */
   inputSchema?: DefinitionSchema<unknown, TInput>;
-  /** Optional output schema metadata for introspection; core execution does not validate it. */
+  /** Optional output schema metadata for introspection; core execution does not validate output against it. */
   outputSchema?: DefinitionSchema<unknown, TOutput>;
 }
 

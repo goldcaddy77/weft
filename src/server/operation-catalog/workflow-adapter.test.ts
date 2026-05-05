@@ -249,7 +249,8 @@ describe('catalogWorkflow', () => {
   });
 
   it('uses workflow registration metadata as adapter defaults', async () => {
-    const registration = checkoutWorkflowRegistration();
+    const registration: WorkflowRegistration<CheckoutInput, { completed: true }> =
+      checkoutWorkflowRegistration();
     const engine = createEngine();
     engine.register('checkout', registration);
     const registry = createOperationRegistry([
@@ -309,7 +310,7 @@ describe('catalogWorkflow', () => {
   it('fails closed when registration schema metadata cannot become a catalog input schema', () => {
     const registration = {
       ...checkoutWorkflowRegistration(),
-      inputSchema: makeDefinitionSchema<CheckoutInput>() as unknown as z.ZodObject<z.ZodRawShape>,
+      inputSchema: makeDefinitionSchema<CheckoutInput>(),
     };
 
     expect(() =>

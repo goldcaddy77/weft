@@ -2938,6 +2938,62 @@
     },
     {
       "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "StandardJSONSchemaV1Converter",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "StandardJSONSchemaV1Converter",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "StandardJSONSchemaV1Options",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "StandardJSONSchemaV1Options",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "StandardJSONSchemaV1Properties",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "StandardJSONSchemaV1Properties",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "StandardJSONSchemaV1Target",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "StandardJSONSchemaV1Target",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/definition-schema.ts",
       "sourceName": "StandardSchemaV1",
       "kind": "type",
       "subKind": "interface",
@@ -2952,6 +3008,104 @@
     },
     {
       "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "StandardSchemaV1FailureResult",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "StandardSchemaV1FailureResult",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "StandardSchemaV1Issue",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "StandardSchemaV1Issue",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "StandardSchemaV1Options",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "StandardSchemaV1Options",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "StandardSchemaV1PathSegment",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "StandardSchemaV1PathSegment",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "StandardSchemaV1Properties",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "StandardSchemaV1Properties",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "StandardSchemaV1Result",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "StandardSchemaV1Result",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "StandardSchemaV1SuccessResult",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "StandardSchemaV1SuccessResult",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/definition-schema.ts",
       "sourceName": "StandardTypedV1",
       "kind": "type",
       "subKind": "interface",
@@ -2959,6 +3113,34 @@
         {
           "importPath": "weft",
           "exportName": "StandardTypedV1",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "StandardTypedV1Properties",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "StandardTypedV1Properties",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "StandardTypedV1Types",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "StandardTypedV1Types",
           "kind": "type"
         }
       ],

@@ -181,8 +181,21 @@ interface SleepInterception { duration: number; headers: Map<string, string>; wo
 interface StabilityOptions { maxGrowthRatePerSecond?: number; warmupSamples?: number }
 interface StabilityResult { rssGrowthRatePerSecond: number; samplesAnalyzed: number; stable: boolean; thresholdPerSecond: number }
 interface StandardJSONSchemaV1 { readonly '~standard': StandardJSONSchemaV1Properties<Input, Output> }
+interface StandardJSONSchemaV1Converter { readonly input: (options: StandardJSONSchemaV1Options) => Record<string, unknown>; readonly output: (options: StandardJSONSchemaV1Options) => Record<string, unknown> }
+interface StandardJSONSchemaV1Options { readonly libraryOptions?: Record<string, unknown>; readonly target: StandardJSONSchemaV1Target }
+interface StandardJSONSchemaV1Properties { readonly jsonSchema: StandardJSONSchemaV1Converter }
+type StandardJSONSchemaV1Target = "draft-2020-12" | "draft-07" | "openapi-3.0" | ({} & string)
 interface StandardSchemaV1 { readonly '~standard': StandardSchemaV1Properties<Input, Output> }
+interface StandardSchemaV1FailureResult { readonly issues: readonly StandardSchemaV1Issue[] }
+interface StandardSchemaV1Issue { readonly message: string; readonly path?: readonly (PropertyKey | StandardSchemaV1PathSegment)[] }
+interface StandardSchemaV1Options { readonly libraryOptions?: Record<string, unknown> }
+interface StandardSchemaV1PathSegment { readonly key: PropertyKey }
+interface StandardSchemaV1Properties { readonly validate: (value: unknown, options?: StandardSchemaV1Options) => StandardSchemaV1Result<Output> | Promise<StandardSchemaV1Result<Output>> }
+type StandardSchemaV1Result = StandardSchemaV1SuccessResult<Output> | StandardSchemaV1FailureResult
+interface StandardSchemaV1SuccessResult { readonly issues?: undefined; readonly value: Output }
 interface StandardTypedV1 { readonly '~standard': StandardTypedV1Properties<Input, Output> }
+interface StandardTypedV1Properties { readonly types?: StandardTypedV1Types<Input, Output>; readonly vendor: string; readonly version: 1 }
+interface StandardTypedV1Types { readonly input: Input; readonly output: Output }
 interface StartOptions { executionTimeout?: Duration; id?: string; idempotencyKey?: string; searchAttributes?: Record<string, SearchAttributeValue>; startAfter?: Duration; startAt?: number; tags?: string[] }
 class StepContext { dequeue(): Promise<QueuedOperation>; readonly signal: AbortSignal; signalDone(): void; step<T>(name: string, fn: () => Promise<T> | T): Promise<T>; readonly workflowId: string }
 interface StepWorkflowContext { readonly signal: AbortSignal; step<T>(name: string, fn: () => Promise<T> | T): Promise<T>; readonly workflowId: string }

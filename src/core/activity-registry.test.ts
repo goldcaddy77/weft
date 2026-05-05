@@ -268,6 +268,37 @@ describe('ActivityRegistry', () => {
       expect(metadata?.tags).toEqual(['explicit']);
       expect(metadata?.inputSchema).toBe(explicitInputSchema);
     });
+
+    it('rejects malformed explicit schema metadata', () => {
+      const registry = new ActivityRegistry();
+      const greet = activity({
+        name: 'greet',
+        execute: (input: string) => `Hello, ${input}!`,
+      });
+
+      expect(() =>
+        registry.register('greet', greet, {
+          inputSchema: {
+            '~standard': {
+              version: 1,
+              validate: (value: unknown) => ({ value }),
+            },
+          } as unknown as DefinitionSchema,
+        }),
+      ).toThrow('activity registration "greet".inputSchema');
+
+      expect(() =>
+        registry.register('greet', greet, {
+          outputSchema: {
+            '~standard': {
+              version: 1,
+              vendor: '',
+              validate: (value: unknown) => ({ value }),
+            },
+          } as unknown as DefinitionSchema,
+        }),
+      ).toThrow('activity registration "greet".outputSchema');
+    });
   });
 
   describe('unregister()', () => {

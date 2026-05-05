@@ -143,7 +143,9 @@ type DefinitionSchema<Input = unknown, Output = Input> =
 
 Schema metadata accepted by workflow and activity definitions. [Standard Schema](https://standardschema.dev/) validation and [Standard JSON Schema](https://standardschema.dev/json-schema) conversion are separate capabilities; a definition can provide either one or both.
 
-Core workflow and activity execution stores these fields for introspection. Runtime validation happens only in adapters that explicitly consume the metadata.
+Core workflow and activity registration validates the Standard Schema metadata shape and stores these fields for introspection. Runtime input or output validation happens only in adapters that explicitly consume the metadata.
+
+Weft also exports the small Standard Schema helper surfaces used by those interfaces so diagnostics and generated declaration files stay self-contained: `StandardTypedV1Properties`, `StandardTypedV1Types`, `StandardSchemaV1Properties`, `StandardSchemaV1Result`, `StandardSchemaV1SuccessResult`, `StandardSchemaV1FailureResult`, `StandardSchemaV1Issue`, `StandardSchemaV1PathSegment`, `StandardSchemaV1Options`, `StandardJSONSchemaV1Properties`, `StandardJSONSchemaV1Converter`, `StandardJSONSchemaV1Target`, and `StandardJSONSchemaV1Options`.
 
 ### `WorkflowRegistration`
 

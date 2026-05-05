@@ -1292,6 +1292,40 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('register(name, registration) rejects malformed schema metadata', () => {
+    const engine = new Engine();
+    const handler = async function* () {
+      return { completed: true };
+    };
+
+    expect(() =>
+      engine.register('bad-input-schema', {
+        handler,
+        inputSchema: {
+          '~standard': {
+            version: 1,
+            validate: (value: unknown) => ({ value }),
+          },
+        } as unknown as DefinitionSchema,
+      }),
+    ).toThrow('registration("bad-input-schema").inputSchema');
+
+    expect(() =>
+      engine.register('bad-output-schema', {
+        handler,
+        outputSchema: {
+          '~standard': {
+            version: 1,
+            vendor: '',
+            validate: (value: unknown) => ({ value }),
+          },
+        } as unknown as DefinitionSchema,
+      }),
+    ).toThrow('registration("bad-output-schema").outputSchema');
+
+    engine[Symbol.dispose]();
+  });
+
   it('register(name, registration) defaults version to 1', async () => {
     const engine = new Engine();
     const handler = async function* () {

@@ -53,6 +53,22 @@ describe('isDefinitionSchema', () => {
     ).toBe(false);
   });
 
+  it('rejects missing or malformed Standard Schema vendors', () => {
+    const invalidVendors = [undefined, '', 123, true, null, {}];
+
+    for (const vendor of invalidVendors) {
+      expect(
+        isDefinitionSchema({
+          '~standard': {
+            version: 1,
+            vendor,
+            validate: (value: unknown) => ({ value }),
+          },
+        }),
+      ).toBe(false);
+    }
+  });
+
   it('rejects malformed Standard JSON Schema converters', () => {
     const invalidConverters = [
       {},

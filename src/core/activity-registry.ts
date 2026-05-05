@@ -47,9 +47,9 @@ export interface ActivityMetadata {
   description?: string;
   /** User-facing grouping tags for catalog and documentation surfaces. */
   tags?: ReadonlyArray<string>;
-  /** Optional input schema metadata for introspection; core execution does not validate it. */
+  /** Optional input schema metadata for introspection; core execution does not validate input against it. */
   inputSchema?: DefinitionSchema;
-  /** Optional output schema metadata for introspection; core execution does not validate it. */
+  /** Optional output schema metadata for introspection; core execution does not validate output against it. */
   outputSchema?: DefinitionSchema;
   /** Retry policy used when the activity fails. */
   retry?: RetryPolicy;
@@ -84,9 +84,9 @@ export interface ActivityRegistrationOptions {
   description?: string;
   /** User-facing grouping tags for catalog and documentation surfaces. */
   tags?: ReadonlyArray<string>;
-  /** Optional input schema metadata for introspection; core execution does not validate it. */
+  /** Optional input schema metadata for introspection; core execution validates shape but not input. */
   inputSchema?: DefinitionSchema;
-  /** Optional output schema metadata for introspection; core execution does not validate it. */
+  /** Optional output schema metadata for introspection; core execution validates shape but not output. */
   outputSchema?: DefinitionSchema;
   /** Retry policy used when the activity fails. */
   retry?: RetryPolicy;
@@ -166,6 +166,11 @@ function copyRetryPolicy(retry: RetryPolicy): RetryPolicy {
       ? {}
       : { nonRetryableErrors: [...retry.nonRetryableErrors] }),
   };
+}
+
+function validateDefinitionSchemaMetadata(value: unknown, fieldName: string): DefinitionSchema {
+  if (isDefinitionSchema(value)) return value;
+  throw new TypeError(`${fieldName} must be Standard Schema-compatible definition metadata.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -257,10 +262,22 @@ export class ActivityRegistry {
     const tags = options?.tags ?? extracted.tags;
     if (tags !== undefined) metadata.tags = [...tags];
 
-    const inputSchema = options?.inputSchema ?? extracted.inputSchema;
+    const inputSchema =
+      options?.inputSchema === undefined
+        ? extracted.inputSchema
+        : validateDefinitionSchemaMetadata(
+            options.inputSchema,
+            `activity registration "${name}".inputSchema`,
+          );
     if (inputSchema !== undefined) metadata.inputSchema = inputSchema;
 
-    const outputSchema = options?.outputSchema ?? extracted.outputSchema;
+    const outputSchema =
+      options?.outputSchema === undefined
+        ? extracted.outputSchema
+        : validateDefinitionSchemaMetadata(
+            options.outputSchema,
+            `activity registration "${name}".outputSchema`,
+          );
     if (outputSchema !== undefined) metadata.outputSchema = outputSchema;
 
     const retry = options?.retry ?? extracted.retry;

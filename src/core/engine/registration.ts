@@ -1,7 +1,13 @@
 import type { AgentContextOptions } from '../context.ts';
 import { Context } from '../context.ts';
 import { compileStepWorkflow, isAsyncGeneratorFunction } from '../step-context.ts';
-import type { StepWorkflowFunction, WorkflowFunction, WorkflowRegistration } from '../types.ts';
+import {
+  isDefinitionSchema,
+  type DefinitionSchema,
+  type StepWorkflowFunction,
+  type WorkflowFunction,
+  type WorkflowRegistration,
+} from '../types.ts';
 import { collectToolVersions, type WorkflowVersionTuple } from '../workflow-version-tuple.ts';
 import type { EngineInternals } from './internals.ts';
 import { normalizeRetentionPolicy } from './validation.ts';
@@ -32,6 +38,11 @@ export type RegistrationCallbacks = {
 
 function copiedTags(tags: ReadonlyArray<string> | undefined): string[] | undefined {
   return tags === undefined ? undefined : [...tags];
+}
+
+function validateDefinitionSchemaMetadata(value: unknown, fieldName: string): DefinitionSchema {
+  if (isDefinitionSchema(value)) return value;
+  throw new TypeError(`${fieldName} must be Standard Schema-compatible definition metadata.`);
 }
 
 // oxlint-disable-next-line complexity -- ID:core-engine-register-complexity
@@ -120,10 +131,22 @@ export function register(
       version: registration.version ?? '1',
       ...(registration.description === undefined ? {} : { description: registration.description }),
       ...(tags === undefined ? {} : { tags }),
-      ...(registration.inputSchema === undefined ? {} : { inputSchema: registration.inputSchema }),
+      ...(registration.inputSchema === undefined
+        ? {}
+        : {
+            inputSchema: validateDefinitionSchemaMetadata(
+              registration.inputSchema,
+              `registration("${name}").inputSchema`,
+            ),
+          }),
       ...(registration.outputSchema === undefined
         ? {}
-        : { outputSchema: registration.outputSchema }),
+        : {
+            outputSchema: validateDefinitionSchemaMetadata(
+              registration.outputSchema,
+              `registration("${name}").outputSchema`,
+            ),
+          }),
       ...(normalizedRetention !== null && { retention: normalizedRetention }),
     };
     if (registration.migrate) {

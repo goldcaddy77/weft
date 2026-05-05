@@ -2,18 +2,59 @@
 // Standard Schema-compatible definition metadata
 // ---------------------------------------------------------------------------
 
-interface StandardTypedV1Properties<Input = unknown, Output = Input> {
+/**
+ * Metadata stored under `~standard` by Standard Schema-compatible libraries.
+ *
+ * @example
+ * ```ts
+ * import type { StandardTypedV1Properties } from 'weft';
+ *
+ * const properties: StandardTypedV1Properties = { version: 1, vendor: 'example' };
+ * void properties;
+ * ```
+ */
+export interface StandardTypedV1Properties<Input = unknown, Output = Input> {
   readonly version: 1;
   readonly vendor: string;
   readonly types?: StandardTypedV1Types<Input, Output> | undefined;
 }
 
-interface StandardTypedV1Types<Input = unknown, Output = Input> {
+/**
+ * Compile-time input and output markers used by Standard Schema.
+ *
+ * @example
+ * ```ts
+ * import type { StandardTypedV1Types } from 'weft';
+ *
+ * const types: StandardTypedV1Types<string, number> = {
+ *   input: '',
+ *   output: 0,
+ * };
+ * void types;
+ * ```
+ */
+export interface StandardTypedV1Types<Input = unknown, Output = Input> {
   readonly input: Input;
   readonly output: Output;
 }
 
-interface StandardSchemaV1Properties<
+/**
+ * Standard Schema v1 validator metadata stored under `~standard`.
+ *
+ * @example
+ * ```ts
+ * import type { StandardSchemaV1Properties } from 'weft';
+ *
+ * const properties: StandardSchemaV1Properties<unknown, string> = {
+ *   version: 1,
+ *   vendor: 'example',
+ *   validate: (value) =>
+ *     typeof value === 'string' ? { value } : { issues: [{ message: 'Expected a string.' }] },
+ * };
+ * void properties;
+ * ```
+ */
+export interface StandardSchemaV1Properties<
   Input = unknown,
   Output = Input,
 > extends StandardTypedV1Properties<Input, Output> {
@@ -23,47 +64,173 @@ interface StandardSchemaV1Properties<
   ) => StandardSchemaV1Result<Output> | Promise<StandardSchemaV1Result<Output>>;
 }
 
-type StandardSchemaV1Result<Output> =
+/**
+ * Result returned by a Standard Schema v1 validator.
+ *
+ * @example
+ * ```ts
+ * import type { StandardSchemaV1Result } from 'weft';
+ *
+ * const result: StandardSchemaV1Result<string> = { value: 'ok' };
+ * void result;
+ * ```
+ */
+export type StandardSchemaV1Result<Output> =
   | StandardSchemaV1SuccessResult<Output>
   | StandardSchemaV1FailureResult;
 
-interface StandardSchemaV1SuccessResult<Output> {
+/**
+ * Successful Standard Schema v1 validation result.
+ *
+ * @example
+ * ```ts
+ * import type { StandardSchemaV1SuccessResult } from 'weft';
+ *
+ * const result: StandardSchemaV1SuccessResult<string> = { value: 'ok' };
+ * void result;
+ * ```
+ */
+export interface StandardSchemaV1SuccessResult<Output> {
   readonly value: Output;
   readonly issues?: undefined;
 }
 
-interface StandardSchemaV1FailureResult {
+/**
+ * Failed Standard Schema v1 validation result.
+ *
+ * @example
+ * ```ts
+ * import type { StandardSchemaV1FailureResult } from 'weft';
+ *
+ * const result: StandardSchemaV1FailureResult = {
+ *   issues: [{ message: 'Expected a string.' }],
+ * };
+ * void result;
+ * ```
+ */
+export interface StandardSchemaV1FailureResult {
   readonly issues: ReadonlyArray<StandardSchemaV1Issue>;
 }
 
-interface StandardSchemaV1Issue {
+/**
+ * Single validation issue reported by a Standard Schema v1 validator.
+ *
+ * @example
+ * ```ts
+ * import type { StandardSchemaV1Issue } from 'weft';
+ *
+ * const issue: StandardSchemaV1Issue = { message: 'Expected a string.' };
+ * void issue;
+ * ```
+ */
+export interface StandardSchemaV1Issue {
   readonly message: string;
   readonly path?: ReadonlyArray<PropertyKey | StandardSchemaV1PathSegment> | undefined;
 }
 
-interface StandardSchemaV1PathSegment {
+/**
+ * Structured path segment in a Standard Schema v1 issue path.
+ *
+ * @example
+ * ```ts
+ * import type { StandardSchemaV1PathSegment } from 'weft';
+ *
+ * const segment: StandardSchemaV1PathSegment = { key: 'email' };
+ * void segment;
+ * ```
+ */
+export interface StandardSchemaV1PathSegment {
   readonly key: PropertyKey;
 }
 
-interface StandardSchemaV1Options {
+/**
+ * Options passed to a Standard Schema v1 validator.
+ *
+ * @example
+ * ```ts
+ * import type { StandardSchemaV1Options } from 'weft';
+ *
+ * const options: StandardSchemaV1Options = { libraryOptions: { abortEarly: true } };
+ * void options;
+ * ```
+ */
+export interface StandardSchemaV1Options {
   readonly libraryOptions?: Record<string, unknown> | undefined;
 }
 
-interface StandardJSONSchemaV1Properties<
+/**
+ * Standard JSON Schema v1 converter metadata stored under `~standard`.
+ *
+ * @example
+ * ```ts
+ * import type { StandardJSONSchemaV1Properties } from 'weft';
+ *
+ * const properties: StandardJSONSchemaV1Properties = {
+ *   version: 1,
+ *   vendor: 'example',
+ *   jsonSchema: {
+ *     input: () => ({ type: 'object' }),
+ *     output: () => ({ type: 'object' }),
+ *   },
+ * };
+ * void properties;
+ * ```
+ */
+export interface StandardJSONSchemaV1Properties<
   Input = unknown,
   Output = Input,
 > extends StandardTypedV1Properties<Input, Output> {
   readonly jsonSchema: StandardJSONSchemaV1Converter;
 }
 
-interface StandardJSONSchemaV1Converter {
+/**
+ * Input and output JSON Schema converter functions.
+ *
+ * @example
+ * ```ts
+ * import type { StandardJSONSchemaV1Converter } from 'weft';
+ *
+ * const converter: StandardJSONSchemaV1Converter = {
+ *   input: () => ({ type: 'object' }),
+ *   output: () => ({ type: 'object' }),
+ * };
+ * void converter;
+ * ```
+ */
+export interface StandardJSONSchemaV1Converter {
   readonly input: (options: StandardJSONSchemaV1Options) => Record<string, unknown>;
   readonly output: (options: StandardJSONSchemaV1Options) => Record<string, unknown>;
 }
 
-type StandardJSONSchemaV1Target = 'draft-2020-12' | 'draft-07' | 'openapi-3.0' | ({} & string);
+/**
+ * JSON Schema target dialect requested from a Standard JSON Schema converter.
+ *
+ * @example
+ * ```ts
+ * import type { StandardJSONSchemaV1Target } from 'weft';
+ *
+ * const target: StandardJSONSchemaV1Target = 'draft-2020-12';
+ * void target;
+ * ```
+ */
+export type StandardJSONSchemaV1Target =
+  | 'draft-2020-12'
+  | 'draft-07'
+  | 'openapi-3.0'
+  | ({} & string);
 
-interface StandardJSONSchemaV1Options {
+/**
+ * Options passed to Standard JSON Schema converter functions.
+ *
+ * @example
+ * ```ts
+ * import type { StandardJSONSchemaV1Options } from 'weft';
+ *
+ * const options: StandardJSONSchemaV1Options = { target: 'draft-2020-12' };
+ * void options;
+ * ```
+ */
+export interface StandardJSONSchemaV1Options {
   readonly target: StandardJSONSchemaV1Target;
   readonly libraryOptions?: Record<string, unknown> | undefined;
 }
@@ -148,8 +315,9 @@ export interface StandardJSONSchemaV1<Input = unknown, Output = Input> {
  *
  * Validation and JSON Schema conversion are separate capabilities. A schema may
  * provide validation only, JSON Schema conversion only, or both. Core workflow
- * and activity execution stores this as introspection metadata; adapters must
- * opt in explicitly before using it for runtime validation.
+ * and activity registration validates this metadata shape for introspection;
+ * adapters must opt in explicitly before using it for runtime input or output
+ * validation.
  *
  * @example
  * ```ts
@@ -166,15 +334,34 @@ export type DefinitionSchema<Input = unknown, Output = Input> =
   | StandardSchemaV1<Input, Output>
   | StandardJSONSchemaV1<Input, Output>;
 
+type StandardMetadataRecord = {
+  jsonSchema?: unknown;
+  validate?: unknown;
+  vendor?: unknown;
+  version?: unknown;
+};
+
 export function isDefinitionSchema(value: unknown): value is DefinitionSchema {
-  if (value === null || typeof value !== 'object') return false;
+  const standardRecord = getStandardMetadataRecord(value);
+  if (standardRecord === undefined) return false;
+  if (typeof standardRecord.validate === 'function') return true;
+  return isStandardJsonSchemaConverter(standardRecord.jsonSchema);
+}
+
+function getStandardMetadataRecord(value: unknown): StandardMetadataRecord | undefined {
+  if (value === null || typeof value !== 'object') return undefined;
   const standard = (value as { '~standard'?: unknown })['~standard'];
-  if (standard === null || typeof standard !== 'object') return false;
-  if ((standard as { version?: unknown }).version !== 1) return false;
+  if (standard === null || typeof standard !== 'object') return undefined;
+  const standardRecord = standard as StandardMetadataRecord;
+  if (standardRecord.version !== 1) return undefined;
+  if (typeof standardRecord.vendor !== 'string' || standardRecord.vendor.length === 0) {
+    return undefined;
+  }
 
-  if (typeof (standard as { validate?: unknown }).validate === 'function') return true;
+  return standardRecord;
+}
 
-  const jsonSchema = (standard as { jsonSchema?: unknown }).jsonSchema;
+function isStandardJsonSchemaConverter(jsonSchema: unknown): boolean {
   if (jsonSchema === null || typeof jsonSchema !== 'object') return false;
   return (
     typeof (jsonSchema as { input?: unknown }).input === 'function' &&

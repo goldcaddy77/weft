@@ -17,7 +17,7 @@ export function catalogActivity(metadata: ActivityMetadata): CatalogActivityDefi
     ...(metadata.tags === undefined ? {} : { tags: [...metadata.tags] }),
     ...(metadata.inputSchema === undefined ? {} : { inputSchema: metadata.inputSchema }),
     ...(metadata.outputSchema === undefined ? {} : { outputSchema: metadata.outputSchema }),
-    ...(metadata.retry === undefined ? {} : { retry: metadata.retry }),
+    ...(metadata.retry === undefined ? {} : { retry: copyRetryPolicy(metadata.retry) }),
     ...(metadata.timeout === undefined ? {} : { timeout: metadata.timeout }),
     ...(metadata.idempotent === undefined ? {} : { idempotent: metadata.idempotent }),
   };
@@ -25,4 +25,15 @@ export function catalogActivity(metadata: ActivityMetadata): CatalogActivityDefi
 
 export function catalogActivities(registry: ActivityRegistry): CatalogActivityDefinition[] {
   return registry.listDefinitions().map(catalogActivity);
+}
+
+function copyRetryPolicy(
+  retry: NonNullable<ActivityMetadata['retry']>,
+): NonNullable<ActivityMetadata['retry']> {
+  return {
+    ...retry,
+    ...(retry.nonRetryableErrors === undefined
+      ? {}
+      : { nonRetryableErrors: [...retry.nonRetryableErrors] }),
+  };
 }

@@ -35,4 +35,24 @@ describe('activity catalog adapter', () => {
       },
     ]);
   });
+
+  it('returns isolated retry policy copies', () => {
+    const retry = {
+      maxAttempts: 3,
+      initialBackoff: 100,
+      backoffMultiplier: 2,
+      maxBackoff: 1_000,
+      nonRetryableErrors: ['ValidationError'],
+    };
+
+    const projected = catalogActivity({
+      name: 'chargeCard',
+      queue: 'payments',
+      retry,
+    });
+
+    projected.retry?.nonRetryableErrors?.push('CallerMutation');
+
+    expect(retry.nonRetryableErrors).toEqual(['ValidationError']);
+  });
 });
