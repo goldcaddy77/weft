@@ -167,4 +167,48 @@ describe('Track 8 discovery registry drift', () => {
       }
     }
   });
+
+  it('registry-drift: /asyncapi.json uses the live server restBindings, not the default', async () => {
+    const hostname = '127.0.0.1';
+    const localEngine = new Engine({ storage: new MemoryStorage() });
+    engine = localEngine;
+
+    const liveRegistry = createLiveOperationRegistry();
+    const streamOperation = liveRegistry.get('weft.workflows.streams.sse');
+    if (streamOperation === undefined) {
+      throw new Error('expected weft.workflows.streams.sse to be registered');
+    }
+    const operationRegistry: OperationRegistry = {
+      get(name) {
+        return name === streamOperation.name ? streamOperation : undefined;
+      },
+      list() {
+        return [streamOperation];
+      },
+    };
+    const restBindings = createLiveRestBindings()
+      .filter((binding) => binding.operationName === streamOperation.name)
+      .map((binding) => ({
+        ...binding,
+        path: '/v1/custom-streams/:id/events',
+      }));
+
+    server = Bun.serve({
+      hostname,
+      port: 0,
+      fetch(request) {
+        return handleRequest(request, localEngine, { operationRegistry, restBindings });
+      },
+    });
+
+    const response = await fetch(`http://${hostname}:${server.port}/asyncapi.json`);
+    expect(response.status).toBe(200);
+    const document = (await response.json()) as {
+      channels?: Record<string, { address?: unknown }>;
+    };
+
+    expect(document.channels?.['weft/workflows/streams/sse']?.address).toBe(
+      '/v1/custom-streams/{id}/events',
+    );
+  });
 });

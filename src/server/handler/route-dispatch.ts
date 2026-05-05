@@ -250,6 +250,7 @@ export const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
     jsonResponse(
       generateAsyncApiDocument({
         registry: options?.operationRegistry ?? defaultOperationRegistry(),
+        ...(options?.restBindings !== undefined ? { restBindings: options.restBindings } : {}),
         ...(options?.discoveryInfo !== undefined ? { discoveryInfo: options.discoveryInfo } : {}),
       }),
     ),
