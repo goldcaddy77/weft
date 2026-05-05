@@ -211,10 +211,7 @@ export async function processRunAllOperation(
   internals: EngineInternals,
   workflowId: string,
   operation: RunAllOperation,
-  callbacks: Pick<
-    CoordinationOperationCallbacks,
-    'getActivityOperationCallbacks' | 'runOperationWithResult'
-  >,
+  callbacks: Pick<CoordinationOperationCallbacks, 'runOperationWithResult'>,
 ): Promise<void> {
   return callbacks.runOperationWithResult(workflowId, operation, async () => {
     const branchNames = Object.keys(operation.branches);

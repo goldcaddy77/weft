@@ -92,13 +92,11 @@ export function* all(
         return reconstructAllResult(cached);
       }
       // Partial cache: re-yield with the cached entry so the engine reuses
-      // fulfilled slots and re-dispatches the rest.
+      // fulfilled slots and re-dispatches the rest. Branch count was
+      // already validated against `operations.length` above; priming
+      // produces one sub-operation per input generator, so the count is
+      // still valid here without rechecking.
       const subOperations = primeParallelOperations(operations);
-      if (subOperations.length !== cached.subOperationCount) {
-        throw new BranchTopologyChangedError(
-          `ctx.all branch count changed across retry: expected ${cached.subOperationCount}, got ${subOperations.length}. Branch count must be deterministic.`,
-        );
-      }
       stampDeterministicOperationIds(subOperations, `parallel:${step}`);
       const callerStack = captureCallerStack();
       const result = yield {
