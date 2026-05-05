@@ -304,7 +304,6 @@ export interface WorkflowReduceOptions extends Record<string, unknown> {
   idPrefix?: string;
 }
 
-// ---------------------------------------------------------------------------
 // Workflow registration
 // ---------------------------------------------------------------------------
 

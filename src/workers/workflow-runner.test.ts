@@ -241,14 +241,16 @@ describe('handleRunMessage', () => {
     expect(context.abortControllers.has('wf-6')).toBe(true);
   });
 
-  it('fails with a clear error when a worker-side workflow calls ctx.sessionState()', async () => {
+  it('fails with a clear error when a worker-side workflow calls ctx.state.session()', async () => {
     const context = createWorkflowRunnerContext();
 
     async function* sessionWorkflow(
-      ctx: { sessionState<T>(key: string, initialValue?: T): { get(): T | undefined } },
+      ctx: {
+        state: { session<T>(key: string, options?: { initial?: T }): { get(): T | undefined } };
+      },
       _input: unknown,
     ) {
-      ctx.sessionState('draft', { count: 0 }).get();
+      ctx.state.session('draft', { initial: { count: 0 } }).get();
       return 'ok';
     }
 
@@ -260,8 +262,46 @@ describe('handleRunMessage', () => {
 
     expect(result.type).toBe('failed');
     expect((result as { error: string }).error).toContain(
-      'ctx.sessionState() is not supported in worker execution mode',
+      'ctx.state.session() is not supported in worker execution mode',
     );
+  });
+
+  it('routes worker-side durable state through operation requests', async () => {
+    const context = createWorkflowRunnerContext();
+
+    async function* stateWorkflow(
+      ctx: {
+        state: {
+          execution<T>(
+            key: string,
+            options?: { initial?: T },
+          ): { get(): Generator<unknown, T | undefined, unknown> };
+        };
+      },
+      _input: unknown,
+    ) {
+      return yield* ctx.state.execution<number>('counter', { initial: 0 }).get();
+    }
+
+    const result = await handleRunMessage(
+      context,
+      {
+        workflowId: 'wf-worker-state',
+        workflowType: 'state-test',
+        input: null,
+        executionStateOwnerId: 'wf-owner',
+      },
+      () => stateWorkflow,
+    );
+
+    expect(result.type).toBe('checkpoint');
+    if (result.type !== 'checkpoint') return;
+    expect(result.operationRequest).toMatchObject({
+      type: 'state-read',
+      scope: { type: 'execution', ownerWorkflowId: 'wf-owner' },
+      key: 'counter',
+      initial: 0,
+    });
   });
 });
 

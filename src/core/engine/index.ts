@@ -4,7 +4,7 @@ import type { AgentDefinition } from '../../ai/declaration.ts';
 import { ReviewCoordinator, type ReviewRequest } from '../../ai/human-review.ts';
 import { AlertManager } from '../../alerting/alert-manager.ts';
 import { CompressedStorage } from '../../storage/compressed-storage.ts';
-import type { Storage as WeftStorage } from '../../storage/interface.ts';
+import { KEYS, type Storage as WeftStorage } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { ActivityWorkerDispatcher } from '../../workers/activity-worker-dispatcher.ts';
 import { WorkerPool } from '../../workers/pool.ts';
@@ -13,6 +13,7 @@ import {
   type ActivityMetadata,
   type ActivityRegistrationOptions,
 } from '../activity-registry.ts';
+import { AtomicState, type AtomicStateOptions } from '../atomic-state.ts';
 import type { StoredStreamChunk } from '../context.ts';
 import { createExpiredResponseCleanupTick, createHandleCacheFinalizer } from '../engine-helpers.ts';
 import { InlineExecutionStrategy } from '../inline-execution-strategy.ts';
@@ -209,11 +210,6 @@ export type {
   WorkflowFeedSelector,
 } from './workflow-feed.ts';
 
-declare global {
-  interface SymbolConstructor {
-    readonly observable: unique symbol;
-  }
-}
 /**
  * Options accepted by `Engine.register` when registering an agent definition.
  * Configures the LLM provider for the agent's runtime calls.
@@ -228,6 +224,36 @@ declare global {
  */
 export interface AgentRegistrationOptions {
   provider: LLMProvider;
+}
+
+/**
+ * Admin-facing factories for storage-backed {@link AtomicState} handles.
+ * Workflow code should prefer `ctx.state.*`; external maintenance and
+ * administrative code can use `engine.state.*` with explicit scope inputs.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type EngineStateNamespace } from 'weft';
+ *
+ * const engine = new Engine();
+ * const state: EngineStateNamespace = engine.state;
+ * const counter = state.tenant<number>('acme', 'count', { initial: 0 });
+ * void counter;
+ * ```
+ */
+export interface EngineStateNamespace {
+  execution<T>(
+    ownerWorkflowId: string,
+    key: string,
+    options?: AtomicStateOptions<T>,
+  ): AtomicState<T>;
+  workflow<T>(
+    tenantId: string,
+    workflowType: string,
+    key: string,
+    options?: AtomicStateOptions<T>,
+  ): AtomicState<T>;
+  tenant<T>(tenantId: string, key: string, options?: AtomicStateOptions<T>): AtomicState<T>;
 }
 
 function resolveEngineStorage(
@@ -435,6 +461,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     getInternals(this).broadcastChannel = null;
     getInternals(this).pendingNestingDepth = undefined;
     getInternals(this).pendingParentHeaders = undefined;
+    getInternals(this).pendingExecutionStateOwnerId = undefined;
     getInternals(this).workflowNestingDepths = new Map();
     getInternals(this).workflowHeaders = new Map();
     getInternals(this).workflowStateWriteChains = new Map();
@@ -568,6 +595,26 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       target,
       this.#createRegistrationCallbacks(),
     );
+  }
+  get state(): EngineStateNamespace {
+    const storage = getInternals(this).storage;
+    return {
+      execution: <T>(
+        ownerWorkflowId: string,
+        key: string,
+        options?: AtomicStateOptions<T>,
+      ): AtomicState<T> =>
+        new AtomicState<T>(storage, KEYS.stateExecution(ownerWorkflowId, key), options),
+      workflow: <T>(
+        tenantId: string,
+        workflowType: string,
+        key: string,
+        options?: AtomicStateOptions<T>,
+      ): AtomicState<T> =>
+        new AtomicState<T>(storage, KEYS.stateWorkflow(tenantId, workflowType, key), options),
+      tenant: <T>(tenantId: string, key: string, options?: AtomicStateOptions<T>): AtomicState<T> =>
+        new AtomicState<T>(storage, KEYS.stateTenant(tenantId, key), options),
+    };
   }
   async #handleStrategyMessage(message: WorkerOutboundMessage): Promise<void> {
     return handleStrategyMessageFromInternals(
@@ -993,6 +1040,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     internals.sleepResolvers.clear();
     internals.sleepResolversByWorkflow.clear();
     internals.checkpoints.clear();
+    internals.pendingExecutionStateOwnerId = undefined;
     internals.workflowNestingDepths.clear();
     internals.workflowHeaders.clear();
     internals.pendingStarts.clear();

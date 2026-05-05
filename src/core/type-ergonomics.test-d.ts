@@ -47,11 +47,11 @@ type RequiredWorkflowContextKeys =
   | 'run'
   | 'runAll'
   | 'saga'
-  | 'sessionState'
   | 'setAttribute'
   | 'setAttributes'
   | 'sleep'
   | 'startChild'
+  | 'state'
   | 'stream'
   | 'streamUrl'
   | 'suspendUntil'
@@ -92,7 +92,7 @@ engine.register('welcome', async function* (ctx: WorkflowContext, input: Welcome
     formatGreeting: [async (value: WelcomeInput) => value.name, input],
   });
   const sagaResult = yield* ctx.saga<WelcomeOutput>([]);
-  const session = ctx.sessionState('name', input.name);
+  const session = ctx.state.session('name', { initial: input.name });
 
   void signalPayload;
   void updatePayload;

@@ -394,7 +394,7 @@ describe('workflow retention', () => {
     });
     await handle.result();
     await engine.setAttributes(handle.id, { priority: 'high' });
-    await storage.put(`shared:${handle.id}:counter`, new TextEncoder().encode('1'));
+    await storage.put(KEYS.stateExecution(handle.id, 'counter'), new TextEncoder().encode('1'));
     await storage.put(KEYS.update(handle.id, 'update-1'), encode({ updateId: 'update-1' }));
     await storage.put(KEYS.updateResponse('update-1'), encode({ result: 'done' }));
 
@@ -412,7 +412,7 @@ describe('workflow retention', () => {
     expect(await collectKeys(storage, `offload:${handle.id}:`)).toEqual([]);
     expect(await collectKeys(storage, `archive:${handle.id}:`)).toEqual([]);
     expect(await collectKeys(storage, `blob:${handle.id}:`)).toEqual([]);
-    expect(await collectKeys(storage, `shared:${handle.id}:`)).toEqual([]);
+    expect(await collectKeys(storage, `state:execution:${handle.id}:`)).toEqual([]);
     expect(await collectKeys(storage, `idx:priority:`)).toEqual([]);
     expect(await collectKeys(storage, KEYS.terminalWorkflowPrefix())).toEqual([]);
     expect(await storage.get(KEYS.update(handle.id, 'update-1'))).toBeNull();

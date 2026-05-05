@@ -149,7 +149,7 @@ Long-running workflows just run.
 
 ## Managing large state
 
-While Weft's checkpoints stay constant-size by default, the data _inside_ your checkpoint can still grow if your workflow accumulates large intermediate results. Two context methods help you manage this. For small mutable state that should survive recovery---a counter, a flag, a conversation handle---reach for the lightweight [`ctx.sessionState`](./session-state.md) primitive instead.
+While Weft's checkpoints stay constant-size by default, the data _inside_ your checkpoint can still grow if your workflow accumulates large intermediate results. Two context methods help you manage this. For small mutable state that should survive recovery---a counter, a flag, a conversation handle---reach for the lightweight [`ctx.state.session`](./session-state.md) primitive instead.
 
 ### Offloading large intermediate data
 

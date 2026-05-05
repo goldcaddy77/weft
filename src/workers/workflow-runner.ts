@@ -1,10 +1,13 @@
+import { WorkflowAtomicStateHandle } from '../core/context/state-namespace.ts';
 import type { TenantContext } from '../core/tenant.ts';
 import type {
   OperationOutcome,
   OperationRequest,
   WorkerOutboundMessage,
+  WorkflowAtomicStateOptions,
   WorkflowContext,
   WorkflowSessionState,
+  WorkflowStateNamespace,
 } from '../core/types.ts';
 
 // ---------------------------------------------------------------------------
@@ -23,13 +26,14 @@ export type WorkerWorkflowContext = Pick<
   WorkflowContext,
   'workflowId' | 'tenant' | 'signal' | 'startedAt'
 > & {
-  sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T>;
+  readonly state: WorkflowStateNamespace;
 };
 
 interface RunMessageShape {
   workflowId: string;
   workflowType: string;
   input: unknown;
+  executionStateOwnerId?: string;
   tenant?: TenantContext;
   deadline?: number;
   headers?: [string, string][];
@@ -50,13 +54,48 @@ export function createWorkerWorkflowContext(
     tenant: message.tenant,
     signal: controller.signal,
     startedAt: Date.now(),
-    sessionState: <T>(_key: string, _initialValue?: T): WorkflowSessionState<T> => {
+    state: createWorkerStateNamespace(message),
+  };
+}
+
+function createWorkerStateNamespace(message: RunMessageShape): WorkflowStateNamespace {
+  return {
+    session: <T>(_key: string): WorkflowSessionState<T> => {
       throw new Error(
-        'ctx.sessionState() is not supported in worker execution mode. ' +
+        'ctx.state.session() is not supported in worker execution mode. ' +
           'Construct the engine without `workerExecution` to use session state.',
       );
     },
+    execution: <T>(key: string, options?: WorkflowAtomicStateOptions<T>) =>
+      new WorkflowAtomicStateHandle<T>(
+        {
+          type: 'execution',
+          ownerWorkflowId: message.executionStateOwnerId ?? message.workflowId,
+        },
+        key,
+        options,
+      ),
+    workflow: <T>(key: string, options?: WorkflowAtomicStateOptions<T>) => {
+      const tenantId = requireWorkerTenantId(message, 'ctx.state.workflow()');
+      return new WorkflowAtomicStateHandle<T>(
+        { type: 'workflow', tenantId, workflowType: message.workflowType },
+        key,
+        options,
+      );
+    },
+    tenant: <T>(key: string, options?: WorkflowAtomicStateOptions<T>) => {
+      const tenantId = requireWorkerTenantId(message, 'ctx.state.tenant()');
+      return new WorkflowAtomicStateHandle<T>({ type: 'tenant', tenantId }, key, options);
+    },
   };
+}
+
+function requireWorkerTenantId(message: RunMessageShape, methodName: string): string {
+  const tenantId = message.tenant?.id;
+  if (tenantId === undefined || tenantId.length === 0) {
+    throw new Error(`${methodName} requires a tenant context.`);
+  }
+  return tenantId;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +124,7 @@ export async function handleRunMessage(
     workflowId: string;
     workflowType: string;
     input: unknown;
+    executionStateOwnerId?: string;
     tenant?: TenantContext;
     deadline?: number;
     headers?: [string, string][];

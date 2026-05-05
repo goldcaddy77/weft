@@ -34,6 +34,7 @@ export {
   WorkflowNotFoundError,
   WorkflowNotRegisteredError,
 } from './core/engine';
+export type { EngineStateNamespace } from './core/engine';
 export {
   DEFAULT_CHECKPOINT_SIZE_WARNING_THRESHOLD,
   DEFAULT_MAX_NESTING_DEPTH,
@@ -102,6 +103,8 @@ export type {
   TenantQuotaUsage,
   TenantWorkflowCreationRateLimit,
   TenantWorkflowCreationRateUsage,
+  WorkflowAtomicState,
+  WorkflowAtomicStateOptions,
   WorkflowContext,
   WorkflowDefinition,
   WorkflowEvent,
@@ -112,6 +115,7 @@ export type {
   WorkflowReplay,
   WorkflowSessionState,
   WorkflowState,
+  WorkflowStateNamespace,
   WorkflowStatus,
   WorkflowSummary,
   WorkflowTimelineEntry,
@@ -295,8 +299,25 @@ export {
   timeRemaining,
 } from './core/timeouts';
 
-// Shared State
-export { SharedState, SharedStateConflictError } from './core/shared-state';
+// Atomic State
+export {
+  AtomicState,
+  AtomicStateChangeEvent,
+  AtomicStateConflictError,
+  AtomicStateConflictEvent,
+  AtomicStateExhaustedEvent,
+  OBSERVABLE_SYMBOL,
+} from './core/atomic-state';
+export type {
+  AtomicStateCommitResult,
+  AtomicStateEvent,
+  AtomicStateObserver,
+  AtomicStateOptions,
+  AtomicStateScope,
+  AtomicStateSnapshot,
+  AtomicStateSubscription,
+  SleepFunction,
+} from './core/atomic-state';
 
 // Server
 export type { PrometheusExporter } from './observability/metrics';
