@@ -16,8 +16,12 @@ import { IndexedDBStorage } from '../storage/indexeddb';
 import type { Storage as WeftStorage } from '../storage/interface';
 import { handleRequest } from '../server/handler';
 import { ServiceWorkerScheduler } from './scheduler';
+import {
+  buildDelegatedRequest,
+  normalizePathPrefix,
+  type MinimalFetchEvent,
+} from './shared.ts';
 
-const DEFAULT_PATH_PREFIX = '/weft/';
 const DEFAULT_DATABASE_NAME = 'weft';
 const DEFAULT_PERIODIC_SYNC_TAG = 'weft-timers';
 
@@ -97,11 +101,6 @@ type SetupState =
 
 const setupRegistry = new WeakMap<object, SetupState>();
 
-interface MinimalFetchEvent {
-  request: Request;
-  respondWith(response: Response | Promise<Response>): void;
-}
-
 interface MinimalExtendableEvent {
   waitUntil(promise: Promise<unknown>): void;
 }
@@ -175,17 +174,13 @@ function buildFetchListener(
   engine: Engine,
   registrationReady: Promise<void>,
 ): (event: MinimalFetchEvent) => void {
+  // Reuses the shared `buildDelegatedRequest` helper so the URL-stripping
+  // convention can't drift between `setupServiceWorker` and the lower-level
+  // `createFetchHandler`. The setup-helper-specific addition is gating on
+  // `registrationReady` and converting registration failures to a 503.
   return (event) => {
-    const url = new URL(event.request.url);
-    if (!url.pathname.startsWith(pathPrefix)) return;
-    const strippedPathname = '/' + url.pathname.slice(pathPrefix.length);
-    const strippedUrl = new URL(strippedPathname, url.origin);
-    strippedUrl.search = url.search;
-    const delegatedRequest = new Request(strippedUrl.toString(), {
-      method: event.request.method,
-      headers: event.request.headers,
-      body: event.request.body,
-    });
+    const delegatedRequest = buildDelegatedRequest(event, pathPrefix);
+    if (delegatedRequest === null) return;
     event.respondWith(
       registrationReady
         .then(() => handleRequest(delegatedRequest, engine))
@@ -227,11 +222,6 @@ function attachListeners(
   addEventListener('activate', activateListener as (event: unknown) => void);
   addEventListener('fetch', fetchListener as (event: unknown) => void);
   addEventListener('periodicsync', periodicSyncListener as (event: unknown) => void);
-}
-
-function normalizePathPrefix(pathPrefix: string | undefined): string {
-  const value = pathPrefix ?? DEFAULT_PATH_PREFIX;
-  return value.endsWith('/') ? value : `${value}/`;
 }
 
 /**
@@ -294,9 +284,9 @@ export function setupServiceWorker(
     periodicSyncTag,
   });
 
-  const registrationReady: Promise<void> = Promise.resolve().then(async () => {
-    if (options.register === undefined) return;
-    await options.register(engine);
+  const registrationReady: Promise<void> = Promise.resolve().then(() => {
+    if (options.register === undefined) return undefined;
+    return options.register(engine);
   });
 
   attachListeners(scope, pathPrefix, periodicSyncTag, engine, scheduler, registrationReady);

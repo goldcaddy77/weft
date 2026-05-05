@@ -6602,6 +6602,48 @@
       "classification": "example-required"
     },
     {
+      "sourceFile": "src/service-worker/shared.ts",
+      "sourceName": "MinimalFetchEvent",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "MinimalFetchEvent",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/service-worker/shared.ts",
+      "sourceName": "buildDelegatedRequest",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "buildDelegatedRequest",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/service-worker/shared.ts",
+      "sourceName": "normalizePathPrefix",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "normalizePathPrefix",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
       "sourceFile": "src/storage/bun-sql.ts",
       "sourceName": "BunSQLiteStorage",
       "kind": "value",

@@ -9,18 +9,17 @@
 
 import type { Engine } from '../core/engine';
 import { handleRequest } from '../server/handler';
+import { buildDelegatedRequest, normalizePathPrefix } from './shared.ts';
+import type { MinimalFetchEvent } from './shared.ts';
 import type { ServiceWorkerScheduler } from './scheduler';
+
+export { buildDelegatedRequest, normalizePathPrefix } from './shared.ts';
+export type { MinimalFetchEvent } from './shared.ts';
 
 // ---------------------------------------------------------------------------
 // Minimal Service Worker type interfaces
 // (avoids conflicts between webworker and Bun type libs)
 // ---------------------------------------------------------------------------
-
-/** Minimal FetchEvent shape for Service Worker compatibility. */
-interface MinimalFetchEvent {
-  request: Request;
-  respondWith(response: Response | Promise<Response>): void;
-}
 
 /** Minimal ExtendableEvent shape for Service Worker compatibility. */
 interface MinimalExtendableEvent {
@@ -67,7 +66,6 @@ export interface ServiceWorkerOptions {
 // Default constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_PATH_PREFIX = '/weft/';
 const DEFAULT_PERIODIC_SYNC_TAG = 'weft-timers';
 
 // ---------------------------------------------------------------------------
@@ -104,31 +102,11 @@ export function createFetchHandler(
   options: ServiceWorkerOptions,
 ): (event: MinimalFetchEvent) => void {
   const { engine } = options;
-  let pathPrefix = options.pathPrefix ?? DEFAULT_PATH_PREFIX;
-
-  // Normalize: ensure it ends with /
-  if (!pathPrefix.endsWith('/')) {
-    pathPrefix += '/';
-  }
+  const pathPrefix = normalizePathPrefix(options.pathPrefix);
 
   return (event: MinimalFetchEvent) => {
-    const url = new URL(event.request.url);
-    const pathname = url.pathname;
-
-    if (!pathname.startsWith(pathPrefix)) return;
-
-    // Strip the prefix to produce the path that handleRequest expects.
-    // e.g. /weft/v1/health -> /v1/health
-    const strippedPathname = '/' + pathname.slice(pathPrefix.length);
-    const strippedUrl = new URL(strippedPathname, url.origin);
-    strippedUrl.search = url.search;
-
-    const delegatedRequest = new Request(strippedUrl.toString(), {
-      method: event.request.method,
-      headers: event.request.headers,
-      body: event.request.body,
-    });
-
+    const delegatedRequest = buildDelegatedRequest(event, pathPrefix);
+    if (delegatedRequest === null) return;
     event.respondWith(handleRequest(delegatedRequest, engine));
   };
 }
