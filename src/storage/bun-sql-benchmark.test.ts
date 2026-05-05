@@ -5,7 +5,10 @@ import { join } from 'node:path';
 
 import type { BatchOperation } from './interface';
 
-import { isConstrainedCodexRunner } from '../benchmarks/benchmark-environment';
+import {
+  isConstrainedCodexRunner,
+  isGitHubActionsRunner,
+} from '../benchmarks/benchmark-environment';
 import { BunSQLiteStorage } from './bun-sql';
 
 /** Create a unique temporary file path for each test. */
@@ -28,7 +31,8 @@ function generateCheckpointValue(): Uint8Array {
  * samples so it still catches order-of-magnitude regressions without flaking
  * on an otherwise healthy loaded machine.
  */
-const TARGET_WRITES_PER_SECOND = isConstrainedCodexRunner() ? 5_000 : 20_000;
+const TARGET_WRITES_PER_SECOND =
+  isConstrainedCodexRunner() || isGitHubActionsRunner() ? 5_000 : 20_000;
 const BATCH_WRITE_SAMPLE_SIZE = 3;
 
 function median(values: number[]): number {
