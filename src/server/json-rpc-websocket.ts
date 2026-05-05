@@ -309,7 +309,14 @@ export function createJsonRpcWebSocketSession(
       // thrown values fall through to the generic `server-closed` path with
       // a sanitized fault — the wire must not carry potentially-sensitive
       // data from a thrown value of unknown origin.
-      if (!shouldSuppressOutput()) {
+      //
+      // Skip the emission entirely when the controller is aborted: that
+      // path is owned by `handleUnsubscribe`, which has already sent
+      // `client-unsubscribed`. A teardown-induced throw from the iterable
+      // (e.g. when `closeOnce()` aborts the inner controller and the feed
+      // raises during cleanup) must not produce a duplicate `terminated`
+      // frame for the same `subscriptionId`.
+      if (!signal.aborted && !shouldSuppressOutput()) {
         if (error instanceof SubscriptionElementValidationError) {
           emit({
             jsonrpc: JSON_RPC_VERSION,
