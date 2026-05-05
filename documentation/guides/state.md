@@ -35,10 +35,7 @@ const findings = ctx.state.execution<{ articles: string[]; totalCost: number }>(
   initial: { articles: [], totalCost: 0 },
 });
 
-yield *
-  findings.merge({
-    articles: ['https://example.com/research'],
-  });
+yield * findings.merge({ articles: ['https://example.com/research'] });
 ```
 
 The durable scopes are backed by `AtomicState`. Updates use compare-and-swap with automatic retry. If another writer commits between your read and write, Weft rereads the latest value and reruns your update function.

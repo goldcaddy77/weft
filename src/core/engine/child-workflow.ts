@@ -82,8 +82,10 @@ export async function executeChildWorkflow(
   const executionStateOwnerId = parentState?.executionStateOwnerId ?? workflowId;
   // oxlint-disable-next-line complexity -- ID:core-engine-execute-child-complexity
   const executeChild = async () => {
-    internals.pendingNestingDepth = currentDepth + 1;
-    internals.pendingParentHeaders = internals.workflowHeaders.get(workflowId);
+    const pendingNestingDepth = currentDepth + 1;
+    const pendingParentHeaders = internals.workflowHeaders.get(workflowId);
+    internals.pendingNestingDepth = pendingNestingDepth;
+    internals.pendingParentHeaders = pendingParentHeaders;
     internals.pendingExecutionStateOwnerId = executionStateOwnerId;
     let childHandle: WorkflowHandle;
 
@@ -127,9 +129,13 @@ export async function executeChildWorkflow(
         throw error;
       }
     } finally {
-      if (internals.pendingExecutionStateOwnerId === executionStateOwnerId) {
+      if (internals.pendingNestingDepth === pendingNestingDepth) {
         internals.pendingNestingDepth = undefined;
+      }
+      if (internals.pendingParentHeaders === pendingParentHeaders) {
         internals.pendingParentHeaders = undefined;
+      }
+      if (internals.pendingExecutionStateOwnerId === executionStateOwnerId) {
         internals.pendingExecutionStateOwnerId = undefined;
       }
     }

@@ -204,6 +204,42 @@ describe('workflow composition operators', () => {
     );
   });
 
+  it('child workflow id collisions do not leak nesting depth into later workflow starts', async () => {
+    const engine = new Engine({ maxNestingDepth: 1 });
+
+    async function* echoStage(_ctx: WorkflowContext, input: unknown) {
+      return { echoed: input };
+    }
+
+    engine.register('echo-stage', echoStage);
+    engine.register('first-parent', async function* (ctx: WorkflowContext) {
+      return yield* ctx.pipe([{ type: echoStage, options: { id: 'shared-child' } }], 'same');
+    });
+    engine.register('collision-parent', async function* (ctx: WorkflowContext) {
+      return yield* ctx.pipe([{ type: echoStage, options: { id: 'shared-child' } }], 'different');
+    });
+    engine.register('unrelated-parent', async function* (ctx: WorkflowContext) {
+      return yield* ctx.pipe([{ type: echoStage }], 'unrelated');
+    });
+
+    const firstHandle = await engine.start('first-parent', null, {
+      id: 'first-parent',
+    });
+    await expect(firstHandle.result()).resolves.toEqual({ echoed: 'same' });
+
+    const collisionHandle = await engine.start('collision-parent', null, {
+      id: 'collision-parent',
+    });
+    await expect(collisionHandle.result()).rejects.toThrow(
+      'Child workflow id collision for "shared-child" does not match the requested child workflow',
+    );
+
+    const unrelatedHandle = await engine.start('unrelated-parent', null, {
+      id: 'unrelated-parent',
+    });
+    await expect(unrelatedHandle.result()).resolves.toEqual({ echoed: 'unrelated' });
+  });
+
   it('Track 7c: ctx.map honors the concurrency limit while keeping input order', async () => {
     const engine = new TestEngine({ startTime: 0 });
 
