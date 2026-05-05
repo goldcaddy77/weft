@@ -78,7 +78,11 @@ async function connectAndRegisterWorker(
       concurrency: options.concurrency ?? 10,
     }),
   );
-  await sleepForTesting(50);
+  await waitForCondition(() => wsServer.registry.getWorker(options.workerId) !== undefined, {
+    timeoutMs: 5000,
+    intervalMs: 25,
+    label: `worker "${options.workerId}" to register`,
+  });
   return ws;
 }
 
