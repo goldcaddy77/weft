@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { evaluateAccess } from '../authorization.ts';
+import { isPlainObject } from '../json-schema-utilities.ts';
 import type { OperationFault } from '../operation-fault.ts';
 import {
   SUPPORTED_TRANSPORTS,
@@ -248,10 +249,6 @@ function safeParseInput(inputSchema: z.ZodType, input: unknown): PipelineParseOu
     };
   }
   return { kind: 'ok', input: parseResult.data };
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function isAuthorizationDecision(value: unknown): value is AuthorizationDecision {

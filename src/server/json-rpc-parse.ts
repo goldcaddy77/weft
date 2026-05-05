@@ -30,6 +30,7 @@ import {
   type JsonRpcId,
   type JsonRpcRequest,
 } from './json-rpc-protocol.ts';
+import { isPlainObject } from './json-schema-utilities.ts';
 
 /**
  * A request body that has been parsed successfully. Either a single
@@ -239,8 +240,4 @@ function parseSingleObject(
   };
 
   return { kind: 'single', request, isNotification };
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

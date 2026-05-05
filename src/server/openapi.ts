@@ -140,6 +140,13 @@ export function emitBindings(
     const operation: ErasedOperation | undefined = registry.get(binding.operationName);
     if (operation === undefined) continue;
     const openApiPath = toOpenApiPath(binding.path);
+    // Order matters: skipping non-discoverable bindings BEFORE adding to
+    // `boundMethodPaths` is intentional. `boundMethodPaths` suppresses
+    // legacy `ROUTES` entries that share the same path; not adding here
+    // means a non-discoverable binding does NOT shadow its corresponding
+    // legacy route. If a future non-discoverable binding has no legacy
+    // fallback its path is intentionally absent from the doc — that is
+    // what `discoverable: false` means.
     if (!isDiscoverable(operation)) continue;
     boundMethodPaths.add(`${binding.method} ${openApiPath}`);
     if (!paths[openApiPath]) paths[openApiPath] = {};
