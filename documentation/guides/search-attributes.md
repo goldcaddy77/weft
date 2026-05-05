@@ -7,11 +7,11 @@ Your workflows are running, but you can't find the one you need. Filtering by st
 Search attributes are declared at registration time. This prevents typos and gives the engine enough type information to build correct indexes.
 
 ```typescript partial
-const customerId = searchAttribute<string>('customerId', 'string');
-const orderTotal = searchAttribute<number>('orderTotal', 'number');
-const region = searchAttribute<string>('region', 'string');
-const priority = searchAttribute<number>('priority', 'number');
-const tags = searchAttribute<string[]>('tags', { type: 'array', items: { type: 'string' } });
+const customerId = searchAttribute('customerId', 'string');
+const orderTotal = searchAttribute('orderTotal', 'number');
+const region = searchAttribute('region', 'string');
+const priority = searchAttribute('priority', 'number');
+const tags = searchAttribute('tags', { type: 'array', items: { type: 'string' } });
 
 engine.register('order', {
   handler: orderWorkflow,

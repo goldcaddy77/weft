@@ -200,6 +200,8 @@ export class Context implements WorkflowContext {
         : undefined;
     childInternals.updateHandlers =
       internals.updateHandlers !== undefined ? new Map(internals.updateHandlers) : undefined;
+    childInternals.queryHandlers =
+      internals.queryHandlers !== undefined ? new Map(internals.queryHandlers) : undefined;
     childInternals.exposedValues =
       internals.exposedValues !== undefined ? new Map(internals.exposedValues) : undefined;
     childInternals.memoCache =

@@ -855,6 +855,10 @@ function handleHeartbeat(operationId: string, details?: unknown) {
 }
 ```
 
+```typescript partial
+const activityProgressQuery = query<void, { timestamp: number }>('activityProgress');
+```
+
 Heartbeat details are queryable from the workflow via `handle.query(activityProgressQuery)`, enabling progress UIs without custom plumbing.
 
 #### Worker Identity and Routing

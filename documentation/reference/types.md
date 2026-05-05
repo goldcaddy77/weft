@@ -409,13 +409,11 @@ type SearchAttributeValue = string | number | boolean | Date | string[];
 ```ts partial
 type SearchAttributeSchema = Record<string, SearchAttributeDefinition>;
 
-interface SearchAttributeDefinition {
-  type: 'array' | 'boolean' | 'integer' | 'number' | 'object' | 'string';
-  format?: string;
-  items?: SearchAttributeDefinition;
-  properties?: Record<string, SearchAttributeDefinition>;
-  required?: string[];
-}
+type SearchAttributeDefinition =
+  | { type: 'string'; format?: string }
+  | { type: 'number' | 'integer' }
+  | { type: 'boolean' }
+  | { type: 'array'; items?: { type: 'string'; format?: string } };
 ```
 
 ### `ListFilter`

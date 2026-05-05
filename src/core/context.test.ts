@@ -1067,6 +1067,21 @@ describe('Context', () => {
       expect(result.done).toBe(true);
       expect(result.value).toBe('cached-speculation-result');
     });
+
+    it('preserves query handlers registered before speculative execution', () => {
+      const context = createContext();
+      const parentQueryHandler = () => 'parent';
+      const childQueryHandler = () => 'child';
+      context.onQuery('parent', parentQueryHandler);
+
+      const child = context.createSpeculativeChild();
+      expect(child.queryHandlers.get('parent')).toBe(parentQueryHandler);
+      child.onQuery('child', childQueryHandler);
+      context.commitSpeculativeChild(child);
+
+      expect(context.queryHandlers.get('parent')).toBe(parentQueryHandler);
+      expect(context.queryHandlers.get('child')).toBe(childQueryHandler);
+    });
   });
 
   describe('ctx.runAll fed-back result', () => {
