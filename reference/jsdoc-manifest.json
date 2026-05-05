@@ -5541,13 +5541,13 @@
     },
     {
       "sourceFile": "src/observability/metrics.ts",
-      "sourceName": "OtelMetrics",
+      "sourceName": "OpenTelemetryMetrics",
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [
         {
           "importPath": "weft",
-          "exportName": "OtelMetrics",
+          "exportName": "OpenTelemetryMetrics",
           "kind": "type"
         }
       ],
@@ -5583,13 +5583,13 @@
     },
     {
       "sourceFile": "src/observability/metrics.ts",
-      "sourceName": "createOtelMetrics",
+      "sourceName": "createOpenTelemetryMetrics",
       "kind": "value",
       "subKind": "function",
       "publicFaces": [
         {
           "importPath": "weft",
-          "exportName": "createOtelMetrics",
+          "exportName": "createOpenTelemetryMetrics",
           "kind": "value"
         }
       ],
@@ -5613,13 +5613,13 @@
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
-      "sourceName": "OtelApi",
+      "sourceName": "OpenTelemetryApi",
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [
         {
           "importPath": "weft",
-          "exportName": "OtelApi",
+          "exportName": "OpenTelemetryApi",
           "kind": "type"
         }
       ],
@@ -5627,13 +5627,13 @@
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
-      "sourceName": "OtelMeter",
+      "sourceName": "OpenTelemetryMeter",
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [
         {
           "importPath": "weft",
-          "exportName": "OtelMeter",
+          "exportName": "OpenTelemetryMeter",
           "kind": "type"
         }
       ],
@@ -5641,13 +5641,13 @@
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
-      "sourceName": "OtelSpan",
+      "sourceName": "OpenTelemetrySpan",
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [
         {
           "importPath": "weft",
-          "exportName": "OtelSpan",
+          "exportName": "OpenTelemetrySpan",
           "kind": "type"
         }
       ],
@@ -5655,13 +5655,13 @@
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
-      "sourceName": "OtelTracer",
+      "sourceName": "OpenTelemetryTracer",
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [
         {
           "importPath": "weft",
-          "exportName": "OtelTracer",
+          "exportName": "OpenTelemetryTracer",
           "kind": "type"
         }
       ],
@@ -5685,13 +5685,13 @@
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
-      "sourceName": "getOtelApi",
+      "sourceName": "getOpenTelemetryApi",
       "kind": "value",
       "subKind": "function",
       "publicFaces": [
         {
           "importPath": "weft",
-          "exportName": "getOtelApi",
+          "exportName": "getOpenTelemetryApi",
           "kind": "value"
         }
       ],
@@ -5699,7 +5699,7 @@
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
-      "sourceName": "isSupportedOtelApi",
+      "sourceName": "isSupportedOpenTelemetryApi",
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
@@ -5707,7 +5707,7 @@
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
-      "sourceName": "resetCachedOtelApiForTesting",
+      "sourceName": "resetCachedOpenTelemetryApiForTesting",
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
@@ -5715,7 +5715,7 @@
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
-      "sourceName": "resolveInstalledOtelApi",
+      "sourceName": "resolveInstalledOpenTelemetryApi",
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],

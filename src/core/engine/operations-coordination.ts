@@ -1,5 +1,14 @@
 import type { ContextOperationRequest } from '../context.ts';
-import { executeRunAllBranches } from '../engine-helpers.ts';
+import {
+  isParallelOperationCacheEntry,
+  type ParallelBranchSlot,
+  type ParallelOperationCacheEntry,
+} from '../context/parallel-operations.ts';
+import {
+  executeRunAllBranches,
+  executeRunAllBranchesSettled,
+  type RunAllBranchOutcome,
+} from '../engine-helpers.ts';
 import type { EngineInternals } from './internals.ts';
 import {
   executeActivityOperationResult as executeActivityOperationResultFromInternals,
@@ -7,6 +16,11 @@ import {
   type ActivityOperationCallbacks,
 } from './operations-activity.ts';
 import type { OperationWithCallerStack } from './operations-router.ts';
+import {
+  buildEntryFromSlots,
+  dispatchBranchesAllSettled,
+  valuesFromSlots,
+} from './parallel-dispatch.ts';
 import { consumeSignal, trackWaiterKey, untrackWaiterKey } from './signals.ts';
 import type { SpeculativeExecutionState } from './speculative-execution-state.ts';
 import { callActivityFunction } from './state-utilities.ts';
@@ -81,22 +95,86 @@ export async function processWaitSignalOperation(
 }
 
 export async function processParallelOperation(
-  _internals: EngineInternals,
+  internals: EngineInternals,
   workflowId: string,
   operation: ParallelOperation,
   callbacks: Pick<CoordinationOperationCallbacks, 'executeSubOperation' | 'runOperationWithResult'>,
 ): Promise<void> {
   // `ctx.all()` awaits every branch, so there's no "loser" to abort like
   // there is for `ctx.race()`. Each sub-operation runs to completion or
-  // throws; `Promise.all` short-circuits on the first rejection, but the
-  // surviving branches' budgets are intentionally preserved — callers that
-  // want cancellation on failure should use `ctx.race()` with a guard.
-  return callbacks.runOperationWithResult(workflowId, operation, async () =>
-    Promise.all(
-      operation.operations.map((subOperation) =>
-        callbacks.executeSubOperation(workflowId, subOperation),
-      ),
-    ),
+  // throws. We use `Promise.allSettled` semantics so successful branches'
+  // results can be persisted to the parent's cache entry before any
+  // rejection propagates — on retry, fulfilled branches are reused
+  // instead of re-running, which fixes the duplicate-side-effects bug
+  // when one branch in `ctx.all` fails.
+  return callbacks.runOperationWithResult(workflowId, operation, async () => {
+    const resumedSlots = extractResumedSlots(operation.resumedCacheEntry);
+    const operationIds = operation.operations.map((sub, i) =>
+      typeof sub.operationId === 'string' ? sub.operationId : `parallel:${operation.step}:${i}`,
+    );
+    const { slots, hasFirstError, firstError } = await dispatchBranchesAllSettled(
+      operationIds,
+      resumedSlots,
+      (index) => callbacks.executeSubOperation(workflowId, operation.operations[index]!),
+    );
+
+    const entry = buildEntryFromSlots('all', slots);
+    const partialEntryWritten = writePartialEntry(internals, workflowId, operation.step, entry);
+
+    if (hasFirstError) {
+      assertPartialFailurePersistenceSupported(
+        partialEntryWritten,
+        slots,
+        'ctx.all',
+        'worker execution mode',
+      );
+      // Rethrow the original reason as-is (could be a string, number,
+      // undefined, or any non-Error value) to mirror Promise.all.
+      throw firstError;
+    }
+    return valuesFromSlots(slots);
+  });
+}
+
+/** Pull resumed slots out of an opaque cache entry, validating the shape. */
+function extractResumedSlots(resumedCacheEntry: unknown): ParallelBranchSlot[] | undefined {
+  if (!isParallelOperationCacheEntry(resumedCacheEntry)) return undefined;
+  return resumedCacheEntry.branches;
+}
+
+/**
+ * Mutate the workflow's `accumulatedResults` map in place at the given
+ * step. The next checkpoint write — triggered by the workflow's next
+ * yield — will persist the partial entry. If the workflow throws and
+ * fails before yielding again, the partial entry is lost; users with
+ * externally visible side effects must still use idempotency keys for
+ * activities inside `ctx.all`.
+ */
+function writePartialEntry(
+  internals: EngineInternals,
+  workflowId: string,
+  step: number,
+  entry: ParallelOperationCacheEntry,
+): boolean {
+  const context = internals.inlineStrategy?.getContext(workflowId);
+  if (context === undefined) return false;
+  context.accumulatedResults.set(step, entry);
+  return true;
+}
+
+function assertPartialFailurePersistenceSupported(
+  partialEntryWritten: boolean,
+  slots: ParallelBranchSlot[],
+  operationName: 'ctx.all' | 'ctx.runAll',
+  executionMode: string,
+): void {
+  if (partialEntryWritten || !slots.some((slot) => slot.status === 'fulfilled')) {
+    return;
+  }
+  throw new Error(
+    `${operationName} partial-failure preservation is not supported in ${executionMode}: ` +
+      `the engine cannot persist fulfilled branch slots after a sibling branch fails. ` +
+      `Run the workflow inline or make branch side effects idempotent.`,
   );
 }
 
@@ -133,14 +211,129 @@ export async function processRunAllOperation(
   internals: EngineInternals,
   workflowId: string,
   operation: RunAllOperation,
-  callbacks: Pick<
-    CoordinationOperationCallbacks,
-    'getActivityOperationCallbacks' | 'runOperationWithResult'
-  >,
+  callbacks: Pick<CoordinationOperationCallbacks, 'runOperationWithResult'>,
 ): Promise<void> {
-  return callbacks.runOperationWithResult(workflowId, operation, () =>
-    executeRunAllOperationResult(internals, workflowId, operation, callbacks),
-  );
+  return callbacks.runOperationWithResult(workflowId, operation, async () => {
+    const branchNames = Object.keys(operation.branches);
+    const operationIds = branchNames.map((name) => `run-all:${operation.step}:${name}`);
+    const resumedSlots = extractResumedSlots(operation.resumedCacheEntry);
+    const resumedSlotsByName = mapResumedSlotsByName(resumedSlots, branchNames);
+
+    const branchesToRun = filterBranchesToRun(operation.branches, branchNames, resumedSlotsByName);
+
+    // Dispatch through the existing run-all helper shape so callers that
+    // reuse it keep matching semantics. The settled variant returns
+    // per-branch outcomes plus the first rejection by settlement timing,
+    // matching `Promise.all`'s rethrow-as-is contract.
+    const { outcomes, hasFirstError, firstError } = await executeRunAllBranchesSettled(
+      branchesToRun,
+      (fn, args) => callActivityFunction(fn, args),
+    );
+
+    const slots = mergeRunAllSlots(branchNames, operationIds, resumedSlotsByName, outcomes);
+
+    const entry = buildEntryFromSlots('run-all', slots, branchNames);
+    const partialEntryWritten = writePartialEntry(internals, workflowId, operation.step, entry);
+
+    if (hasFirstError) {
+      assertPartialFailurePersistenceSupported(
+        partialEntryWritten,
+        slots,
+        'ctx.runAll',
+        'worker execution mode',
+      );
+      // Rethrow the original reason as-is to mirror Promise.all semantics
+      // for non-Error throws.
+      throw firstError;
+    }
+
+    return reconstructRunAllRecord(branchNames, slots);
+  });
+}
+
+/** Drop fulfilled-on-resume branches so we only re-dispatch the rest. */
+function filterBranchesToRun(
+  branches: Record<string, [Function, ...unknown[]]>,
+  branchNames: string[],
+  resumedSlotsByName: Map<string, ParallelBranchSlot> | undefined,
+): Record<string, [Function, ...unknown[]]> {
+  const result: Record<string, [Function, ...unknown[]]> = {};
+  for (const name of branchNames) {
+    if (resumedSlotsByName?.get(name)?.status !== 'fulfilled') {
+      const branch = branches[name];
+      if (branch !== undefined) result[name] = branch;
+    }
+  }
+  return result;
+}
+
+/** Merge resumed slots with fresh outcomes into the final slot table. */
+function mergeRunAllSlots(
+  branchNames: string[],
+  operationIds: string[],
+  resumedSlotsByName: Map<string, ParallelBranchSlot> | undefined,
+  outcomes: RunAllBranchOutcome[],
+): ParallelBranchSlot[] {
+  // Index outcomes by name once so per-branch lookup is O(1) instead of
+  // O(n) per branch (which would make this O(n^2) overall — fine for a
+  // few branches but unnecessary work for runAll with many).
+  const outcomesByName = new Map<string, RunAllBranchOutcome>();
+  for (const outcome of outcomes) {
+    outcomesByName.set(outcome.name, outcome);
+  }
+  return branchNames.map((name, i) => {
+    const operationId = operationIds[i]!;
+    const resumed = resumedSlotsByName?.get(name);
+    if (resumed?.status === 'fulfilled') {
+      return resumed;
+    }
+    const outcome = outcomesByName.get(name);
+    if (outcome === undefined) {
+      return { status: 'pending', operationId };
+    }
+    if (outcome.status === 'fulfilled') {
+      return { status: 'fulfilled', value: outcome.value, operationId };
+    }
+    const reasonError =
+      outcome.reason instanceof Error ? outcome.reason : new Error(String(outcome.reason));
+    return {
+      status: 'rejected',
+      reason: { name: reasonError.name, message: reasonError.message },
+      operationId,
+    };
+  });
+}
+
+/** Reconstruct the name-keyed result from the final slot table. */
+function reconstructRunAllRecord(
+  branchNames: string[],
+  slots: ParallelBranchSlot[],
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (let i = 0; i < branchNames.length; i++) {
+    const slot = slots[i];
+    if (slot?.status === 'fulfilled') {
+      result[branchNames[i]!] = slot.value;
+    }
+  }
+  return result;
+}
+
+/** Index resumed branch slots by their corresponding branch name. */
+function mapResumedSlotsByName(
+  resumedSlots: ParallelBranchSlot[] | undefined,
+  branchNames: string[],
+): Map<string, ParallelBranchSlot> | undefined {
+  if (resumedSlots === undefined) return undefined;
+  const result = new Map<string, ParallelBranchSlot>();
+  for (let i = 0; i < branchNames.length; i++) {
+    const name = branchNames[i];
+    const slot = resumedSlots[i];
+    if (name !== undefined && slot !== undefined) {
+      result.set(name, slot);
+    }
+  }
+  return result;
 }
 
 export function isConfiguredInlineActivity(
@@ -149,6 +342,15 @@ export function isConfiguredInlineActivity(
   return typeof (fn as { execute?: unknown }).execute === 'function';
 }
 
+/**
+ * Used by `executeSubOperation`'s `'run-all'` case (nested run-all inside
+ * another sub-operation). Speculative-execution path retained for
+ * `ctx.speculate` callers that need verification/compensation tracking.
+ *
+ * This path does NOT write a partial cache entry — it's only invoked for
+ * nested run-alls whose results live inside the outer parent's slot. The
+ * outer parent's partial-persistence handles durability.
+ */
 export async function executeRunAllOperationResult(
   internals: EngineInternals,
   workflowId: string,

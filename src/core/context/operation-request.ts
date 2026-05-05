@@ -59,6 +59,21 @@ export type ContextOperationRequest =
       type: 'parallel';
       operationId: string;
       operations: ContextOperationRequest[];
+      /**
+       * Workflow step index where this parallel op lives. The engine
+       * writes the partial cache entry to `context.accumulatedResults[step]`
+       * after settlement so on retry the workflow generator can reuse
+       * fulfilled branches.
+       */
+      step: number;
+      /**
+       * Resumed parallel-operation cache entry from a prior attempt. Engine
+       * uses this to skip dispatch for fulfilled branch slots and re-dispatch
+       * the rest. Typed as `unknown` here to avoid a circular import with
+       * `./parallel-operations.ts` where the entry shape is defined; the
+       * engine validates the shape via `isParallelOperationCacheEntry`.
+       */
+      resumedCacheEntry?: unknown;
       callerStack?: string;
     }
   | {
@@ -106,6 +121,13 @@ export type ContextOperationRequest =
       type: 'run-all';
       operationId: string;
       branches: Record<string, [Function, ...unknown[]]>;
+      /** Workflow step index — see note on `parallel.step`. */
+      step: number;
+      /**
+       * Resumed run-all cache entry from a prior attempt. See note on
+       * `parallel.resumedCacheEntry` for why this is typed as `unknown`.
+       */
+      resumedCacheEntry?: unknown;
       callerStack?: string;
     }
   | {

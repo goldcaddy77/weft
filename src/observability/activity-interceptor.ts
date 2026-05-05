@@ -1,5 +1,5 @@
 import type { ActivityExecutionInterception, ActivityInterceptor } from '../core/interceptor';
-import type { OtelSpan } from './no-op-telemetry';
+import type { OpenTelemetrySpan } from './no-op-telemetry';
 import { NO_OP_SPAN_METHODS } from './no-op-telemetry';
 import { extractTraceParent } from './propagation';
 import { errorMessage, serializePayload, toError } from './span-helpers';
@@ -15,7 +15,7 @@ export function buildActivityInterceptor(state: ObservabilityState): ActivityInt
 
       let parentCtx = state.api.context.ROOT_CONTEXT;
       if (parentContext) {
-        const remoteParentSpan: OtelSpan = {
+        const remoteParentSpan: OpenTelemetrySpan = {
           ...NO_OP_SPAN_METHODS,
           spanContext() {
             return {
