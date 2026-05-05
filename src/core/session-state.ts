@@ -1,6 +1,7 @@
 import { encode } from './codec.ts';
 
-export const SESSION_STATE_LOCAL_KEY = 'sessionState';
+export const SESSION_STATE_LOCAL_KEY = 'stateSession';
+export const LEGACY_SESSION_STATE_LOCAL_KEY = 'sessionState';
 export const MAX_SESSION_STATE_ENTRY_COUNT = 256;
 export const MAX_SESSION_STATE_KEY_LENGTH = 256;
 export const MAX_SESSION_STATE_SERIALIZED_BYTES = 32 * 1024;
@@ -91,6 +92,18 @@ export function normalizeSessionStateRecord(value: unknown): Record<string, unkn
   return normalized;
 }
 
+export function normalizeSessionStateLocals(
+  locals: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!locals) {
+    return undefined;
+  }
+
+  return normalizeSessionStateRecord(
+    locals[SESSION_STATE_LOCAL_KEY] ?? locals[LEGACY_SESSION_STATE_LOCAL_KEY],
+  );
+}
+
 export function validateSessionStateStore(store: Record<string, unknown>): void {
   const keys = Object.keys(store);
   if (keys.length > MAX_SESSION_STATE_ENTRY_COUNT) {
@@ -112,5 +125,5 @@ export function validateSessionStateStore(store: Record<string, unknown>): void 
 }
 
 export function validateSessionStateLocals(locals: Record<string, unknown>): void {
-  normalizeSessionStateRecord(locals[SESSION_STATE_LOCAL_KEY]);
+  normalizeSessionStateLocals(locals);
 }

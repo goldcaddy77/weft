@@ -52,6 +52,14 @@ export type OperationRouterCallbacks = {
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'archive' }>,
   ) => Promise<void>;
+  processStateReadOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'state-read' }>,
+  ) => Promise<void>;
+  processStateCommitOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'state-commit' }>,
+  ) => Promise<void>;
   processRunAllOperation: (
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'run-all' }>,
@@ -177,6 +185,10 @@ export async function processOperation(
       return callbacks.processLoadOperation(workflowId, operation);
     case 'archive':
       return callbacks.processArchiveOperation(workflowId, operation);
+    case 'state-read':
+      return callbacks.processStateReadOperation(workflowId, operation);
+    case 'state-commit':
+      return callbacks.processStateCommitOperation(workflowId, operation);
     case 'run-all':
       return callbacks.processRunAllOperation(workflowId, operation);
     case 'agent':

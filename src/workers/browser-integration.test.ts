@@ -41,6 +41,18 @@ function waitForMessage(
   });
 }
 
+function expectActivityOperationRequestName(operationRequest: unknown, expected: string): void {
+  if (
+    typeof operationRequest !== 'object' ||
+    operationRequest === null ||
+    !('activityName' in operationRequest)
+  ) {
+    throw new Error('Expected an activity operation request');
+  }
+
+  expect(operationRequest.activityName).toBe(expected);
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -107,7 +119,7 @@ describe('browser Web Worker integration', () => {
 
       expect(checkpoint.type).toBe('checkpoint');
       if (checkpoint.type === 'checkpoint') {
-        expect(checkpoint.operationRequest.activityName).toBe('testActivity');
+        expectActivityOperationRequestName(checkpoint.operationRequest, 'testActivity');
         expect(checkpoint.checkpoint).toBeInstanceOf(ArrayBuffer);
       }
     });
@@ -180,7 +192,7 @@ describe('browser Web Worker integration', () => {
         (m) => m.type === 'checkpoint' && m.workflowId === 'wf-multi-1',
       );
       if (firstCheckpoint.type === 'checkpoint') {
-        expect(firstCheckpoint.operationRequest.activityName).toBe('step1');
+        expectActivityOperationRequestName(firstCheckpoint.operationRequest, 'step1');
       }
 
       // Resume step1 — yields at step2
@@ -197,7 +209,7 @@ describe('browser Web Worker integration', () => {
         (m) => m.type === 'checkpoint' && m.workflowId === 'wf-multi-1',
       );
       if (secondCheckpoint.type === 'checkpoint') {
-        expect(secondCheckpoint.operationRequest.activityName).toBe('step2');
+        expectActivityOperationRequestName(secondCheckpoint.operationRequest, 'step2');
       }
 
       // Resume step2 — completes

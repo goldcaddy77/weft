@@ -3,7 +3,7 @@ import type { TenantContext } from '../tenant.ts';
 import type { WorkflowId } from './identity.ts';
 import type { RetentionPolicy } from './retry-retention.ts';
 import type { SearchAttributeSchema } from './search-attributes.ts';
-import type { WorkflowSessionState } from './state.ts';
+import type { WorkflowStateNamespace } from './state.ts';
 
 // ---------------------------------------------------------------------------
 // Workflow function signature
@@ -371,7 +371,7 @@ export interface WorkflowContext {
    * contract that the getter can't satisfy.
    */
   readonly tenant: TenantContext | undefined;
-  sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T>;
+  readonly state: WorkflowStateNamespace;
   pipe<TInput, TOutput>(
     stages: [WorkflowPipeStageDefinition<TInput, TOutput>],
     input: TInput,

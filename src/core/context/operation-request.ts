@@ -4,6 +4,7 @@ import type {
   SuperviseOptions,
 } from '../../ai/coordination/index.ts';
 import type { HumanReviewOptions } from '../../ai/human-review.ts';
+import type { AtomicStateScope } from '../atomic-state.ts';
 import type { ChildWorkflowOptions } from '../types.ts';
 import type { Context } from './index.ts';
 import type { AgentContextOptions, OffloadReference, StreamSink } from './types.ts';
@@ -119,6 +120,24 @@ export type ContextOperationRequest =
       operationId: string;
       key: string;
       data: unknown;
+      callerStack?: string;
+    }
+  | {
+      type: 'state-read';
+      operationId: string;
+      scope: AtomicStateScope;
+      key: string;
+      initial?: unknown;
+      callerStack?: string;
+    }
+  | {
+      type: 'state-commit';
+      operationId: string;
+      scope: AtomicStateScope;
+      key: string;
+      expectedVersion: number;
+      mode: 'set' | 'delete';
+      value?: unknown;
       callerStack?: string;
     }
   | {

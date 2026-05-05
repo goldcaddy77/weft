@@ -285,6 +285,18 @@ export function decodeWorkflowState(bytes: Uint8Array): WorkflowState {
     );
     delete state.tags;
   }
+  if (state.executionStateOwnerId !== undefined) {
+    try {
+      coerceStartWorkflowId(state.executionStateOwnerId, 'executionStateOwnerId');
+    } catch {
+      console.warn(
+        `[weft] Decoded workflow state for "${String(state.id)}" has an invalid ` +
+          'executionStateOwnerId field; falling back to the workflow id as the execution owner. ' +
+          'This usually indicates corruption or tampering of the storage record.',
+      );
+      delete state.executionStateOwnerId;
+    }
+  }
   return state;
 }
 export function rejectInvalidScheduleRecord(scheduleId: string | undefined, message: string): null {

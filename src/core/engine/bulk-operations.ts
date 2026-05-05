@@ -452,7 +452,7 @@ async function purgeWorkflow(
     `offload:${encodedWorkflowId}:`,
     `archive:${encodedWorkflowId}:`,
     `blob:${encodedWorkflowId}:`,
-    `shared:${encodedWorkflowId}:`,
+    `state:execution:${encodedWorkflowId}:`,
     `tool-effect:${encodedWorkflowId}:`,
     `upk:${encodedWorkflowId}:`,
   ]) {

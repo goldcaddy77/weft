@@ -78,10 +78,13 @@ export async function executeChildWorkflow(
   const rawId = operation.options?.['id'];
   const childWorkflowId = typeof rawId === 'string' ? rawId : crypto.randomUUID();
   const parentHeaders = internals.workflowHeaders.get(workflowId) ?? new Map<string, string>();
+  const parentState = await callbacks.loadWorkflowState(workflowId);
+  const executionStateOwnerId = parentState?.executionStateOwnerId ?? workflowId;
   // oxlint-disable-next-line complexity -- ID:core-engine-execute-child-complexity
   const executeChild = async () => {
     internals.pendingNestingDepth = currentDepth + 1;
     internals.pendingParentHeaders = internals.workflowHeaders.get(workflowId);
+    internals.pendingExecutionStateOwnerId = executionStateOwnerId;
     let childHandle: WorkflowHandle;
 
     try {
@@ -90,7 +93,7 @@ export async function executeChildWorkflow(
       });
     } catch (error) {
       if (error instanceof WorkflowAlreadyExistsError) {
-        const [existingState, parentState] = await Promise.all([
+        const [existingState, currentParentState] = await Promise.all([
           callbacks.loadWorkflowState(childWorkflowId),
           callbacks.loadWorkflowState(workflowId),
         ]);
@@ -100,7 +103,7 @@ export async function executeChildWorkflow(
         }
 
         const existingTenantId = existingState.tenant?.id;
-        const parentTenantId = parentState?.tenant?.id;
+        const parentTenantId = currentParentState?.tenant?.id;
         const tenantMatches =
           (existingTenantId === undefined && parentTenantId === undefined) ||
           (existingTenantId !== undefined &&
@@ -110,7 +113,8 @@ export async function executeChildWorkflow(
         if (
           existingState.type !== operation.workflowType ||
           !encodedValuesEqual(existingState.input, operation.input) ||
-          !tenantMatches
+          !tenantMatches ||
+          existingState.executionStateOwnerId !== executionStateOwnerId
         ) {
           throw new Error(
             `Child workflow id collision for "${childWorkflowId}" does not match the requested child workflow`,
@@ -121,6 +125,12 @@ export async function executeChildWorkflow(
         childHandle = callbacks.getHandle(childWorkflowId);
       } else {
         throw error;
+      }
+    } finally {
+      if (internals.pendingExecutionStateOwnerId === executionStateOwnerId) {
+        internals.pendingNestingDepth = undefined;
+        internals.pendingParentHeaders = undefined;
+        internals.pendingExecutionStateOwnerId = undefined;
       }
     }
 

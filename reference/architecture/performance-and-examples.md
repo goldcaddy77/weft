@@ -50,14 +50,14 @@ weft/
 │   ├── context.ts         # ctx.run, ctx.sleep, ctx.signal, ctx.agent, ctx.all,
 │   │                      # ctx.setAttribute, ctx.onUpdate, ctx.waitForUpdate,
 │   │                      # ctx.humanReview, ctx.handoff, ctx.debate, ctx.supervise,
-│   │                      # ctx.sharedState, ctx.setBudget, ctx.budgetRemaining
+│   │                      # ctx.state, ctx.setBudget, ctx.budgetRemaining
 │   ├── checkpoint.ts      # Generator serialization via structuredClone
 │   ├── scheduler.ts       # Timer/retry scheduling logic (no I/O)
 │   ├── interceptor.ts     # WorkflowInterceptor, ActivityInterceptor interfaces + chain composition
 │   ├── search-attributes.ts # Attribute index encoding, diff logic, sortable key encoding
 │   ├── updates.ts         # Synchronous update request/response coordination
 │   ├── codec.ts           # MessagePack encode/decode (pure JS)
-│   ├── shared-state.ts    # SharedState primitive: durable concurrent KV with optimistic concurrency
+│   ├── atomic-state.ts    # AtomicState primitive: durable concurrent KV with optimistic concurrency
 │   └── types.ts           # TypeScript types
 │
 ├── storage/               # Storage adapters (one per platform)

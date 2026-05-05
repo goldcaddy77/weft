@@ -21,7 +21,7 @@ describe('Acceptance criterion: Virtual-Object-style session state', () => {
     function createWorkflow() {
       return async function* (ctx: WorkflowContext) {
         const context = ctx as Context;
-        const session = context.sessionState<number>('counter', 0);
+        const session = context.state.session<number>('counter', { initial: 0 });
 
         session.update((current) => (current ?? 0) + 1);
         const beforeRecovery = session.get();
@@ -43,7 +43,7 @@ describe('Acceptance criterion: Virtual-Object-style session state', () => {
       (await storage.get(KEYS.checkpoint('wf-session-state')))!,
     );
     expect(checkpointBeforeCrash.locals).toEqual({
-      sessionState: {
+      stateSession: {
         counter: 1,
       },
     });
@@ -74,10 +74,10 @@ describe('Acceptance criterion: Virtual-Object-style session state', () => {
     function createWorkflow() {
       return async function* (ctx: WorkflowContext) {
         const context = ctx as Context;
-        const session = context.sessionState<number>('counter', 0);
+        const session = context.state.session<number>('counter', { initial: 0 });
 
         session.set(1);
-        session.clear();
+        session.delete();
         const afterClear = session.get();
 
         yield* context.waitForSignal('resume');
@@ -121,15 +121,15 @@ describe('Acceptance criterion: Virtual-Object-style session state', () => {
   });
 
   it('rejects corrupted checkpoint locals that use reserved session-state keys', () => {
-    const sessionState = Object.create(null) as Record<string, unknown>;
-    sessionState['constructor'] = {
+    const stateSession = Object.create(null) as Record<string, unknown>;
+    stateSession['constructor'] = {
       polluted: true,
     };
     const corruptedCheckpoint = encode({
       workflowId: 'wf-corrupted-session-state',
       step: 1,
       locals: {
-        sessionState,
+        stateSession,
       },
       accumulatedResults: [],
       pendingSignals: [],
@@ -141,13 +141,32 @@ describe('Acceptance criterion: Virtual-Object-style session state', () => {
     expect(() => deserializeCheckpoint(corruptedCheckpoint)).toThrow();
   });
 
+  it('validates legacy checkpoint-local session state records during recovery', () => {
+    const legacyState = Object.create(null) as Record<string, unknown>;
+    legacyState['__proto__'] = 1;
+
+    expect(() =>
+      validateSessionStateLocals({
+        sessionState: {
+          counter: 1,
+        },
+      }),
+    ).not.toThrow();
+
+    expect(() =>
+      validateSessionStateLocals({
+        sessionState: legacyState,
+      }),
+    ).toThrow();
+  });
+
   it('rejects corrupted checkpoint locals whose session-state root is not a plain object', () => {
-    for (const sessionState of [new Date(), new Map<string, number>([['count', 1]])]) {
+    for (const stateSession of [new Date(), new Map<string, number>([['count', 1]])]) {
       const corruptedCheckpoint = encode({
         workflowId: 'wf-corrupted-session-state-root',
         step: 1,
         locals: {
-          sessionState,
+          stateSession,
         },
         accumulatedResults: [],
         pendingSignals: [],
@@ -167,7 +186,7 @@ describe('Acceptance criterion: Virtual-Object-style session state', () => {
 
     expect(() =>
       validateSessionStateLocals({
-        sessionState: new SessionStateRoot(),
+        stateSession: new SessionStateRoot(),
       }),
     ).toThrow();
   });

@@ -227,37 +227,67 @@ describe('Context', () => {
   });
 
   describe('Acceptance criterion: Virtual-Object-style session state API', () => {
+    it('does not expose the old sessionState method', () => {
+      const context = createContext();
+
+      expect('sessionState' in context).toBe(false);
+    });
+
     it('returns the initial value until a value is written', () => {
       const context = createContext();
-      const session = context.sessionState<number>('counter', 0);
+      const session = context.state.session<number>('counter', { initial: 0 });
 
       expect(session.get()).toBe(0);
     });
 
+    it('restores legacy checkpoint-local session state and normalizes new writes', () => {
+      const context = createContext({
+        locals: {
+          retained: true,
+          sessionState: {
+            counter: 2,
+          },
+        },
+      });
+      const session = context.state.session<number>('counter');
+
+      expect(session.get()).toBe(2);
+
+      session.set(3);
+
+      expect(context.checkpointLocals).toEqual({
+        retained: true,
+        stateSession: {
+          counter: 3,
+        },
+      });
+      expect('sessionState' in context.checkpointLocals).toBe(false);
+    });
+
     it('returns undefined after clear when no initial value is configured', () => {
       const context = createContext();
-      const session = context.sessionState<number>('counter');
+      const session = context.state.session<number>('counter');
 
       session.set(1);
-      session.clear();
+      session.delete();
 
       expect(session.get()).toBeUndefined();
     });
 
     it('updates and clears a session-scoped value', () => {
       const context = createContext();
-      const session = context.sessionState<number>('counter', 0);
+      const session = context.state.session<number>('counter', { initial: 0 });
 
       expect(session.update((current) => (current ?? 0) + 1)).toBe(1);
       expect(session.get()).toBe(1);
 
-      session.clear();
+      session.delete();
       expect(session.get()).toBe(0);
     });
 
     it('routes session-bound activities through sticky worker execution', () => {
       const context = createContext();
-      const session = context.sessionState<number>('conversation', 0);
+      const session = context.state.session<number>('conversation', { initial: 0 });
 
       const generator = session.run(greet, 'Alice', { queue: 'gpu' });
       const request = expectRequest(
@@ -271,7 +301,7 @@ describe('Context', () => {
 
     it('rejects reserved prototype keys', () => {
       const context = createContext();
-      const session = context.sessionState<number>('__proto__', 0);
+      const session = context.state.session<number>('__proto__', { initial: 0 });
 
       expect(() => session.set(1)).toThrow(SessionStateValidationError);
       expect(({} as { polluted?: number }).polluted).toBeUndefined();
@@ -279,7 +309,7 @@ describe('Context', () => {
 
     it('rejects oversized session-state payloads', () => {
       const context = createContext();
-      const session = context.sessionState<string>('payload');
+      const session = context.state.session<string>('payload');
 
       expect(() => session.set('x'.repeat(MAX_SESSION_STATE_SERIALIZED_BYTES + 1024))).toThrow(
         SessionStateValidationError,
@@ -288,7 +318,7 @@ describe('Context', () => {
 
     it('returns cloned values so caller mutation does not leak into durable state', () => {
       const context = createContext();
-      const session = context.sessionState<{ values: string[] }>('draft');
+      const session = context.state.session<{ values: string[] }>('draft');
 
       const stored = session.set({ values: ['a'] });
       stored.values.push('b');
@@ -303,7 +333,9 @@ describe('Context', () => {
     it('snapshots the initial value when the handle is created', () => {
       const context = createContext();
       const initialValue = { values: ['a'] };
-      const session = context.sessionState<{ values: string[] }>('draft', initialValue);
+      const session = context.state.session<{ values: string[] }>('draft', {
+        initial: initialValue,
+      });
 
       initialValue.values.push('b');
 
@@ -316,7 +348,7 @@ describe('Context', () => {
 
     it('does not poison stored state when validation rejects a write', () => {
       const context = createContext();
-      const session = context.sessionState<string>('payload');
+      const session = context.state.session<string>('payload');
 
       session.set('safe');
 
@@ -324,6 +356,21 @@ describe('Context', () => {
         SessionStateValidationError,
       );
       expect(session.get()).toBe('safe');
+    });
+
+    it('allows durable state handles to configure maxRetries', () => {
+      const context = createContext();
+      const durable = context.state.execution<number>('counter', {
+        initial: 0,
+        maxRetries: 1,
+      });
+
+      const request = expectRequest(
+        durable.get().next() as IteratorResult<ContextOperationRequest, number | undefined>,
+        'state-read',
+      );
+
+      expect(request.key).toBe('counter');
     });
   });
 

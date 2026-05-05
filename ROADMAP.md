@@ -2,7 +2,7 @@
 
 A running list of issues, gaps, and follow-ups discovered while reading through the docs. Each item should carry enough context that we can pick it up cold later without re-doing the investigation.
 
-## 1. Type System & Definition Vocabulary 🚨
+## Type System & Definition Vocabulary 🚨
 
 This section unifies the public type surface, ergonomics, and definition helpers. Everything here is pre-1.0 hard rename — no aliases, no codemod, no changelog warnings.
 
@@ -80,16 +80,17 @@ This section unifies the public type surface, ergonomics, and definition helpers
 
   Replace the tag enum with the JSON Schema fragments produced by `searchAttribute()`. `'datetime'` becomes `{ type: 'string', format: 'date-time' }`; `'keyword_list'` becomes `{ type: 'array', items: { type: 'string' } }`. Filter coercion logic in `engine.list` reads the schema fragment instead of the tag. Test that the existing search-attribute behavior (string indexing, date-range filters, array containment) is preserved across the cleanup.
 
-- [ ] **Redesign `SharedState` from first principles: three named primitives with scope in the name.** 🚨
+- [x] **Redesign the durable state API from first principles: a scoped `ctx.state` ladder.** 🚨
 
-  **Severity: high.** The current class promises cross-workflow sharing (the name says so) but its tests demonstrate single-workflow private state — storage keys are `shared:${workflowId}:${stateKey}`. Two workflow runs each passing `ctx.workflowId` write to different keys and share nothing. Users get burned silently.
+  **Severity: high.** The previous API promised cross-workflow sharing but its tests demonstrated single-workflow private state because the storage key included the current workflow id. Two workflow runs each passing `ctx.workflowId` wrote to different keys and shared nothing. Users got burned silently.
 
-  **The redesign — three primitives, scope in the name:**
-  - **`tenantState<T>(key, options?)`** — every workflow in a tenant shares this. Storage key: `state:tenant:${tenantId}:${key}`.
-  - **`workflowTypeState<T>(workflowType, key, options?)`** — every execution of a given workflow type within a tenant shares this. Storage key: `state:type:${tenantId}:${workflowType}:${key}`.
-  - **`ctx.runState<T>(key, options?)`** — between a workflow execution and its children/concurrent branches. Storage key: `state:run:${ctx.workflowId}:${key}`.
+  **The redesign — one namespace, explicit scope ladder:**
+  - **`ctx.state.session<T>(key, options?)`** — checkpoint-local state private to the current workflow execution.
+  - **`ctx.state.execution<T>(key, options?)`** — shared by a parent workflow, durable child workflows, and concurrent branches. Storage key: `state:execution:${ownerWorkflowId}:${key}`.
+  - **`ctx.state.workflow<T>(key, options?)`** — shared by every execution of the current workflow type within a tenant. Storage key: `state:workflow:${tenantId}:${workflowType}:${key}`.
+  - **`ctx.state.tenant<T>(key, options?)`** — shared by every workflow in a tenant. Storage key: `state:tenant:${tenantId}:${key}`.
 
-  Tenant ID resolves from the engine's tenant resolver (or `ctx.tenant`); throws clearly if no tenant context. The current `SharedState` class stays as the underlying primitive (rename to `AtomicState` — more accurate, atomicity via CAS is the actual guarantee) and as the escape hatch for custom scopes.
+  Tenant ID resolves from the engine's tenant resolver (or `ctx.tenant`); throws clearly if no tenant context. Non-session scopes are also available for admin use through `engine.state.execution(ownerWorkflowId, key, options?)`, `engine.state.workflow(tenantId, workflowType, key, options?)`, and `engine.state.tenant(tenantId, key, options?)`. The old class is removed and replaced by `AtomicState` — more accurate, atomicity via CAS is the actual guarantee.
 
   **Other changes:**
   1. **`initial: T` at construction**, not on every call site. `.get()` returns `initial` if no value written; `undefined` if no `initial` and no value written.
@@ -97,11 +98,11 @@ This section unifies the public type surface, ergonomics, and definition helpers
   3. **Convenience methods over `.update()`** (no Proxy — hides asynchrony, breaks compound expressions). Always: `.get()`, `.update(fn)`, `.set(value)`, `.delete()`. For numeric `T`: `.increment(by?)`, `.decrement(by?)`. For object `T`: `.merge(partial)`. For array `T`: `.append(item)`, `.removeFirst()`, `.removeLast()`. CAS-on-delete is the safe form.
   4. **Tests** must prove tenant-wide sharing _and_ tenant isolation _and_ type-scoped sharing _and_ run-scoped sharing. Existing tests pass `'wf-1'` everywhere — single-namespace correctness only.
 
-  Rewrite `documentation/guides/shared-state.md`. Audit `offload`, `archive`, anything else taking a `workflowId` parameter outside a workflow context for the same disease. Pre-release, hard cut.
+  Rewrite the state documentation around `ctx.state`, remove the old session-state method, and audit `offload`, `archive`, anything else taking a `workflowId` parameter outside a workflow context for the same disease. Pre-release, hard cut.
 
   **Out of scope:** Proxy form, cross-process change notifications, automatic lifecycle binding, schema validation on writes (covered by Standard Schema item), Immer-style transactional draft.
 
-## 2. Cross-Process Type Generation
+## Cross-Process Type Generation
 
 - [ ] **Add typed `ctx.run` and `engine.start` via a module-augmentation activity registry.**
 
@@ -142,7 +143,7 @@ This section unifies the public type surface, ergonomics, and definition helpers
 
   Gated by the JSON Schema registry endpoint above.
 
-## 3. Catalog Follow-Ups
+## Catalog Follow-Ups
 
 The transport-neutral operation catalog, dispatch audit, stream/subscription kinds, OpenAPI hydration, AsyncAPI, `/.well-known/api-catalog`, OpenRPC errors, discovery info, and the `mcpExposable` ratchet have landed. The remaining catalog work is about user-defined workflows and activities rather than the built-in server operations.
 
@@ -154,7 +155,7 @@ The transport-neutral operation catalog, dispatch audit, stream/subscription kin
 
   Schemas are opt-in in v1, then ratchet to "required for MCP-exposed workflows" once the MCP server lands. Use Standard Schema for the validator interface (cross-validator interop). This is the foundation for codegen, MCP tool input schemas, per-workflow AsyncAPI payloads, and the `/v1/registry` endpoint.
 
-## 4. MCP Server Support
+## MCP Server Support
 
 Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armorer` owns MCP-as-tool-source). Weft's _workflow_ surface is a separate concern: there's value in exposing Weft workflows as MCP tools/resources to external MCP clients (Claude Desktop, Cursor, Anthropic SDK).
 
@@ -197,7 +198,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
 
   Once the server exists, add an `x-weft-mcp` extension on the OpenRPC document plus a `/.well-known/mcp.json` route. Native MCP `tools/list` is the canonical answer for live introspection; the static catalog is for build-time consumers. Lean minimal — extension on OpenRPC + live `tools/list` is enough; separate static catalog is nice-to-have. Gated by the MCP server item.
 
-## 5. Polyglot Activity Workers (Path A)
+## Polyglot Activity Workers (Path A)
 
 **Architectural decision:** workflows are TypeScript-only by design (generators don't serialize across processes); activities are polyglot via the `RemoteWorker` wire protocol.
 
@@ -228,7 +229,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
 
   Without a documented ADR, a future contributor proposes a Python workflow runtime, no one remembers why we said no, and the codebase fragments. The ADR is the durable answer.
 
-## 6. Agent Bureau Compatibility 🚨
+## Agent Bureau Compatibility 🚨
 
 **Architectural commitment:** Agent Bureau (`/Users/stevekinney/Developer/agent-bureau`) consumes Weft, never the reverse. **Dependency arrow: Agent Bureau → Weft. Hard structural constraint.** Weft cannot import from `armorer`, `conversationalist`, or `interoperability` — `devDependencies` only, for type-compat tests. The two items below scope the Weft-side design that lets Agent Bureau extend Weft's narrow contracts as structural supersets.
 
@@ -283,7 +284,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
 
   Lands with or before the tool-types compat item. Both are pre-1.0; this locks in Weft's storage interface as the canonical shape for the agent ecosystem.
 
-## 7. Documentation
+## Documentation
 
 - [ ] **Update the Service Worker guide to lead with `setupServiceWorker()`.**
 

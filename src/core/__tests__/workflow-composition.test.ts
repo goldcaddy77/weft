@@ -176,6 +176,34 @@ describe('workflow composition operators', () => {
     );
   });
 
+  it('child workflow reuse does not cross execution-state owners', async () => {
+    const engine = new TestEngine();
+
+    async function* echoStage(_ctx: WorkflowContext, input: unknown) {
+      return { echoed: input };
+    }
+
+    engine.register('echo-stage', echoStage);
+    engine.register('first-execution-parent', async function* (ctx: WorkflowContext) {
+      return yield* ctx.pipe([{ type: echoStage, options: { id: 'shared-child' } }], 'same');
+    });
+    engine.register('second-execution-parent', async function* (ctx: WorkflowContext) {
+      return yield* ctx.pipe([{ type: echoStage, options: { id: 'shared-child' } }], 'same');
+    });
+
+    const firstHandle = await engine.start('first-execution-parent', null, {
+      id: 'first-parent',
+    });
+    await expect(firstHandle.result()).resolves.toEqual({ echoed: 'same' });
+
+    const secondHandle = await engine.start('second-execution-parent', null, {
+      id: 'second-parent',
+    });
+    await expect(secondHandle.result()).rejects.toThrow(
+      'Child workflow id collision for "shared-child" does not match the requested child workflow',
+    );
+  });
+
   it('Track 7c: ctx.map honors the concurrency limit while keeping input order', async () => {
     const engine = new TestEngine({ startTime: 0 });
 
@@ -377,23 +405,22 @@ describe('workflow composition operators', () => {
     }
 
     engine.register('echo-stage', echoStage);
-    engine.register('first-parent', async function* (ctx: WorkflowContext) {
-      return yield* ctx.pipe([{ type: echoStage, options: { id: 'shared-child' } }], {
+    engine.register('same-execution-parent', async function* (ctx: WorkflowContext) {
+      const first = yield* ctx.pipe([{ type: echoStage, options: { id: 'shared-child' } }], {
         alpha: 1,
         beta: 2,
       });
-    });
-    engine.register('second-parent', async function* (ctx: WorkflowContext) {
-      return yield* ctx.pipe([{ type: echoStage, options: { id: 'shared-child' } }], {
+      const second = yield* ctx.pipe([{ type: echoStage, options: { id: 'shared-child' } }], {
         beta: 2,
         alpha: 1,
       });
+      return { first, second };
     });
 
-    const firstHandle = await engine.start('first-parent', null);
-    await expect(firstHandle.result()).resolves.toEqual({ alpha: 1, beta: 2 });
-
-    const secondHandle = await engine.start('second-parent', null);
-    await expect(secondHandle.result()).resolves.toEqual({ alpha: 1, beta: 2 });
+    const handle = await engine.start('same-execution-parent', null);
+    await expect(handle.result()).resolves.toEqual({
+      first: { alpha: 1, beta: 2 },
+      second: { alpha: 1, beta: 2 },
+    });
   });
 });

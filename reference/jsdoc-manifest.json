@@ -1069,6 +1069,250 @@
       "classification": "example-required"
     },
     {
+      "sourceFile": "src/core/atomic-state-events.ts",
+      "sourceName": "AtomicStateChangeEvent",
+      "kind": "value",
+      "subKind": "class",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "AtomicStateChangeEvent",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/atomic-state-events.ts",
+      "sourceName": "AtomicStateCommitResult",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "AtomicStateCommitResult",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/atomic-state-events.ts",
+      "sourceName": "AtomicStateConflictEvent",
+      "kind": "value",
+      "subKind": "class",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "AtomicStateConflictEvent",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/atomic-state-events.ts",
+      "sourceName": "AtomicStateEvent",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "AtomicStateEvent",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/atomic-state-events.ts",
+      "sourceName": "AtomicStateExhaustedEvent",
+      "kind": "value",
+      "subKind": "class",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "AtomicStateExhaustedEvent",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/atomic-state-events.ts",
+      "sourceName": "AtomicStateObserver",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "AtomicStateObserver",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/atomic-state-events.ts",
+      "sourceName": "AtomicStateOptions",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "AtomicStateOptions",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/atomic-state-events.ts",
+      "sourceName": "AtomicStateScope",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "AtomicStateScope",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/atomic-state-events.ts",
+      "sourceName": "AtomicStateSnapshot",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "AtomicStateSnapshot",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/atomic-state-events.ts",
+      "sourceName": "AtomicStateSubscription",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "AtomicStateSubscription",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/atomic-state-events.ts",
+      "sourceName": "OBSERVABLE_SYMBOL",
+      "kind": "value",
+      "subKind": "const",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "OBSERVABLE_SYMBOL",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/atomic-state-events.ts",
+      "sourceName": "SleepFunction",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "SleepFunction",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/atomic-state.ts",
+      "sourceName": "AtomicState",
+      "kind": "value",
+      "subKind": "class",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "AtomicState",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/atomic-state.ts",
+      "sourceName": "AtomicStateConflictError",
+      "kind": "value",
+      "subKind": "class",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "AtomicStateConflictError",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/atomic-state.ts",
+      "sourceName": "atomicStateDataKey",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/atomic-state.ts",
+      "sourceName": "atomicStateVersionKey",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/atomic-state.ts",
+      "sourceName": "buildAtomicStateCommitOperations",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/atomic-state.ts",
+      "sourceName": "commitAtomicStateDelete",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/atomic-state.ts",
+      "sourceName": "commitAtomicStateValue",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/atomic-state.ts",
+      "sourceName": "readAtomicStateSnapshot",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
       "sourceFile": "src/core/checkpoint/lifecycle.ts",
       "sourceName": "advanceCheckpoint",
       "kind": "value",
@@ -1624,6 +1868,20 @@
           "importPath": "weft",
           "exportName": "Engine",
           "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/engine/index.ts",
+      "sourceName": "EngineStateNamespace",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "EngineStateNamespace",
+          "kind": "type"
         }
       ],
       "classification": "example-required"
@@ -2343,50 +2601,6 @@
       "sourceName": "validateEncodedValueSize",
       "kind": "value",
       "subKind": "function",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/core/shared-state.ts",
-      "sourceName": "SharedState",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "SharedState",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/core/shared-state.ts",
-      "sourceName": "SharedStateConflictError",
-      "kind": "value",
-      "subKind": "class",
-      "publicFaces": [
-        {
-          "importPath": "weft",
-          "exportName": "SharedStateConflictError",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/core/shared-state.ts",
-      "sourceName": "SharedStateOptions",
-      "kind": "type",
-      "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/core/shared-state.ts",
-      "sourceName": "SleepFunction",
-      "kind": "type",
-      "subKind": "type-alias",
       "publicFaces": [],
       "classification": "not-public"
     },
@@ -3340,6 +3554,34 @@
     },
     {
       "sourceFile": "src/core/types/state.ts",
+      "sourceName": "WorkflowAtomicState",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "WorkflowAtomicState",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/state.ts",
+      "sourceName": "WorkflowAtomicStateOptions",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "WorkflowAtomicStateOptions",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/core/types/state.ts",
       "sourceName": "WorkflowEvent",
       "kind": "type",
       "subKind": "interface",
@@ -3382,6 +3624,14 @@
     },
     {
       "sourceFile": "src/core/types/state.ts",
+      "sourceName": "WorkflowSessionStateOptions",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/state.ts",
       "sourceName": "WorkflowState",
       "kind": "type",
       "subKind": "interface",
@@ -3393,6 +3643,20 @@
         }
       ],
       "classification": "prose-only"
+    },
+    {
+      "sourceFile": "src/core/types/state.ts",
+      "sourceName": "WorkflowStateNamespace",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "WorkflowStateNamespace",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types/state.ts",
