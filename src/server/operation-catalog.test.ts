@@ -1197,4 +1197,184 @@ describe('createOperationRegistry', () => {
     const registry = createOperationRegistry([op1, op2]);
     expect(registry.list().map((op) => op.name)).toEqual(['weft.test.a', 'weft.test.b']);
   });
+
+  describe('kind / eventSchema invariants', () => {
+    // Closes a Codex finding from round 3: the discriminated union on
+    // OperationDefinition prevents callers using `defineOperation` from
+    // declaring a streaming op without `eventSchema`, but a hand-rolled
+    // RegistrableOperation literal can bypass that check. The registry
+    // must reject the malformed shape at construction so the failure
+    // surfaces immediately, not on the first request.
+
+    it('rejects kind: stream without eventSchema', () => {
+      const malformed = makeOp({
+        name: 'weft.test.streamnoschema',
+        kind: 'stream',
+        inputSchema: z.object({}),
+        outputSchema: z.object({}),
+        // eventSchema intentionally omitted — the registry must catch this.
+        invoke: async () => {
+          async function* iter() {}
+          return iter();
+        },
+      });
+      expect(() => createOperationRegistry([malformed])).toThrow(/kind: 'stream'.*no eventSchema/);
+    });
+
+    it('rejects kind: subscription without eventSchema', () => {
+      const malformed = makeOp({
+        name: 'weft.test.subscriptionnoschema',
+        kind: 'subscription',
+        inputSchema: z.object({}),
+        outputSchema: z.object({ subscriptionId: z.string(), cursor: z.string() }),
+        invoke: async () => ({
+          envelope: { subscriptionId: 's', cursor: 'c' },
+          iterable: (async function* () {})(),
+          close: async () => {},
+        }),
+      });
+      expect(() => createOperationRegistry([malformed])).toThrow(
+        /kind: 'subscription'.*no eventSchema/,
+      );
+    });
+
+    it('rejects kind: unary with an eventSchema (or kind absent + eventSchema)', () => {
+      const malformed = makeOp({
+        name: 'weft.test.unarywitheventschema',
+        // kind defaults to 'unary' when omitted
+        eventSchema: z.unknown(),
+        inputSchema: z.object({}),
+        outputSchema: z.object({}),
+        invoke: async () => ({}),
+      });
+      expect(() => createOperationRegistry([malformed])).toThrow(
+        /kind: 'unary'.*declares an eventSchema/,
+      );
+    });
+
+    it('accepts kind: stream with eventSchema', () => {
+      const wellFormed = makeOp({
+        name: 'weft.test.streamok',
+        kind: 'stream',
+        eventSchema: z.object({ chunk: z.string() }),
+        inputSchema: z.object({}),
+        outputSchema: z.object({}),
+        invoke: async () => {
+          async function* iter() {
+            yield { chunk: 'a' };
+          }
+          return iter();
+        },
+      });
+      expect(() => createOperationRegistry([wellFormed])).not.toThrow();
+    });
+  });
+});
+
+describe('classifyEngineError — producibleFaults enforcement', () => {
+  it('strict mode: undeclared fault becomes EngineFailure with the diagnostic message', () => {
+    // Default test environment is strict (NODE_ENV !== 'production').
+    const fault: OperationFault = {
+      code: 'NotFound',
+      message: 'workflow "wf-1" not found',
+      data: { resource: 'workflow' },
+    };
+    const result = classifyEngineError(fault, {
+      name: 'weft.test.legacydirectthrow',
+      // no producibleFaults declaration
+    });
+    expect(result.code).toBe('EngineFailure');
+    expect(result.message).toContain('weft.test.legacydirectthrow');
+    expect(result.message).toContain('NotFound');
+  });
+
+  it('strict mode: declared fault passes through unchanged', () => {
+    const fault: OperationFault = {
+      code: 'Conflict',
+      message: 'workflow already exists',
+      data: { reason: 'workflow already exists' },
+    };
+    const result = classifyEngineError(fault, {
+      name: 'weft.test.declared',
+      producibleFaults: ['Conflict'],
+    });
+    expect(result.code).toBe('Conflict');
+    expect(result.message).toBe('workflow already exists');
+  });
+
+  it('strict mode: universal-default fault passes through unchanged without explicit declaration', () => {
+    const fault: OperationFault = {
+      code: 'Unauthorized',
+      message: 'no token',
+      data: { reason: 'no token' },
+    };
+    const result = classifyEngineError(fault, {
+      name: 'weft.test.universal',
+      // Unauthorized is in the universal-default set (Unauthorized,
+      // Forbidden, InvalidParams, EngineFailure) — no declaration needed.
+    });
+    expect(result.code).toBe('Unauthorized');
+  });
+
+  it('production mode: undeclared fault preserved on the wire AND console.warn fires', () => {
+    const originalNodeEnv = Bun.env['NODE_ENV'];
+    const originalStrict = Bun.env['WEFT_STRICT_FAULTS'];
+    Bun.env['NODE_ENV'] = 'production';
+    delete Bun.env['WEFT_STRICT_FAULTS'];
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      const fault: OperationFault = {
+        code: 'RateLimited',
+        message: 'slow down',
+        data: { retryAfterMs: 100 },
+      };
+      const result = classifyEngineError(fault, {
+        name: 'weft.test.prodlegacy',
+      });
+      // Production preserves the original fault on the wire so clients
+      // keep their actionable semantics.
+      expect(result.code).toBe('RateLimited');
+      expect(result.message).toBe('slow down');
+      // ...AND the warning fires for monitoring.
+      const matching = warnings.filter(
+        (w) => w.includes('weft.test.prodlegacy') && w.includes('RateLimited'),
+      );
+      expect(matching).toHaveLength(1);
+    } finally {
+      console.warn = originalWarn;
+      if (originalNodeEnv !== undefined) Bun.env['NODE_ENV'] = originalNodeEnv;
+      else delete Bun.env['NODE_ENV'];
+      if (originalStrict !== undefined) Bun.env['WEFT_STRICT_FAULTS'] = originalStrict;
+    }
+  });
+
+  it('WEFT_STRICT_FAULTS=1 forces strict behavior even when NODE_ENV=production', () => {
+    const originalNodeEnv = Bun.env['NODE_ENV'];
+    const originalStrict = Bun.env['WEFT_STRICT_FAULTS'];
+    Bun.env['NODE_ENV'] = 'production';
+    Bun.env['WEFT_STRICT_FAULTS'] = '1';
+    try {
+      const fault: OperationFault = {
+        code: 'NotFound',
+        message: 'gone',
+        data: { resource: 'thing' },
+      };
+      const result = classifyEngineError(fault, {
+        name: 'weft.test.forcestrict',
+      });
+      // Strict mode applies: result is EngineFailure with the diagnostic
+      // message, NOT the original NotFound.
+      expect(result.code).toBe('EngineFailure');
+      expect(result.message).toContain('weft.test.forcestrict');
+    } finally {
+      if (originalNodeEnv !== undefined) Bun.env['NODE_ENV'] = originalNodeEnv;
+      else delete Bun.env['NODE_ENV'];
+      if (originalStrict !== undefined) Bun.env['WEFT_STRICT_FAULTS'] = originalStrict;
+      else delete Bun.env['WEFT_STRICT_FAULTS'];
+    }
+  });
 });

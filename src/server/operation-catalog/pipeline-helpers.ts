@@ -122,7 +122,22 @@ export function classifyEngineError(
   operation?: { name: string; producibleFaults?: ReadonlyArray<string> },
 ): OperationFault {
   if (isOperationFault(error)) {
-    enforceProducibleFaults(operation, error.code);
+    try {
+      enforceProducibleFaults(operation, error.code);
+    } catch (enforcementError) {
+      if (isUndeclaredFaultError(enforcementError)) {
+        // Strict mode caught an undeclared fault. Surface as
+        // EngineFailure with the diagnostic message so the test runner
+        // can assert against `result.fault.message` and the test fails
+        // loudly instead of silently passing through the original code.
+        return {
+          code: 'EngineFailure',
+          message: enforcementError.message,
+          data: {},
+        };
+      }
+      throw enforcementError;
+    }
     return error;
   }
   if (error instanceof WorkflowAlreadyExistsError) {
@@ -145,6 +160,33 @@ export function classifyEngineError(
   return { code: 'EngineFailure', message: 'internal error', data: {} };
 }
 
+/**
+ * Sentinel thrown by `enforceProducibleFaults` in strict mode when an
+ * operation raises a fault code that isn't in its `producibleFaults`
+ * declaration. The dispatcher catches this in `executeOperation` and
+ * surfaces it as a generic `EngineFailure` so test failures point at the
+ * declaration mismatch rather than silently passing through.
+ */
+class UndeclaredFaultError extends Error {
+  readonly operationName: string;
+  readonly code: string;
+
+  constructor(operationName: string, code: string) {
+    super(
+      `[weft] Operation "${operationName}" raised undeclared fault "${code}". ` +
+        "Add it to the operation's `producibleFaults` array or migrate the throw to " +
+        '`raiseFault(operation, fault)`.',
+    );
+    this.name = 'UndeclaredFaultError';
+    this.operationName = operationName;
+    this.code = code;
+  }
+}
+
+export function isUndeclaredFaultError(value: unknown): value is UndeclaredFaultError {
+  return value instanceof UndeclaredFaultError;
+}
+
 function enforceProducibleFaults(
   operation: { name: string; producibleFaults?: ReadonlyArray<string> } | undefined,
   code: string,
@@ -154,19 +196,21 @@ function enforceProducibleFaults(
   const declared = operation.producibleFaults;
   if (declared !== undefined && declared.includes(code)) return;
 
-  // The operation produced a fault it didn't declare. In test/dev this is
-  // a developer-actionable violation; in production we log so it shows up
-  // in monitoring without breaking client contract.
   const isStrict = Bun.env['WEFT_STRICT_FAULTS'] === '1' || Bun.env['NODE_ENV'] !== 'production';
-  const message =
-    `[weft] Operation "${operation.name}" raised undeclared fault "${code}". ` +
-    "Add it to the operation's `producibleFaults` array or migrate the throw to " +
-    '`raiseFault(operation, fault)`.';
   if (isStrict) {
-    console.error(message);
-  } else {
-    console.warn(message);
+    // Strict mode: throw a hard error so the regression is observable
+    // through the test framework's normal failure path. The dispatcher
+    // catches `UndeclaredFaultError` separately so the message reaches
+    // test output instead of being swallowed as a bare `EngineFailure`.
+    throw new UndeclaredFaultError(operation.name, code);
   }
+  // Production: log only. Original fault is preserved on the wire so
+  // clients keep their actionable RateLimited / Conflict semantics.
+  console.warn(
+    `[weft] Operation "${operation.name}" raised undeclared fault "${code}". ` +
+      "Add it to the operation's `producibleFaults` array or migrate the throw to " +
+      '`raiseFault(operation, fault)`.',
+  );
 }
 
 function classifyErrorMessage(error: Error): OperationFault {

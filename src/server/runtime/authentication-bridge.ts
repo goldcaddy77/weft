@@ -28,6 +28,7 @@ type ServerFetchOptions = {
   metricsCollector?: MetricsCollector;
   discoveryInfo?: import('../discovery-info.ts').DiscoveryInfo;
   publicOrigin?: string;
+  trustedHosts?: ReadonlyArray<string>;
 };
 
 export function deriveSupportedOpenApiSecuritySchemes(
@@ -173,6 +174,7 @@ function buildHandlerOptions(
       : {}),
     ...(options.discoveryInfo !== undefined ? { discoveryInfo: options.discoveryInfo } : {}),
     ...(options.publicOrigin !== undefined ? { publicOrigin: options.publicOrigin } : {}),
+    ...(options.trustedHosts !== undefined ? { trustedHosts: options.trustedHosts } : {}),
     operationRegistry: context.liveOperationRegistry,
     restBindings: context.liveRestBindings,
     supportedAuthenticationSchemes: context.supportedAuthenticationSchemes,

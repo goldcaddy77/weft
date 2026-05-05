@@ -131,13 +131,19 @@ export interface ServeOptions {
    */
   discoveryInfo?: DiscoveryInfo;
   /**
-   * Optional explicit public origin (e.g. `https://api.example.com`) used
-   * when emitting absolute URLs in `/.well-known/api-catalog`. Takes
-   * precedence over header-based origin derivation. Recommended in
-   * production to avoid trusting attacker-controlled `Host` /
-   * `X-Forwarded-Proto` headers.
+   * Explicit public origin used by `/.well-known/api-catalog` (e.g.
+   * `https://api.example.com`). Recommended in production. Either this
+   * or `trustedHosts` MUST be set or the catalog route returns 503.
    */
   publicOrigin?: string;
+  /**
+   * Allowlist of `Host` values trusted to source absolute URLs in
+   * `/.well-known/api-catalog`. Required (with `publicOrigin` as the
+   * alternative) in production — Bun.serve() resolves `request.url`
+   * from the incoming Host header so attackers can otherwise poison
+   * the discovery URLs.
+   */
+  trustedHosts?: ReadonlyArray<string>;
 }
 
 /**

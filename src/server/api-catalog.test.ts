@@ -157,4 +157,51 @@ describe('API catalog linkset', () => {
     const matching = warnings.filter((line) => line.includes('publicOrigin'));
     expect(matching).toHaveLength(0);
   });
+
+  it('returns 503 in production when neither publicOrigin nor trustedHosts is configured', async () => {
+    // Closes Codex round-3 finding: a one-shot warning is not mitigation.
+    // Bun.serve() resolves request.url from the Host header, so without
+    // publicOrigin or trustedHosts the route would emit attacker-supplied
+    // URLs. In production the route refuses to serve.
+    engine = createEngine();
+    const originalNodeEnv = Bun.env['NODE_ENV'];
+    Bun.env['NODE_ENV'] = 'production';
+    try {
+      const response = await handleRequest(
+        new Request('https://attacker.example/.well-known/api-catalog'),
+        engine,
+      );
+      expect(response.status).toBe(503);
+      const body = (await response.json()) as { error?: string };
+      expect(body.error).toContain('publicOrigin');
+      expect(body.error).toContain('trustedHosts');
+    } finally {
+      if (originalNodeEnv !== undefined) Bun.env['NODE_ENV'] = originalNodeEnv;
+      else delete Bun.env['NODE_ENV'];
+    }
+  });
+
+  it('serves the catalog when trustedHosts contains the request Host', async () => {
+    engine = createEngine();
+    const response = await handleRequest(
+      new Request('https://api.example.com/.well-known/api-catalog'),
+      engine,
+      { trustedHosts: ['api.example.com'] },
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { linkset?: { anchor?: string }[] };
+    expect(body.linkset?.[0]?.anchor).toBe('https://api.example.com');
+  });
+
+  it('returns 421 when the request Host is not in the trustedHosts allowlist', async () => {
+    engine = createEngine();
+    const response = await handleRequest(
+      new Request('https://attacker.example/.well-known/api-catalog'),
+      engine,
+      { trustedHosts: ['api.example.com'] },
+    );
+    expect(response.status).toBe(421);
+    const body = (await response.json()) as { error?: string };
+    expect(body.error).toContain('trustedHosts');
+  });
 });

@@ -105,9 +105,22 @@ export interface HandlerOptions {
   /**
    * Optional explicit public origin used when emitting absolute URLs in
    * `/.well-known/api-catalog`. Recommended in production to avoid trusting
-   * attacker-controlled `Host` / `X-Forwarded-Proto` headers.
+   * attacker-controlled `Host` / `X-Forwarded-Proto` headers. Takes
+   * precedence over `trustedHosts`.
    */
   publicOrigin?: string;
+  /**
+   * Optional allowlist of `Host` values that are trusted as the source of
+   * absolute service-desc URLs in `/.well-known/api-catalog`. The route
+   * derives the origin from the incoming request and rejects (421
+   * Misdirected Request) if the resolved Host is not in this list.
+   *
+   * Either `publicOrigin` OR `trustedHosts` must be configured in
+   * production deployments — without one, the route returns 503 because
+   * `Bun.serve()` trusts the Host header in `request.url` and an attacker
+   * can otherwise poison the discovery URLs.
+   */
+  trustedHosts?: ReadonlyArray<string>;
   /**
    * Optional pipeline-trace observer. **Internal test seam** used by the
    * dispatch-audit suite to prove every transport drives the full
@@ -153,19 +166,50 @@ export const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   getMetrics: async ({ options }) =>
     handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),
   apiCatalog: async ({ request, options }) => {
-    // Prefer an explicit operator-supplied origin over header-derived
-    // values to avoid Host-header injection. When publicOrigin is unset,
-    // fall back to deriving the origin from the incoming request and warn
-    // (once per process) — header-derived origins are vulnerable to
-    // Host-header poisoning behind reverse proxies.
-    let origin: string;
+    // Three-tier origin resolution:
+    //   1. publicOrigin explicit → use verbatim (safe, operator-controlled).
+    //   2. trustedHosts allowlist → derive from request, validate Host.
+    //   3. Neither set → 503 in production (Bun.serve trusts the Host
+    //      header in request.url, so header-poisoning is real); warn-and-
+    //      fall-back in dev so `serve({ engine })` quickstarts still work.
     if (options?.publicOrigin !== undefined) {
-      origin = options.publicOrigin;
-    } else {
-      warnIfPublicOriginUnset();
-      origin = originFromRequest(request);
+      const body = generateApiCatalog({ origin: options.publicOrigin });
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/linkset+json' },
+      });
     }
-    const body = generateApiCatalog({ origin });
+    const requestOrigin = originFromRequest(request);
+    if (options?.trustedHosts !== undefined) {
+      const requestHost = new URL(requestOrigin).host;
+      if (!options.trustedHosts.includes(requestHost)) {
+        return new Response(
+          JSON.stringify({ error: 'request Host is not in the configured trustedHosts allowlist' }),
+          { status: 421, headers: { 'Content-Type': 'application/json; charset=utf-8' } },
+        );
+      }
+      const body = generateApiCatalog({ origin: requestOrigin });
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/linkset+json' },
+      });
+    }
+    // Neither publicOrigin nor trustedHosts configured. In production
+    // refuse to serve absolute discovery URLs because Bun.serve resolves
+    // request.url from the (attacker-controllable) Host header. In
+    // development, fall back to the request origin and warn loudly so
+    // operators see the misconfiguration in logs before they ship.
+    if (Bun.env['NODE_ENV'] === 'production') {
+      return new Response(
+        JSON.stringify({
+          error:
+            "/.well-known/api-catalog refuses to emit absolute service-desc URLs without one of `publicOrigin` or `trustedHosts` configured. Set `serve({ publicOrigin: 'https://api.example.com' })` or `serve({ trustedHosts: ['api.example.com'] })`.",
+        }),
+        { status: 503, headers: { 'Content-Type': 'application/json; charset=utf-8' } },
+      );
+    }
+    warnIfPublicOriginUnset();
+    const body = generateApiCatalog({ origin: requestOrigin });
     return new Response(JSON.stringify(body), {
       status: 200,
       headers: { 'Content-Type': 'application/linkset+json' },
