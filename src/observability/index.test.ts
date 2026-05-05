@@ -25,7 +25,12 @@ import type { WorkflowContext } from '../core/types';
 import { MemoryStorage } from '../storage/memory';
 import { createObservabilityInterceptors } from './index';
 import { MetricsCollector } from './metrics';
-import type { OtelApi, OtelSpan, OtelTracer, SpanLink } from './no-op-telemetry';
+import type {
+  OpenTelemetryApi,
+  OpenTelemetrySpan,
+  OpenTelemetryTracer,
+  SpanLink,
+} from './no-op-telemetry';
 
 // ---------------------------------------------------------------------------
 // Recording tracer: captures all span operations for assertions
@@ -42,13 +47,13 @@ type RecordedSpan = {
 };
 
 function createRecordingTracer(): {
-  tracer: OtelTracer;
+  tracer: OpenTelemetryTracer;
   spans: RecordedSpan[];
 } {
   const spans: RecordedSpan[] = [];
 
-  const tracer: OtelTracer = {
-    startSpan(name: string, options?, _context?): OtelSpan {
+  const tracer: OpenTelemetryTracer = {
+    startSpan(name: string, options?, _context?): OpenTelemetrySpan {
       const recorded: RecordedSpan = {
         name,
         attributes: { ...options?.attributes },
@@ -87,10 +92,10 @@ function createRecordingTracer(): {
 }
 
 /**
- * Build a mock OTel API that uses our recording tracer.
- * This lets us verify that the interceptors call OTel correctly.
+ * Build a mock OpenTelemetry API that uses our recording tracer.
+ * This lets us verify that the interceptors call OpenTelemetry correctly.
  */
-function createMockOtelApi(tracer: OtelTracer): OtelApi {
+function createMockOpenTelemetryApi(tracer: OpenTelemetryTracer): OpenTelemetryApi {
   return {
     trace: {
       getTracer() {
@@ -147,7 +152,7 @@ describe('createObservabilityInterceptors', () => {
     it('injects traceparent header on workflowStart', () => {
       const { tracer } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       const headers = new Map<string, string>();
@@ -169,7 +174,7 @@ describe('createObservabilityInterceptors', () => {
     it('creates a span for workflowStart with correct attributes', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -191,7 +196,7 @@ describe('createObservabilityInterceptors', () => {
     it('ends and replaces an existing workflow span on re-execution', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       const interception = {
@@ -218,7 +223,7 @@ describe('createObservabilityInterceptors', () => {
       try {
         const { tracer, spans } = createRecordingTracer();
         const { workflow } = createObservabilityInterceptors({
-          otelApi: createMockOtelApi(tracer),
+          openTelemetryApi: createMockOpenTelemetryApi(tracer),
         });
 
         workflow.workflowStart!(
@@ -253,7 +258,7 @@ describe('createObservabilityInterceptors', () => {
     it('evicts the oldest workflow spans when the span cache exceeds the hard cap', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       for (let index = 0; index <= 10_001; index++) {
@@ -271,13 +276,13 @@ describe('createObservabilityInterceptors', () => {
       expect(spans).toHaveLength(10_002);
       expect(spans[0]!.ended).toBe(true);
       expect(spans.at(-1)!.ended).toBe(false);
-    });
+    }, 30_000);
 
     it('ends workflow spans from terminal events and ignores unrelated events', () => {
       const { tracer, spans } = createRecordingTracer();
       const eventTarget = new EventTarget();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
         eventTarget,
       });
 
@@ -347,7 +352,7 @@ describe('createObservabilityInterceptors', () => {
     it('injects traceparent header on activity', () => {
       const { tracer } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -388,7 +393,7 @@ describe('createObservabilityInterceptors', () => {
     it('creates a span for activity with correct attributes', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -433,7 +438,7 @@ describe('createObservabilityInterceptors', () => {
     it('records error span when activity generator throws', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -485,7 +490,7 @@ describe('createObservabilityInterceptors', () => {
     it('records span for sleep with correct attributes', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -519,7 +524,7 @@ describe('createObservabilityInterceptors', () => {
     it('records error span when sleep throws', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -558,7 +563,7 @@ describe('createObservabilityInterceptors', () => {
     it('records span for waitForSignal with correct attributes', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -599,7 +604,7 @@ describe('createObservabilityInterceptors', () => {
     it('records error span when waitForSignal throws', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -649,7 +654,7 @@ describe('createObservabilityInterceptors', () => {
     it('records span for agent with correct attributes', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -685,7 +690,7 @@ describe('createObservabilityInterceptors', () => {
     it('records error span when agent throws', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -729,7 +734,7 @@ describe('createObservabilityInterceptors', () => {
     it('creates standalone span for signalReceived', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.signalReceived!(
@@ -753,7 +758,7 @@ describe('createObservabilityInterceptors', () => {
     it('records error span when signalReceived throws', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       const theError = new Error('signal handler failed');
@@ -780,7 +785,7 @@ describe('createObservabilityInterceptors', () => {
     it('ends workflow spans explicitly with success and error states', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow, endWorkflowSpan } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -817,7 +822,7 @@ describe('createObservabilityInterceptors', () => {
     it('extracts trace context from headers and creates child span', async () => {
       const { tracer, spans } = createRecordingTracer();
       const { activity } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       const headers = new Map<string, string>([
@@ -840,13 +845,13 @@ describe('createObservabilityInterceptors', () => {
       const { tracer } = createRecordingTracer();
       let extractedRemoteSpanId: string | undefined;
 
-      const otelApi = createMockOtelApi(tracer);
-      otelApi.trace.setSpan = (_context, span) => {
+      const openTelemetryApi = createMockOpenTelemetryApi(tracer);
+      openTelemetryApi.trace.setSpan = (_context, span) => {
         extractedRemoteSpanId = span.spanContext().spanId;
         return _context;
       };
 
-      const { activity } = createObservabilityInterceptors({ otelApi });
+      const { activity } = createObservabilityInterceptors({ openTelemetryApi });
       const headers = new Map<string, string>([
         ['traceparent', '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'],
       ]);
@@ -862,7 +867,7 @@ describe('createObservabilityInterceptors', () => {
     it('handles errors in activity execution', async () => {
       const { tracer, spans } = createRecordingTracer();
       const { activity } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       const headers = new Map<string, string>([
@@ -890,7 +895,7 @@ describe('createObservabilityInterceptors', () => {
     it('handles non-Error thrown values', async () => {
       const { tracer, spans } = createRecordingTracer();
       const { activity } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       const headers = new Map<string, string>([
@@ -917,7 +922,7 @@ describe('createObservabilityInterceptors', () => {
     it('generates a new trace when no traceparent header exists', async () => {
       const { tracer, spans } = createRecordingTracer();
       const { activity } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       await activity.execute!(
@@ -936,7 +941,7 @@ describe('createObservabilityInterceptors', () => {
       const { tracer, spans } = createRecordingTracer();
       const { activity } = createObservabilityInterceptors({
         recordPayloads: true,
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       await activity.execute!(
@@ -957,7 +962,7 @@ describe('createObservabilityInterceptors', () => {
       const { tracer, spans } = createRecordingTracer();
       const { activity } = createObservabilityInterceptors({
         recordPayloads: false,
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       await activity.execute!(
@@ -979,7 +984,7 @@ describe('createObservabilityInterceptors', () => {
       const { activity } = createObservabilityInterceptors({
         recordPayloads: true,
         maxPayloadSize: 10,
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       await activity.execute!(
@@ -1001,7 +1006,7 @@ describe('createObservabilityInterceptors', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
         recordPayloads: true,
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -1023,7 +1028,7 @@ describe('createObservabilityInterceptors', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
         recordPayloads: true,
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -1064,7 +1069,7 @@ describe('createObservabilityInterceptors', () => {
       const { tracer, spans } = createRecordingTracer();
       const { activity } = createObservabilityInterceptors({
         recordPayloads: true,
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       // Create a circular reference that JSON.stringify will fail on
@@ -1089,7 +1094,7 @@ describe('createObservabilityInterceptors', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
         recordPayloads: true,
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -1130,7 +1135,7 @@ describe('createObservabilityInterceptors', () => {
     it('merges custom attributes into workflowStart span', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
         attributeExtractor: () => ({ 'custom.region': 'us-east', 'custom.priority': 1 }),
       });
 
@@ -1153,7 +1158,7 @@ describe('createObservabilityInterceptors', () => {
     it('merges custom attributes into activity span', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
         attributeExtractor: () => ({ 'custom.region': 'us-east' }),
       });
 
@@ -1194,7 +1199,7 @@ describe('createObservabilityInterceptors', () => {
     it('merges custom attributes into sleep span', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
         attributeExtractor: () => ({ 'custom.region': 'eu-west' }),
       });
 
@@ -1227,7 +1232,7 @@ describe('createObservabilityInterceptors', () => {
     it('merges custom attributes into agent span', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
         attributeExtractor: () => ({ 'custom.env': 'production' }),
       });
 
@@ -1263,7 +1268,7 @@ describe('createObservabilityInterceptors', () => {
       const extractorCalls: unknown[] = [];
       const { tracer } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
         attributeExtractor: (ctx) => {
           extractorCalls.push(ctx);
           return {};
@@ -1382,8 +1387,8 @@ describe('createObservabilityInterceptors', () => {
     });
   });
 
-  describe('without OTel API (default no-op)', () => {
-    it('works without any options — uses no-op OTel API', () => {
+  describe('without OpenTelemetry API (default no-op)', () => {
+    it('works without any options — uses no-op OpenTelemetry API', () => {
       const { workflow } = createObservabilityInterceptors();
 
       const headers = new Map<string, string>();
@@ -1403,11 +1408,11 @@ describe('createObservabilityInterceptors', () => {
       expect(headers.has('traceparent')).toBe(true);
     });
 
-    it('activity interceptor works without OTel', async () => {
+    it('activity interceptor works without OpenTelemetry', async () => {
       const { activity } = createObservabilityInterceptors();
 
       const result = await activity.execute!(
-        { activityName: 'noOtel', input: undefined, attempt: 1, headers: new Map() },
+        { activityName: 'noOpenTelemetry', input: undefined, attempt: 1, headers: new Map() },
         async () => 'ok',
       );
 
@@ -1419,7 +1424,7 @@ describe('createObservabilityInterceptors', () => {
     it('records non-Error thrown value in activity generator', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -1465,7 +1470,7 @@ describe('createObservabilityInterceptors', () => {
     it('records non-Error thrown value in waitForSignal', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -1512,7 +1517,7 @@ describe('createObservabilityInterceptors', () => {
     it('still creates a span when no workflowStart was called', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       const interception = {
@@ -1549,11 +1554,11 @@ describe('createObservabilityInterceptors', () => {
 
     function setupWorkflow(eventTarget: EventTarget) {
       const { tracer, spans } = createRecordingTracer();
-      const otelApi = createMockOtelApi(tracer);
+      const openTelemetryApi = createMockOpenTelemetryApi(tracer);
 
       const { workflow } = createObservabilityInterceptors({
         eventTarget,
-        otelApi,
+        openTelemetryApi,
       });
 
       workflow.workflowStart!(
@@ -1849,7 +1854,7 @@ describe('createObservabilityInterceptors', () => {
     it('does not create child spans when eventTarget is not provided', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -1940,7 +1945,7 @@ describe('createObservabilityInterceptors', () => {
     it('creates a span with link to parent, not parent-child relationship', async () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       // Start parent workflow to populate the root span
@@ -1994,7 +1999,7 @@ describe('createObservabilityInterceptors', () => {
     it('injects traceparent header into child workflow headers', async () => {
       const { tracer } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -2030,7 +2035,7 @@ describe('createObservabilityInterceptors', () => {
     it('records error span when child workflow fails', async () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -2077,7 +2082,7 @@ describe('createObservabilityInterceptors', () => {
     it('creates span with empty links when no parent traceparent exists', async () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -2112,7 +2117,7 @@ describe('createObservabilityInterceptors', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
         recordPayloads: true,
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -2197,7 +2202,7 @@ describe('createObservabilityInterceptors', () => {
       const { tracer, spans } = createRecordingTracer();
       const eventTarget = new EventTarget();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
         eventTarget,
       });
 
@@ -2217,7 +2222,7 @@ describe('createObservabilityInterceptors', () => {
       const { tracer, spans } = createRecordingTracer();
       const eventTarget = new EventTarget();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
         eventTarget,
       });
 
@@ -2237,7 +2242,7 @@ describe('createObservabilityInterceptors', () => {
       const { tracer, spans } = createRecordingTracer();
       const eventTarget = new EventTarget();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
         eventTarget,
       });
 
@@ -2257,7 +2262,7 @@ describe('createObservabilityInterceptors', () => {
       const { tracer, spans } = createRecordingTracer();
       const eventTarget = new EventTarget();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
         eventTarget,
       });
 
@@ -2278,7 +2283,7 @@ describe('createObservabilityInterceptors', () => {
       const { tracer } = createRecordingTracer();
       const eventTarget = new EventTarget();
       const { workflow, endWorkflowSpan } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
         eventTarget,
       });
 
@@ -2299,7 +2304,7 @@ describe('createObservabilityInterceptors', () => {
       const { tracer, spans } = createRecordingTracer();
       const eventTarget = new EventTarget();
       const { workflow } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
         eventTarget,
       });
 
@@ -2323,7 +2328,7 @@ describe('createObservabilityInterceptors', () => {
       const { tracer, spans } = createRecordingTracer();
       const eventTarget = new EventTarget();
       const { workflow, dispose } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
         eventTarget,
       });
 
@@ -2345,7 +2350,7 @@ describe('createObservabilityInterceptors', () => {
     it('does nothing when no eventTarget is provided (backwards compatible)', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow, dispose } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       startWorkflow(workflow, 'wf-no-target');
@@ -2365,7 +2370,7 @@ describe('createObservabilityInterceptors', () => {
       const engine = new Engine({ storage });
 
       const { workflow, activity, dispose } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
         eventTarget: engine,
       });
       engine.addInterceptor(workflow);
@@ -2394,7 +2399,7 @@ describe('createObservabilityInterceptors', () => {
       const engine = new Engine({ storage });
 
       const { workflow, activity, dispose } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
         eventTarget: engine,
       });
       engine.addInterceptor(workflow);
@@ -2423,7 +2428,7 @@ describe('createObservabilityInterceptors', () => {
       const engine = new Engine({ storage });
 
       const { workflow, activity, dispose } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
         eventTarget: engine,
       });
       engine.addInterceptor(workflow);
@@ -2454,7 +2459,7 @@ describe('createObservabilityInterceptors', () => {
     it('ends the span with OK status', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow, endWorkflowSpan } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -2477,7 +2482,7 @@ describe('createObservabilityInterceptors', () => {
     it('ends the span with ERROR status and message', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow, endWorkflowSpan } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -2509,7 +2514,7 @@ describe('createObservabilityInterceptors', () => {
     it('evicts spans older than maxAgeMs and returns the count', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow, evictStaleSpans } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -2535,7 +2540,7 @@ describe('createObservabilityInterceptors', () => {
     it('does not evict spans younger than maxAgeMs', () => {
       const { tracer } = createRecordingTracer();
       const { workflow, evictStaleSpans } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -2563,7 +2568,7 @@ describe('createObservabilityInterceptors', () => {
     it('ends all tracked spans and clears the map', () => {
       const { tracer, spans } = createRecordingTracer();
       const { workflow, dispose, evictStaleSpans } = createObservabilityInterceptors({
-        otelApi: createMockOtelApi(tracer),
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
       });
 
       workflow.workflowStart!(

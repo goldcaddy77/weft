@@ -35,7 +35,7 @@ interface ObservabilityOptions {
     interception: InterceptionContext,
   ) => Record<string, string | number | boolean>;
   metrics?: MetricsCollectorClass; // Metrics collector for counters, histograms, gauges.
-  otelApi?: OtelApi; // Override OTel API instance (primarily for testing).
+  openTelemetryApi?: OpenTelemetryApi; // Override OpenTelemetry API instance (primarily for testing).
   eventTarget?: EventTarget; // Engine instance; enables auto-close of root spans on lifecycle events.
 }
 ```

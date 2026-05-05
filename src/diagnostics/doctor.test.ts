@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 
 import { encode } from '../core/codec.ts';
-import type { Checkpoint, WorkflowState } from '../core/types.ts';
+import {
+  CURRENT_CHECKPOINT_SCHEMA_VERSION,
+  type Checkpoint,
+  type WorkflowState,
+} from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -33,6 +37,7 @@ function makeCheckpoint(overrides: Partial<Checkpoint> = {}): Checkpoint {
     pendingSignals: [],
     searchAttributes: {},
     version: '1.0.0',
+    schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
     createdAt: Date.now(),
     ...overrides,
   };

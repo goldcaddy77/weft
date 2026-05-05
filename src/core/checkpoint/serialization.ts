@@ -1,6 +1,10 @@
 import { decode, encode } from '../codec.ts';
 import { validateSessionStateLocals } from '../session-state.ts';
 import type { Checkpoint, Serializer } from '../types.ts';
+import {
+  CURRENT_CHECKPOINT_SCHEMA_VERSION,
+  CheckpointSchemaVersionError,
+} from '../types/checkpoint.ts';
 
 /**
  * Serialize a Checkpoint to bytes.
@@ -96,5 +100,23 @@ export function validateCheckpointShape(value: unknown): asserts value is Checkp
 
   if (typeof record['createdAt'] !== 'number') {
     throw new Error('Invalid checkpoint: missing or invalid "createdAt" (expected number)');
+  }
+
+  // Schema version gate. Pre-1.0 we refuse to load any checkpoint that
+  // doesn't match CURRENT_CHECKPOINT_SCHEMA_VERSION exactly. Older
+  // checkpoints (no field, or numeric < current) are rejected with a
+  // clear migration message; newer checkpoints (numeric > current)
+  // surface as "engine too old."
+  const schemaVersion = record['schemaVersion'];
+  if (schemaVersion === undefined) {
+    throw new CheckpointSchemaVersionError('pre-versioned', CURRENT_CHECKPOINT_SCHEMA_VERSION);
+  }
+  if (typeof schemaVersion !== 'number' || !Number.isSafeInteger(schemaVersion)) {
+    throw new Error(
+      'Invalid checkpoint: missing or invalid "schemaVersion" (expected integer number)',
+    );
+  }
+  if (schemaVersion !== CURRENT_CHECKPOINT_SCHEMA_VERSION) {
+    throw new CheckpointSchemaVersionError(schemaVersion, CURRENT_CHECKPOINT_SCHEMA_VERSION);
   }
 }
