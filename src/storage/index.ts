@@ -18,11 +18,30 @@
  *
  * @module weft/storage
  */
-export { KEYS, storageConditionalBatch, storageValuesEqual } from './interface';
+// Bun 1.3.13 minifier workaround: pure re-export barrels
+// (`export { X } from './m'`) emit invalid JavaScript with undeclared
+// identifiers in `dist/`. Loading the bundle from Node throws
+// `Export 'B' is not defined in module`. Rebinding each value to a
+// local const before re-exporting forces the bundler to keep the
+// reference live. Same pattern applied in `src/testing/index.ts`.
+// Remove this workaround once Bun ships the fix and CI proves a clean
+// build with direct re-exports.
+import { KEYS, storageConditionalBatch, storageValuesEqual } from './interface';
+import { MemoryStorage } from './memory';
+import { ScopedStorage, scopedStorage } from './scoped-storage';
+import { jsonCodec, msgpackCodec, withCodec } from './typed-storage';
+
+const exportedJsonCodec = jsonCodec;
+const exportedKeys = KEYS;
+const exportedMemoryStorage = MemoryStorage;
+const exportedMsgpackCodec = msgpackCodec;
+const exportedScopedStorage = ScopedStorage;
+const exportedScopedStorageFactory = scopedStorage;
+const exportedStorageConditionalBatch = storageConditionalBatch;
+const exportedStorageValuesEqual = storageValuesEqual;
+const exportedWithCodec = withCodec;
+
 export type { BatchOperation, ConditionalBatchCondition, ScanOptions, Storage } from './interface';
-export { MemoryStorage } from './memory';
-export { ScopedStorage, scopedStorage } from './scoped-storage';
-export { jsonCodec, msgpackCodec, withCodec } from './typed-storage';
 export type {
   JsonValue,
   MessagePackValue,
@@ -31,3 +50,14 @@ export type {
   TypedBatchOperation,
   TypedStorage,
 } from './typed-storage';
+export {
+  exportedJsonCodec as jsonCodec,
+  exportedKeys as KEYS,
+  exportedMemoryStorage as MemoryStorage,
+  exportedMsgpackCodec as msgpackCodec,
+  exportedScopedStorage as ScopedStorage,
+  exportedScopedStorageFactory as scopedStorage,
+  exportedStorageConditionalBatch as storageConditionalBatch,
+  exportedStorageValuesEqual as storageValuesEqual,
+  exportedWithCodec as withCodec,
+};

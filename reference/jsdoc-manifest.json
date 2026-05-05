@@ -12,6 +12,7 @@
     "weft/storage/lmdb": "src/storage/lmdb.ts",
     "weft/storage/turso": "src/storage/turso.ts",
     "weft/storage/indexeddb": "src/storage/indexeddb.ts",
+    "weft/storage/auto": "src/storage/auto.ts",
     "weft/server": "src/server/index.ts",
     "weft/server/handler": "src/server/handler.ts",
     "weft/mcp/stdio": "src/ai/mcp/transport-stdio.ts",
@@ -6540,6 +6541,20 @@
         {
           "importPath": "weft/service-worker",
           "exportName": "createPeriodicSyncHandler",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/auto.ts",
+      "sourceName": "resolveDefaultStorage",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage/auto",
+          "exportName": "resolveDefaultStorage",
           "kind": "value"
         }
       ],

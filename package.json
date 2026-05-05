@@ -98,6 +98,12 @@
       "import": "./dist/storage/indexeddb.js",
       "default": "./dist/storage/indexeddb.js"
     },
+    "./storage/auto": {
+      "types": "./dist/storage/auto.d.ts",
+      "bun": "./dist/storage/auto.js",
+      "import": "./dist/storage/auto.js",
+      "default": "./dist/storage/auto.js"
+    },
     "./server": {
       "types": "./dist/server/index.d.ts",
       "bun": "./dist/server/index.js"

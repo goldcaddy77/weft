@@ -8,7 +8,7 @@
  * Run after `bun run build`: bun run verify:exports
  */
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -133,6 +133,34 @@ if (!tursoBundle.includes('@libsql/client')) {
   fail('weft/storage/turso bundle has no reference to @libsql/client (should be external import)');
 } else {
   pass('weft/storage/turso externalizes @libsql/client correctly');
+}
+
+// ---------------------------------------------------------------------------
+// Test 5: weft/service-worker bundle must not pull in Bun/Node SQLite adapters
+//
+// `resolveDefaultStorage` is exported only from `weft/storage/auto`, which the
+// service-worker entrypoint must never import (directly or transitively).
+// Verify the emitted bundle is free of any Bun/Node-only storage code so
+// browser consumers don't ship dead SQLite chunks.
+// ---------------------------------------------------------------------------
+const serviceWorkerBundle = readFileSync(join(distPath, 'service-worker/index.js'), 'utf-8');
+const serviceWorkerForbiddenTokens = [
+  'BunSQLiteStorage',
+  'NodeSQLiteStorage',
+  'bun:sqlite',
+  'better-sqlite3',
+  'src/storage/auto',
+];
+const foundInServiceWorker = serviceWorkerForbiddenTokens.filter((token) =>
+  serviceWorkerBundle.includes(token),
+);
+
+if (foundInServiceWorker.length > 0) {
+  fail(
+    `weft/service-worker bundle contains forbidden SQLite adapter code: ${foundInServiceWorker.join(', ')}`,
+  );
+} else {
+  pass('weft/service-worker bundle is free of SQLite adapter code');
 }
 
 if (failed) {
