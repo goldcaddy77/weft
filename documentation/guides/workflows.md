@@ -13,9 +13,8 @@ import { Engine } from 'weft';
 
 const engine = new Engine();
 
-engine.register('welcome', async (ctx, input) => {
-  const { name } = input as { name: string };
-  const greeting = await ctx.step('greet', () => greet(name));
+engine.register('welcome', async (ctx, input: { name: string }) => {
+  const greeting = await ctx.step('greet', () => greet(input.name));
   await ctx.step('notify', () => notify(greeting));
   return { greeting, notified: true };
 });
@@ -34,17 +33,16 @@ import { Engine } from 'weft';
 
 const engine = new Engine();
 
-engine.register('welcome', async function* (ctx, input) {
-  const { name } = input as { name: string };
-  const greeting = yield* ctx.run(greet, name);
-  yield* ctx.run(notify, greeting);
+engine.register('welcome', async function* (ctx, input: { name: string }) {
+  const greeting = yield* ctx.run(greet, { name: input.name });
+  yield* ctx.run(notify, { message: greeting });
   return { greeting, notified: true };
 });
 ```
 
 The `async function*` declaration gives you a function that can pause itself with `yield` and be resumed later. Each pause preserves all local variables. `yield*` delegates to another generator---in this case, the context methods that represent durable operations. These are the only JavaScript primitives that give you serializable, suspendable execution, and they are a web standard that works everywhere.
 
-So when you write `yield* ctx.run(greet, name)`, two things happen: the activity executes, and Weft captures a checkpoint of your workflow's state. If the process crashes after that line but before the next `yield*`, recovery resumes from the checkpoint---not from the top of the function.
+So when you write `yield* ctx.run(greet, { name: input.name })`, two things happen: the named activity executes, and Weft captures a checkpoint of your workflow's state. If the process crashes after that line but before the next `yield*`, recovery resumes from the checkpoint---not from the top of the function.
 
 ## The workflow lifecycle
 
@@ -127,7 +125,7 @@ The registration object also accepts `searchAttributes` (declare indexed attribu
 Call `engine.start()` with the registered name and your input. You get back a `WorkflowHandle`---a lightweight reference you can use to await the result, send [signals](signals-and-queries.md), or cancel execution.
 
 ```typescript partial
-const handle = await engine.start('welcome', { name: 'World' });
+const handle = await engine.start('welcome', { name: 'World' }, { id: 'welcome:world' });
 const result = await handle.result();
 // { greeting: 'Hello, World!', notified: true }
 ```
@@ -141,7 +139,7 @@ const handle = await engine.start('order', orderData, {
 });
 ```
 
-The `id` option is useful when you want idempotent starts---starting a workflow with an ID that already exists throws an error, so you can safely retry without creating duplicates.
+If you omit `options.id`, Weft creates a fresh workflow id for this start. The `id` option is useful when you want idempotent starts---starting a workflow with an ID that already exists throws an error, so your caller can safely retry without creating duplicates and then reattach to the existing workflow.
 
 ## No history growth
 

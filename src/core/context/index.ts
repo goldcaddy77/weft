@@ -223,6 +223,14 @@ export class Context implements WorkflowContext {
   sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T> {
     return sessionStateHelpers.sessionState(this, getInternals(this), key, initialValue);
   }
+  run<TArguments extends unknown[], TResult>(
+    fn: (...args: TArguments) => Promise<TResult> | TResult,
+    ...rest: TArguments
+  ): Generator<ContextOperationRequest, TResult, unknown>;
+  run<TArguments extends unknown[], TResult>(
+    fn: (...args: TArguments) => Promise<TResult> | TResult,
+    ...rest: [...TArguments, ActivityCallOptions]
+  ): Generator<ContextOperationRequest, TResult, unknown>;
   // oxlint-disable-next-line complexity -- ID:core-context-fn-complexity
   *run<TResult>(
     fn: (...args: unknown[]) => Promise<TResult> | TResult,

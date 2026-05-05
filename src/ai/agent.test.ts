@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import { yieldToEventLoop } from '../testing/fake-timers.ts';
+
 import type { LLMProvider } from './providers/interface';
 import type { ChatResponse, Message, ToolDefinition } from './providers/types';
 

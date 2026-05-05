@@ -556,8 +556,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return broadcastFromInternals(getInternals(this), message, this.#createBroadcastCallbacks());
   }
 
-  register(name: string, handler: WorkflowFunction | StepWorkflowFunction): void;
-  register(name: string, registration: WorkflowRegistration): void;
+  register<TInput = unknown, TOutput = unknown>(
+    name: string,
+    handler: WorkflowFunction<TInput, TOutput> | StepWorkflowFunction<TInput, TOutput>,
+  ): void;
+  register<TInput = unknown, TOutput = unknown>(
+    name: string,
+    registration: WorkflowRegistration<TInput, TOutput>,
+  ): void;
   register(agentDef: AgentDefinition, options: AgentRegistrationOptions): void;
   register(
     nameOrAgent: string | AgentDefinition,
@@ -582,9 +588,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     getInternals(this).activityInterceptors.push(interceptor);
     getInternals(this).composedActivityInterceptor = null;
   }
-  registerActivity(
+  registerActivity<TArguments extends unknown[], TResult>(
     name: string,
-    fn: (...arguments_: unknown[]) => unknown,
+    fn: (...arguments_: TArguments) => TResult,
     options?: ActivityRegistrationOptions,
   ): void {
     getInternals(this).activityRegistry.register(name, fn, options);
