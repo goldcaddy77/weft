@@ -5,8 +5,6 @@ import {
   waitForRealTimersForTesting,
 } from '../../testing/fake-timers.ts';
 
-import type { LLMProvider } from '../../ai/providers/interface.ts';
-import type { ChatResponse } from '../../ai/providers/types.ts';
 import type { BatchOperation, ScanOptions } from '../../storage/interface.ts';
 import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
@@ -14,25 +12,6 @@ import { encode } from '../codec.ts';
 import type { Context } from '../context.ts';
 import { Engine } from '../engine.ts';
 import type { AttributeFilter, WorkflowContext } from '../types.ts';
-
-const retentionBudgetProvider: LLMProvider = {
-  name: 'retention-budget-provider',
-  async chat(): Promise<ChatResponse> {
-    return {
-      content: 'budgeted artifact',
-      toolCalls: [],
-      usage: { inputTokens: 1000, outputTokens: 1000, totalTokens: 2000 },
-      model: 'test-model',
-      stopReason: 'end_turn',
-    };
-  },
-  async stream() {
-    return new ReadableStream();
-  },
-  async countTokens(): Promise<number> {
-    return 100;
-  },
-};
 
 async function waitForWorkflowPresence(
   engine: Engine,
@@ -439,54 +418,6 @@ describe('workflow retention', () => {
     expect(await collectKeys(storage, KEYS.terminalWorkflowPrefix())).toEqual([]);
     expect(await storage.get(KEYS.update(handle.id, 'update-1'))).toBeNull();
     expect(await storage.get(KEYS.updateResponse('update-1'))).toBeNull();
-
-    engine[Symbol.dispose]();
-  });
-
-  it('retention cleanup reuses the charged agent operation cleanup path', async () => {
-    const storage = new MemoryStorage();
-    const engine = new Engine({ storage });
-    await engine.setBudgetPolicy({
-      namespace: 'retention-organization',
-      daily: { maxCost: 100 },
-    });
-
-    engine.register('budget-blocked', async function* (ctx: WorkflowContext) {
-      const concreteContext = ctx as Context;
-      yield* concreteContext.agent({
-        model: 'test-model',
-        prompt: 'charge retention budget',
-        provider: retentionBudgetProvider,
-        budgetNamespace: 'retention-organization',
-        budget: {
-          maxCost: 100,
-          models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 1 } },
-        },
-      });
-      yield* concreteContext.waitForSignal('continue');
-      return 'done';
-    });
-
-    const handle = await engine.start('budget-blocked', null, {
-      id: 'budget-cleanup-workflow',
-    });
-    await waitForCondition(
-      async () => {
-        const state = await engine.get(handle.id);
-        const chargedKeys = await collectKeys(storage, 'budget-charged:');
-        return state?.status === 'running' && chargedKeys.length === 1;
-      },
-      {
-        label: 'running workflow with an active charged-agent budget key',
-        timeoutMs: 400,
-        intervalMs: 5,
-      },
-    );
-
-    await engine.timeout(handle.id);
-    await handle.result().catch(() => {});
-
-    expect(await collectKeys(storage, 'budget-charged:')).toEqual([]);
 
     engine[Symbol.dispose]();
   });

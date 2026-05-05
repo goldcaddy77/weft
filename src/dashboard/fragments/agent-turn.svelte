@@ -8,7 +8,7 @@
 </script>
 
 <script lang="ts">
-  import { formatTokenCount, formatCost } from '../utilities/format-number.ts';
+  import { formatTokenCount } from '../utilities/format-number.ts';
   import { bot, chevronRight } from '../icons.ts';
   import Badge from '../components/badge.svelte';
   import JsonViewer from './json-viewer.svelte';
@@ -34,7 +34,6 @@
         {formatTokenCount(turn.inputTokens) ?? '0'} in /
         {formatTokenCount(turn.outputTokens) ?? '0'} out
       </span>
-      <span class="agent-turn-cost">{formatCost(turn.cost)}</span>
     </div>
   </div>
 

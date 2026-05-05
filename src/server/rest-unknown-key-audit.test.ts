@@ -155,13 +155,6 @@ const AUDIT_CASES: ReadonlyArray<AuditCase> = [
     expectedBaselineStatuses: [404],
   },
   {
-    name: 'PUT /v1/budget-policy (setBudgetPolicy)',
-    method: 'PUT',
-    path: '/v1/budget-policy',
-    baselineBody: { namespace: 'audit-ns', daily: { maxCost: 10 } },
-    expectedBaselineStatuses: [200],
-  },
-  {
     name: 'POST /v1/workflows/:id/resume (resumeWorkflow) — nonexistent id → 404',
     method: 'POST',
     path: '/v1/workflows/does-not-exist/resume',

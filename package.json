@@ -104,6 +104,12 @@
       "import": "./dist/storage/indexeddb.js",
       "default": "./dist/storage/indexeddb.js"
     },
+    "./storage/auto": {
+      "types": "./dist/storage/auto.d.ts",
+      "bun": "./dist/storage/auto.js",
+      "import": "./dist/storage/auto.js",
+      "default": "./dist/storage/auto.js"
+    },
     "./server": {
       "types": "./dist/server/index.d.ts",
       "bun": "./dist/server/index.js"
@@ -112,10 +118,6 @@
       "types": "./dist/server/handler.d.ts",
       "import": "./dist/server/handler.js",
       "default": "./dist/server/handler.js"
-    },
-    "./mcp/stdio": {
-      "types": "./dist/ai/mcp/transport-stdio.d.ts",
-      "bun": "./dist/ai/mcp/transport-stdio.js"
     },
     "./client": {
       "types": "./dist/client/index.d.ts",
@@ -155,7 +157,8 @@
     "test": "bun test --timeout 15000",
     "test:coverage": "WEFT_COVERAGE_MODE=1 bun test --timeout 15000 --coverage",
     "typecheck": "tsc --noEmit",
-    "validate": "bun run lint && bun run typecheck && bun run verify:no-test-sleeps && bun run test",
+    "typecheck:tests": "tsc --noEmit -p tsconfig.test-d.json",
+    "validate": "bun run lint && bun run typecheck && bun run typecheck:tests && bun run verify:no-test-sleeps && bun run test",
     "verify:exports": "bun run scripts/verify-tree-shaking.ts",
     "verify:jsdoc": "bun run scripts/audit-jsdoc-manifest.ts",
     "verify:jsdoc:declarations": "bun run scripts/check-declaration-jsdoc.ts --all",

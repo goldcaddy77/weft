@@ -19,7 +19,7 @@ Weft runs async workflows to completion across crashes, retries, and arbitrary s
 It's built for two execution shapes that traditional workflow engines treat as second-class:
 
 - **Long-running business processes**---checkouts, onboarding flows, fulfillment pipelines---where a process crash mid-flight must not lose money or leave the system in a partial state.
-- **AI agent loops**---ReAct-style LLM execution where the next step is decided at runtime by a probabilistic model, tool calls have real side effects, and conversations need to survive crashes mid-turn.
+- **AI agent loops**---durable ReAct-style LLM execution where each tool call is a checkpoint boundary. Bring any provider; Weft drives the loop and survives crashes mid-conversation.
 
 ## Design Constraints
 
@@ -29,7 +29,7 @@ Weft is a ground-up rethink: what would durable execution look like if you desig
 - **Bun-native on the server.** `Bun.serve()`, `Bun.SQL`, `Bun.build()`, `bun:test`. The full Bun platform, not just "Node.js but faster."
 - **Single binary, every OS.** `bun build --compile` produces standalone executables for darwin-arm64, darwin-x64, linux-x64, linux-arm64, and windows-x64. One CI pipeline, six binaries, zero runtime dependencies.
 - **Runs in the browser.** The core engine (minus the server shell) runs in Web Workers with a Service Worker as its persistence backbone. Same workflow code, different environment.
-- **Agent-native.** Dynamic execution graphs, durable streaming, cost enforcement, human oversight, multi-agent coordination, context window management, and model routing are built into the core---not bolted on as wrappers around generic activities.
+- **Agent-native.** Dynamic execution graphs, durable agent loops, human-in-the-loop oversight, and multi-agent coordination are built into the core---each tool call a checkpoint boundary, each conversation durable across crashes.
 
 ## Hello, World
 
@@ -177,10 +177,43 @@ const orders = await engine.list({
 
 ### AI Agents
 
-First-class ReAct loop with tool calling, budget enforcement, human-in-the-loop review, model routing, context window management, and multi-agent coordination (handoff, supervision, debate).
+Weft adds durability to your agent loop. Bring your provider; bring your tools. Weft drives the loop, checkpoints at every tool-call boundary, and survives crashes mid-conversation.
 
 ```typescript
-import { defineAgent, costTierRouter, slidingWindowStrategy } from 'weft';
+import { Engine, defineAgent, type AgentTool, type LLMProvider } from 'weft';
+import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+import Anthropic from '@anthropic-ai/sdk';
+
+const client = new Anthropic();
+
+// Satisfy the structural LLMProvider interface with any SDK.
+const provider: LLMProvider = {
+  name: 'anthropic',
+  async chat(messages, options) {
+    const response = await client.messages.create({
+      model: options.model,
+      max_tokens: options.maxTokens ?? 8096,
+      system: options.systemPrompt,
+      messages: messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+    });
+    const firstBlock = response.content[0];
+    return {
+      content: firstBlock?.type === 'text' ? firstBlock.text : '',
+      toolCalls: [],
+      usage: {
+        inputTokens: response.usage.input_tokens,
+        outputTokens: response.usage.output_tokens,
+        totalTokens: response.usage.input_tokens + response.usage.output_tokens,
+      },
+      model: response.model,
+      stopReason: response.stop_reason === 'end_turn' ? 'end_turn' : 'tool_use',
+    };
+  },
+};
+
+declare const webSearch: AgentTool;
+declare const factCheck: AgentTool;
+declare const dataQuery: AgentTool;
 
 const researcher = defineAgent({
   name: 'research',
@@ -188,24 +221,16 @@ const researcher = defineAgent({
   systemPrompt: 'You are a research analyst.',
   tools: [webSearch, factCheck, dataQuery],
   maxTurns: 25,
-  budget: { maxTokens: 100_000, maxCost: 5.0, warningThreshold: 0.8 },
-  modelRouter: costTierRouter([
-    { model: 'claude-sonnet-4-20250514', maxCostRemaining: 2.0 },
-    { model: 'claude-sonnet-4-20250514' },
-  ]),
-  contextStrategy: slidingWindowStrategy({
-    preserveSystemMessage: true,
-    preserveRecentCount: 10,
-  }),
 });
 
-engine.registerAgent(researcher);
+const engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
+engine.register(researcher, { provider });
 
 const handle = await engine.start('research', 'How did the 2026 Treasury auction go?');
-const { messages, usage } = await handle.result();
+const { messages, turnUsage } = await handle.result();
 ```
 
-Each tool call inside the loop is a separate checkpoint boundary. Crash after 7 of 30 tool calls and the agent picks up at tool call 8---no replay, no re-execution of side effects.
+Crash after 7 of 30 tool calls and the agent picks up at tool call 8---no replay, no re-execution of side effects.
 
 ### Pluggable Storage
 
@@ -291,8 +316,7 @@ const interceptors = createObservabilityInterceptors({ metrics });
 
 const engine = new Engine({
   storage,
-  workflowInterceptors: [interceptors.workflow],
-  activityInterceptors: [interceptors.activity],
+  interceptors: [interceptors.interceptor],
 });
 ```
 
@@ -367,7 +391,8 @@ Each `ctx.step()` is a checkpoint boundary. The engine compiles step-style workf
 | Signal                 | `setHandler` + `condition`        | `yield* ctx.waitForSignal(name)`                                           |
 | Versioning             | `patched()` / `deprecatePatch()`  | Deploy new code (migration optional)                                       |
 | Long-running workflows | `continueAsNew()`                 | None needed (checkpoint size is bounded by live state, not history length) |
-| Agent declaration      | N/A (build from primitives)       | `defineAgent()` or `ctx.agent()`                                           |
+| Agent declaration      | N/A (build from primitives)       | `defineAgent()` or `ctx.agent()`—bring your own provider and tools         |
+| Durable agent loop     | Activity boundary only            | Every tool call is a checkpoint boundary                                   |
 | Dev environment        | Docker Compose + Temporal server  | `bun add weft`                                                             |
 | Bundling               | Webpack for workflow sandbox      | None                                                                       |
 
@@ -390,10 +415,9 @@ Guides:
 
 Agents:
 
-- [Agent Overview](documentation/agents/agent-overview.md), [Declaration](documentation/agents/agent-declaration.md), [Tools and MCP](documentation/agents/agent-tools-and-mcp.md)
-- [Budget and Cost](documentation/agents/agent-budget-and-cost.md), [Streaming](documentation/agents/agent-streaming.md), [Context Window](documentation/agents/agent-context-window.md)
-- [Model Routing](documentation/agents/agent-model-routing.md), [Human Review](documentation/agents/agent-human-review.md), [Coordination](documentation/agents/agent-coordination.md)
-- [Provider Health](documentation/agents/agent-provider-health.md), [Observability](documentation/agents/agent-observability.md)
+- [Agent Overview](documentation/agents/agent-overview.md), [Declaration](documentation/agents/agent-declaration.md), [Tools](documentation/agents/agent-tools.md)
+- [Human Review](documentation/agents/agent-human-review.md), [Coordination](documentation/agents/agent-coordination.md)
+- [Observability](documentation/agents/agent-observability.md), [What Weft Owns](documentation/agents/what-weft-owns.md)
 
 Architecture and reference:
 

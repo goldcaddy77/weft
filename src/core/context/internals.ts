@@ -1,4 +1,3 @@
-import type { BudgetTracker } from '../../ai/budget.ts';
 import type { SearchAttributeSchema, SearchAttributeValue } from '../types.ts';
 import type { Context, ContextOptions } from './index.ts';
 import { createCheckpointLocals } from './session-state.ts';
@@ -20,7 +19,6 @@ export interface ContextInternals {
   getNow: () => number;
   sleepReferenceTime: number | undefined;
   explainMode: boolean;
-  budgetTracker: BudgetTracker | undefined;
   nestingDepth: number;
   tenant: import('../tenant.ts').TenantContext | undefined;
   resolveWorkflowType: ((target: string | Function) => string) | undefined;
@@ -50,7 +48,6 @@ export function initializeInternals(
     getNow: options.getNow ?? Date.now,
     sleepReferenceTime: options.sleepReferenceTime,
     explainMode: false,
-    budgetTracker: undefined,
     nestingDepth: options.nestingDepth ?? 0,
     tenant: options.tenant,
     resolveWorkflowType: options.resolveWorkflowType,

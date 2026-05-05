@@ -125,19 +125,19 @@ interface ActivityExecutionInterception {
 
 The `headers` Map is the important piece for remote workers. When a workflow interceptor sets a header on the dispatch side (for example, an OpenTelemetry `traceparent` or an opaque credential reference such as `x-weft-credential-reference`), the engine serializes it into the WebSocket task message, and the `RemoteWorker` rehydrates it into the `headers` Map before calling your interceptor chain. Use the reference to resolve real secrets inside the worker from its own secret store; do not propagate raw bearer tokens, API keys, or encryption keys through task headers. That's how trace context and authorization context cross the network boundary without your activity function knowing anything about tracing.
 
-The most common use case is observability. The built-in `createObservabilityInterceptors()` factory returns a matched pair of workflow and activity interceptors that share trace context across the boundary. Pass the activity half to every remote worker that should show up in your traces:
+The most common use case is observability. The built-in `createObservabilityInterceptors()` factory returns a unified interceptor whose workflow and activity hooks share trace context across the boundary. Pass the same interceptor to every remote worker that should show up in your traces:
 
 ```typescript partial
 import { createObservabilityInterceptors } from 'weft';
 
-const { activity } = createObservabilityInterceptors();
+const { interceptor } = createObservabilityInterceptors();
 
 const worker = new RemoteWorker({
   serverUrl: 'wss://weft-server:7233/v1/tasks/default/stream',
   activities: {
     /* ... */
   },
-  interceptors: [activity],
+  interceptors: [interceptor],
 });
 ```
 

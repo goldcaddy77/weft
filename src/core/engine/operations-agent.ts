@@ -1,19 +1,13 @@
-import type { AgentLoopSuspendedError as AgentLoopSuspendedErrorValue } from '../../ai/agent.ts';
+import type { AgentLoopSuspendedError as AgentLoopSuspendedErrorValue } from '../../ai/agent/index.ts';
 import type { ContextOperationRequest } from '../context.ts';
 import type { ComposedWorkflowInterceptor } from '../interceptor.ts';
 import type { WorkflowState } from '../types.ts';
 import type { EngineInternals } from './internals.ts';
 import {
-  checkAgentBudgetPolicy,
   closeAgentInterceptor,
-  createAgentBudgetTracker,
   createAgentInterception,
   exposeAgentObservability,
-  exposeTokenUsageAccessor,
   openAgentInterceptor,
-  recordAgentBudgetCost,
-  recordAgentContextCost,
-  resolveAgentBudgetNamespace,
 } from './operations-agent-support.ts';
 import {
   clearPendingAgentExecutionState,
@@ -30,12 +24,6 @@ import type { OperationWithCallerStack } from './operations-router.ts';
 import type { ConsumedSignalResult } from './signals.ts';
 import { SpeculativeExecutionState } from './speculative-execution-state.ts';
 
-export {
-  checkAgentBudgetPolicy,
-  createAgentBudgetTracker,
-  recordAgentBudgetCost,
-  resolveAgentBudgetNamespace,
-} from './operations-agent-support.ts';
 export { withPendingChatResumeTurnIndex } from './operations-agent-suspension.ts';
 
 type AgentOperation = Extract<ContextOperationRequest, { type: 'agent' }>;
@@ -135,38 +123,17 @@ export async function executeAgentContextOperationResult(
   operation: AgentOperation,
   callbacks: AgentOperationCallbacks,
 ): Promise<AgentOperationDisposition> {
-  const { AgentLoopSuspendedError, executeAgentLoopWithState } = await import('../../ai/agent.ts');
-  const {
-    prompt,
-    budget: budgetOptions,
-    budgetNamespace,
-    contextStrategy: _contextStrategy,
-    ...rest
-  } = operation.options;
+  const { AgentLoopSuspendedError, executeAgentLoopWithState } =
+    await import('../../ai/agent/index.ts');
+  const { prompt, ...rest } = operation.options;
   let pendingExecutionState = await loadPendingAgentExecutionState(
     internals,
     workflowId,
     operation.stepIndex,
   );
-  const budgetTracker = await createAgentBudgetTracker(
-    internals,
-    workflowId,
-    operation,
-    budgetOptions,
-    callbacks,
-  );
   await callbacks.ensureTerminalCleanupTracked(workflowId);
-  const resolvedBudgetNamespace = resolveAgentBudgetNamespace(internals, budgetNamespace);
-  await checkAgentBudgetPolicy(
-    internals,
-    workflowId,
-    budgetOptions,
-    resolvedBudgetNamespace,
-    callbacks,
-  );
 
   const context = internals.inlineStrategy?.getContext(workflowId);
-  exposeTokenUsageAccessor(context, budgetTracker);
 
   const agentInterception = createAgentInterception(workflowId, rest.model, prompt);
   const agentInterceptorGenerator = openAgentInterceptor(agentInterception, callbacks);
@@ -188,15 +155,9 @@ export async function executeAgentContextOperationResult(
           {
             ...rest,
             provider,
-            modelRouter: rest.modelRouter ?? internals.defaultModelRouter,
-            budget: budgetTracker,
             eventTarget: callbacks.getEventTarget(),
             workflowId,
             agentId: operation.operationId,
-            onTurnStarted: agentInterception.onTurnStarted,
-            onTurnCompleted: agentInterception.onTurnCompleted,
-            onToolCalled: agentInterception.onToolCalled,
-            onToolReturned: agentInterception.onToolReturned,
             toolEffectLog,
           },
           prompt,
@@ -205,14 +166,6 @@ export async function executeAgentContextOperationResult(
         closeAgentInterceptor(agentInterceptorGenerator, agentResult.content);
         agentInterceptorClosed = true;
         exposeAgentObservability(context, agentResult, rest.maxTurns ?? 10);
-        recordAgentContextCost(context, agentResult.totalCost);
-        await recordAgentBudgetCost(
-          internals,
-          workflowId,
-          operation.operationId,
-          resolvedBudgetNamespace,
-          agentResult.totalCost,
-        );
         await clearPendingAgentExecutionState(internals, workflowId, operation.stepIndex);
         return { kind: 'completed', value: agentResult.content };
       } catch (error) {

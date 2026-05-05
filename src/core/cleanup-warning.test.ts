@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { waitForCondition, waitForever } from '../testing/fake-timers.ts';
+import { waitForever } from '../testing/fake-timers.ts';
 
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -166,100 +166,5 @@ describe('Engine dispatches CleanupWarningEvent on cleanup errors', () => {
     const responseWarnings = warnings.filter((w) => w.source === 'writeCoordinatedUpdateResponse');
     expect(responseWarnings.length).toBeGreaterThanOrEqual(1);
     expect(responseWarnings[0]!.error.message).toBe('batch write failed');
-  });
-
-  it('dispatches CleanupWarningEvent when immediate budget-charged cleanup fails', async () => {
-    const realStorage = new MemoryStorage();
-    const originalBatch = realStorage.batch.bind(realStorage);
-    const storage: WeftStorage = {
-      get: realStorage.get.bind(realStorage),
-      put: realStorage.put.bind(realStorage),
-      delete: realStorage.delete.bind(realStorage),
-      batch: async (operations) => {
-        const deletesBudgetChargedKey = operations.some(
-          (operation) => operation.type === 'delete' && operation.key.startsWith('budget-charged:'),
-        );
-        if (deletesBudgetChargedKey) {
-          throw new Error('budget cleanup batch failed');
-        }
-        return originalBatch(operations);
-      },
-      scan: realStorage.scan.bind(realStorage),
-      deletePrefix: realStorage.deletePrefix?.bind(realStorage),
-      [Symbol.dispose]() {
-        realStorage[Symbol.dispose]();
-      },
-    };
-
-    engine = new Engine({ storage });
-    await engine.setBudgetPolicy({
-      namespace: 'cleanup-warning-tests',
-      daily: { maxCost: 100 },
-    });
-
-    const warnings: CleanupWarningEvent[] = [];
-    engine.addEventListener(CleanupWarningEvent.type, (event) => {
-      warnings.push(event as CleanupWarningEvent);
-    });
-
-    engine.register('budget-cleanup-warning', async function* (ctx: WorkflowContext) {
-      const concreteContext = ctx as Context;
-      yield* concreteContext.agent({
-        model: 'test-model',
-        prompt: 'charge cleanup warning budget',
-        provider: {
-          name: 'cleanup-warning-provider',
-          async chat() {
-            return {
-              content: 'budgeted artifact',
-              toolCalls: [],
-              usage: { inputTokens: 1000, outputTokens: 1000, totalTokens: 2000 },
-              model: 'test-model',
-              stopReason: 'end_turn' as const,
-            };
-          },
-          async stream() {
-            return new ReadableStream();
-          },
-          async countTokens(): Promise<number> {
-            return 100;
-          },
-        },
-        budgetNamespace: 'cleanup-warning-tests',
-        budget: {
-          maxCost: 100,
-          models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 1 } },
-        },
-      });
-      yield* concreteContext.waitForSignal('finish');
-      return 'done';
-    });
-
-    const handle = await engine.start('budget-cleanup-warning', null, {
-      id: 'budget-cleanup-warning-workflow',
-    });
-
-    await waitForCondition(
-      async () => {
-        for await (const _entry of realStorage.scan('budget-charged:')) {
-          return true;
-        }
-        return false;
-      },
-      { label: 'budget charged entry to be written' },
-    );
-
-    const resultPromise = handle.result();
-    await engine.signal(handle.id, 'finish', null);
-    await expect(resultPromise).resolves.toBe('done');
-
-    await flush();
-    await flush();
-
-    const cleanupWarnings = warnings.filter(
-      (warning) => warning.source === 'cleanupBudgetChargedOperations',
-    );
-    expect(cleanupWarnings).toHaveLength(1);
-    expect(cleanupWarnings[0]!.error.message).toBe('budget cleanup batch failed');
   });
 });

@@ -1,4 +1,4 @@
-import type { Message } from '../../ai/providers/types.ts';
+import type { Message } from '../../ai/agent/index.ts';
 import type { AgentTurnData } from './agent-turn-types.ts';
 
 /** A slice of the conversation attributed to a single agent turn. */

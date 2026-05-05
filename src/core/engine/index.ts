@@ -1,8 +1,7 @@
 /* oxlint-disable max-lines -- ID:core-engine-index-file-length */
-import type { BudgetPolicyOptions } from '../../ai/budget-policy.ts';
+import type { LLMProvider } from '../../ai/agent/index.ts';
 import type { AgentDefinition } from '../../ai/declaration.ts';
 import { ReviewCoordinator, type ReviewRequest } from '../../ai/human-review.ts';
-import type { LLMProvider } from '../../ai/providers/interface.ts';
 import { AlertManager } from '../../alerting/alert-manager.ts';
 import { CompressedStorage } from '../../storage/compressed-storage.ts';
 import type { Storage as WeftStorage } from '../../storage/interface.ts';
@@ -13,7 +12,7 @@ import { ActivityRegistry, type ActivityRegistrationOptions } from '../activity-
 import type { StoredStreamChunk } from '../context.ts';
 import { createExpiredResponseCleanupTick, createHandleCacheFinalizer } from '../engine-helpers.ts';
 import { InlineExecutionStrategy } from '../inline-execution-strategy.ts';
-import type { ActivityInterceptor, WorkflowInterceptor } from '../interceptor.ts';
+import type { Interceptor } from '../interceptor.ts';
 import { Scheduler } from '../scheduler.ts';
 import { TenantQuotaManager } from '../tenant-quotas.ts';
 import {
@@ -50,6 +49,7 @@ import {
   type WorkflowSummary,
   type WorkflowTimelineEntry,
 } from '../types.ts';
+import type { TimerEntry } from '../types/checkpoint.ts';
 import { UpdateCoordinator } from '../updates.ts';
 import { WorkerExecutionStrategy } from '../worker-execution-strategy.ts';
 import { broadcast as broadcastFromInternals, type BroadcastCallbacks } from './broadcast.ts';
@@ -239,6 +239,13 @@ function resolveEngineStorage(
   });
 }
 
+function resolveEngineInterceptors(options?: EngineConstructorOptions): Interceptor[] {
+  // Defensive copy: callers must not mutate the engine's interceptor list
+  // after construction. Mutating the source array directly would bypass
+  // the composed-interceptor cache invalidation in `addInterceptor`.
+  return options?.interceptors ? [...options.interceptors] : [];
+}
+
 // oxlint-disable-next-line complexity -- ID:core-engine-resolve-engine-options-complexity
 function resolveEngineOptions(
   storage: WeftStorage,
@@ -396,10 +403,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     getInternals(this).updateWaitersByWorkflow = new Map();
     getInternals(this).sleepResolvers = new Map();
     getInternals(this).sleepResolversByWorkflow = new Map();
-    getInternals(this).interceptors = [];
-    getInternals(this).activityInterceptors = [];
-    getInternals(this).composedWorkflowInterceptor = null;
-    getInternals(this).composedActivityInterceptor = null;
+    getInternals(this).interceptors = resolveEngineInterceptors(options);
+    getInternals(this).composedWorkflowInterceptor = undefined;
+    getInternals(this).composedActivityInterceptor = undefined;
     getInternals(this).updateCoordinator = new UpdateCoordinator(storage);
     getInternals(this).activityRegistry = new ActivityRegistry();
     getInternals(this).activityWorkerDispatcher = null;
@@ -414,7 +420,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       createHandleCacheFinalizer(getInternals(this).handleCache),
     );
     getInternals(this).options = resolvedOptions;
-    getInternals(this).defaultModelRouter = options?.defaultModelRouter;
     getInternals(this).scheduler = new Scheduler({
       storage,
       onTimerFired: (entry) =>
@@ -446,7 +451,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         );
       };
     }
-    getInternals(this).budgetPolicyEnforcer = null;
     getInternals(this).tenantQuotaManager = new TenantQuotaManager(
       storage,
       getNow,
@@ -455,8 +459,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     getInternals(this).heartbeatDetails = new Map();
     getInternals(this).pendingStarts = new Set();
     getInternals(this).pendingScheduleCreations = new Set();
-    getInternals(this).chargedAgentOperations = new Set();
-    getInternals(this).chargedAgentOperationsByWorkflow = new Map();
     getInternals(this).workflowsNeedingTerminalCleanup = new Set();
     getInternals(this).reviewCoordinator = new ReviewCoordinator(storage, getNow);
     getInternals(this).reviewWaiters = new Map();
@@ -580,13 +582,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#createRegistrationCallbacks(),
     );
   }
-  addInterceptor(interceptor: WorkflowInterceptor): void {
+  addInterceptor(interceptor: Interceptor): void {
     getInternals(this).interceptors.push(interceptor);
-    getInternals(this).composedWorkflowInterceptor = null;
-  }
-  addActivityInterceptor(interceptor: ActivityInterceptor): void {
-    getInternals(this).activityInterceptors.push(interceptor);
-    getInternals(this).composedActivityInterceptor = null;
+    // Adding ANY interceptor invalidates BOTH composed caches because the
+    // unified list feeds both pipelines. Use `undefined` to mean
+    // "uncomputed" so the next call recomputes; `null` would be
+    // indistinguishable from a legitimate computed-empty result.
+    getInternals(this).composedWorkflowInterceptor = undefined;
+    getInternals(this).composedActivityInterceptor = undefined;
   }
   registerActivity<TArguments extends unknown[], TResult>(
     name: string,
@@ -745,20 +748,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
   async query(workflowId: string, name: string): Promise<unknown> {
     return queryWorkflow(getInternals(this), workflowId, name);
-  }
-  async setBudgetPolicy(options: BudgetPolicyOptions): Promise<void> {
-    const internals = getInternals(this);
-    if (!internals.budgetPolicyEnforcer) {
-      const { BudgetPolicyEnforcer } = await import('../../ai/budget-policy.ts');
-      internals.budgetPolicyEnforcer = new BudgetPolicyEnforcer(
-        internals.storage,
-        internals.options.getNow,
-      );
-    }
-    internals.budgetPolicyEnforcer.setPolicy(options);
-  }
-  async getBudgetPolicy(namespace: string): Promise<BudgetPolicyOptions | null> {
-    return getInternals(this).budgetPolicyEnforcer?.policies.get(namespace) ?? null;
   }
   async getQuotaUsage(tenantId: string): Promise<TenantQuotaUsage> {
     return getInternals(this).tenantQuotaManager.getUsage(tenantId);
@@ -935,8 +924,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     internals.workflowHeaders.clear();
     internals.pendingStarts.clear();
     internals.pendingScheduleCreations.clear();
-    internals.chargedAgentOperations.clear();
-    internals.chargedAgentOperationsByWorkflow.clear();
     internals.agentWorkflowIds.clear();
     internals.eventLogHeads.clear();
     internals.pendingTimelineEntries.clear();
@@ -953,5 +940,29 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
   get scheduler(): Scheduler {
     return getInternals(this).scheduler;
+  }
+
+  /**
+   * Fire a single timer entry directly. Intended for external schedulers
+   * (Service Worker, custom transports) that own timer dispatch but want
+   * the engine to actually resume the workflow associated with the entry.
+   *
+   * Most users do not call this directly. The internal `Scheduler` invokes
+   * the same code path automatically when its tick observes a due entry.
+   *
+   * @example
+   * ```ts
+   * import { Engine } from 'weft';
+   * declare const externalEntry: import('weft').TimerEntry;
+   * const engine = new Engine();
+   * await engine.fireTimer(externalEntry);
+   * ```
+   */
+  async fireTimer(entry: TimerEntry): Promise<void> {
+    await handleTimerFiredFromInternals(
+      getInternals(this),
+      entry,
+      this.#createTimeOperationCallbacks(),
+    );
   }
 }

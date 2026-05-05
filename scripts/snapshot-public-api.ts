@@ -266,7 +266,49 @@ function interfaceLine(
   exportedName: string,
 ): string {
   const members = sortedMemberSignatures(declaration.members, checker);
+  // When the interface only extends others (no own members), walk the
+  // heritage clauses so the snapshot reflects the actual public shape.
+  if (
+    members.length === 0 &&
+    declaration.heritageClauses &&
+    declaration.heritageClauses.length > 0
+  ) {
+    const inherited = inheritedMemberSignatures(declaration, checker);
+    if (inherited.length > 0) {
+      return `interface ${exportedName} { ${inherited.join('; ')} }`;
+    }
+  }
   return `interface ${exportedName} { ${members.join('; ')} }`;
+}
+
+function inheritedMemberSignatures(
+  declaration: ts.InterfaceDeclaration,
+  checker: ts.TypeChecker,
+): string[] {
+  const symbol = checker.getSymbolAtLocation(declaration.name);
+  if (!symbol) return [];
+  const type = checker.getDeclaredTypeOfSymbol(symbol);
+  const properties = checker.getPropertiesOfType(type);
+  const lines: string[] = [];
+  for (const property of properties) {
+    const propertyDeclaration = property.declarations?.[0];
+    if (
+      propertyDeclaration &&
+      (ts.isPropertySignature(propertyDeclaration) ||
+        ts.isMethodSignature(propertyDeclaration) ||
+        ts.isPropertyDeclaration(propertyDeclaration) ||
+        ts.isMethodDeclaration(propertyDeclaration))
+    ) {
+      const line = memberSignature(propertyDeclaration, checker);
+      if (line !== null) lines.push(line);
+    }
+  }
+  return lines.toSorted((left, right) => {
+    const leftName = memberSortName(left);
+    const rightName = memberSortName(right);
+    if (leftName !== rightName) return leftName < rightName ? -1 : 1;
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
 }
 
 function classLine(
@@ -294,6 +336,7 @@ function variableDeclarationLine(
   declaration: ts.VariableDeclaration,
   checker: ts.TypeChecker,
   exportedName?: string,
+  visited: Set<ts.VariableDeclaration> = new Set(),
 ): string | null {
   if (!ts.isIdentifier(declaration.name)) return null;
   const name = exportedName ?? declaration.name.text;
@@ -302,7 +345,7 @@ function variableDeclarationLine(
   // Bun barrel workaround: `const exportedX = X; export { exportedX as X }`
   // makes `X` look like a value with type `typeof RealX`. Reflect the
   // underlying class/function instead of a useless `const X: typeof X`.
-  const aliasLine = aliasedRebindLine(declaration, checker, name);
+  const aliasLine = aliasedRebindLine(declaration, checker, name, visited);
   if (aliasLine !== null) return aliasLine;
   const type = checker.getTypeOfSymbolAtLocation(symbol, declaration);
   return `const ${name}: ${typeString(checker, type, declaration)}`;
@@ -312,12 +355,17 @@ function aliasedRebindLine(
   declaration: ts.VariableDeclaration,
   checker: ts.TypeChecker,
   exportedName: string,
+  visited: Set<ts.VariableDeclaration>,
 ): string | null {
   // Two source patterns produce a value-aliasing rebind, both common in
   // barrel files that work around the Bun 1.3.13 minifier bug:
   //   1. Source `.ts`: `const exportedX = X;` — initializer is an identifier.
   //   2. Emitted `.d.ts`: `declare const exportedX: typeof X;` — type annotation
   //      is a TypeQueryNode whose name is the identifier we want to follow.
+  // Track visited variable declarations across the recursion so an indirect
+  // cycle (A → B → A) terminates instead of overflowing the stack.
+  if (visited.has(declaration)) return null;
+  visited.add(declaration);
   const target = aliasTargetSymbol(declaration, checker);
   if (target === null) return null;
   const resolved = resolveAlias(target, checker);
@@ -327,10 +375,8 @@ function aliasedRebindLine(
   const functionDeclaration = declarations.find(ts.isFunctionDeclaration);
   if (functionDeclaration) return functionLine(functionDeclaration, checker, exportedName);
   const variableDeclaration = declarations.find(ts.isVariableDeclaration);
-  // Avoid infinite recursion: only follow if the resolved declaration
-  // is a different variable than the one we started from.
-  if (variableDeclaration && variableDeclaration !== declaration) {
-    return variableDeclarationLine(variableDeclaration, checker, exportedName);
+  if (variableDeclaration && !visited.has(variableDeclaration)) {
+    return variableDeclarationLine(variableDeclaration, checker, exportedName, visited);
   }
   return null;
 }

@@ -23,7 +23,6 @@ const RAISE_FAULT_ALLOWLIST = new Set([
   'get-stream-chunks.ts',
   'get-review.ts',
   'get-checkpoint-at.ts',
-  'get-budget-policy.ts',
   'get-system-metrics.ts',
   'get-tenant-quota.ts',
   'get-retention-overview.ts',
@@ -43,7 +42,6 @@ const RAISE_FAULT_ALLOWLIST = new Set([
   'replay-workflow.ts',
   'timeout-workflow.ts',
   'submit-review-decision.ts',
-  'set-budget-policy.ts',
   'set-workflow-attributes.ts',
   'add-workflow-tags.ts',
   'remove-workflow-tags.ts',
@@ -60,7 +58,7 @@ const RAISE_FAULT_ALLOWLIST = new Set([
 // raise it. If an honest migration shrinks the set below this number, lower
 // the constant in the same commit. The bound is set to the current size so
 // any new direct-throw operation file fails the ratchet immediately.
-const RAISE_FAULT_ALLOWLIST_MAX_SIZE = 46;
+const RAISE_FAULT_ALLOWLIST_MAX_SIZE = 44;
 
 describe('raiseFault canonical path', () => {
   it('all operations using direct throw patterns are tracked in the allow-list', () => {

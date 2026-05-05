@@ -45,10 +45,6 @@ import {
 } from './operations/create-schedule.ts';
 import { forkWorkflowOperation, forkWorkflowRestBinding } from './operations/fork-workflow.ts';
 import {
-  getBudgetPolicyOperation,
-  getBudgetPolicyRestBinding,
-} from './operations/get-budget-policy.ts';
-import {
   getCheckpointAtOperation,
   getCheckpointAtRestBinding,
 } from './operations/get-checkpoint-at.ts';
@@ -122,10 +118,6 @@ import {
   resumeWorkflowOperation,
   resumeWorkflowRestBinding,
 } from './operations/resume-workflow.ts';
-import {
-  setBudgetPolicyOperation,
-  setBudgetPolicyRestBinding,
-} from './operations/set-budget-policy.ts';
 import {
   setWorkflowAttributesOperation,
   setWorkflowAttributesRestBinding,
@@ -204,7 +196,6 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
   createScheduleRestBinding,
   updateScheduleRestBinding,
   getRetentionOverviewRestBinding,
-  getBudgetPolicyRestBinding,
   getUpdateResultRestBinding,
   listReviewsRestBinding,
   getReviewRestBinding,
@@ -214,7 +205,6 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
   addWorkflowTagsRestBinding,
   removeWorkflowTagsRestBinding,
   submitReviewDecisionRestBinding,
-  setBudgetPolicyRestBinding,
   cancelScheduleRestBinding,
   pauseScheduleRestBinding,
   resumeScheduleRestBinding,
@@ -276,7 +266,6 @@ export function createLiveOperationRegistry(options?: {
     createScheduleOperation,
     updateScheduleOperation,
     getRetentionOverviewOperation,
-    getBudgetPolicyOperation,
     getUpdateResultOperation,
     listReviewsOperation,
     getReviewOperation,
@@ -286,7 +275,6 @@ export function createLiveOperationRegistry(options?: {
     addWorkflowTagsOperation,
     removeWorkflowTagsOperation,
     submitReviewDecisionOperation,
-    setBudgetPolicyOperation,
     cancelScheduleOperation,
     pauseScheduleOperation,
     resumeScheduleOperation,

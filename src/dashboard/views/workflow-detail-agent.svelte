@@ -7,7 +7,7 @@
 <script lang="ts">
   import { getContext, untrack } from 'svelte';
 
-  import type { Message, MessageRole } from '../../ai/providers/types.ts';
+  import type { Message, MessageRole } from '../../ai/agent/index.ts';
   import type { ApiClient, WorkflowState, WorkflowEvent } from '../api-client.ts';
   import type { AgentTurnData } from '../fragments/agent-turn.svelte';
   import { WebSocketClient } from '../websocket-client.svelte.ts';
@@ -42,7 +42,7 @@
   // long-running agent emitting thousands of token events cannot grow memory
   // unbounded. Once the cap is exceeded the oldest events are dropped from
   // the timeline only — the derived aggregates (`turns`, `tokensUsed`,
-  // `costUsed`, `tokenBudget`, `maxCost`) are NOT derived from this buffer.
+  // `tokenBudget` and `maxCost`) are NOT derived from this buffer.
   // They are held as durable `$state` and updated incrementally by
   // `applyEvent`, so eviction cannot silently corrupt running totals or the
   // budget gauge.
@@ -128,7 +128,6 @@
       model: data ? readEventString(data, 'model', 'unknown') : 'unknown',
       inputTokens: data ? readEventNumber(data, 'inputTokens', 0) : 0,
       outputTokens: data ? readEventNumber(data, 'outputTokens', 0) : 0,
-      cost: data ? readEventNumber(data, 'cost', 0) : 0,
       toolCalls: [],
       response: '',
       messages: [],
@@ -156,7 +155,6 @@
     turn.model = readEventString(data, 'model', turn.model);
     turn.inputTokens = readEventNumber(data, 'inputTokens', turn.inputTokens);
     turn.outputTokens = readEventNumber(data, 'outputTokens', turn.outputTokens);
-    turn.cost = readEventNumber(data, 'cost', turn.cost);
     const messagesValue = data['messages'];
     if (isMessageArray(messagesValue)) {
       turn.messages = messagesValue;
@@ -228,18 +226,15 @@
   }
 
   function refreshTurnsSnapshot(): void {
-    // Rebuild the sorted snapshot plus running totals from the authoritative
-    // turnMap. Cost here is O(k) in number of turns, not O(n) in events.
+    // Rebuild the sorted snapshot plus running token totals from the
+    // authoritative turnMap. This is O(k) in number of turns, not O(n) in events.
     const sorted = Array.from(turnMap.values()).toSorted((a, b) => a.turnIndex - b.turnIndex);
     turns = sorted;
     let nextTokens = 0;
-    let nextCost = 0;
     for (const turn of sorted) {
       nextTokens += turn.inputTokens + turn.outputTokens;
-      nextCost += turn.cost;
     }
     tokensUsed = nextTokens;
-    costUsed = nextCost;
   }
 
   function resetAgentAggregates(): void {
@@ -475,9 +470,9 @@
         </Card>
       {/if}
 
-      <!-- Cost Waterfall -->
+      <!-- Turn Usage -->
       {#if turns.length > 0}
-        <Card title="Cost Waterfall">
+        <Card title="Turn Usage">
           <AgentCostWaterfall {turns} />
         </Card>
       {/if}

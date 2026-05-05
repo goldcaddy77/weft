@@ -36,7 +36,7 @@ function createRecordingTracer(): { tracer: OpenTelemetryTracer; spans: Recorded
     startSpan(name: string, options?, _context?): OpenTelemetrySpan {
       const id = String(++spanCounter).padStart(16, '0');
       // If a parent context carries a span with a traceId, inherit it.
-      // This mirrors real OpenTelemetry behavior where child spans share the parent's traceId.
+      // This mirrors real OTel behavior where child spans share the parent's traceId.
       const parentSpan = (_context as any)?.__span as OpenTelemetrySpan | undefined;
       const traceId = parentSpan ? parentSpan.spanContext().traceId : 'a'.repeat(32);
       const recorded: RecordedSpan = {
@@ -116,7 +116,7 @@ describe('remote worker trace propagation', () => {
     });
 
     // 1. Establish the workflow's trace context via workflowStart.
-    workflowSide.workflow.workflowStart!(
+    workflowSide.interceptor.workflowStart!(
       {
         workflowId: 'wf-remote-1',
         workflowType: 'OrderProcessing',
@@ -137,7 +137,7 @@ describe('remote worker trace propagation', () => {
     };
 
     driveGenerator(
-      workflowSide.workflow.activity!(activityInterception, function* () {
+      workflowSide.interceptor.activity!(activityInterception, function* () {
         return 'dispatched';
       }),
     );
@@ -155,7 +155,7 @@ describe('remote worker trace propagation', () => {
 
     // 5. Run the activity interceptor on the remote worker side.
     let activityExecuted = false;
-    await workerSide.activity.execute!(
+    await workerSide.interceptor.execute!(
       {
         activityName: 'chargeCard',
         input: { amount: 99 },
@@ -189,7 +189,7 @@ describe('remote worker trace propagation', () => {
       openTelemetryApi: createMockOpenTelemetryApi(tracer),
     });
 
-    workflowSide.workflow.workflowStart!(
+    workflowSide.interceptor.workflowStart!(
       {
         workflowId: 'wf-json-rt',
         workflowType: 'TestWorkflow',
@@ -201,7 +201,7 @@ describe('remote worker trace propagation', () => {
 
     const headers = new Map<string, string>();
     driveGenerator(
-      workflowSide.workflow.activity!(
+      workflowSide.interceptor.activity!(
         { workflowId: 'wf-json-rt', activityName: 'process', input: 'data', attempt: 1, headers },
         function* () {
           return 'ok';
@@ -232,12 +232,12 @@ describe('remote worker trace propagation', () => {
 
   it('activity interceptor creates a span when no traceparent is present', async () => {
     const { tracer, spans } = createRecordingTracer();
-    const { activity } = createObservabilityInterceptors({
+    const { interceptor } = createObservabilityInterceptors({
       openTelemetryApi: createMockOpenTelemetryApi(tracer),
     });
 
     // Simulate a remote worker receiving a task with no headers.
-    await activity.execute!(
+    await interceptor.execute!(
       {
         activityName: 'standaloneTask',
         input: 'hello',
@@ -259,7 +259,7 @@ describe('remote worker trace propagation', () => {
       openTelemetryApi: createMockOpenTelemetryApi(tracer),
     });
 
-    workflowSide.workflow.workflowStart!(
+    workflowSide.interceptor.workflowStart!(
       {
         workflowId: 'wf-multi',
         workflowType: 'MultiStep',
@@ -272,7 +272,7 @@ describe('remote worker trace propagation', () => {
     // Dispatch two activities from the same workflow.
     const headers1 = new Map<string, string>();
     driveGenerator(
-      workflowSide.workflow.activity!(
+      workflowSide.interceptor.activity!(
         {
           workflowId: 'wf-multi',
           activityName: 'step1',
@@ -288,7 +288,7 @@ describe('remote worker trace propagation', () => {
 
     const headers2 = new Map<string, string>();
     driveGenerator(
-      workflowSide.workflow.activity!(
+      workflowSide.interceptor.activity!(
         {
           workflowId: 'wf-multi',
           activityName: 'step2',

@@ -1,4 +1,4 @@
-import { executeAgentLoop } from '../agent.ts';
+import { executeAgentLoop } from '../agent/index.ts';
 import type { DebateOptions, DebateResult, DebateRound } from './types.ts';
 
 /**
@@ -21,7 +21,7 @@ import type { DebateOptions, DebateResult, DebateRound } from './types.ts';
  * ```
  */
 export async function debate(options: DebateOptions): Promise<DebateResult> {
-  const { advocate, critic, judge, topic, rounds: roundCount, provider, budget, signal } = options;
+  const { advocate, critic, judge, topic, rounds: roundCount, provider, signal } = options;
 
   const debateRounds: DebateRound[] = [];
   let transcript = `Topic: ${topic}\n\n`;
@@ -40,7 +40,6 @@ export async function debate(options: DebateOptions): Promise<DebateResult> {
         systemPrompt: advocate.systemPrompt,
         tools: advocate.tools,
         maxTurns: advocate.maxTurns,
-        budget,
         signal,
       },
       advocateInput,
@@ -59,7 +58,6 @@ export async function debate(options: DebateOptions): Promise<DebateResult> {
         systemPrompt: critic.systemPrompt,
         tools: critic.tools,
         maxTurns: critic.maxTurns,
-        budget,
         signal,
       },
       criticInput,
@@ -85,7 +83,6 @@ export async function debate(options: DebateOptions): Promise<DebateResult> {
       systemPrompt: judge.systemPrompt,
       tools: judge.tools,
       maxTurns: judge.maxTurns,
-      budget,
       signal,
     },
     judgeInput,

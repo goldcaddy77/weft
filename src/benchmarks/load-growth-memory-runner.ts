@@ -94,6 +94,14 @@ async function runWarmup(engine: Engine): Promise<void> {
   }
 }
 
+function snapshotRetainedMemory(profiler: MemoryProfiler): MemorySample {
+  if (typeof Bun.gc === 'function') {
+    Bun.gc(true);
+  }
+
+  return profiler.snapshot();
+}
+
 function summarizeSamples(samples: MemorySample[]): {
   peakRss: number;
   averageRss: number;
@@ -150,7 +158,7 @@ async function runSustainedLoad(
 ): Promise<{ elapsedMilliseconds: number; samples: MemorySample[]; totalWorkflows: number }> {
   const startedAt = performance.now();
   const deadline = startedAt + durationMilliseconds;
-  const samples: MemorySample[] = [profiler.snapshot()];
+  const samples: MemorySample[] = [snapshotRetainedMemory(profiler)];
   let lastSampleTimestamp = samples[0]!.timestamp;
   let totalWorkflows = 0;
 
@@ -159,7 +167,7 @@ async function runSustainedLoad(
     totalWorkflows += DEFAULT_BATCH_SIZE;
 
     if (Date.now() - lastSampleTimestamp >= sampleIntervalMilliseconds) {
-      const sample = profiler.snapshot();
+      const sample = snapshotRetainedMemory(profiler);
       samples.push(sample);
       lastSampleTimestamp = sample.timestamp;
     }
@@ -167,7 +175,7 @@ async function runSustainedLoad(
     await Bun.sleep(0);
   }
 
-  samples.push(profiler.snapshot());
+  samples.push(snapshotRetainedMemory(profiler));
 
   const elapsedMilliseconds = Math.max(1, performance.now() - startedAt);
 
