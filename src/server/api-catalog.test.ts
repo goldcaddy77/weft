@@ -219,8 +219,11 @@ describe('API catalog linkset', () => {
       expect(body.error).toContain('trustedHosts');
     } finally {
       if (originalNodeEnv !== undefined) Bun.env['NODE_ENV'] = originalNodeEnv;
+      else delete Bun.env['NODE_ENV'];
       if (originalOverride !== undefined) {
         Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'] = originalOverride;
+      } else {
+        delete Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'];
       }
     }
   });
@@ -263,6 +266,7 @@ describe('API catalog linkset', () => {
       expect(response.status).toBe(200);
     } finally {
       if (originalNodeEnv !== undefined) Bun.env['NODE_ENV'] = originalNodeEnv;
+      else delete Bun.env['NODE_ENV'];
       if (originalOverride !== undefined) {
         Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'] = originalOverride;
       } else {
