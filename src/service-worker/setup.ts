@@ -76,9 +76,9 @@ export interface SetupServiceWorkerOptions {
  *
  * @example
  * ```ts
- * import { setupServiceWorker } from 'weft/service-worker';
+ * import { setupServiceWorker, type SetupServiceWorkerResult } from 'weft/service-worker';
  *
- * const setup = await setupServiceWorker();
+ * const setup: SetupServiceWorkerResult = await setupServiceWorker();
  * await setup.ready;
  * setup.engine.register('hello', async function* () {
  *   yield;
