@@ -6,8 +6,10 @@ const BYTE_STRING_CHUNK_SIZE = 0x8000;
 export function encodeBytesToBase64(value: Uint8Array): string {
   let binary = '';
   for (let offset = 0; offset < value.byteLength; offset += BYTE_STRING_CHUNK_SIZE) {
-    const chunk = value.subarray(offset, offset + BYTE_STRING_CHUNK_SIZE);
-    binary += String.fromCharCode(...chunk);
+    const end = Math.min(offset + BYTE_STRING_CHUNK_SIZE, value.byteLength);
+    for (const byte of value.subarray(offset, end)) {
+      binary += String.fromCharCode(byte);
+    }
   }
   return btoa(binary);
 }

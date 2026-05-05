@@ -74,15 +74,11 @@
     },
     "./storage/sqlite/bun": {
       "types": "./dist/storage/bun-sql.d.ts",
-      "bun": "./dist/storage/bun-sql.js",
-      "import": "./dist/storage/bun-sql.js",
-      "default": "./dist/storage/bun-sql.js"
+      "bun": "./dist/storage/bun-sql.js"
     },
     "./storage/sqlite/node": {
       "types": "./dist/storage/node-sqlite.d.ts",
-      "node": "./dist/storage/node-sqlite.js",
-      "import": "./dist/storage/node-sqlite.js",
-      "default": "./dist/storage/node-sqlite.js"
+      "node": "./dist/storage/node-sqlite.js"
     },
     "./storage/lmdb": {
       "types": "./dist/storage/lmdb.d.ts",

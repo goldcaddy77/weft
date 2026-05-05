@@ -19,18 +19,14 @@ describe('storage package exports', () => {
     });
   });
 
-  it('exposes explicit SQLite runtime override subpaths to standard ESM importers', () => {
-    expect(packageJson.exports['./storage/sqlite/bun']).toMatchObject({
+  it('keeps explicit SQLite runtime override subpaths runtime-specific', () => {
+    expect(packageJson.exports['./storage/sqlite/bun']).toEqual({
       types: './dist/storage/bun-sql.d.ts',
       bun: './dist/storage/bun-sql.js',
-      import: './dist/storage/bun-sql.js',
-      default: './dist/storage/bun-sql.js',
     });
-    expect(packageJson.exports['./storage/sqlite/node']).toMatchObject({
+    expect(packageJson.exports['./storage/sqlite/node']).toEqual({
       types: './dist/storage/node-sqlite.d.ts',
       node: './dist/storage/node-sqlite.js',
-      import: './dist/storage/node-sqlite.js',
-      default: './dist/storage/node-sqlite.js',
     });
   });
 
