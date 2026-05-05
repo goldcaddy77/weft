@@ -31,6 +31,9 @@ Weft is a ground-up rethink: what would durable execution look like if you desig
 - **Runs in the browser.** The core engine (minus the server shell) runs in Web Workers with a Service Worker as its persistence backbone. Same workflow code, different environment.
 - **Agent-native.** Dynamic execution graphs, durable agent loops, human-in-the-loop oversight, and multi-agent coordination are built into the core---each tool call a checkpoint boundary, each conversation durable across crashes.
 
+> [!IMPORTANT]
+> Workflows run in TypeScript on the engine; activities can run in any language via the `RemoteWorker` protocol. This split is intentional — the checkpoint model requires single-process generator state, so workflow code is TypeScript-only by design. See [ADR 0001](documentation/contributing/architecture-decisions/0001-workflows-typescript-only.md) for the design rationale.
+
 ## Hello, World
 
 ```typescript
@@ -388,18 +391,21 @@ Each `ctx.step()` is a checkpoint boundary. The engine compiles step-style workf
 
 ## Weft vs. Temporal
 
-| Concept                | Temporal                          | Weft                                                                       |
-| ---------------------- | --------------------------------- | -------------------------------------------------------------------------- |
-| Core mental model      | Replay determinism                | Generators pause and resume                                                |
-| Activity invocation    | `proxyActivities()` + type import | `yield* ctx.run(namedActivity, input)`                                     |
-| Timer                  | Deterministic `workflow.sleep()`  | `yield* ctx.sleep("1 hour")`                                               |
-| Signal                 | `setHandler` + `condition`        | `yield* ctx.waitForSignal(name)`                                           |
-| Versioning             | `patched()` / `deprecatePatch()`  | Deploy new code (migration optional)                                       |
-| Long-running workflows | `continueAsNew()`                 | None needed (checkpoint size is bounded by live state, not history length) |
-| Agent declaration      | N/A (build from primitives)       | `defineAgent()` or `ctx.agent()`—bring your own provider and tools         |
-| Durable agent loop     | Activity boundary only            | Every tool call is a checkpoint boundary                                   |
-| Dev environment        | Docker Compose + Temporal server  | `bun add weft`                                                             |
-| Bundling               | Webpack for workflow sandbox      | None                                                                       |
+| Concept                | Temporal                                      | Weft                                                                       |
+| ---------------------- | --------------------------------------------- | -------------------------------------------------------------------------- |
+| Core mental model      | Replay determinism                            | Generators pause and resume                                                |
+| Workflow language      | Go, Java, TypeScript, Python, .NET, Ruby, PHP | TypeScript only (activities can be any language via `RemoteWorker`)        |
+| Activity invocation    | `proxyActivities()` + type import             | `yield* ctx.run(namedActivity, input)`                                     |
+| Timer                  | Deterministic `workflow.sleep()`              | `yield* ctx.sleep("1 hour")`                                               |
+| Signal                 | `setHandler` + `condition`                    | `yield* ctx.waitForSignal(name)`                                           |
+| Versioning             | `patched()` / `deprecatePatch()`              | Deploy new code (migration optional)                                       |
+| Long-running workflows | `continueAsNew()`                             | None needed (checkpoint size is bounded by live state, not history length) |
+| Agent declaration      | N/A (build from primitives)                   | `defineAgent()` or `ctx.agent()`—bring your own provider and tools         |
+| Durable agent loop     | Activity boundary only                        | Every tool call is a checkpoint boundary                                   |
+| Dev environment        | Docker Compose + Temporal server              | `bun add weft`                                                             |
+| Bundling               | Webpack for workflow sandbox                  | None                                                                       |
+
+> Weft is for teams whose primary backend language is TypeScript. If you need workflows in multiple languages, [Temporal](https://temporal.io) is the right answer. For the design rationale, see [ADR 0001 — Workflows Are TypeScript-Only by Design](documentation/contributing/architecture-decisions/0001-workflows-typescript-only.md).
 
 ## Documentation
 
