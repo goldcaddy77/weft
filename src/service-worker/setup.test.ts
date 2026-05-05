@@ -2,10 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../core/engine';
 import { MemoryStorage } from '../storage/memory';
-import {
-  resetSetupServiceWorkerRegistry,
-  setupServiceWorker,
-} from './setup.ts';
+import { resetSetupServiceWorkerRegistry, setupServiceWorker } from './setup.ts';
 
 interface FakeEvent {
   request?: Request;
@@ -165,9 +162,9 @@ describe('setupServiceWorker', () => {
       const storageB = new MemoryStorage();
       const engine = new Engine({ storage: storageA });
       try {
-        await expect(
-          setupServiceWorker({ engine, storage: storageB }),
-        ).rejects.toThrow(/same instance/);
+        await expect(setupServiceWorker({ engine, storage: storageB })).rejects.toThrow(
+          /same instance/,
+        );
       } finally {
         engine[Symbol.dispose]();
       }
@@ -271,10 +268,18 @@ describe('setupServiceWorker', () => {
       const installListener = listenerFor(scope, 'install');
       const activateListener = listenerFor(scope, 'activate');
       let installPromise: Promise<unknown> | undefined;
-      installListener({ waitUntil(promise) { installPromise = promise; } });
+      installListener({
+        waitUntil(promise) {
+          installPromise = promise;
+        },
+      });
       await installPromise;
       let activatePromise: Promise<unknown> | undefined;
-      activateListener({ waitUntil(promise) { activatePromise = promise; } });
+      activateListener({
+        waitUntil(promise) {
+          activatePromise = promise;
+        },
+      });
       await activatePromise;
       expect(scope.skipWaitingCalls).toBe(1);
       expect(scope.claimCalls).toBe(1);

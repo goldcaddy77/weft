@@ -108,6 +108,26 @@ If you do not pass a storage option to the `Engine` constructor, it defaults to 
 const engine = new Engine(); // uses MemoryStorage
 ```
 
+### `resolveDefaultStorage` for runtime detection (Bun & Node only)
+
+`weft/storage/auto` exposes `resolveDefaultStorage()`, a developer-convenience helper that detects the runtime and picks a persistent SQLite backend:
+
+- **Bun** → `BunSQLiteStorage`
+- **Node.js** → `NodeSQLiteStorage`
+- **Otherwise** → throws telling you to pass `storage` explicitly
+
+The path is under the OS temp directory, namespaced by the project's `cwd` hash (or `WEFT_DEFAULT_STORAGE_PATH` if set). The parent directory is created automatically. Production deployments should pass an explicit storage instance — this helper is for demos, scripts, and Hello World.
+
+```typescript
+import { Engine } from 'weft';
+import { resolveDefaultStorage } from 'weft/storage/auto';
+
+await using storage = await resolveDefaultStorage();
+await using engine = new Engine({ storage });
+```
+
+`weft/storage/auto` is **not for browsers**. The module statically imports `node:fs`/`node:os`/`node:path`/`node:crypto`, so it can't be bundled into a browser target. Browser and Service Worker contexts should use `IndexedDBStorage` directly (or `setupServiceWorker()` from `weft/service-worker`, which constructs IndexedDB internally).
+
 ## IndexedDBStorage
 
 `IndexedDBStorage` is the browser equivalent of `BunSQLiteStorage`. It persists workflow state to IndexedDB, making it suitable for Service Worker deployments where the engine runs entirely inside the browser.
