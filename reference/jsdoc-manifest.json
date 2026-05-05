@@ -6620,6 +6620,20 @@
     },
     {
       "sourceFile": "src/service-worker/shared.ts",
+      "sourceName": "DEFAULT_PERIODIC_SYNC_TAG",
+      "kind": "value",
+      "subKind": "const",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "DEFAULT_PERIODIC_SYNC_TAG",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/service-worker/shared.ts",
       "sourceName": "MinimalFetchEvent",
       "kind": "type",
       "subKind": "interface",

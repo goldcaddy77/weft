@@ -9,6 +9,20 @@
 const DEFAULT_PATH_PREFIX = '/weft/';
 
 /**
+ * Default periodic-sync tag used when callers don't pass one explicitly.
+ * Shared by `createPeriodicSyncHandler` and `setupServiceWorker` so the
+ * two entry points cannot drift to different tags.
+ *
+ * @example
+ * ```ts
+ * import { DEFAULT_PERIODIC_SYNC_TAG } from 'weft/service-worker';
+ * const tag: 'weft-timers' = DEFAULT_PERIODIC_SYNC_TAG;
+ * void tag;
+ * ```
+ */
+export const DEFAULT_PERIODIC_SYNC_TAG = 'weft-timers';
+
+/**
  * Minimal FetchEvent shape used by `createFetchHandler` and the internal
  * `buildDelegatedRequest` helper. Stays narrow on purpose so the module
  * doesn't pull in webworker types that conflict with Bun's lib.

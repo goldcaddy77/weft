@@ -9,11 +9,19 @@
 
 import type { Engine } from '../core/engine';
 import { handleRequest } from '../server/handler';
-import { buildDelegatedRequest, normalizePathPrefix } from './shared.ts';
+import {
+  buildDelegatedRequest,
+  DEFAULT_PERIODIC_SYNC_TAG,
+  normalizePathPrefix,
+} from './shared.ts';
 import type { MinimalFetchEvent } from './shared.ts';
 import type { ServiceWorkerScheduler } from './scheduler';
 
-export { buildDelegatedRequest, normalizePathPrefix } from './shared.ts';
+export {
+  buildDelegatedRequest,
+  DEFAULT_PERIODIC_SYNC_TAG,
+  normalizePathPrefix,
+} from './shared.ts';
 export type { MinimalFetchEvent } from './shared.ts';
 
 // ---------------------------------------------------------------------------
@@ -66,7 +74,6 @@ export interface ServiceWorkerOptions {
 // Default constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_PERIODIC_SYNC_TAG = 'weft-timers';
 
 // ---------------------------------------------------------------------------
 // createFetchHandler

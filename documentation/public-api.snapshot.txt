@@ -435,6 +435,7 @@ function isOperationFaultLike(value: unknown): boolean
 function shouldPreferLegacyRoute(bindingMatch: { readonly binding: UnknownRestBinding; }, routeMatch: RouteMatch): boolean
 
 # Entrypoint: ./service-worker
+const DEFAULT_PERIODIC_SYNC_TAG: "weft-timers"
 interface MinimalFetchEvent { request: Request; respondWith(response: Response | Promise<Response>): void }
 interface ServiceWorkerOptions { engine: Engine; pathPrefix?: string }
 interface SetupServiceWorkerOptions { databaseName?: string; engine?: Engine; pathPrefix?: string; periodicSyncTag?: string; register?: (engine: Engine) => void | Promise<void>; storage?: WeftStorage }

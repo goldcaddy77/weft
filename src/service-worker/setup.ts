@@ -18,12 +18,12 @@ import { handleRequest } from '../server/handler';
 import { ServiceWorkerScheduler } from './scheduler';
 import {
   buildDelegatedRequest,
+  DEFAULT_PERIODIC_SYNC_TAG,
   normalizePathPrefix,
   type MinimalFetchEvent,
 } from './shared.ts';
 
 const DEFAULT_DATABASE_NAME = 'weft';
-const DEFAULT_PERIODIC_SYNC_TAG = 'weft-timers';
 
 /**
  * Options for {@link setupServiceWorker}. All fields are optional; the
