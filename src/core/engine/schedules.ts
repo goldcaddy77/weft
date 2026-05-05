@@ -17,6 +17,7 @@ import type {
   TimerEntry,
   WorkflowState,
 } from '../types.ts';
+import { WorkflowNotRegisteredError } from './errors.ts';
 import { ScheduleHandle } from './handles.ts';
 import type { EngineInternals } from './internals.ts';
 import {
@@ -71,7 +72,7 @@ export async function schedule(
   accessOptions?: ScheduleAccessOptions,
 ): Promise<ScheduleHandle> {
   if (!internals.registrations.has(type)) {
-    throw new Error(`No workflow registered with name "${type}"`);
+    throw new WorkflowNotRegisteredError(type);
   }
   if (typeof cronExpression !== 'string') {
     throw new Error('cronExpression must be a string');

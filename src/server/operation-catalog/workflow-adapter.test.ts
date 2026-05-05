@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { z } from 'zod';
 
 import { Engine } from '../../core/engine.ts';
+import {
+  WorkflowAlreadyExistsError,
+  WorkflowNotRegisteredError,
+} from '../../core/engine/errors.ts';
 import { StartWorkflowValidationError } from '../../core/start-workflow-validation.ts';
 import { QuotaExceededError } from '../../core/tenant-quotas.ts';
 import type { WorkflowContext } from '../../core/types.ts';
@@ -58,12 +62,11 @@ function registerCheckoutWorkflow(engine: Engine): void {
   });
 }
 
-function catalogCheckoutWorkflow(engine: Engine) {
+function catalogCheckoutWorkflow() {
   return catalogWorkflow<CheckoutInput>({
     name: 'weft.workflows.checkout.start',
     mcpExposable: false,
     workflowType: 'checkout',
-    engine,
     summary: 'Start a checkout workflow',
     tags: ['Workflows', 'Checkout'],
     inputSchema: checkoutInputSchema,
@@ -77,7 +80,7 @@ describe('catalogWorkflow', () => {
   it('starts the workflow and returns only the start handle', async () => {
     const engine = createEngine();
     registerCheckoutWorkflow(engine);
-    const registry = createOperationRegistry([catalogCheckoutWorkflow(engine)]);
+    const registry = createOperationRegistry([catalogCheckoutWorkflow()]);
 
     const result = await executeOperation<StartHandle>(
       'weft.workflows.checkout.start',
@@ -106,7 +109,7 @@ describe('catalogWorkflow', () => {
   it('dispatches over JSON-RPC HTTP and passes the entire validated input to engine.start', async () => {
     const engine = createEngine();
     registerCheckoutWorkflow(engine);
-    const registry = createOperationRegistry([catalogCheckoutWorkflow(engine)]);
+    const registry = createOperationRegistry([catalogCheckoutWorkflow()]);
 
     const result = await executeOperation<StartHandle>(
       'weft.workflows.checkout.start',
@@ -132,7 +135,7 @@ describe('catalogWorkflow', () => {
   it('rejects invalid input before starting the workflow', async () => {
     const engine = createEngine();
     registerCheckoutWorkflow(engine);
-    const registry = createOperationRegistry([catalogCheckoutWorkflow(engine)]);
+    const registry = createOperationRegistry([catalogCheckoutWorkflow()]);
 
     const result = await executeOperation(
       'weft.workflows.checkout.start',
@@ -159,7 +162,6 @@ describe('catalogWorkflow', () => {
         name: 'weft.workflows.checkout.start',
         mcpExposable: false,
         workflowType: 'checkout',
-        engine,
         summary: 'Start a checkout workflow',
         inputSchema: checkoutInputSchema,
         access: { kind: 'authenticated' },
@@ -197,7 +199,6 @@ describe('catalogWorkflow', () => {
         name: 'weft.workflows.loose.start',
         mcpExposable: false,
         workflowType: 'loose-workflow',
-        engine,
         summary: 'Start a loose workflow',
         access: { kind: 'public' },
         transports: catalogTransports,
@@ -241,11 +242,11 @@ describe('catalogWorkflow', () => {
         expectedCode: 'RateLimited',
       },
       {
-        error: new Error('No workflow registered with name "missing"'),
+        error: new WorkflowNotRegisteredError('missing'),
         expectedCode: 'InvalidParams',
       },
       {
-        error: new Error('Workflow "checkout" already exists'),
+        error: new WorkflowAlreadyExistsError('checkout'),
         expectedCode: 'Conflict',
       },
       {
@@ -259,7 +260,7 @@ describe('catalogWorkflow', () => {
       engine.start = async () => {
         throw testCase.error;
       };
-      const registry = createOperationRegistry([catalogCheckoutWorkflow(engine)]);
+      const registry = createOperationRegistry([catalogCheckoutWorkflow()]);
 
       const result = await executeOperation(
         'weft.workflows.checkout.start',
@@ -279,8 +280,7 @@ describe('catalogWorkflow', () => {
   });
 
   it('appears in generated OpenRPC documents with the hard-coded start handle result schema', () => {
-    const engine = createEngine();
-    const registry = createOperationRegistry([catalogCheckoutWorkflow(engine)]);
+    const registry = createOperationRegistry([catalogCheckoutWorkflow()]);
 
     const document = generateOpenRpcDocument({ registry, transports: ['http'] });
     const methods = document['methods'] as Array<Record<string, unknown>>;

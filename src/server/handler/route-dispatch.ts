@@ -7,10 +7,15 @@ import {
 import { generateApiCatalog, originFromRequest } from '../api-catalog.ts';
 import { generateAsyncApiDocument } from '../asyncapi.ts';
 import type { AuthContext } from '../authentication.ts';
+import type { DiscoveryInfo } from '../discovery-info.ts';
 import { faultToHttpResponse } from '../fault-to-http.ts';
 import { generateOpenApiDocument, type OpenApiSecuritySchemeName } from '../openapi.ts';
 import { generateOpenRpcDocument } from '../openrpc.ts';
-import { executeOperation, type OperationRegistry } from '../operation-catalog.ts';
+import {
+  executeOperation,
+  type OperationRegistry,
+  type PipelineTrace,
+} from '../operation-catalog.ts';
 import type { OperationFault } from '../operation-fault.ts';
 import { FAULT_CODE_TO_HTTP_STATUS } from '../operation-fault.ts';
 import {
@@ -92,6 +97,24 @@ export interface HandlerOptions {
   restBindings?: ReadonlyArray<UnknownRestBinding>;
   /** OpenAPI security schemes supported by the live server configuration. */
   supportedAuthenticationSchemes?: ReadonlySet<OpenApiSecuritySchemeName>;
+  /**
+   * Operator-supplied metadata applied uniformly to all three discovery
+   * documents (`/openapi.json`, `/openrpc.json`, `/asyncapi.json`).
+   */
+  discoveryInfo?: DiscoveryInfo;
+  /**
+   * Optional explicit public origin used when emitting absolute URLs in
+   * `/.well-known/api-catalog`. Recommended in production to avoid trusting
+   * attacker-controlled `Host` / `X-Forwarded-Proto` headers.
+   */
+  publicOrigin?: string;
+  /**
+   * Optional pipeline-trace observer. **Internal test seam** used by the
+   * dispatch-audit suite to prove every transport drives the full
+   * `executeOperation` pipeline. Production callers should not set this
+   * — the parameter has no other effect on dispatch behavior.
+   */
+  pipelineTrace?: PipelineTrace;
 }
 
 async function handleGetMetrics(
@@ -127,8 +150,11 @@ export const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   healthCheck: async ({ request }) => negotiatedResponse(request, { status: 'ok' }),
   getMetrics: async ({ options }) =>
     handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),
-  apiCatalog: async ({ request }) => {
-    const origin = originFromRequest(request);
+  apiCatalog: async ({ request, options }) => {
+    // Prefer an explicit operator-supplied origin over header-derived
+    // values to avoid Host-header injection. Falls back to header-based
+    // derivation only when no explicit origin is configured.
+    const origin = options?.publicOrigin ?? originFromRequest(request);
     const body = generateApiCatalog({ origin });
     return new Response(JSON.stringify(body), {
       status: 200,
@@ -143,6 +169,7 @@ export const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
         ...(options?.supportedAuthenticationSchemes !== undefined
           ? { supportedSchemes: options.supportedAuthenticationSchemes }
           : {}),
+        ...(options?.discoveryInfo !== undefined ? { discoveryInfo: options.discoveryInfo } : {}),
       }),
     ),
   openRpcDocument: async ({ options }) =>
@@ -150,12 +177,14 @@ export const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
       generateOpenRpcDocument({
         registry: options?.operationRegistry ?? defaultOperationRegistry(),
         transports: ['http', 'websocket'],
+        ...(options?.discoveryInfo !== undefined ? { discoveryInfo: options.discoveryInfo } : {}),
       }),
     ),
   asyncApiDocument: async ({ options }) =>
     jsonResponse(
       generateAsyncApiDocument({
         registry: options?.operationRegistry ?? defaultOperationRegistry(),
+        ...(options?.discoveryInfo !== undefined ? { discoveryInfo: options.discoveryInfo } : {}),
       }),
     ),
 };
@@ -167,6 +196,7 @@ export async function dispatchViaExecuteOperation(
   pathParams: Record<string, string>,
   registry: OperationRegistry,
   principal: Principal,
+  pipelineTrace?: PipelineTrace,
 ): Promise<Response> {
   let input: unknown;
   try {
@@ -183,6 +213,7 @@ export async function dispatchViaExecuteOperation(
     engine,
     transport: 'http-rest',
     registry,
+    ...(pipelineTrace !== undefined ? { pipelineTrace } : {}),
   });
   if (result.ok) {
     return binding.shapeSuccess

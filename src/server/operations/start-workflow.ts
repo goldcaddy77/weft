@@ -2,6 +2,10 @@ import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
 import {
+  WorkflowAlreadyExistsError,
+  WorkflowNotRegisteredError,
+} from '../../core/engine/errors.ts';
+import {
   assertExclusiveStartWorkflowOptions,
   coerceStartWorkflowDuration,
   coerceStartWorkflowId,
@@ -72,6 +76,21 @@ export const startWorkflowOperation = defineOperation<StartWorkflowInput, StartW
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
 
+      // Typed engine errors first; the engine throws these for the
+      // canonical failure modes (workflow type not registered, workflow
+      // ID collision). String-matching the message would silently
+      // misclassify the fault if the message text is ever changed.
+      if (error instanceof WorkflowNotRegisteredError) {
+        throw invalidParamsFault(message);
+      }
+      if (error instanceof WorkflowAlreadyExistsError) {
+        const fault: OperationFault = {
+          code: 'Conflict',
+          message,
+          data: { reason: message },
+        };
+        throw fault;
+      }
       if (error instanceof StartWorkflowValidationError) {
         throw invalidParamsFault(message);
       }
@@ -80,17 +99,6 @@ export const startWorkflowOperation = defineOperation<StartWorkflowInput, StartW
           code: 'RateLimited',
           message,
           data: {},
-        };
-        throw fault;
-      }
-      if (message.includes('No workflow registered')) {
-        throw invalidParamsFault(message);
-      }
-      if (message.includes('already exists')) {
-        const fault: OperationFault = {
-          code: 'Conflict',
-          message,
-          data: { reason: message },
         };
         throw fault;
       }

@@ -1,0 +1,16 @@
+{
+  "jsonrpc": "2.0",
+  "method": "weft.events.deliver",
+  "params": {
+    "subscriptionId": "<subscription-id>",
+    "envelope": {
+      "kind": "workflow:started",
+      "workflowId": "<workflow-id>",
+      "selector": "events",
+      "sequence": 0,
+      "cursor": "<cursor>",
+      "emittedAtMs": 0,
+      "payload": { "type": "started" }
+    }
+  }
+}

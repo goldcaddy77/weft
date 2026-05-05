@@ -13,6 +13,7 @@ import { WorkerRegistry } from '../worker/registry.ts';
 import type { AuthConfig } from './authentication.ts';
 import { buildTLSOptions, createAuthenticator, validateAuthConfig } from './authentication.ts';
 import { DeadlineTracker } from './deadline-tracker.ts';
+import type { DiscoveryInfo } from './discovery-info.ts';
 import { createEngineEventFeedBackend } from './engine-event-feed-backend.ts';
 import {
   closeJsonRpcSessionsForShutdown,
@@ -121,6 +122,22 @@ export interface ServeOptions {
    * path and has lower precedence if both are set.
    */
   metricsCollector?: MetricsCollector;
+  /**
+   * Optional metadata applied uniformly to all three discovery documents
+   * (`/openapi.json`, `/openrpc.json`, `/asyncapi.json`). When set, the
+   * description, contact, license, and externalDocs fields appear in every
+   * discovery surface from one source — ensuring zero drift across the
+   * three documents.
+   */
+  discoveryInfo?: DiscoveryInfo;
+  /**
+   * Optional explicit public origin (e.g. `https://api.example.com`) used
+   * when emitting absolute URLs in `/.well-known/api-catalog`. Takes
+   * precedence over header-based origin derivation. Recommended in
+   * production to avoid trusting attacker-controlled `Host` /
+   * `X-Forwarded-Proto` headers.
+   */
+  publicOrigin?: string;
 }
 
 /**

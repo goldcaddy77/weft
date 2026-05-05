@@ -86,6 +86,119 @@ describe('operation dispatch audit — negative fixture', () => {
   });
 });
 
+describe('operation dispatch audit — discriminated union compile-time guarantees', () => {
+  it('compiles: kind: stream with eventSchema is accepted', () => {
+    // The compile-time test is the test. If this file compiles, the
+    // discriminated union accepts the well-formed stream operation; if
+    // someone removes `eventSchema`, this file fails to compile and the
+    // whole audit suite fails to run.
+    const operation = defineOperation({
+      name: 'weft.audit.streamtrace',
+      mcpExposable: false,
+      kind: 'stream',
+      summary: 'fixture',
+      inputSchema: z.object({}),
+      outputSchema: z.object({}),
+      eventSchema: z.object({ chunk: z.string() }),
+      access: { kind: 'public' },
+      transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
+      unknownKeyPolicy: { http: 'reject', jsonRpc: 'reject' },
+      invoke: async () => {
+        async function* iter() {
+          yield { chunk: 'a' };
+        }
+        return iter();
+      },
+    });
+    expect(operation.kind).toBe('stream');
+    expect(operation.eventSchema).toBeDefined();
+  });
+
+  it('compiles: kind: subscription with eventSchema is accepted', () => {
+    const operation = defineOperation({
+      name: 'weft.audit.subtrace',
+      mcpExposable: false,
+      kind: 'subscription',
+      summary: 'fixture',
+      inputSchema: z.object({}),
+      outputSchema: z.object({ subscriptionId: z.string(), cursor: z.string() }),
+      eventSchema: z.object({ envelope: z.unknown() }),
+      access: { kind: 'public' },
+      transports: { http: false, jsonRpcHttp: false, jsonRpcWebSocket: true, jsonRpcStdio: false },
+      unknownKeyPolicy: { http: 'reject', jsonRpc: 'reject' },
+      invoke: async () => ({
+        envelope: { subscriptionId: 's', cursor: 'c' },
+        iterable: (async function* () {})(),
+        close: async () => {},
+      }),
+    });
+    expect(operation.kind).toBe('subscription');
+    expect(operation.eventSchema).toBeDefined();
+  });
+
+  // Negative compile-time tests: documented for future readers, NOT
+  // executed as runtime tests (TypeScript already proves them at build
+  // time). The discriminated union forbids these at type-check time:
+  //
+  //   defineOperation({ kind: 'stream', /* no eventSchema */ ... })
+  //     ^^^^^^^^^^^^ Property 'eventSchema' is missing
+  //
+  //   defineOperation({ kind: 'unary', eventSchema: z.unknown(), ... })
+  //     ^^^^^^^^^^^ Object literal may only specify known properties,
+  //                 and 'eventSchema' does not exist in type
+  //                 'UnaryOperationDefinition...'
+});
+
+describe('operation dispatch audit — HTTP-handler integration', () => {
+  it('drives all eight pipeline-stage markers when a request reaches the real HTTP handler', async () => {
+    // This proves the HTTP transport adapter does call executeOperation
+    // through the standard pipeline rather than shortcutting around it.
+    // The earlier transport sweep above tests executeOperation directly;
+    // this test verifies the HTTP handler path lands at executeOperation.
+    const { handleRequest } = await import('../handler.ts');
+    const { Engine } = await import('../../core/engine.ts');
+    const { MemoryStorage } = await import('../../storage/memory.ts');
+
+    const operation = createTraceOperation();
+    const registry = createOperationRegistry([operation]);
+    const traceBinding = {
+      method: 'POST' as const,
+      path: '/v1/test/trace',
+      pathParamNames: [] as readonly string[],
+      operationName: 'weft.audit.trace',
+      inputSources: { value: { kind: 'body-field' as const, bodyField: 'value' } },
+      extractInput: async (request: Request) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        return { value: body['value'] };
+      },
+      success: { kind: 'json' as const, status: 200 },
+    };
+    const markers: PipelineTraceMarker[] = [];
+    const engine = new Engine({ storage: new MemoryStorage() });
+
+    try {
+      const response = await handleRequest(
+        new Request('http://localhost/v1/test/trace', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ value: 'http' }),
+        }),
+        engine,
+        {
+          operationRegistry: registry,
+          restBindings: [traceBinding],
+          pipelineTrace: (marker) => markers.push(marker),
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(markers).toEqual(EXPECTED_PIPELINE_TRACE);
+    } finally {
+      engine[Symbol.dispose]();
+    }
+  });
+});
+
 function createTraceOperation() {
   return defineOperation({
     name: 'weft.audit.trace',

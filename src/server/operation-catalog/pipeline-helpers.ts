@@ -1,5 +1,10 @@
 import { z } from 'zod';
 
+import {
+  WorkflowAlreadyExistsError,
+  WorkflowNotFoundError,
+  WorkflowNotRegisteredError,
+} from '../../core/engine/errors.ts';
 import type { FlattenedZodIssue, OperationFault, TransportKind } from '../operation-fault.ts';
 import type { TransportAvailability, UnknownKeyPolicy } from './types.ts';
 
@@ -83,10 +88,30 @@ export function flattenZodIssues(
 /**
  * Translate a thrown value from `invoke` into a transport-neutral
  * OperationFault.
+ *
+ * Typed engine errors (`WorkflowAlreadyExistsError`,
+ * `WorkflowNotFoundError`, `WorkflowNotRegisteredError`) are matched first
+ * so the fault classification is robust against future error-message
+ * rewording. Plain `Error` instances fall through to the message-pattern
+ * heuristics, which exist as a last-resort generic catch-all.
  */
 export function classifyEngineError(error: unknown): OperationFault {
   if (isOperationFault(error)) {
     return error;
+  }
+  if (error instanceof WorkflowAlreadyExistsError) {
+    return {
+      code: 'Conflict',
+      message: 'conflict',
+      data: { reason: 'resource already exists' },
+    };
+  }
+  if (error instanceof WorkflowNotFoundError || error instanceof WorkflowNotRegisteredError) {
+    return {
+      code: 'NotFound',
+      message: 'not found',
+      data: { resource: 'workflow' },
+    };
   }
   if (error instanceof Error) {
     return classifyErrorMessage(error);

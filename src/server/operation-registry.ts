@@ -23,7 +23,6 @@ import type { AccessPolicy } from './authorization.ts';
 import {
   validateOperationName,
   type OperationDefinition,
-  type OperationKind,
   type TransportAvailability,
   type UnknownKeyPolicy,
 } from './operation-catalog.ts';
@@ -46,15 +45,13 @@ export { isValidOperationName, validateOperationName } from './operation-catalog
  * passes. When present, BOTH `access` AND `authorize` must permit the
  * call: the policy runs first, then the parameter-aware hook.
  */
-export type OperationDefinitionInput<Input, Output> = {
+type OperationDefinitionInputBase<Input, Output> = {
   readonly name: string;
   readonly mcpExposable: boolean;
-  readonly kind?: OperationKind;
   readonly summary: string;
   readonly tags?: ReadonlyArray<string>;
   readonly inputSchema: z.ZodType<Input>;
   readonly outputSchema: z.ZodType<Output>;
-  readonly eventSchema?: z.ZodType;
   readonly access: AccessPolicy;
   readonly producibleFaults?: ReadonlyArray<FaultCode>;
   readonly discoverable?: boolean;
@@ -63,6 +60,28 @@ export type OperationDefinitionInput<Input, Output> = {
   readonly authorize?: OperationDefinition<Input, Output>['authorize'];
   readonly invoke: OperationDefinition<Input, Output>['invoke'];
 };
+
+/**
+ * Discriminated input for `defineOperation`, mirroring the discriminated
+ * union on `OperationDefinition`. Streaming and subscription kinds REQUIRE
+ * `eventSchema`; unary kinds forbid it. The compiler rejects shapes that
+ * don't satisfy this constraint, eliminating the runtime EngineFailure
+ * that would otherwise fire when a streaming operation tries to validate
+ * elements without a schema.
+ */
+export type OperationDefinitionInput<Input, Output> =
+  | (OperationDefinitionInputBase<Input, Output> & {
+      readonly kind?: 'unary';
+      readonly eventSchema?: never;
+    })
+  | (OperationDefinitionInputBase<Input, Output> & {
+      readonly kind: 'stream';
+      readonly eventSchema: z.ZodType;
+    })
+  | (OperationDefinitionInputBase<Input, Output> & {
+      readonly kind: 'subscription';
+      readonly eventSchema: z.ZodType;
+    });
 
 /**
  * Typed builder for a single operation. Validates the name at construction
@@ -87,15 +106,18 @@ export function defineOperation<Input, Output>(
   input: OperationDefinitionInput<Input, Output>,
 ): OperationDefinition<Input, Output> {
   validateOperationName(input.name);
-  return {
+  // The discriminated union on the input forces `eventSchema` to match
+  // `kind`. We construct the same shape on the output: streaming /
+  // subscription branches carry `eventSchema`, unary does not. The
+  // explicit branching is what TypeScript needs to narrow the assembled
+  // object literal against the union variants.
+  const baseFields = {
     name: input.name,
     mcpExposable: input.mcpExposable,
-    ...(input.kind === undefined ? {} : { kind: input.kind }),
     summary: input.summary,
     tags: [...(input.tags ?? [])],
     inputSchema: input.inputSchema,
     outputSchema: input.outputSchema,
-    ...(input.eventSchema === undefined ? {} : { eventSchema: input.eventSchema }),
     ...(input.producibleFaults === undefined
       ? {}
       : { producibleFaults: [...input.producibleFaults] }),
@@ -112,6 +134,15 @@ export function defineOperation<Input, Output>(
     unknownKeyPolicy: { ...input.unknownKeyPolicy },
     ...(input.authorize === undefined ? {} : { authorize: input.authorize }),
     invoke: input.invoke,
+  };
+  if (input.kind === 'stream') {
+    return { ...baseFields, kind: 'stream', eventSchema: input.eventSchema };
+  }
+  if (input.kind === 'subscription') {
+    return { ...baseFields, kind: 'subscription', eventSchema: input.eventSchema };
+  }
+  return {
+    ...baseFields,
   };
 }
 

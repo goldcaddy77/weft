@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
+import {
+  WorkflowAlreadyExistsError,
+  WorkflowNotRegisteredError,
+} from '../../core/engine/errors.ts';
 import { StartWorkflowValidationError } from '../../core/start-workflow-validation.ts';
 import { QuotaExceededError } from '../../core/tenant-quotas.ts';
 import type { AccessPolicy } from '../authorization.ts';
@@ -22,11 +26,31 @@ const StartHandleSchema = z.object({
 
 type StartHandle = z.infer<typeof StartHandleSchema>;
 
+/**
+ * Options accepted by {@link catalogWorkflow}.
+ *
+ * `mcpExposable` is REQUIRED. There is no default. The plan's MCP-readiness
+ * ratchet enforces explicit per-operation declaration of MCP exposability
+ * (see `mcp-readiness.test.ts`); the adapter forwards the caller's choice
+ * verbatim so cataloged workflows participate in the same ratchet.
+ *
+ * No `engine` field. The engine instance comes from the runtime dispatch
+ * context (the same `Engine` that runs `executeOperation`). Binding the
+ * adapter to a specific engine instance was a footgun: an adapter created
+ * for engine A could be dispatched by engine B and silently start the
+ * workflow on the wrong engine. The dispatch context is the single source
+ * of truth.
+ *
+ * No `outputSchema` field. The response shape is fixed at
+ * `{ workflowId, status }` — the workflow's own result schema belongs on a
+ * future `getResult`-shaped operation.
+ *
+ * No `mode` field. v1 ships start-only semantics.
+ */
 export type CatalogWorkflowOptions<Input> = {
   readonly name: string;
   readonly mcpExposable: boolean;
   readonly workflowType: string;
-  readonly engine: Engine;
   readonly summary: string;
   readonly tags?: ReadonlyArray<string>;
   readonly inputSchema?: z.ZodObject<z.ZodRawShape>;
@@ -63,6 +87,9 @@ export function catalogWorkflow<Input>(
     unknownKeyPolicy: { ...options.unknownKeyPolicy },
     ...(options.authorize === undefined ? {} : { authorize: options.authorize }),
     invoke: async ({ input, engine }): Promise<StartHandle> => {
+      // Engine is supplied by the dispatch context. The cast to `Engine`
+      // matches the project-accepted pattern in start-workflow.ts; it
+      // narrows from the dispatcher's `unknown` engine slot.
       const typedEngine = engine as Engine;
 
       try {
@@ -71,6 +98,21 @@ export function catalogWorkflow<Input>(
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
 
+        // Typed engine errors first; the engine throws these for the
+        // canonical failure modes (workflow type not registered, workflow
+        // ID collision). String-matching the message would silently
+        // misclassify the fault if the message text is ever changed.
+        if (error instanceof WorkflowNotRegisteredError) {
+          throw invalidParamsFault(message);
+        }
+        if (error instanceof WorkflowAlreadyExistsError) {
+          const fault: OperationFault = {
+            code: 'Conflict',
+            message,
+            data: { reason: message },
+          };
+          throw fault;
+        }
         if (error instanceof StartWorkflowValidationError) {
           throw invalidParamsFault(message);
         }
@@ -79,17 +121,6 @@ export function catalogWorkflow<Input>(
             code: 'RateLimited',
             message,
             data: {},
-          };
-          throw fault;
-        }
-        if (message.includes('No workflow registered')) {
-          throw invalidParamsFault(message);
-        }
-        if (message.includes('already exists')) {
-          const fault: OperationFault = {
-            code: 'Conflict',
-            message,
-            data: { reason: message },
           };
           throw fault;
         }

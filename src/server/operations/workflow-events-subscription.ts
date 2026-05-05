@@ -23,6 +23,21 @@ export type WorkflowEventsSubscriptionEnvelope = z.infer<typeof workflowEventsSu
  * Cataloged subscription operation for replay-plus-live workflow events.
  * The WebSocket session owns the lifecycle primitive; this operation owns
  * validation, authorization, and feed wiring.
+ *
+ * **Security model.** Subscriptions are capability grants for the lifetime
+ * of the WebSocket session: the catalog access policy is checked once at
+ * subscribe time, and once granted the subscription continues delivering
+ * events until the client unsubscribes, the socket closes, or the feed
+ * terminates. There is no per-event re-authorization in v1, so a token's
+ * scope must be revoked AT THE SOCKET LEVEL (close + reconnect) to stop
+ * event delivery — token revocation alone does not terminate active
+ * subscriptions. This is documented as a known v1 constraint; per-event
+ * filtering is a planned future refinement.
+ *
+ * Access is scoped to `workflows:read` rather than `public` to prevent
+ * unauthenticated callers from observing event streams of arbitrary
+ * workflows. Operators that need looser access can override the registry
+ * with a custom operation definition.
  */
 export const workflowEventsSubscriptionOperation = defineOperation<
   WorkflowEventsSubscriptionInput,
@@ -44,7 +59,22 @@ export const workflowEventsSubscriptionOperation = defineOperation<
     emittedAtMs: z.number(),
     payload: z.unknown(),
   }),
-  access: { kind: 'public' },
+  // optionalAuth: matches the project's default-no-auth ergonomics for
+  // unauthenticated callers (so `serve({ engine })` keeps the live event
+  // surface usable in dev) while requiring `workflows:read` once a caller
+  // authenticates. Operators that need stricter behavior should configure
+  // `serve({ auth: ... })` and rely on the authentication layer rejecting
+  // the connection entirely; this access policy then enforces the
+  // workflows:read scope on the resulting authenticated principal.
+  access: {
+    kind: 'optionalAuth',
+    authenticatedScopes: { kind: 'anyOf', scopes: ['workflows:read'] },
+  },
+  // optionalAuth is not public; explicitly mark this operation as
+  // discoverable so /openapi.json, /openrpc.json, and /asyncapi.json all
+  // include it. Without this flag the discovery filter hides the
+  // operation, which would break clients that introspect the API surface.
+  discoverable: true,
   transports: { http: false, jsonRpcHttp: false, jsonRpcWebSocket: true, jsonRpcStdio: false },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }) => {

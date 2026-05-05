@@ -43,7 +43,7 @@ import {
 } from '../workflow-version-tuple.ts';
 import { validateAttributeValueSizes } from './attributes-tags.ts';
 import type { QueuedInlineWorkflowExecutionStart } from './engine-internal-types.ts';
-import { WorkflowAlreadyExistsError } from './errors.ts';
+import { WorkflowAlreadyExistsError, WorkflowNotRegisteredError } from './errors.ts';
 import { getWorkflowExecutionStartedAt, type WorkflowHandle } from './handles.ts';
 import type { EngineInternals } from './internals.ts';
 import { createDelayedStartTimerEntry } from './operations-time.ts';
@@ -265,7 +265,7 @@ export async function startWorkflow(
 ): Promise<WorkflowHandle> {
   const registration = internals.registrations.get(type);
   if (!registration) {
-    throw new Error(`No workflow registered with name "${type}"`);
+    throw new WorkflowNotRegisteredError(type);
   }
 
   const callerProvidedId = options?.id !== undefined;

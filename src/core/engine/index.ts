@@ -184,7 +184,12 @@ export type {
   TrackedWaiterKeys,
   WorkflowResultWaiter,
 } from './engine-internal-types.ts';
-export { BulkDeleteRequiresTerminalWorkflowsError, WorkflowAlreadyExistsError } from './errors.ts';
+export {
+  BulkDeleteRequiresTerminalWorkflowsError,
+  WorkflowAlreadyExistsError,
+  WorkflowNotFoundError,
+  WorkflowNotRegisteredError,
+} from './errors.ts';
 export { HANDLE_RESULT_PROMISE, ScheduleHandle, WorkflowHandle } from './handles.ts';
 export { withPendingChatResumeTurnIndex } from './operations-agent.ts';
 export type {

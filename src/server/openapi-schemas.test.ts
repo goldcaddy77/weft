@@ -11,6 +11,29 @@ function makeOperation(options: {
   readonly outputSchema: z.ZodType;
   readonly eventSchema?: z.ZodType;
 }): RegistrableOperation {
+  // The discriminated union on `defineOperation` requires `eventSchema`
+  // to coexist with `kind: 'stream' | 'subscription'`. Operations declaring
+  // an eventSchema are streaming by construction; the test factory makes
+  // that explicit so the type system narrows correctly.
+  if (options.eventSchema !== undefined) {
+    return defineOperation({
+      name: options.name,
+      mcpExposable: false,
+      kind: 'stream',
+      summary: 'test operation',
+      tags: ['Tests'],
+      inputSchema: options.inputSchema,
+      outputSchema: options.outputSchema,
+      eventSchema: options.eventSchema,
+      access: { kind: 'public' },
+      transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
+      unknownKeyPolicy: { http: 'reject', jsonRpc: 'reject' },
+      invoke: async () => {
+        async function* iter() {}
+        return iter();
+      },
+    });
+  }
   return defineOperation({
     name: options.name,
     mcpExposable: false,
@@ -18,7 +41,6 @@ function makeOperation(options: {
     tags: ['Tests'],
     inputSchema: options.inputSchema,
     outputSchema: options.outputSchema,
-    ...(options.eventSchema === undefined ? {} : { eventSchema: options.eventSchema }),
     access: { kind: 'public' },
     transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
     unknownKeyPolicy: { http: 'reject', jsonRpc: 'reject' },
