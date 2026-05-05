@@ -3891,6 +3891,7 @@ describe('handleRequest', () => {
 
     // Pre-seed checkpoint history entries
     const { serializeCheckpoint } = await import('../core/checkpoint.ts');
+    const { CURRENT_CHECKPOINT_SCHEMA_VERSION } = await import('../core/types.ts');
     for (const step of [1, 2, 3]) {
       const checkpoint = {
         workflowId: 'test-wf',
@@ -3900,6 +3901,7 @@ describe('handleRequest', () => {
         pendingSignals: [] as string[],
         searchAttributes: {},
         version: '1.0.0',
+        schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
         createdAt: 1000 + step * 100,
       };
       await storage.put(KEYS.checkpointHistory('test-wf', step), serializeCheckpoint(checkpoint));
@@ -3938,6 +3940,7 @@ describe('handleRequest', () => {
     });
 
     const { serializeCheckpoint } = await import('../core/checkpoint.ts');
+    const { CURRENT_CHECKPOINT_SCHEMA_VERSION } = await import('../core/types.ts');
     const checkpoint = {
       workflowId: 'test-wf',
       step: 5,
@@ -3948,6 +3951,7 @@ describe('handleRequest', () => {
         tag: 'test' as unknown as import('../core/types.ts').SearchAttributeValue,
       },
       version: '2.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: 9999,
     };
     await storage.put(KEYS.checkpointHistory('test-wf', 5), serializeCheckpoint(checkpoint));
