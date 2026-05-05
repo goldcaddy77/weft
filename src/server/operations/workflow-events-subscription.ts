@@ -29,6 +29,7 @@ export const workflowEventsSubscriptionOperation = defineOperation<
   WorkflowEventsSubscriptionEnvelope
 >({
   name: 'weft.workflows.events',
+  mcpExposable: false,
   kind: 'subscription',
   summary: 'Subscribe to workflow events with replay-from-cursor',
   tags: ['Events'],

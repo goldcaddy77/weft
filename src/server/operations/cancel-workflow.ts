@@ -15,6 +15,7 @@ export type CancelWorkflowOutput = z.infer<typeof cancelWorkflowOutput>;
 
 export const cancelWorkflowOperation = defineOperation<CancelWorkflowInput, CancelWorkflowOutput>({
   name: 'weft.workflows.cancel',
+  mcpExposable: false,
   summary: 'Cancel a running workflow',
   tags: ['Workflows'],
   inputSchema: cancelWorkflowInput,

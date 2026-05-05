@@ -20,6 +20,7 @@ export const getUpdateResultOperation = defineOperation<
   GetUpdateResultOutput
 >({
   name: 'weft.updates.result.get',
+  mcpExposable: false,
   summary: 'Get the result of an update request',
   tags: ['Updates'],
   inputSchema: getUpdateResultInput,

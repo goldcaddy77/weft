@@ -19,6 +19,7 @@ export const getWorkflowEventsOperation = defineOperation<
   GetWorkflowEventsOutput
 >({
   name: 'weft.workflows.events.list',
+  mcpExposable: false,
   summary: 'Get workflow events by id',
   tags: ['Events'],
   inputSchema: getWorkflowEventsInput,

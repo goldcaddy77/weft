@@ -24,6 +24,7 @@ type StartHandle = z.infer<typeof StartHandleSchema>;
 
 export type CatalogWorkflowOptions<Input> = {
   readonly name: string;
+  readonly mcpExposable: boolean;
   readonly workflowType: string;
   readonly engine: Engine;
   readonly summary: string;
@@ -52,6 +53,7 @@ export function catalogWorkflow<Input>(
 
   return {
     name: options.name,
+    mcpExposable: options.mcpExposable,
     summary: options.summary,
     tags: [...(options.tags ?? [])],
     inputSchema,

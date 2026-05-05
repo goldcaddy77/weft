@@ -107,6 +107,7 @@ export type OperationContext<Input> = {
 
 export type OperationDefinition<Input, Output> = {
   readonly name: string;
+  readonly mcpExposable: boolean;
   readonly kind?: OperationKind;
   readonly summary: string;
   readonly tags: ReadonlyArray<string>;
@@ -146,6 +147,7 @@ export type OperationRegistry = {
  */
 export type RegistrableOperation = {
   readonly name: string;
+  readonly mcpExposable: boolean;
   readonly kind?: OperationKind;
   readonly summary: string;
   readonly tags: ReadonlyArray<string>;

@@ -14,6 +14,7 @@ import {
   buildWebSocketMessages,
 } from './asyncapi-channels.ts';
 import { isDiscoverable } from './discovery-filter.ts';
+import { applyDiscoveryInfo, type DiscoveryInfo } from './discovery-info.ts';
 import { canonicalJson } from './openapi-canonical-json.ts';
 import type { ErasedOperation, OperationRegistry } from './operation-catalog.ts';
 
@@ -21,6 +22,7 @@ export type AsyncApiOptions = {
   registry: OperationRegistry;
   title?: string;
   version?: string;
+  discoveryInfo?: DiscoveryInfo;
   serverUrl?: string;
 };
 
@@ -86,10 +88,7 @@ export function generateAsyncApiDocument(options: AsyncApiOptions): Record<strin
 
   const document: Record<string, unknown> = {
     asyncapi: '3.0.0',
-    info: {
-      title: options.title ?? 'Weft Workflow Engine',
-      version: options.version ?? '0.0.1',
-    },
+    info: buildAsyncApiInfo(options),
     channels: replaceMessageReferences(channels, messageAliases),
     operations: replaceMessageReferences(operations, messageAliases),
     components: {
@@ -100,6 +99,25 @@ export function generateAsyncApiDocument(options: AsyncApiOptions): Record<strin
     },
   };
 
+  applyAsyncApiDocumentOptions(document, options);
+
+  return normalizeJsonObject(document);
+}
+
+function buildAsyncApiInfo(options: AsyncApiOptions): Record<string, unknown> {
+  return applyDiscoveryInfo(
+    {
+      title: options.title ?? 'Weft Workflow Engine',
+      version: options.version ?? '0.0.1',
+    },
+    options.discoveryInfo,
+  );
+}
+
+function applyAsyncApiDocumentOptions(
+  document: Record<string, unknown>,
+  options: AsyncApiOptions,
+): void {
   if (options.serverUrl !== undefined) {
     document['servers'] = {
       default: {
@@ -108,8 +126,9 @@ export function generateAsyncApiDocument(options: AsyncApiOptions): Record<strin
       },
     };
   }
-
-  return normalizeJsonObject(document);
+  if (options.discoveryInfo?.externalDocs !== undefined) {
+    document['externalDocs'] = { ...options.discoveryInfo.externalDocs };
+  }
 }
 
 function isAsyncApiOperation(operation: ErasedOperation): operation is ErasedOperation & {

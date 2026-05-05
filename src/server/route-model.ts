@@ -79,6 +79,14 @@ export const ROUTES = [
   },
   {
     method: 'GET',
+    path: '/.well-known/api-catalog',
+    handler: 'apiCatalog',
+    paramNames: [],
+    summary: 'RFC 9264 API catalog linkset',
+    tags: ['System'],
+  },
+  {
+    method: 'GET',
     path: '/openapi.json',
     handler: 'openApiDocument',
     paramNames: [],

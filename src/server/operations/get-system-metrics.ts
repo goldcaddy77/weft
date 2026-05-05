@@ -38,6 +38,7 @@ export type GetSystemMetricsOutput = MetricsSnapshot;
 export function createGetSystemMetricsOperation(options?: { metricsCollector?: MetricsCollector }) {
   return defineOperation<GetSystemMetricsInput, GetSystemMetricsOutput>({
     name: 'weft.system.metrics',
+    mcpExposable: false,
     summary: 'Get JSON-shaped system metrics',
     tags: ['Observability'],
     inputSchema: getSystemMetricsInput,

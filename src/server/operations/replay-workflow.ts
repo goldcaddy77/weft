@@ -34,6 +34,7 @@ export type ReplayWorkflowOutput = WorkflowReplay;
 
 export const replayWorkflowOperation = defineOperation<ReplayWorkflowInput, ReplayWorkflowOutput>({
   name: 'weft.workflows.replay',
+  mcpExposable: false,
   summary: 'Replay a workflow to a historical checkpoint step',
   tags: ['Checkpoints'],
   inputSchema: replayWorkflowInput,

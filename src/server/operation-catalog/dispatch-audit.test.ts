@@ -89,6 +89,7 @@ describe('operation dispatch audit — negative fixture', () => {
 function createTraceOperation() {
   return defineOperation({
     name: 'weft.audit.trace',
+    mcpExposable: false,
     summary: 'Audit pipeline trace markers',
     inputSchema: z.object({ value: z.string() }),
     outputSchema: z.object({ echoed: z.string() }),

@@ -28,6 +28,7 @@ export const streamWorkflowSseOperation = defineOperation<
   StreamWorkflowSseOutput
 >({
   name: 'weft.workflows.streams.sse',
+  mcpExposable: false,
   kind: 'stream',
   summary: 'Stream workflow tokens as Server-Sent Events',
   tags: ['Streams'],

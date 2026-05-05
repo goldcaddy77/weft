@@ -32,6 +32,7 @@ export type UpdateWorkflowOutput = z.infer<typeof updateWorkflowOutput>;
 
 export const updateWorkflowOperation = defineOperation<UpdateWorkflowInput, UpdateWorkflowOutput>({
   name: 'weft.workflows.update',
+  mcpExposable: false,
   summary: 'Send a synchronous update to a workflow',
   tags: ['Updates'],
   inputSchema: updateWorkflowInput,

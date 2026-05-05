@@ -19,6 +19,7 @@ export type ResumeWorkflowOutput = z.infer<typeof resumeWorkflowOutput>;
 
 export const resumeWorkflowOperation = defineOperation<ResumeWorkflowInput, ResumeWorkflowOutput>({
   name: 'weft.workflows.resume',
+  mcpExposable: false,
   summary: 'Resume a suspended workflow',
   tags: ['Workflows'],
   inputSchema: resumeWorkflowInput,

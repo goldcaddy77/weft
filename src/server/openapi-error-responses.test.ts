@@ -9,6 +9,7 @@ function operation(producibleFaults?: readonly FaultCode[]): ErasedOperation {
   // Test-only cast: invoke parameter variance is intentionally relaxed in test fixtures.
   const base = {
     name: 'weft.test.errors',
+    mcpExposable: false,
     summary: 'test operation',
     tags: [],
     inputSchema: z.object({}),

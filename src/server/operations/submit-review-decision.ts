@@ -31,6 +31,7 @@ export const submitReviewDecisionOperation = defineOperation<
   SubmitReviewDecisionOutput
 >({
   name: 'weft.reviews.decision.submit',
+  mcpExposable: false,
   summary: 'Submit a decision for a human review',
   tags: ['Reviews'],
   inputSchema: submitReviewDecisionInput,

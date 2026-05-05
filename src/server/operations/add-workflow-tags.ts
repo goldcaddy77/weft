@@ -25,6 +25,7 @@ export const addWorkflowTagsOperation = defineOperation<
   AddWorkflowTagsOutput
 >({
   name: 'weft.workflows.tags.add',
+  mcpExposable: false,
   summary: 'Add workflow tags',
   tags: ['Tags'],
   inputSchema: addWorkflowTagsInput,

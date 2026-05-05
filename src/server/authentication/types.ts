@@ -135,7 +135,7 @@ export type AuthConfig = {
   mtls?: MTLSConfig;
   /**
    * Paths that bypass authentication. Defaults to
-   * `['/v1/health', '/v1/metrics', '/openapi.json', '/openrpc.json', '/asyncapi.json']`.
+   * `['/v1/health', '/v1/metrics', '/.well-known/api-catalog', '/openapi.json', '/openrpc.json', '/asyncapi.json']`.
    */
   publicPaths?: string[];
   /**
@@ -296,6 +296,7 @@ export type Authenticator = (request: Request) => Promise<AuthResult>;
 export const DEFAULT_PUBLIC_PATHS = [
   '/v1/health',
   '/v1/metrics',
+  '/.well-known/api-catalog',
   '/openapi.json',
   '/openrpc.json',
   '/asyncapi.json',

@@ -19,6 +19,7 @@ export const getWorkflowAttributesOperation = defineOperation<
   GetWorkflowAttributesOutput
 >({
   name: 'weft.workflows.attributes.get',
+  mcpExposable: false,
   summary: 'Get workflow attributes by id',
   tags: ['Attributes'],
   inputSchema: getWorkflowAttributesInput,

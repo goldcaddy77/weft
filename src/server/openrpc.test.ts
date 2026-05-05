@@ -30,6 +30,7 @@ function makeOp(
   overrides: Partial<RegistrableOperation> & Pick<RegistrableOperation, 'name'>,
 ): RegistrableOperation {
   return {
+    mcpExposable: false,
     summary: 'test op',
     tags: [],
     access: { kind: 'public' },

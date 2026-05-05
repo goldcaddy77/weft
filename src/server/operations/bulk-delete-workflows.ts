@@ -29,6 +29,7 @@ export const bulkDeleteWorkflowsOperation = defineOperation<
   BulkDeleteWorkflowsOutput
 >({
   name: 'weft.workflows.bulk.delete',
+  mcpExposable: false,
   summary: 'Delete terminal workflows in bulk',
   tags: ['Workflows'],
   inputSchema: bulkListFilterInputSchema,

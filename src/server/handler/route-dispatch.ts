@@ -4,6 +4,7 @@ import {
   type MetricsCollector,
   type PrometheusExporter,
 } from '../../observability/metrics.ts';
+import { generateApiCatalog, originFromRequest } from '../api-catalog.ts';
 import { generateAsyncApiDocument } from '../asyncapi.ts';
 import type { AuthContext } from '../authentication.ts';
 import { faultToHttpResponse } from '../fault-to-http.ts';
@@ -126,6 +127,14 @@ export const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   healthCheck: async ({ request }) => negotiatedResponse(request, { status: 'ok' }),
   getMetrics: async ({ options }) =>
     handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),
+  apiCatalog: async ({ request }) => {
+    const origin = originFromRequest(request);
+    const body = generateApiCatalog({ origin });
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'Content-Type': 'application/linkset+json' },
+    });
+  },
   openApiDocument: async ({ options }) =>
     jsonResponse(
       generateOpenApiDocument({

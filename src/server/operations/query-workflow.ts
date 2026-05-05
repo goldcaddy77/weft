@@ -16,6 +16,7 @@ export type QueryWorkflowOutput = { result: unknown };
 
 export const queryWorkflowOperation = defineOperation<QueryWorkflowInput, QueryWorkflowOutput>({
   name: 'weft.workflows.query',
+  mcpExposable: false,
   summary: 'Query workflow state by id',
   tags: ['Workflows'],
   inputSchema: queryWorkflowInput,

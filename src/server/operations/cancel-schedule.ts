@@ -15,6 +15,7 @@ export type CancelScheduleOutput = z.infer<typeof cancelScheduleOutput>;
 
 export const cancelScheduleOperation = defineOperation<CancelScheduleInput, CancelScheduleOutput>({
   name: 'weft.schedules.cancel',
+  mcpExposable: false,
   summary: 'Cancel a recurring schedule',
   tags: ['Schedules'],
   inputSchema: cancelScheduleInput,

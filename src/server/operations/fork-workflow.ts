@@ -23,6 +23,7 @@ export type ForkWorkflowOutput = z.infer<typeof forkWorkflowOutput>;
 
 export const forkWorkflowOperation = defineOperation<ForkWorkflowInput, ForkWorkflowOutput>({
   name: 'weft.workflows.fork',
+  mcpExposable: false,
   summary: 'Fork a workflow from a checkpoint',
   tags: ['Workflows'],
   inputSchema: forkWorkflowInput,

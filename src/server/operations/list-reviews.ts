@@ -13,6 +13,7 @@ export type ListReviewsOutput = { items: Array<Record<string, unknown>> };
 
 export const listReviewsOperation = defineOperation<ListReviewsInput, ListReviewsOutput>({
   name: 'weft.reviews.list',
+  mcpExposable: false,
   summary: 'List pending human review requests',
   tags: ['Reviews'],
   inputSchema: listReviewsInput,

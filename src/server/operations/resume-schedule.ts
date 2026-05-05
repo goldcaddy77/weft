@@ -15,6 +15,7 @@ export type ResumeScheduleOutput = z.infer<typeof resumeScheduleOutput>;
 
 export const resumeScheduleOperation = defineOperation<ResumeScheduleInput, ResumeScheduleOutput>({
   name: 'weft.schedules.resume',
+  mcpExposable: false,
   summary: 'Resume a recurring schedule',
   tags: ['Schedules'],
   inputSchema: resumeScheduleInput,

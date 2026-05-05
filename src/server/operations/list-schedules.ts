@@ -48,6 +48,7 @@ export type ListSchedulesOutput = PaginatedResult<ScheduleSummary>;
 
 export const listSchedulesOperation = defineOperation<ListSchedulesInput, ListSchedulesOutput>({
   name: 'weft.schedules.list',
+  mcpExposable: false,
   summary: 'List recurring schedules',
   tags: ['Schedules'],
   inputSchema: listSchedulesInput,

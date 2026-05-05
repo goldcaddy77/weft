@@ -13,6 +13,7 @@ function makeOperation(options: {
 }): RegistrableOperation {
   return defineOperation({
     name: options.name,
+    mcpExposable: false,
     summary: 'test operation',
     tags: ['Tests'],
     inputSchema: options.inputSchema,

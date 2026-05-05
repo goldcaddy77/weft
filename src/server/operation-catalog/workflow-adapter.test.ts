@@ -61,6 +61,7 @@ function registerCheckoutWorkflow(engine: Engine): void {
 function catalogCheckoutWorkflow(engine: Engine) {
   return catalogWorkflow<CheckoutInput>({
     name: 'weft.workflows.checkout.start',
+    mcpExposable: false,
     workflowType: 'checkout',
     engine,
     summary: 'Start a checkout workflow',
@@ -156,6 +157,7 @@ describe('catalogWorkflow', () => {
     const registry = createOperationRegistry([
       catalogWorkflow<CheckoutInput>({
         name: 'weft.workflows.checkout.start',
+        mcpExposable: false,
         workflowType: 'checkout',
         engine,
         summary: 'Start a checkout workflow',
@@ -193,6 +195,7 @@ describe('catalogWorkflow', () => {
     const registry = createOperationRegistry([
       catalogWorkflow<Record<string, unknown>>({
         name: 'weft.workflows.loose.start',
+        mcpExposable: false,
         workflowType: 'loose-workflow',
         engine,
         summary: 'Start a loose workflow',

@@ -21,6 +21,7 @@ export const getCheckpointAtOperation = defineOperation<
   GetCheckpointAtOutput
 >({
   name: 'weft.workflows.checkpoints.get',
+  mcpExposable: false,
   summary: 'Get a specific checkpoint by step number',
   tags: ['Checkpoints'],
   inputSchema: getCheckpointAtInput,

@@ -19,6 +19,7 @@ export type SignalWorkflowOutput = z.infer<typeof signalWorkflowOutput>;
 
 export const signalWorkflowOperation = defineOperation<SignalWorkflowInput, SignalWorkflowOutput>({
   name: 'weft.workflows.signal',
+  mcpExposable: false,
   summary: 'Send a signal to a workflow',
   tags: ['Signals'],
   inputSchema: signalWorkflowInput,

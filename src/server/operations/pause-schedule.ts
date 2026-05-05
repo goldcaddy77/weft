@@ -15,6 +15,7 @@ export type PauseScheduleOutput = z.infer<typeof pauseScheduleOutput>;
 
 export const pauseScheduleOperation = defineOperation<PauseScheduleInput, PauseScheduleOutput>({
   name: 'weft.schedules.pause',
+  mcpExposable: false,
   summary: 'Pause a recurring schedule',
   tags: ['Schedules'],
   inputSchema: pauseScheduleInput,

@@ -38,6 +38,7 @@ export type GetWorkflowOutput = WorkflowState;
 
 export const getWorkflowOperation = defineOperation<GetWorkflowInput, GetWorkflowOutput>({
   name: 'weft.workflows.get',
+  mcpExposable: false,
   summary: 'Get workflow state by id',
   tags: ['Workflows'],
   inputSchema: getWorkflowInput,

@@ -26,6 +26,7 @@ export type UpdateScheduleInput = z.infer<typeof updateScheduleInput>;
 
 export const updateScheduleOperation = defineOperation<UpdateScheduleInput, null>({
   name: 'weft.schedules.update',
+  mcpExposable: false,
   summary: 'Update a recurring schedule',
   tags: ['Schedules'],
   inputSchema: updateScheduleInput,

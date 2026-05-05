@@ -20,6 +20,7 @@ export const getWorkflowTimelineOperation = defineOperation<
   GetWorkflowTimelineOutput
 >({
   name: 'weft.workflows.timeline.get',
+  mcpExposable: false,
   summary: 'Get the structured execution timeline for a workflow',
   tags: ['Checkpoints'],
   inputSchema: getWorkflowTimelineInput,

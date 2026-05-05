@@ -28,6 +28,7 @@ export type GetTenantQuotaOutput = TenantQuotaUsage;
 
 export const getTenantQuotaOperation = defineOperation<GetTenantQuotaInput, GetTenantQuotaOutput>({
   name: 'weft.tenants.quota.get',
+  mcpExposable: false,
   summary: 'Get quota usage for a tenant',
   tags: ['Budget'],
   inputSchema: getTenantQuotaInput,

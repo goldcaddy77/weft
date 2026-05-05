@@ -31,6 +31,7 @@ export type GetScheduleOutput = ScheduleSummary;
 
 export const getScheduleOperation = defineOperation<GetScheduleInput, GetScheduleOutput>({
   name: 'weft.schedules.get',
+  mcpExposable: false,
   summary: 'Get a recurring schedule by id',
   tags: ['Schedules'],
   inputSchema: getScheduleInput,

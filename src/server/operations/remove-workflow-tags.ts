@@ -25,6 +25,7 @@ export const removeWorkflowTagsOperation = defineOperation<
   RemoveWorkflowTagsOutput
 >({
   name: 'weft.workflows.tags.remove',
+  mcpExposable: false,
   summary: 'Remove workflow tags',
   tags: ['Tags'],
   inputSchema: removeWorkflowTagsInput,

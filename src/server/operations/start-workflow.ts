@@ -39,6 +39,7 @@ export type StartWorkflowOutput = z.infer<typeof startWorkflowOutput>;
 
 export const startWorkflowOperation = defineOperation<StartWorkflowInput, StartWorkflowOutput>({
   name: 'weft.workflows.start',
+  mcpExposable: false,
   summary: 'Start a new workflow',
   tags: ['Workflows'],
   inputSchema: startWorkflowInput,

@@ -25,7 +25,11 @@
 import { z } from 'zod';
 
 import { isDiscoverable } from './discovery-filter.ts';
+import { applyDiscoveryInfo, type DiscoveryInfo } from './discovery-info.ts';
+import { OpenRpcDocumentSchema } from './openrpc-document-schema.ts';
+import { buildOpenRpcComponentsErrors } from './openrpc-errors.ts';
 import type { ErasedOperation, OperationRegistry } from './operation-catalog.ts';
+import type { FaultCode } from './operation-fault.ts';
 
 /** Transports that MAY be listed in `OpenRpcOptions.transports`. */
 export type OpenRpcTransport = 'http' | 'websocket' | 'stdio';
@@ -39,6 +43,8 @@ export type OpenRpcOptions = {
   readonly title?: string;
   /** Document version. Defaults to `'0.0.1'`. */
   readonly version?: string;
+  /** Operator-supplied discovery metadata applied to the `info` object. */
+  readonly discoveryInfo?: DiscoveryInfo;
   /** Optional server URL; emitted as a single-entry `servers` array. */
   readonly serverUrl?: string;
 };
@@ -56,6 +62,7 @@ type OpenRpcMethod = {
   paramStructure: 'by-name';
   params: ContentDescriptor[];
   result: ContentDescriptor;
+  errors?: Array<{ $ref: string }>;
   'x-weft-paramsSchema': Record<string, unknown>;
 };
 
@@ -64,9 +71,6 @@ type OpenRpcMethod = {
  * runtime-filtering contract.
  */
 export function generateOpenRpcDocument(options: OpenRpcOptions): Record<string, unknown> {
-  const title = options.title ?? 'Weft Workflow Engine';
-  const version = options.version ?? '0.0.1';
-
   const methods: OpenRpcMethod[] = [];
   let registryProvidesDiscover = false;
 
@@ -87,16 +91,36 @@ export function generateOpenRpcDocument(options: OpenRpcOptions): Record<string,
 
   const document: Record<string, unknown> = {
     openrpc: '1.3.2',
-    info: { title, version },
+    info: buildOpenRpcInfo(options),
     methods,
+    components: {
+      errors: buildOpenRpcComponentsErrors(),
+    },
   };
-  if (options.serverUrl) {
-    document['servers'] = [{ url: options.serverUrl }];
-  }
+  applyOpenRpcServer(document, options.serverUrl);
   return document;
 }
 
 const DISCOVER_METHOD_NAME = 'rpc.discover';
+
+function buildOpenRpcInfo(options: OpenRpcOptions): Record<string, unknown> {
+  const title = options.title ?? 'Weft Workflow Engine';
+  const version = options.version ?? '0.0.1';
+  const infoBlock = applyDiscoveryInfo({ title, version }, options.discoveryInfo);
+  if (options.discoveryInfo?.externalDocs !== undefined) {
+    infoBlock['externalDocs'] = { ...options.discoveryInfo.externalDocs };
+  }
+  return infoBlock;
+}
+
+function applyOpenRpcServer(
+  document: Record<string, unknown>,
+  serverUrl: string | undefined,
+): void {
+  if (serverUrl) {
+    document['servers'] = [{ url: serverUrl }];
+  }
+}
 
 function isOperationLiveOnJsonRpc(
   operation: ErasedOperation,
@@ -156,6 +180,7 @@ function buildMethod(operation: ErasedOperation): OpenRpcMethod {
   if (operation.tags.length > 0) {
     method.tags = [...operation.tags].toSorted(byString).map((name) => ({ name }));
   }
+  method.errors = buildMethodErrorReferences(operation);
   return method;
 }
 
@@ -167,9 +192,10 @@ function buildDiscoverMethod(): OpenRpcMethod {
     params: [],
     result: {
       name: 'openRpcDocument',
-      schema: { type: 'object' },
+      schema: zodToJsonSchema(OpenRpcDocumentSchema),
       required: true,
     },
+    errors: buildUniversalErrorReferences(),
     'x-weft-paramsSchema': {
       type: 'object',
       properties: {},
@@ -177,6 +203,29 @@ function buildDiscoverMethod(): OpenRpcMethod {
       additionalProperties: false,
     },
   };
+}
+
+const UNIVERSAL_FAULT_CODES = [
+  'Unauthorized',
+  'Forbidden',
+  'InvalidParams',
+  'EngineFailure',
+] as const satisfies ReadonlyArray<FaultCode>;
+
+function buildMethodErrorReferences(operation: ErasedOperation): Array<{ $ref: string }> {
+  const faultCodes = new Set<FaultCode>(UNIVERSAL_FAULT_CODES);
+  for (const faultCode of operation.producibleFaults ?? []) {
+    faultCodes.add(faultCode);
+  }
+  return [...faultCodes].map((faultCode) => ({
+    $ref: `#/components/errors/${faultCode}`,
+  }));
+}
+
+function buildUniversalErrorReferences(): Array<{ $ref: string }> {
+  return UNIVERSAL_FAULT_CODES.map((faultCode) => ({
+    $ref: `#/components/errors/${faultCode}`,
+  }));
 }
 
 /**

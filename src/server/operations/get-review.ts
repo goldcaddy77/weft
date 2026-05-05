@@ -17,6 +17,7 @@ export type GetReviewOutput = ReviewRequest;
 
 export const getReviewOperation = defineOperation<GetReviewInput, GetReviewOutput>({
   name: 'weft.reviews.get',
+  mcpExposable: false,
   summary: 'Get a specific review for a workflow',
   tags: ['Reviews'],
   inputSchema: getReviewInput,

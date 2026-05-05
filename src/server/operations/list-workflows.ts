@@ -46,6 +46,7 @@ export type ListWorkflowsOutput = PaginatedResult<WorkflowSummary>;
 
 export const listWorkflowsOperation = defineOperation<ListWorkflowsInput, ListWorkflowsOutput>({
   name: 'weft.workflows.list',
+  mcpExposable: false,
   summary: 'List workflows',
   tags: ['Workflows'],
   inputSchema: listWorkflowsInput,

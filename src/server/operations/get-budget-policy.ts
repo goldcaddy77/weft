@@ -19,6 +19,7 @@ export const getBudgetPolicyOperation = defineOperation<
   GetBudgetPolicyOutput
 >({
   name: 'weft.budget.get',
+  mcpExposable: false,
   summary: 'Get budget policy for a namespace',
   tags: ['Budget'],
   inputSchema: getBudgetPolicyInput,

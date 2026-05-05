@@ -9,6 +9,7 @@
  */
 
 import { isDiscoverable } from './discovery-filter.ts';
+import { applyDiscoveryInfo, type DiscoveryInfo } from './discovery-info.ts';
 import { buildErrorResponses, ERROR_SCHEMA } from './openapi-error-responses.ts';
 import { extractComponentsSchemas, type OpenApiSchemaHelper } from './openapi-schemas.ts';
 import type { ErasedOperation, OperationRegistry } from './operation-catalog.ts';
@@ -28,6 +29,8 @@ export type OpenApiOptions = {
   title?: string;
   /** API version. Defaults to `'0.0.1'`. */
   version?: string;
+  /** Operator-supplied discovery metadata applied to the `info` object. */
+  discoveryInfo?: DiscoveryInfo;
   /** Operation registry used to emit migrated REST bindings. */
   registry?: OperationRegistry;
   /**
@@ -166,6 +169,10 @@ function emitRoutes(
 export function generateOpenApiDocument(options?: OpenApiOptions): Record<string, unknown> {
   const title = options?.title ?? 'Weft Workflow Engine';
   const version = options?.version ?? '0.0.1';
+  const infoBlock = applyDiscoveryInfo({ title, version }, options?.discoveryInfo);
+  if (options?.discoveryInfo?.externalDocs !== undefined) {
+    infoBlock['externalDocs'] = { ...options.discoveryInfo.externalDocs };
+  }
   const registry = options?.registry ?? createLiveOperationRegistry();
   const restBindings = options?.restBindings;
 
@@ -200,7 +207,7 @@ export function generateOpenApiDocument(options?: OpenApiOptions): Record<string
 
   const document: Record<string, unknown> = {
     openapi: '3.1.0',
-    info: { title, version },
+    info: infoBlock,
     paths,
     tags,
     security,

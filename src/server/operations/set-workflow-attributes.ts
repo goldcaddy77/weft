@@ -22,6 +22,7 @@ export const setWorkflowAttributesOperation = defineOperation<
   SetWorkflowAttributesOutput
 >({
   name: 'weft.workflows.attributes.set',
+  mcpExposable: false,
   summary: 'Update search attributes for a workflow',
   tags: ['Attributes'],
   inputSchema: setWorkflowAttributesInput,

@@ -379,6 +379,7 @@ describe('Track 8 acceptance coverage', () => {
     const registry = createOperationRegistry([
       defineOperation({
         name: 'weft.test.mutate',
+        mcpExposable: false,
         summary: 'mutating test operation',
         inputSchema: z.object({ value: z.string() }),
         outputSchema: z.object({ mutated: z.string() }),

@@ -23,6 +23,7 @@ export const setBudgetPolicyOperation = defineOperation<
   SetBudgetPolicyOutput
 >({
   name: 'weft.budget.set',
+  mcpExposable: false,
   summary: 'Set organization-level budget policy',
   tags: ['Budget'],
   inputSchema: setBudgetPolicyInput,

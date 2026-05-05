@@ -48,6 +48,7 @@ export { isValidOperationName, validateOperationName } from './operation-catalog
  */
 export type OperationDefinitionInput<Input, Output> = {
   readonly name: string;
+  readonly mcpExposable: boolean;
   readonly kind?: OperationKind;
   readonly summary: string;
   readonly tags?: ReadonlyArray<string>;
@@ -88,6 +89,7 @@ export function defineOperation<Input, Output>(
   validateOperationName(input.name);
   return {
     name: input.name,
+    mcpExposable: input.mcpExposable,
     ...(input.kind === undefined ? {} : { kind: input.kind }),
     summary: input.summary,
     tags: [...(input.tags ?? [])],

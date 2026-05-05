@@ -43,6 +43,7 @@ export type CreateScheduleOutput = z.infer<typeof createScheduleOutput>;
 
 export const createScheduleOperation = defineOperation<CreateScheduleInput, CreateScheduleOutput>({
   name: 'weft.schedules.create',
+  mcpExposable: false,
   summary: 'Create a recurring schedule',
   tags: ['Schedules'],
   inputSchema: createScheduleInput,

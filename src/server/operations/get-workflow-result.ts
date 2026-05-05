@@ -18,6 +18,7 @@ export const getWorkflowResultOperation = defineOperation<
   GetWorkflowResultOutput
 >({
   name: 'weft.workflows.result.get',
+  mcpExposable: false,
   summary: 'Get workflow result by id',
   tags: ['Workflows'],
   inputSchema: getWorkflowResultInput,

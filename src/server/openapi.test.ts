@@ -142,6 +142,7 @@ describe('emitBindings — body-accepting methods', () => {
     it(`adds requestBody for ${method} bindings`, () => {
       const operation = defineOperation({
         name: 'weft.test.bodysuffix',
+        mcpExposable: false,
         summary: 'body-accepting test op',
         inputSchema: z.object({ payload: z.unknown() }),
         outputSchema: z.unknown(),
@@ -179,6 +180,7 @@ describe('emitBindings — body-accepting methods', () => {
   it('does not add requestBody for GET bindings', () => {
     const operation = defineOperation({
       name: 'weft.test.getread',
+      mcpExposable: false,
       summary: 'get-only test op',
       inputSchema: z.object({ id: z.string() }),
       outputSchema: z.unknown(),
