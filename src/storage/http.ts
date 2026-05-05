@@ -112,26 +112,41 @@ async function* readNdjsonLines(response: Response): AsyncIterable<string> {
   const decoder = new TextDecoder();
   let bufferedText = '';
   let bytesRead = 0;
+  let reachedEndOfStream = false;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        reachedEndOfStream = true;
+        break;
+      }
 
-    bytesRead += value.byteLength;
-    assertScanResponseSize(bytesRead);
+      bytesRead += value.byteLength;
+      assertScanResponseSize(bytesRead);
 
-    bufferedText += decoder.decode(value, { stream: true });
-    const lines = bufferedText.split('\n');
-    bufferedText = lines.pop() ?? '';
+      bufferedText += decoder.decode(value, { stream: true });
+      const lines = bufferedText.split('\n');
+      bufferedText = lines.pop() ?? '';
 
-    for (const line of lines) {
-      yield line;
+      for (const line of lines) {
+        yield line;
+      }
     }
-  }
 
-  bufferedText += decoder.decode();
-  if (bufferedText.length > 0) {
-    yield bufferedText;
+    bufferedText += decoder.decode();
+    if (bufferedText.length > 0) {
+      yield bufferedText;
+    }
+  } finally {
+    try {
+      if (!reachedEndOfStream) {
+        await reader.cancel();
+      }
+    } catch {
+      // Ignore cancellation errors while unwinding a terminated scan.
+    }
+    reader.releaseLock();
   }
 }
 

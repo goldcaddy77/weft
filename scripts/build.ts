@@ -16,7 +16,6 @@ await Bun.build({
     './src/storage/scoped-storage.ts',
     './src/storage/typed-storage.ts',
     './src/storage/resolve.ts',
-    './src/storage/http.ts',
     './src/storage/lmdb.ts',
     './src/storage/turso.ts',
     './src/testing/index.ts',
@@ -77,6 +76,8 @@ await Bun.build({
     './src/service-worker/index.ts',
     './src/storage/indexeddb.ts',
     './src/storage/web-extension.ts',
+    // HTTPStorage is portable and intentionally emitted from the browser build
+    // so the subpath is produced once without a later overwrite.
     './src/storage/http.ts',
     './src/server/handler.ts',
   ],

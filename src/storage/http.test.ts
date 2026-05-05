@@ -178,6 +178,39 @@ describe('HTTPStorage', () => {
     }
   });
 
+  it('cancels and releases the NDJSON reader when scan iteration stops early', async () => {
+    let cancelCalled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encode(`${JSON.stringify({ key: 'wf:a', value: base64('a') })}\n`));
+      },
+      cancel() {
+        cancelCalled = true;
+      },
+    });
+    const restoreFetch = installFetch(
+      async () =>
+        new Response(stream, {
+          status: 200,
+          headers: { 'content-type': 'application/x-ndjson' },
+        }),
+    );
+    try {
+      const storage = new HTTPStorage({ baseUrl: 'https://example.test' });
+
+      for await (const [key, value] of storage.scan('wf:')) {
+        expect(key).toBe('wf:a');
+        expect(decode(value)).toBe('a');
+        break;
+      }
+
+      expect(cancelCalled).toBe(true);
+      expect(stream.locked).toBe(false);
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it('returns the conditional batch result', async () => {
     const restoreFetch = installFetch(async () =>
       Response.json({
