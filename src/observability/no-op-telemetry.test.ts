@@ -2,15 +2,15 @@ import { describe, expect, it } from 'bun:test';
 
 import {
   NO_OP_SPAN_METHODS,
-  getOtelApi,
-  isSupportedOtelApi,
-  resetCachedOtelApiForTesting,
-  resolveInstalledOtelApi,
+  getOpenTelemetryApi,
+  isSupportedOpenTelemetryApi,
+  resetCachedOpenTelemetryApiForTesting,
+  resolveInstalledOpenTelemetryApi,
 } from './no-op-telemetry';
 
-describe('getOtelApi', () => {
+describe('getOpenTelemetryApi', () => {
   it('returns an object with trace, metrics, context, and SpanStatusCode', () => {
-    const api = getOtelApi();
+    const api = getOpenTelemetryApi();
     expect(api.trace).toBeDefined();
     expect(api.metrics).toBeDefined();
     expect(api.context).toBeDefined();
@@ -18,7 +18,7 @@ describe('getOtelApi', () => {
   });
 
   it('returns SpanStatusCode with OK, ERROR, and UNSET values', () => {
-    const { SpanStatusCode } = getOtelApi();
+    const { SpanStatusCode } = getOpenTelemetryApi();
     expect(SpanStatusCode.OK).toBe(1);
     expect(SpanStatusCode.ERROR).toBe(2);
     expect(SpanStatusCode.UNSET).toBe(0);
@@ -33,14 +33,14 @@ describe('getOtelApi', () => {
 
   describe('no-op tracer', () => {
     it('creates a tracer via trace.getTracer()', () => {
-      const { trace } = getOtelApi();
+      const { trace } = getOpenTelemetryApi();
       const tracer = trace.getTracer('test');
       expect(tracer).toBeDefined();
       expect(typeof tracer.startSpan).toBe('function');
     });
 
     it('creates spans that do not throw', () => {
-      const { trace } = getOtelApi();
+      const { trace } = getOpenTelemetryApi();
       const tracer = trace.getTracer('test', '1.0.0');
       const span = tracer.startSpan('test-span');
 
@@ -51,7 +51,7 @@ describe('getOtelApi', () => {
     });
 
     it('returns a span context with valid structure', () => {
-      const { trace } = getOtelApi();
+      const { trace } = getOpenTelemetryApi();
       const tracer = trace.getTracer('test');
       const span = tracer.startSpan('test-span');
       const ctx = span.spanContext();
@@ -63,7 +63,7 @@ describe('getOtelApi', () => {
     });
 
     it('returns a static no-op span context with sentinel values', () => {
-      const { trace } = getOtelApi();
+      const { trace } = getOpenTelemetryApi();
       const tracer = trace.getTracer('test');
       const span1 = tracer.startSpan('span-1');
       const span2 = tracer.startSpan('span-2');
@@ -81,13 +81,13 @@ describe('getOtelApi', () => {
 
   describe('no-op meter', () => {
     it('creates a meter via metrics.getMeter()', () => {
-      const { metrics } = getOtelApi();
+      const { metrics } = getOpenTelemetryApi();
       const meter = metrics.getMeter('test');
       expect(meter).toBeDefined();
     });
 
     it('creates histogram, counter, and upDownCounter without throwing', () => {
-      const { metrics } = getOtelApi();
+      const { metrics } = getOpenTelemetryApi();
       const meter = metrics.getMeter('test');
 
       const histogram = meter.createHistogram('test.hist', { unit: 'ms' });
@@ -109,7 +109,7 @@ describe('getOtelApi', () => {
 
   describe('context utilities', () => {
     it('trace.setSpan returns a context value', () => {
-      const { trace, context } = getOtelApi();
+      const { trace, context } = getOpenTelemetryApi();
       const tracer = trace.getTracer('test');
       const span = tracer.startSpan('test-span');
       const ctx = trace.setSpan(context.ROOT_CONTEXT, span);
@@ -117,21 +117,21 @@ describe('getOtelApi', () => {
     });
 
     it('context.with calls the callback and returns its result', () => {
-      const { context } = getOtelApi();
+      const { context } = getOpenTelemetryApi();
       const result = context.with(context.ROOT_CONTEXT, () => 'hello');
       expect(result).toBe('hello');
     });
   });
 
   it('returns the same API on repeated calls (cached)', () => {
-    const api1 = getOtelApi();
-    const api2 = getOtelApi();
+    const api1 = getOpenTelemetryApi();
+    const api2 = getOpenTelemetryApi();
     expect(api1).toBe(api2);
   });
 
-  it('isSupportedOtelApi accepts the subset of the OTel API Weft requires', () => {
+  it('isSupportedOpenTelemetryApi accepts the subset of the OpenTelemetry API Weft requires', () => {
     expect(
-      isSupportedOtelApi({
+      isSupportedOpenTelemetryApi({
         trace: {
           getTracer() {
             return {
@@ -178,13 +178,13 @@ describe('getOtelApi', () => {
     ).toBe(true);
   });
 
-  it('isSupportedOtelApi rejects incomplete module shapes', () => {
-    expect(isSupportedOtelApi(undefined)).toBe(false);
-    expect(isSupportedOtelApi({ trace: {} } as never)).toBe(false);
+  it('isSupportedOpenTelemetryApi rejects incomplete module shapes', () => {
+    expect(isSupportedOpenTelemetryApi(undefined)).toBe(false);
+    expect(isSupportedOpenTelemetryApi({ trace: {} } as never)).toBe(false);
   });
 
-  it('resolveInstalledOtelApi returns the installed module when the loader exposes the required shape', () => {
-    const loadedApi = resolveInstalledOtelApi(() => ({
+  it('resolveInstalledOpenTelemetryApi returns the installed module when the loader exposes the required shape', () => {
+    const loadedApi = resolveInstalledOpenTelemetryApi(() => ({
       trace: {
         getTracer() {
           return {
@@ -233,15 +233,15 @@ describe('getOtelApi', () => {
     expect(loadedApi!.SpanStatusCode.OK).toBe(1);
   });
 
-  it('resolveInstalledOtelApi falls back to undefined when the loader throws', () => {
+  it('resolveInstalledOpenTelemetryApi falls back to undefined when the loader throws', () => {
     expect(
-      resolveInstalledOtelApi(() => {
+      resolveInstalledOpenTelemetryApi(() => {
         throw new Error('module not found');
       }),
     ).toBeUndefined();
   });
 
-  it('resolveInstalledOtelApi uses the global require loader when it is available', () => {
+  it('resolveInstalledOpenTelemetryApi uses the global require loader when it is available', () => {
     const globalObject = globalThis as Record<PropertyKey, unknown>;
     const originalRequire = globalObject['require'];
     const requestedModules: string[] = [];
@@ -296,30 +296,30 @@ describe('getOtelApi', () => {
     };
 
     try {
-      expect(resolveInstalledOtelApi()).toBe(installedApi);
+      expect(resolveInstalledOpenTelemetryApi()).toBe(installedApi);
       expect(requestedModules).toEqual(['@opentelemetry/api']);
     } finally {
       globalObject['require'] = originalRequire;
     }
   });
 
-  it('resolveInstalledOtelApi safely falls back when require is unavailable', () => {
+  it('resolveInstalledOpenTelemetryApi safely falls back when require is unavailable', () => {
     const globalObject = globalThis as Record<PropertyKey, unknown>;
     const originalRequire = globalObject['require'];
     globalObject['require'] = undefined;
 
     try {
-      expect(resolveInstalledOtelApi()).toBeUndefined();
-      resetCachedOtelApiForTesting();
-      expect(getOtelApi().SpanStatusCode.OK).toBe(1);
+      expect(resolveInstalledOpenTelemetryApi()).toBeUndefined();
+      resetCachedOpenTelemetryApiForTesting();
+      expect(getOpenTelemetryApi().SpanStatusCode.OK).toBe(1);
     } finally {
       globalObject['require'] = originalRequire;
-      resetCachedOtelApiForTesting();
+      resetCachedOpenTelemetryApiForTesting();
     }
   });
 
-  it('getOtelApi caches the installed module when a loader is provided', () => {
-    resetCachedOtelApiForTesting();
+  it('getOpenTelemetryApi caches the installed module when a loader is provided', () => {
+    resetCachedOpenTelemetryApiForTesting();
 
     const installedApi = {
       trace: {
@@ -366,9 +366,9 @@ describe('getOtelApi', () => {
       SpanStatusCode: { OK: 1, ERROR: 2, UNSET: 0 },
     };
 
-    const api = getOtelApi(() => installedApi);
+    const api = getOpenTelemetryApi(() => installedApi);
 
     expect(api).toBe(installedApi);
-    expect(getOtelApi()).toBe(installedApi);
+    expect(getOpenTelemetryApi()).toBe(installedApi);
   });
 });

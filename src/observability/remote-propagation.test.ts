@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import type { ActivityInterception } from '../core/interceptor';
 import { createObservabilityInterceptors, extractTraceParent } from './index';
-import type { OtelApi, OtelSpan, OtelTracer } from './no-op-telemetry';
+import type { OpenTelemetryApi, OpenTelemetrySpan, OpenTelemetryTracer } from './no-op-telemetry';
 
 /**
  * Drive a generator to completion, pumping each yielded value back in.
@@ -28,16 +28,16 @@ type RecordedSpan = {
   spanContext: { traceId: string; spanId: string; traceFlags: number };
 };
 
-function createRecordingTracer(): { tracer: OtelTracer; spans: RecordedSpan[] } {
+function createRecordingTracer(): { tracer: OpenTelemetryTracer; spans: RecordedSpan[] } {
   const spans: RecordedSpan[] = [];
   let spanCounter = 0;
 
-  const tracer: OtelTracer = {
-    startSpan(name: string, options?, _context?): OtelSpan {
+  const tracer: OpenTelemetryTracer = {
+    startSpan(name: string, options?, _context?): OpenTelemetrySpan {
       const id = String(++spanCounter).padStart(16, '0');
       // If a parent context carries a span with a traceId, inherit it.
       // This mirrors real OTel behavior where child spans share the parent's traceId.
-      const parentSpan = (_context as any)?.__span as OtelSpan | undefined;
+      const parentSpan = (_context as any)?.__span as OpenTelemetrySpan | undefined;
       const traceId = parentSpan ? parentSpan.spanContext().traceId : 'a'.repeat(32);
       const recorded: RecordedSpan = {
         name,
@@ -67,13 +67,13 @@ function createRecordingTracer(): { tracer: OtelTracer; spans: RecordedSpan[] } 
   return { tracer, spans };
 }
 
-function createMockOtelApi(tracer: OtelTracer): OtelApi {
+function createMockOpenTelemetryApi(tracer: OpenTelemetryTracer): OpenTelemetryApi {
   return {
     trace: {
       getTracer() {
         return tracer;
       },
-      setSpan(_context: unknown, span: OtelSpan) {
+      setSpan(_context: unknown, span: OpenTelemetrySpan) {
         // Store the span on the context so the recording tracer can retrieve it.
         return { __span: span };
       },
@@ -109,10 +109,10 @@ describe('remote worker trace propagation', () => {
     const { tracer: workerTracer, spans: workerSpans } = createRecordingTracer();
 
     const workflowSide = createObservabilityInterceptors({
-      otelApi: createMockOtelApi(wfTracer),
+      openTelemetryApi: createMockOpenTelemetryApi(wfTracer),
     });
     const workerSide = createObservabilityInterceptors({
-      otelApi: createMockOtelApi(workerTracer),
+      openTelemetryApi: createMockOpenTelemetryApi(workerTracer),
     });
 
     // 1. Establish the workflow's trace context via workflowStart.
@@ -186,7 +186,7 @@ describe('remote worker trace propagation', () => {
   it('round-trips through JSON serialization without losing trace context', async () => {
     const { tracer } = createRecordingTracer();
     const workflowSide = createObservabilityInterceptors({
-      otelApi: createMockOtelApi(tracer),
+      openTelemetryApi: createMockOpenTelemetryApi(tracer),
     });
 
     workflowSide.interceptor.workflowStart!(
@@ -233,7 +233,7 @@ describe('remote worker trace propagation', () => {
   it('activity interceptor creates a span when no traceparent is present', async () => {
     const { tracer, spans } = createRecordingTracer();
     const { interceptor } = createObservabilityInterceptors({
-      otelApi: createMockOtelApi(tracer),
+      openTelemetryApi: createMockOpenTelemetryApi(tracer),
     });
 
     // Simulate a remote worker receiving a task with no headers.
@@ -256,7 +256,7 @@ describe('remote worker trace propagation', () => {
   it('multiple activities in the same workflow get distinct traceparent headers', () => {
     const { tracer } = createRecordingTracer();
     const workflowSide = createObservabilityInterceptors({
-      otelApi: createMockOtelApi(tracer),
+      openTelemetryApi: createMockOpenTelemetryApi(tracer),
     });
 
     workflowSide.interceptor.workflowStart!(

@@ -153,7 +153,13 @@ function lineForExportSpecifier(
 ): string | null {
   const exportedName = element.name.text;
   const localName = element.propertyName?.text ?? exportedName;
-  const symbol = moduleExports.find((candidate) => candidate.getName() === localName);
+  let symbol = moduleExports.find((candidate) => candidate.getName() === localName);
+  // Bun barrel workaround: `const exportedX = X; export { exportedX as X };`
+  // Here `localName === 'exportedX'` is not in `moduleExports` (only the
+  // re-aliased export is). Resolve via the property-name node directly.
+  if (!symbol && element.propertyName) {
+    symbol = checker.getSymbolAtLocation(element.propertyName) ?? undefined;
+  }
   if (!symbol) return null;
   return symbolLine(symbol, checker, exportedName);
 }
@@ -331,8 +337,57 @@ function variableDeclarationLine(
   const name = exportedName ?? declaration.name.text;
   const symbol = checker.getSymbolAtLocation(declaration.name);
   if (!symbol) return null;
+  // Bun barrel workaround: `const exportedX = X; export { exportedX as X }`
+  // makes `X` look like a value with type `typeof RealX`. Reflect the
+  // underlying class/function instead of a useless `const X: typeof X`.
+  const aliasLine = aliasedRebindLine(declaration, checker, name);
+  if (aliasLine !== null) return aliasLine;
   const type = checker.getTypeOfSymbolAtLocation(symbol, declaration);
   return `const ${name}: ${typeString(checker, type, declaration)}`;
+}
+
+function aliasedRebindLine(
+  declaration: ts.VariableDeclaration,
+  checker: ts.TypeChecker,
+  exportedName: string,
+): string | null {
+  // Two source patterns produce a value-aliasing rebind, both common in
+  // barrel files that work around the Bun 1.3.13 minifier bug:
+  //   1. Source `.ts`: `const exportedX = X;` — initializer is an identifier.
+  //   2. Emitted `.d.ts`: `declare const exportedX: typeof X;` — type annotation
+  //      is a TypeQueryNode whose name is the identifier we want to follow.
+  const target = aliasTargetSymbol(declaration, checker);
+  if (target === null) return null;
+  const resolved = resolveAlias(target, checker);
+  const declarations = resolved.declarations ?? [];
+  const classDeclaration = declarations.find(ts.isClassDeclaration);
+  if (classDeclaration) return classLine(classDeclaration, checker, exportedName);
+  const functionDeclaration = declarations.find(ts.isFunctionDeclaration);
+  if (functionDeclaration) return functionLine(functionDeclaration, checker, exportedName);
+  const variableDeclaration = declarations.find(ts.isVariableDeclaration);
+  // Avoid infinite recursion: only follow if the resolved declaration
+  // is a different variable than the one we started from.
+  if (variableDeclaration && variableDeclaration !== declaration) {
+    return variableDeclarationLine(variableDeclaration, checker, exportedName);
+  }
+  return null;
+}
+
+function aliasTargetSymbol(
+  declaration: ts.VariableDeclaration,
+  checker: ts.TypeChecker,
+): ts.Symbol | null {
+  const initializer = declaration.initializer;
+  if (initializer !== undefined && ts.isIdentifier(initializer)) {
+    return checker.getSymbolAtLocation(initializer) ?? null;
+  }
+  const typeNode = declaration.type;
+  if (typeNode !== undefined && ts.isTypeQueryNode(typeNode)) {
+    const exprName = typeNode.exprName;
+    const target = ts.isIdentifier(exprName) ? exprName : exprName.right;
+    return checker.getSymbolAtLocation(target) ?? null;
+  }
+  return null;
 }
 
 function sortedMemberSignatures(

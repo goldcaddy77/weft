@@ -12,7 +12,7 @@
 import type { Interceptor } from '../core/interceptor';
 import { buildActivityInterceptor } from './activity-interceptor';
 import { MetricsCollector as MetricsCollectorClass } from './metrics';
-import { getOtelApi } from './no-op-telemetry';
+import { getOpenTelemetryApi } from './no-op-telemetry';
 import { DEFAULT_MAX_PAYLOAD_SIZE } from './span-helpers';
 import type { ObservabilityOptions, ObservabilityState } from './types';
 import { buildWorkflowInterceptor } from './workflow-interceptor';
@@ -44,12 +44,12 @@ function createObservabilityState(options?: ObservabilityOptions): Observability
     eventTarget,
     maxPayloadSize = DEFAULT_MAX_PAYLOAD_SIZE,
     metrics = new MetricsCollectorClass(),
-    otelApi = getOtelApi(),
+    openTelemetryApi = getOpenTelemetryApi(),
     recordPayloads = false,
     tracerName = 'weft',
     tracerVersion,
   } = options ?? {};
-  const api = otelApi;
+  const api = openTelemetryApi;
   const { trace, SpanStatusCode } = api;
   const tracer = trace.getTracer(tracerName, tracerVersion);
 

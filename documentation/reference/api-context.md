@@ -136,13 +136,17 @@ Suspend the workflow until a named update is received. Similar to `waitForSignal
 ): Generator<ContextOperationRequest, unknown[], unknown>
 ```
 
-Run multiple durable operations in parallel. All operations must complete before the workflow continues. Analogous to `Promise.all`.
+Run multiple durable operations in parallel. All operations must complete before the workflow continues. Rejection mirrors `Promise.all`---any branch fails, the whole operation fails. But timing is different: `ctx.all` waits for every sibling to settle before throwing the error. That delay is deliberate; it lets successful branches get persisted.
 
 | Parameter    | Type          | Description                                                         |
 | ------------ | ------------- | ------------------------------------------------------------------- |
 | `operations` | `Generator[]` | An array of generators from `context.run()`, `context.memo()`, etc. |
 
 **Returns:** An array of results in the same order as the input operations.
+
+**Failure semantics.** When any branch rejects, every fulfilled branch's value is written to the parent's in-memory cache entry before the error is thrown into the workflow generator. The entry becomes durable on the next checkpoint write (the workflow's next yield). If the workflow catches the rejection and yields again, that next yield persists the partial entry; a resumed run replays at the same step and reuses fulfilled slots without re-dispatch. If the workflow fails terminally without yielding again, the partial entry is **not** persisted---no resumed run can reuse it. This partial-preservation guarantee requires the default inline execution strategy; `workerExecution` cannot persist fulfilled branch slots after a sibling branch fails and reports that unsupported boundary explicitly.
+
+See the [parallel execution guide](../guides/parallel-execution.md) for the full contract, including the deterministic-branch-order requirement and the explicit catch-and-yield boundary.
 
 ```ts partial
 async function* example(context: Context) {
@@ -168,6 +172,8 @@ Run multiple durable operations in parallel, returning the result of whichever c
 | `operations` | `Generator[]` | An array of generators |
 
 **Returns:** The result of the first operation to complete.
+
+**Loser results are abandoned.** Losers are aborted and their results discarded---Weft does not preserve them. Design branches to be idempotent or pair them with compensation, because the engine will not clean up after a loser.
 
 ```ts partial
 async function* example(context: Context) {
@@ -214,6 +220,8 @@ Run multiple named activity branches in parallel. Returns a record mapping each 
 | `branches` | `Record<string, [Function, ...args]>` | Named branches, each a tuple of `[function, ...args]` |
 
 **Returns:** A record with the same keys, each holding the branch's result.
+
+**Failure semantics.** Same partial-persistence contract as `ctx.all`. Branch identity is the **ordered key list** (not just the set of keys)---adding, removing, or reordering keys between attempts throws `BranchTopologyChangedError` to surface the non-determinism instead of silently mismatching slots.
 
 ```ts partial
 async function* example(context: Context) {

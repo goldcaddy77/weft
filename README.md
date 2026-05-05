@@ -109,6 +109,8 @@ engine.register('checkout', async function* (ctx, order) {
 });
 ```
 
+If `scheduleShipping` fails, `sendConfirmation`'s result is recorded in the parent operation's cache entry before the error is thrown into the workflow. If the workflow catches and yields again (e.g., to retry shipping or compensate), the next checkpoint persists that entry---a resumed run reuses the confirmation result instead of sending a duplicate email. See the [parallel execution guide](documentation/guides/parallel-execution.md) for the precise failure-semantics contract, including the catch-and-yield requirement.
+
 ### Durable Timers and Signals
 
 Sleeps survive process restarts. Signals pause workflows for seconds, days, or weeks at no cost---the checkpoint just sits in storage.
@@ -254,9 +256,9 @@ const engine = new Engine({
 Built-in event system (`EventTarget`-based, so it composes with everything), W3C `traceparent` propagation, and OpenTelemetry-compatible metrics. Composable interceptors layer cross-cutting concerns---tracing, validation, encryption---without any of them knowing about each other.
 
 ```typescript
-import { createObservabilityInterceptors, createOtelMetrics } from 'weft';
+import { createObservabilityInterceptors, createOpenTelemetryMetrics } from 'weft';
 
-const metrics = createOtelMetrics({
+const metrics = createOpenTelemetryMetrics({
   /* your meter provider */
 });
 const interceptors = createObservabilityInterceptors({ metrics });
@@ -272,7 +274,7 @@ const engine = new Engine({
 `TestEngine` swaps the production engine in tests and gives you a virtual clock. `engine.advanceTime('1 hour')` jumps timers forward without waiting; `engine.mock(activity, fake)` swaps in fake activity implementations with type-checked signatures, call recording, and per-call overrides.
 
 ```typescript
-import { TestEngine } from 'weft';
+import { TestEngine } from 'weft/testing';
 import { expect, test } from 'bun:test';
 
 test('onboarding completes after a day', async () => {

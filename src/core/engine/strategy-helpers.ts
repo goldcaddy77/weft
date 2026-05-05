@@ -8,11 +8,30 @@ import {
 import type { OperationOutcome } from '../types.ts';
 import type { EngineInternals } from './internals.ts';
 
+/**
+ * Wrapper that carries a captured rejection reason alongside a presence
+ * flag, so callers can distinguish "no reason captured" from "reason
+ * captured and happens to be `undefined`" (a workflow that threw
+ * `undefined` explicitly). Using a wrapper instead of `arguments.length`
+ * avoids tripping the lint rule against `arguments`.
+ */
+export type CapturedRejectionReason = { value: unknown };
+
+/**
+ * Feed an operation outcome back to the strategy. For failures, callers
+ * pass the original thrown reason via a `CapturedRejectionReason`
+ * wrapper so the workflow throw boundary can rethrow it as-is —
+ * matching `Promise.all`'s rethrow semantics for non-`Error` values
+ * like strings or `undefined`. The string-form `outcome.error` is used
+ * only for storage/timeline metadata. When the reason wasn't captured
+ * (worker-strategy resume path), we fall back to constructing an Error
+ * from the outcome message.
+ */
 export function feedOperationResult(
   internals: EngineInternals,
   workflowId: string,
   outcome: OperationOutcome,
-  originalError?: Error,
+  originalReason?: CapturedRejectionReason,
 ): void {
   if (internals.inlineStrategy) {
     if (outcome.status === 'completed') {
@@ -20,7 +39,7 @@ export function feedOperationResult(
     } else {
       internals.inlineStrategy.throwIntoWorkflow(
         workflowId,
-        originalError ?? new Error(outcome.error),
+        originalReason !== undefined ? originalReason.value : new Error(outcome.error),
       );
     }
     return;

@@ -28,7 +28,7 @@ import { TimeControl } from './time-control.ts';
  *
  * @example
  * ```ts
- * import { TestEngine, type RunNOptions } from 'weft';
+ * import { TestEngine, type RunNOptions } from 'weft/testing';
  *
  * const options: RunNOptions = {
  *   runs: 50,
@@ -50,7 +50,7 @@ export interface RunNOptions {
  *
  * @example
  * ```ts
- * import { TestEngine, type RunNResult } from 'weft';
+ * import { TestEngine, type RunNResult } from 'weft/testing';
  *
  * const engine = new TestEngine();
  * engine.register('ping', async function* () { return 'pong'; });
@@ -88,7 +88,8 @@ export interface RunNResult {
  *
  * @example
  * ```ts
- * import { TestEngine, type WorkflowContext } from 'weft';
+ * import type { WorkflowContext } from 'weft';
+ * import { TestEngine } from 'weft/testing';
  *
  * const engine = new TestEngine();
  *

@@ -293,20 +293,6 @@ export type {
   MTLSConfig,
 } from './server/authentication';
 
-// Testing
-export {
-  ChaosNonRetryableError,
-  ChaosTimeoutError,
-  ChaosTransientError,
-  withChaos,
-} from './testing/chaos';
-export type { ChaosScenario, FaultClass } from './testing/chaos';
-export { ActivityMockRegistry } from './testing/mocks';
-export type { MockCall, MockHandle, MockedActivity } from './testing/mocks';
-export { TestEngine } from './testing/test-engine';
-export type { RunNOptions, RunNResult } from './testing/test-engine';
-export { TimeControl } from './testing/time-control';
-
 // AI / Agent
 export { AgentLoopSuspendedError, executeAgentLoop } from './ai/agent';
 export type {
@@ -413,11 +399,16 @@ export type { InterceptionContext, ObservabilityOptions } from './observability/
 export {
   METRICS,
   createMetricsCollectorExporter,
-  createOtelMetrics,
+  createOpenTelemetryMetrics,
 } from './observability/metrics';
-export type { OtelMetrics } from './observability/metrics';
-export { getOtelApi } from './observability/no-op-telemetry';
-export type { OtelApi, OtelMeter, OtelSpan, OtelTracer } from './observability/no-op-telemetry';
+export type { OpenTelemetryMetrics } from './observability/metrics';
+export { getOpenTelemetryApi } from './observability/no-op-telemetry';
+export type {
+  OpenTelemetryApi,
+  OpenTelemetryMeter,
+  OpenTelemetrySpan,
+  OpenTelemetryTracer,
+} from './observability/no-op-telemetry';
 export {
   formatTraceParent,
   generateSpanId,

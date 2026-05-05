@@ -17,7 +17,7 @@
  *
  * @example
  * ```ts
- * import { TestEngine, type MockCall } from 'weft';
+ * import { TestEngine, type MockCall } from 'weft/testing';
  *
  * const engine = new TestEngine();
  * async function sendEmail(input: unknown): Promise<string> { return ''; }
@@ -45,7 +45,7 @@ export interface MockCall<TArgs extends unknown[], TResult> {
  *
  * @example
  * ```ts
- * import { TestEngine, type MockHandle } from 'weft';
+ * import { TestEngine, type MockHandle } from 'weft/testing';
  *
  * const engine = new TestEngine();
  * async function sendEmail(input: unknown): Promise<string> { return 'real'; }
@@ -86,7 +86,7 @@ export interface MockHandle<TArgs extends unknown[], TResult> {
  *
  * @example
  * ```ts
- * import { ActivityMockRegistry, type MockedActivity } from 'weft';
+ * import { ActivityMockRegistry, type MockedActivity } from 'weft/testing';
  *
  * const registry = new ActivityMockRegistry();
  * async function fetchUser(id: unknown): Promise<string> { return String(id); }
@@ -227,7 +227,7 @@ class MockHandleImplementation<TArgs extends unknown[], TResult> implements Mock
  *
  * @example
  * ```ts
- * import { ActivityMockRegistry } from 'weft';
+ * import { ActivityMockRegistry } from 'weft/testing';
  *
  * async function sendEmail(input: unknown): Promise<string> { return 'sent'; }
  *
