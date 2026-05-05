@@ -85,6 +85,23 @@ export type OperationOutcome =
 // Timer entry for scheduler
 // ---------------------------------------------------------------------------
 
+/**
+ * Persistent record of a single scheduled timer. Stored under a
+ * deterministic key so timers survive process restarts; the engine
+ * resumes the associated workflow when the timer fires.
+ *
+ * Most code receives `TimerEntry` values from the scheduler; users only
+ * construct one when implementing an external scheduler that drives
+ * `engine.fireTimer()` (e.g. a Service Worker periodic-sync handler).
+ *
+ * @example
+ * ```ts
+ * import { Engine, type TimerEntry } from 'weft';
+ * declare const engine: Engine;
+ * declare const entry: TimerEntry;
+ * await engine.fireTimer(entry);
+ * ```
+ */
 export interface TimerEntry {
   id: string;
   workflowId: WorkflowId;

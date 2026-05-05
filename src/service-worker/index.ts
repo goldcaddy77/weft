@@ -234,7 +234,6 @@ export function createLifecycleHandlers(): {
 }
 
 export {
-  resetSetupServiceWorkerRegistry,
   setupServiceWorker,
   type SetupServiceWorkerOptions,
   type SetupServiceWorkerResult,

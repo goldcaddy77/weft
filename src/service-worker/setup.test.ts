@@ -18,19 +18,24 @@ interface FakeServiceWorkerScope {
   addEventListener(type: string, listener: (event: FakeEvent) => void): void;
   skipWaiting(): Promise<void>;
   clients: { claim(): Promise<void> };
-  listeners: Map<string, (event: FakeEvent) => void>;
+  listeners: Map<string, Array<(event: FakeEvent) => void>>;
   skipWaitingCalls: number;
   claimCalls: number;
 }
 
 function createFakeServiceWorkerScope(): FakeServiceWorkerScope {
-  const listeners = new Map<string, (event: FakeEvent) => void>();
+  const listeners = new Map<string, Array<(event: FakeEvent) => void>>();
   const scope: FakeServiceWorkerScope = {
     listeners,
     skipWaitingCalls: 0,
     claimCalls: 0,
     addEventListener(type, listener) {
-      listeners.set(type, listener);
+      // Real Service Worker `addEventListener` is additive. Store listeners
+      // in a list so tests can verify the helper registers each event type
+      // exactly once even across concurrent setup calls.
+      const existing = listeners.get(type);
+      if (existing === undefined) listeners.set(type, [listener]);
+      else existing.push(listener);
     },
     async skipWaiting() {
       this.skipWaitingCalls++;
@@ -44,6 +49,17 @@ function createFakeServiceWorkerScope(): FakeServiceWorkerScope {
   return scope;
 }
 
+function listenerFor(scope: FakeServiceWorkerScope, type: string): (event: FakeEvent) => void {
+  const list = scope.listeners.get(type);
+  if (list === undefined || list.length === 0) {
+    throw new Error(`no listener attached for ${type}`);
+  }
+  if (list.length > 1) {
+    throw new Error(`expected exactly one ${type} listener, found ${list.length}`);
+  }
+  return list[0]!;
+}
+
 function withFakeSelf(scope: FakeServiceWorkerScope, fn: () => Promise<void>): Promise<void> {
   const previous = (globalThis as { self?: unknown }).self;
   (globalThis as { self?: unknown }).self = scope;
@@ -53,7 +69,7 @@ function withFakeSelf(scope: FakeServiceWorkerScope, fn: () => Promise<void>): P
     } else {
       (globalThis as { self?: unknown }).self = previous;
     }
-    resetSetupServiceWorkerRegistry(scope as unknown as object);
+    resetSetupServiceWorkerRegistry(scope);
   });
 }
 
@@ -171,8 +187,7 @@ describe('setupServiceWorker', () => {
           });
         },
       });
-      const fetchListener = scope.listeners.get('fetch');
-      expect(fetchListener).toBeDefined();
+      const fetchListener = listenerFor(scope, 'fetch');
       let respondedWith: Promise<Response> | undefined;
       const fakeRequest = new Request('https://example.com/weft/v1/health', { method: 'GET' });
       const fakeEvent: FakeEvent = {
@@ -181,7 +196,7 @@ describe('setupServiceWorker', () => {
           respondedWith = Promise.resolve(response);
         },
       };
-      fetchListener!(fakeEvent);
+      fetchListener(fakeEvent);
       expect(respondedWith).toBeDefined();
       const response = await respondedWith!;
       expect(response).toBeInstanceOf(Response);
@@ -202,8 +217,7 @@ describe('setupServiceWorker', () => {
       } catch {
         /* ignored — we want to exercise the error-path fetch handler */
       }
-      const fetchListener = scope.listeners.get('fetch');
-      expect(fetchListener).toBeDefined();
+      const fetchListener = listenerFor(scope, 'fetch');
       let respondedWith: Promise<Response> | undefined;
       const fakeEvent: FakeEvent = {
         request: new Request('https://example.com/weft/v1/health'),
@@ -211,7 +225,7 @@ describe('setupServiceWorker', () => {
           respondedWith = Promise.resolve(response);
         },
       };
-      fetchListener!(fakeEvent);
+      fetchListener(fakeEvent);
       const response = await respondedWith!;
       expect(response.status).toBe(503);
       const text = await response.text();
@@ -226,11 +240,10 @@ describe('setupServiceWorker', () => {
         storage: new MemoryStorage(),
         periodicSyncTag: 'weft-test',
       });
-      const periodicListener = scope.listeners.get('periodicsync');
-      expect(periodicListener).toBeDefined();
+      const periodicListener = listenerFor(scope, 'periodicsync');
       let captured: Promise<unknown> | undefined;
       // Matching tag — should call waitUntil with a real promise.
-      periodicListener!({
+      periodicListener({
         tag: 'weft-test',
         waitUntil(promise) {
           captured = promise;
@@ -240,7 +253,7 @@ describe('setupServiceWorker', () => {
       await captured;
       // Non-matching tag — must not call waitUntil.
       let nonMatching: Promise<unknown> | undefined;
-      periodicListener!({
+      periodicListener({
         tag: 'unrelated',
         waitUntil(promise) {
           nonMatching = promise;
@@ -255,17 +268,93 @@ describe('setupServiceWorker', () => {
     const scope = createFakeServiceWorkerScope();
     await withFakeSelf(scope, async () => {
       const setup = await setupServiceWorker({ storage: new MemoryStorage() });
-      const installListener = scope.listeners.get('install');
-      const activateListener = scope.listeners.get('activate');
+      const installListener = listenerFor(scope, 'install');
+      const activateListener = listenerFor(scope, 'activate');
       let installPromise: Promise<unknown> | undefined;
-      installListener!({ waitUntil(promise) { installPromise = promise; } });
+      installListener({ waitUntil(promise) { installPromise = promise; } });
       await installPromise;
       let activatePromise: Promise<unknown> | undefined;
-      activateListener!({ waitUntil(promise) { activatePromise = promise; } });
+      activateListener({ waitUntil(promise) { activatePromise = promise; } });
       await activatePromise;
       expect(scope.skipWaitingCalls).toBe(1);
       expect(scope.claimCalls).toBe(1);
       setup.engine[Symbol.dispose]();
+    });
+  });
+
+  it('holds fetches dispatched mid-registration until ready resolves', async () => {
+    const scope = createFakeServiceWorkerScope();
+    await withFakeSelf(scope, async () => {
+      let releaseRegister: () => void = () => {};
+      const setupPromise = setupServiceWorker({
+        storage: new MemoryStorage(),
+        register: async (engine) => {
+          await new Promise<void>((resolve) => {
+            releaseRegister = resolve;
+          });
+          engine.register('hello', async function* hello() {
+            yield;
+            return 'world';
+          });
+        },
+      });
+      // Immediately fire a fetch matching the prefix while register is still
+      // pending. The handler must call respondWith synchronously, but the
+      // returned promise must not resolve until register completes.
+      const fetchListener = listenerFor(scope, 'fetch');
+      let respondedWith: Promise<Response> | undefined;
+      fetchListener({
+        request: new Request('https://example.com/weft/v1/health'),
+        respondWith(response) {
+          respondedWith = Promise.resolve(response);
+        },
+      });
+      expect(respondedWith).toBeDefined();
+      // The response promise should still be pending. Race it against a
+      // very short timer to confirm.
+      const racedBefore = await Promise.race([
+        respondedWith!.then(() => 'response'),
+        new Promise<string>((resolve) => setTimeout(() => resolve('timer'), 10)),
+      ]);
+      expect(racedBefore).toBe('timer');
+      // Release register; respondedWith should now settle.
+      releaseRegister();
+      const setup = await setupPromise;
+      const response = await respondedWith!;
+      expect(response).toBeInstanceOf(Response);
+      setup.engine[Symbol.dispose]();
+    });
+  });
+
+  it('periodic-sync waitUntil rejects when register failed', async () => {
+    const scope = createFakeServiceWorkerScope();
+    await withFakeSelf(scope, async () => {
+      try {
+        await setupServiceWorker({
+          storage: new MemoryStorage(),
+          register: async () => {
+            throw new Error('register-explodes');
+          },
+        });
+      } catch {
+        /* expected */
+      }
+      const periodicListener = listenerFor(scope, 'periodicsync');
+      let captured: Promise<unknown> | undefined;
+      periodicListener({
+        tag: 'weft-timers',
+        waitUntil(promise) {
+          captured = promise;
+        },
+      });
+      expect(captured).toBeDefined();
+      let rejected: unknown;
+      try {
+        await captured;
+      } catch (error) {
+        rejected = error;
+      }
+      expect((rejected as Error | undefined)?.message).toMatch(/register-explodes/);
     });
   });
 });

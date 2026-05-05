@@ -3985,8 +3985,14 @@
       "sourceName": "TimerEntry",
       "kind": "type",
       "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "TimerEntry",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types/checkpoint.ts",
@@ -6578,14 +6584,8 @@
       "sourceName": "resetSetupServiceWorkerRegistry",
       "kind": "value",
       "subKind": "function",
-      "publicFaces": [
-        {
-          "importPath": "weft/service-worker",
-          "exportName": "resetSetupServiceWorkerRegistry",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
+      "publicFaces": [],
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/service-worker/setup.ts",

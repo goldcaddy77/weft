@@ -111,14 +111,21 @@ interface MinimalPeriodicSyncEvent extends MinimalExtendableEvent {
 }
 
 interface ServiceWorkerScope {
-  addEventListener?: (type: string, listener: (event: unknown) => void) => void;
+  addEventListener: (type: string, listener: (event: unknown) => void) => void;
   skipWaiting?: () => Promise<void>;
   clients?: { claim?: () => Promise<void> };
 }
 
+function isServiceWorkerScope(value: unknown): value is ServiceWorkerScope {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as { addEventListener?: unknown };
+  return typeof candidate.addEventListener === 'function';
+}
+
 function getServiceWorkerScope(): ServiceWorkerScope | null {
   if (typeof self === 'undefined') return null;
-  return self as unknown as ServiceWorkerScope;
+  if (!isServiceWorkerScope(self)) return null;
+  return self;
 }
 
 function buildErrorResponse(error: Error): Response {
@@ -215,8 +222,7 @@ function attachListeners(
         : Promise.resolve();
     event.waitUntil(claimPromise);
   };
-  // scope.addEventListener was already verified non-null by the caller.
-  const addEventListener = scope.addEventListener!.bind(scope);
+  const addEventListener = scope.addEventListener.bind(scope);
   addEventListener('install', installListener as (event: unknown) => void);
   addEventListener('activate', activateListener as (event: unknown) => void);
   addEventListener('fetch', fetchListener as (event: unknown) => void);
@@ -257,14 +263,8 @@ export function setupServiceWorker(
   if (scope === null) {
     return Promise.reject(
       new Error(
-        'setupServiceWorker: `self` is undefined. Call this from within a Service Worker scope.',
-      ),
-    );
-  }
-  if (typeof scope.addEventListener !== 'function') {
-    return Promise.reject(
-      new Error(
-        'setupServiceWorker: `self.addEventListener` is not a function. Not a Service Worker scope.',
+        'setupServiceWorker: not running inside a Service Worker scope. ' +
+          'Either `self` is undefined or `self.addEventListener` is missing.',
       ),
     );
   }

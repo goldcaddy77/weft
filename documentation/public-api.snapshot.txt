@@ -262,6 +262,7 @@ interface TenantWorkflowCreationRateLimit { count: number; window: Duration }
 interface TenantWorkflowCreationRateUsage { windowMilliseconds: number }
 class TestEngine { advanceTime(duration: Duration): Promise<void>; mock<TArgs extends unknown[], TResult>(activity: (...args: TArgs) => Promise<TResult> | TResult, implementation: (...args: TArgs) => TResult | Promise<TResult>): MockHandle<TArgs, TResult>; mocks: ActivityMockRegistry; now: number; recover(): TestEngine; runN(type: string, input: unknown, options: RunNOptions): Promise<RunNResult>; storage: MemoryStorage }
 class TimeControl { advance(duration: Duration): Promise<void>; advanceTo(timestamp: number): Promise<void>; nextTimerAt: number; now: number; pendingTimerCount: number; reset(startTime?: number): void; schedule(fireAt: number, callback: () => void | Promise<void>): () => void }
+interface TimerEntry { executionTimeoutMs?: number; fireAt: number; id: string; kind: "sleep" | "visibility-timeout" | "execution-deadline" | "delayed-start" | "schedule" | "terminal-cleanup"; workflowId: string }
 class TokenBridge { pipe(stream: ReadableStream<StreamChunk>): Promise<string> }
 class TokenEvent { readonly model: string; readonly token: string; static readonly type: "agent:token"; readonly workflowId: string }
 interface TokenUsage { inputTokens: number; outputTokens: number; totalTokens: number }
@@ -454,7 +455,6 @@ interface SetupServiceWorkerResult { engine: Engine; ready: Promise<void>; sched
 function createFetchHandler(options: ServiceWorkerOptions): (event: MinimalFetchEvent) => void
 function createLifecycleHandlers(): { install: (event: MinimalExtendableEvent) => void; activate: (event: MinimalExtendableEvent) => void; }
 function createPeriodicSyncHandler(scheduler: ServiceWorkerScheduler, tag?: string): (event: MinimalPeriodicSyncEvent) => void
-function resetSetupServiceWorkerRegistry(scope?: object): void
 function setupServiceWorker(options?: SetupServiceWorkerOptions): Promise<SetupServiceWorkerResult>
 
 # Entrypoint: ./storage
