@@ -246,9 +246,33 @@ function resolveToSourceDeclaration(
   underlying: ts.Symbol;
 } | null {
   let current = symbol;
+  const seen = new Set<ts.Symbol>();
   while (current.flags & ts.SymbolFlags.Alias) {
     const next = checker.getAliasedSymbol(current);
     if (!next || next === current) break;
+    current = next;
+  }
+  // Bun-barrel workaround: `const exportedX = X; export { exportedX as X }`.
+  while (
+    current.flags & ts.SymbolFlags.Variable &&
+    !seen.has(current) &&
+    current.declarations &&
+    current.declarations.length > 0
+  ) {
+    seen.add(current);
+    const variableDeclaration = current.declarations.find(ts.isVariableDeclaration);
+    if (!variableDeclaration) break;
+    const initializer = variableDeclaration.initializer;
+    if (initializer === undefined || !ts.isIdentifier(initializer)) break;
+    const initializerSymbol = checker.getSymbolAtLocation(initializer);
+    if (!initializerSymbol || initializerSymbol === current) break;
+    let next = initializerSymbol;
+    while (next.flags & ts.SymbolFlags.Alias) {
+      const aliased = checker.getAliasedSymbol(next);
+      if (!aliased || aliased === next) break;
+      next = aliased;
+    }
+    if (next === current) break;
     current = next;
   }
   const decls = current.declarations ?? [];

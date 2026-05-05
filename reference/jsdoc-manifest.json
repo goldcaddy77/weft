@@ -6546,6 +6546,62 @@
       "classification": "example-required"
     },
     {
+      "sourceFile": "src/service-worker/setup.ts",
+      "sourceName": "SetupServiceWorkerOptions",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "SetupServiceWorkerOptions",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/service-worker/setup.ts",
+      "sourceName": "SetupServiceWorkerResult",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "SetupServiceWorkerResult",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/service-worker/setup.ts",
+      "sourceName": "resetSetupServiceWorkerRegistry",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "resetSetupServiceWorkerRegistry",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/service-worker/setup.ts",
+      "sourceName": "setupServiceWorker",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "setupServiceWorker",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
       "sourceFile": "src/storage/bun-sql.ts",
       "sourceName": "BunSQLiteStorage",
       "kind": "value",

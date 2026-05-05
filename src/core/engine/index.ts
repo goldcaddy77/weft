@@ -50,6 +50,7 @@ import {
   type WorkflowSummary,
   type WorkflowTimelineEntry,
 } from '../types.ts';
+import type { TimerEntry } from '../types/checkpoint.ts';
 import { UpdateCoordinator } from '../updates.ts';
 import { WorkerExecutionStrategy } from '../worker-execution-strategy.ts';
 import { broadcast as broadcastFromInternals, type BroadcastCallbacks } from './broadcast.ts';
@@ -942,5 +943,29 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
   get scheduler(): Scheduler {
     return getInternals(this).scheduler;
+  }
+
+  /**
+   * Fire a single timer entry directly. Intended for external schedulers
+   * (Service Worker, custom transports) that own timer dispatch but want
+   * the engine to actually resume the workflow associated with the entry.
+   *
+   * Most users do not call this directly. The internal `Scheduler` invokes
+   * the same code path automatically when its tick observes a due entry.
+   *
+   * @example
+   * ```ts
+   * import { Engine } from 'weft';
+   * declare const externalEntry: import('weft').TimerEntry;
+   * const engine = new Engine();
+   * await engine.fireTimer(externalEntry);
+   * ```
+   */
+  async fireTimer(entry: TimerEntry): Promise<void> {
+    await handleTimerFiredFromInternals(
+      getInternals(this),
+      entry,
+      this.#createTimeOperationCallbacks(),
+    );
   }
 }

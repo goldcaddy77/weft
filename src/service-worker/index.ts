@@ -232,3 +232,10 @@ export function createLifecycleHandlers(): {
     },
   };
 }
+
+export {
+  resetSetupServiceWorkerRegistry,
+  setupServiceWorker,
+  type SetupServiceWorkerOptions,
+  type SetupServiceWorkerResult,
+} from './setup.ts';
