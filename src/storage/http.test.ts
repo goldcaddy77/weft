@@ -99,7 +99,7 @@ describe('HTTPStorage', () => {
         { type: 'delete', key: 'b' },
       ]);
 
-      expect(requests[0]?.url).toBe('https://example.test/weft/v1/storage/batch');
+      expect(requests[0]?.url).toBe('https://example.test/weft/v1/storage/-/batch');
       expect(requests[0]?.headers.get('authorization')).toBe('Bearer token');
       expect(await requests[0]?.json()).toEqual({
         operations: [
@@ -212,11 +212,14 @@ describe('HTTPStorage', () => {
   });
 
   it('returns the conditional batch result', async () => {
-    const restoreFetch = installFetch(async () =>
-      Response.json({
+    const requests: Request[] = [];
+    const restoreFetch = installFetch(async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return Response.json({
         applied: false,
-      }),
-    );
+      });
+    });
     try {
       const storage = new HTTPStorage({ baseUrl: 'https://example.test' });
 
@@ -226,6 +229,7 @@ describe('HTTPStorage', () => {
           [{ type: 'put', key: 'a', value: encode('new') }],
         ),
       ).toBe(false);
+      expect(requests[0]?.url).toBe('https://example.test/v1/storage/-/conditional-batch');
     } finally {
       restoreFetch();
     }

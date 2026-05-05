@@ -124,6 +124,14 @@ function forbiddenUnscopedStorageFault(): OperationFault {
   };
 }
 
+function normalizedPrincipalTenantId(principal: Principal): string | undefined {
+  if (!isAuthenticated(principal) || principal.tenantId === undefined) {
+    return undefined;
+  }
+  const tenantId = principal.tenantId.trim();
+  return tenantId.length === 0 ? undefined : tenantId;
+}
+
 function resolveAuthorizedStorage(engine: Engine, principal: Principal): Storage {
   if (!isAuthenticated(principal)) {
     throw {
@@ -133,8 +141,9 @@ function resolveAuthorizedStorage(engine: Engine, principal: Principal): Storage
     } satisfies OperationFault;
   }
 
-  if (principal.tenantId !== undefined) {
-    return scopedStorage(engine.storage, `tenant:${encodeStorageKeyComponent(principal.tenantId)}`);
+  const tenantId = normalizedPrincipalTenantId(principal);
+  if (tenantId !== undefined) {
+    return scopedStorage(engine.storage, `tenant:${encodeStorageKeyComponent(tenantId)}`);
   }
 
   if (principal.hasScope('storage:admin')) {
@@ -461,7 +470,7 @@ export const storageScanRestBinding: UnknownRestBinding = {
 
 export const storageBatchRestBinding: UnknownRestBinding = {
   method: 'POST',
-  path: '/v1/storage/batch',
+  path: '/v1/storage/-/batch',
   pathParamNames: [],
   operationName: 'weft.storage.batch',
   inputSources: {
@@ -475,7 +484,7 @@ export const storageBatchRestBinding: UnknownRestBinding = {
 
 export const storageConditionalBatchRestBinding: UnknownRestBinding = {
   method: 'POST',
-  path: '/v1/storage/conditional-batch',
+  path: '/v1/storage/-/conditional-batch',
   pathParamNames: [],
   operationName: 'weft.storage.conditionalbatch',
   inputSources: {

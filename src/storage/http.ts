@@ -251,7 +251,7 @@ export class HTTPStorage implements Storage {
   }
 
   async batch(operations: BatchOperation[]): Promise<void> {
-    await this.#request(this.#url('/v1/storage/batch'), {
+    await this.#request(this.#url('/v1/storage/-/batch'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ operations: operations.map(encodeOperation) }),
@@ -262,7 +262,7 @@ export class HTTPStorage implements Storage {
     conditions: ConditionalBatchCondition[],
     operations: BatchOperation[],
   ): Promise<boolean> {
-    const response = await this.#request(this.#url('/v1/storage/conditional-batch'), {
+    const response = await this.#request(this.#url('/v1/storage/-/conditional-batch'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({

@@ -130,6 +130,30 @@ describe('storage REST operations', () => {
     expect(response.status).toBe(403);
   });
 
+  it('treats blank tenant principals as unscoped instead of deriving a shared tenant prefix', async () => {
+    const rawStorage = new MemoryStorage();
+    const engine = new Engine({ storage: rawStorage });
+
+    const response = await handleRequest(
+      request('/v1/storage/acme:data', { method: 'PUT', body: encode('blank tenant') }),
+      engine,
+      {
+        authContext: {
+          method: 'api-key' as const,
+          principal: principalFromApiKey({
+            subject: 'blank-tenant-caller',
+            tenantId: '',
+            scopes: ['storage:write'],
+          }),
+        },
+      },
+    );
+
+    expect(response.status).toBe(403);
+    expect(await rawStorage.get('tenant:acme:data')).toBeNull();
+    expect(await rawStorage.get('acme:data')).toBeNull();
+  });
+
   it('streams tenant-scoped scan results as NDJSON', async () => {
     const rawStorage = new MemoryStorage();
     await rawStorage.put('tenant:acme:wf:a', encode('a'));
@@ -190,6 +214,44 @@ describe('storage REST operations', () => {
     await reader.cancel();
   });
 
+  it('keeps storage control routes outside the user key namespace', async () => {
+    const rawStorage = new MemoryStorage();
+    const engine = new Engine({ storage: rawStorage });
+
+    const keyResponse = await handleRequest(
+      request('/v1/storage/batch', { method: 'PUT', body: encode('literal key') }),
+      engine,
+      adminStorageOptions(),
+    );
+    expect(keyResponse.status).toBe(204);
+    expect(decode(await rawStorage.get('batch'))).toBe('literal key');
+
+    const batchResponse = await handleRequest(
+      request('/v1/storage/-/batch', {
+        method: 'POST',
+        body: JSON.stringify({
+          operations: [{ type: 'put', key: 'from-control-route', value: btoa('control') }],
+        }),
+        headers: { 'content-type': 'application/json' },
+      }),
+      engine,
+      adminStorageOptions(),
+    );
+    expect(batchResponse.status).toBe(204);
+    expect(decode(await rawStorage.get('from-control-route'))).toBe('control');
+
+    const legacyCollisionResponse = await handleRequest(
+      request('/v1/storage/batch', {
+        method: 'POST',
+        body: JSON.stringify({ operations: [] }),
+        headers: { 'content-type': 'application/json' },
+      }),
+      engine,
+      adminStorageOptions(),
+    );
+    expect(legacyCollisionResponse.status).toBe(404);
+  });
+
   it('applies tenant-scoped batch writes and deletes without touching raw keys', async () => {
     const rawStorage = new MemoryStorage();
     await rawStorage.put('tenant:acme:wf:delete', encode('old'));
@@ -197,7 +259,7 @@ describe('storage REST operations', () => {
     const engine = new Engine({ storage: rawStorage });
 
     const response = await handleRequest(
-      request('/v1/storage/batch', {
+      request('/v1/storage/-/batch', {
         method: 'POST',
         body: JSON.stringify({
           operations: [
@@ -224,7 +286,7 @@ describe('storage REST operations', () => {
     const engine = new Engine({ storage: rawStorage });
 
     const response = await handleRequest(
-      request('/v1/storage/conditional-batch', {
+      request('/v1/storage/-/conditional-batch', {
         method: 'POST',
         body: JSON.stringify({
           conditions: [{ key: 'wf:key', expectedValue: null }],
@@ -249,7 +311,7 @@ describe('storage REST operations', () => {
     const engine = new Engine({ storage: rawStorage });
 
     const response = await handleRequest(
-      request('/v1/storage/conditional-batch', {
+      request('/v1/storage/-/conditional-batch', {
         method: 'POST',
         body: JSON.stringify({
           conditions: [{ key: 'wf:key', expectedValue: btoa('existing') }],
@@ -275,7 +337,7 @@ describe('storage REST operations', () => {
     const engine = new Engine({ storage: rawStorage });
 
     const response = await handleRequest(
-      request('/v1/storage/conditional-batch', {
+      request('/v1/storage/-/conditional-batch', {
         method: 'POST',
         body: JSON.stringify({
           conditions: [{ key: 'key', expectedValue: btoa('old') }],
@@ -298,7 +360,7 @@ describe('storage REST operations', () => {
     const engine = new Engine({ storage: rawStorage });
 
     const response = await handleRequest(
-      request('/v1/storage/conditional-batch', {
+      request('/v1/storage/-/conditional-batch', {
         method: 'POST',
         body: JSON.stringify({
           conditions: [{ key: 'empty', expectedValue: '' }],
@@ -319,7 +381,7 @@ describe('storage REST operations', () => {
     const engine = new Engine({ storage: new MemoryStorage() });
 
     const response = await handleRequest(
-      request('/v1/storage/batch', {
+      request('/v1/storage/-/batch', {
         method: 'POST',
         body: JSON.stringify({
           operations: [{ type: 'put', key: 'key', value: 'not-base64' }],
@@ -340,7 +402,7 @@ describe('storage REST operations', () => {
     const engine = new Engine({ storage: new MemoryStorage() });
 
     const response = await handleRequest(
-      request('/v1/storage/conditional-batch', {
+      request('/v1/storage/-/conditional-batch', {
         method: 'POST',
         body: JSON.stringify({
           conditions: [{ key: 'key', expectedValue: 'not-base64' }],
