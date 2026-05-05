@@ -26,8 +26,13 @@ function generateCheckpointValue(): Uint8Array {
  * alongside Web Worker pools). The gate uses the median of multiple warmed
  * samples so it still catches order-of-magnitude regressions without flaking
  * on an otherwise healthy loaded machine.
+ *
+ * GitHub-hosted Linux runners routinely measure ~6–9k writes/sec for the
+ * 500-batch workload below, so the CI threshold sits at 5k: low enough to
+ * absorb hardware noise on shared runners, high enough that a real
+ * regression (10x slower) still trips the gate.
  */
-const TARGET_WRITES_PER_SECOND = process.env['CI'] ? 10_000 : 20_000;
+const TARGET_WRITES_PER_SECOND = process.env['CI'] ? 5_000 : 20_000;
 const BATCH_WRITE_SAMPLE_SIZE = 3;
 
 function median(values: number[]): number {
