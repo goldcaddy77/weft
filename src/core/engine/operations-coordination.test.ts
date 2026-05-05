@@ -72,9 +72,6 @@ describe('partial-failure preservation worker-mode boundary', () => {
 
     let captured: unknown;
     await processRunAllOperation(createWorkerModeInternals(), 'wf-worker-run-all', operation, {
-      getActivityOperationCallbacks: () => {
-        throw new Error('activity callbacks are not needed for top-level runAll');
-      },
       runOperationWithResult: async (_workflowId, _operation, execute) => {
         try {
           await execute();
