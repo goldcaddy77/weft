@@ -204,6 +204,16 @@ const engine = new Engine({
 
 Now your checkpoints live in a SQLite database on disk. Crash the process, restart it, call `engine.recoverAll()` after registering the workflow and activities, and the workflow picks up where it left off. Persistent storage keeps the bytes; recovery tells the new engine process to own the work again.
 
+For quick experiments where you don't want to think about which adapter to pick, `resolveDefaultStorage()` detects Bun or Node and picks the matching SQLite backend (it's not for browsers — use `IndexedDBStorage` directly there). The path goes under the OS temp directory; production deployments should pass `storage` explicitly.
+
+```typescript
+import { Engine } from 'weft';
+import { resolveDefaultStorage } from 'weft/storage/auto';
+
+await using storage = await resolveDefaultStorage();
+await using engine = new Engine({ storage });
+```
+
 ## Next Steps
 
 You've got the fundamentals: activities, sleeps, signals, parallel execution, and persistent storage. Before diving deeper, take a look at the [Key Concepts](key-concepts.md) page to build a vocabulary for the rest of the documentation.

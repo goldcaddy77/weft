@@ -8,7 +8,7 @@
  * Run after `bun run build`: bun run verify:exports
  */
 
-import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
@@ -408,9 +408,11 @@ const storageBarrelScript = [
 const storageAdapterSubpathsScript = [
   "import { HTTPStorage } from 'weft/storage/http';",
   "import { resolveStorage } from 'weft/storage/resolve';",
+  "import { resolveDefaultStorage } from 'weft/storage/auto';",
   "import { WebExtensionStorage } from 'weft/storage/web-extension';",
   "if (typeof HTTPStorage !== 'function') throw new Error('HTTPStorage subpath failed');",
   "if (typeof WebExtensionStorage !== 'function') throw new Error('WebExtensionStorage subpath failed');",
+  "if (typeof resolveDefaultStorage !== 'function') throw new Error('resolveDefaultStorage subpath failed');",
   "if (typeof resolveStorage !== 'function') throw new Error('resolveStorage subpath failed');",
 ].join('\n');
 
@@ -473,6 +475,34 @@ if (nodeExecutable === null) {
     'NodeSQLiteStorage',
     'Node.js',
   );
+}
+
+// ---------------------------------------------------------------------------
+// Test 10: weft/service-worker bundle must not pull in Bun/Node SQLite adapters
+//
+// `resolveDefaultStorage` is exported only from `weft/storage/auto`, which the
+// service-worker entrypoint must never import (directly or transitively).
+// Verify the emitted bundle is free of any Bun/Node-only storage code so
+// browser consumers don't ship dead SQLite chunks.
+// ---------------------------------------------------------------------------
+const serviceWorkerBundle = readFileSync(join(distPath, 'service-worker/index.js'), 'utf-8');
+const serviceWorkerForbiddenTokens = [
+  'BunSQLiteStorage',
+  'NodeSQLiteStorage',
+  'bun:sqlite',
+  'better-sqlite3',
+  'src/storage/auto',
+];
+const foundInServiceWorker = serviceWorkerForbiddenTokens.filter((token) =>
+  serviceWorkerBundle.includes(token),
+);
+
+if (foundInServiceWorker.length > 0) {
+  fail(
+    `weft/service-worker bundle contains forbidden SQLite adapter code: ${foundInServiceWorker.join(', ')}`,
+  );
+} else {
+  pass('weft/service-worker bundle is free of SQLite adapter code');
 }
 
 if (failed) {

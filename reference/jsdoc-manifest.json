@@ -16,6 +16,7 @@
     "weft/storage/web-extension": "src/storage/web-extension.ts",
     "weft/storage/http": "src/storage/http.ts",
     "weft/storage/resolve": "src/storage/resolve.ts",
+    "weft/storage/auto": "src/storage/auto.ts",
     "weft/server": "src/server/index.ts",
     "weft/server/handler": "src/server/handler.ts",
     "weft/client": "src/client/index.ts",
@@ -5491,6 +5492,20 @@
         {
           "importPath": "weft/service-worker",
           "exportName": "normalizePathPrefix",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/auto.ts",
+      "sourceName": "resolveDefaultStorage",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage/auto",
+          "exportName": "resolveDefaultStorage",
           "kind": "value"
         }
       ],
