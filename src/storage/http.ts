@@ -1,4 +1,4 @@
-import { decodeBase64ToBytes, encodeBytesToBase64 } from './byte-encoding.ts';
+import { decodeBase64ToBytes, encodeBytesToBase64, isRecord } from './byte-encoding.ts';
 import {
   type BatchOperation,
   type ConditionalBatchCondition,
@@ -43,10 +43,6 @@ type HTTPScanEntry = {
 };
 
 const MAX_SCAN_RESPONSE_BYTES = 64 * 1024 * 1024;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
 
 function encodeOperation(operation: BatchOperation): HTTPBatchOperation {
   if (operation.type === 'put') {

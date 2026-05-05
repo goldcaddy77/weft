@@ -1,12 +1,14 @@
 /**
  * Encode storage bytes as base64 without relying on Node-only Buffer APIs.
  */
+const BYTE_STRING_CHUNK_SIZE = 512;
+
 export function encodeBytesToBase64(value: Uint8Array): string {
-  let binary = '';
-  for (const byte of value) {
-    binary += String.fromCharCode(byte);
+  const chunks: string[] = [];
+  for (let offset = 0; offset < value.length; offset += BYTE_STRING_CHUNK_SIZE) {
+    chunks.push(String.fromCharCode(...value.subarray(offset, offset + BYTE_STRING_CHUNK_SIZE)));
   }
-  return btoa(binary);
+  return btoa(chunks.join(''));
 }
 
 /**
@@ -19,4 +21,8 @@ export function decodeBase64ToBytes(value: string): Uint8Array {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }

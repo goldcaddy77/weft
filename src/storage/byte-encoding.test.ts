@@ -11,7 +11,9 @@ afterEach(() => {
 describe('byte encoding', () => {
   it('round-trips bytes without spreading large chunks into String.fromCharCode', () => {
     let largestArgumentCount = 0;
+    let callCount = 0;
     String.fromCharCode = (...bytes: number[]) => {
+      callCount += 1;
       largestArgumentCount = Math.max(largestArgumentCount, bytes.length);
       if (bytes.length > 512) {
         throw new RangeError('too many arguments');
@@ -28,5 +30,6 @@ describe('byte encoding', () => {
 
     expect(decodeBase64ToBytes(encoded)).toEqual(bytes);
     expect(largestArgumentCount).toBeLessThanOrEqual(512);
+    expect(callCount).toBeLessThan(bytes.length / 2);
   });
 });

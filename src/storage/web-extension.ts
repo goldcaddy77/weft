@@ -1,4 +1,4 @@
-import { decodeBase64ToBytes, encodeBytesToBase64 } from './byte-encoding.ts';
+import { decodeBase64ToBytes, encodeBytesToBase64, isRecord } from './byte-encoding.ts';
 import {
   matchesScanOptions,
   type BatchOperation,
@@ -103,10 +103,6 @@ function isPromiseLike<T>(value: unknown): value is PromiseLike<T> {
     'then' in value &&
     typeof value.then === 'function'
   );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 
 function isStorageEnvelope(value: unknown): value is StorageEnvelope {
