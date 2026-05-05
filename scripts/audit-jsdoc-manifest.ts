@@ -1,11 +1,11 @@
 /**
- * Independent verification that the manifest's public-surface set agrees with
- * what consumers actually see (the emitted .d.ts files), and that every
- * classified entry's currentState satisfies the example-required / prose-only
- * invariants.
+ * Independent verification that the in-memory manifest's public-surface set
+ * agrees with what consumers actually see (the emitted .d.ts files), and that
+ * every classified entry's currentState satisfies the example-required /
+ * prose-only invariants.
  *
  * The audit deliberately uses a different enumeration mechanism than
- * scripts/build-jsdoc-manifest.ts (which walks source) so a shared logic bug
+ * scripts/lib/jsdoc-manifest.ts (which walks source) so a shared logic bug
  * cannot make both gates agree on a wrong denominator. The audit walks the
  * emitted dist/<path>.d.ts files via ts.createProgram + getExportsOfModule.
  *
@@ -19,47 +19,29 @@
  *      the re-derived currentState (read from source JSDoc) is 'has-example'.
  *   4. For each manifest entry with classification == 'prose-only', the
  *      re-derived currentState is 'prose-only' or 'has-example'.
- *
- * The audit never writes to the manifest. The classified manifest is the
- * source of truth for `classification`.
- *
- * Smoke test (against an unclassified manifest): exits non-zero with
- * "manifest contains unclassified entries; classification pass required".
  */
 
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
 
+import { buildManifest, type ManifestEntry, type SymbolKind } from './lib/jsdoc-manifest.ts';
+
 const REPO_ROOT = resolve(import.meta.dir, '..');
 const PACKAGE_JSON = resolve(REPO_ROOT, 'package.json');
-const MANIFEST_PATH = resolve(REPO_ROOT, 'reference/jsdoc-manifest.json');
 
-type SymbolKind = 'value' | 'type' | 'namespace';
 type CurrentState = 'no-jsdoc' | 'prose-only' | 'has-example';
-type Classification = 'unclassified' | 'example-required' | 'prose-only' | 'not-public';
-
-type PublicFace = { importPath: string; exportName: string; kind: SymbolKind };
-
-type ManifestEntry = {
-  sourceFile: string;
-  sourceName: string;
-  kind: SymbolKind;
-  subKind: string;
-  publicFaces: PublicFace[];
-  classification: Classification;
-  currentState: CurrentState;
-  classificationRationale: string | null;
-  batch: string | null;
-};
-
-type Manifest = {
-  publicEntryPoints: Record<string, string>;
-  entries: ManifestEntry[];
-};
 
 // ---------------------------------------------------------------------------
 // package.json reading.
+//
+// `pickTypesField` and `distToSource` below are intentionally duplicated from
+// scripts/lib/jsdoc-manifest.ts. The audit's whole point is to be an
+// independent cross-check: if both the manifest builder and the audit shared
+// these helpers, a logic bug in one place would silently make both gates
+// agree on the wrong answer. Edit either file with that in mind — they
+// should stay byte-for-byte equivalent in behavior, but a refactor that
+// merges them into a single shared helper defeats the cross-check.
 // ---------------------------------------------------------------------------
 
 type PkgJson = { name: string; exports?: Record<string, unknown> };
@@ -73,10 +55,6 @@ function pickTypesField(value: unknown): string | null {
   if (value === null || typeof value !== 'object') return null;
   const obj = value as Record<string, unknown>;
   if (typeof obj['types'] === 'string') return obj['types'];
-  // Conditional shape with platform-specific types — return null. The
-  // unified specifier maps to different sources per platform; explicit
-  // per-platform subpaths in package.json must cover both. (Mirrors the
-  // build script's pickTypesField behavior.)
   for (const key of ['bun', 'node', 'import', 'default'] as const) {
     const inner = obj[key];
     if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
@@ -105,6 +83,63 @@ function recomputePublicEntryPoints(pkg: PkgJson): Record<string, string> {
     out[importPath] = sourcePath;
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Top-level-types requirement.
+//
+// `pickTypesField` returns null for a conditional shape that has nested
+// platform `types` (e.g. `{ bun: { types }, node: { types } }`) without a
+// top-level `types` field. The manifest builder and audit both silently skip
+// such exports — there is no single source file to map them to.
+//
+// Earlier iterations of this audit tried to compensate by requiring explicit
+// per-platform subpaths (`./storage/sqlite/bun`, `./storage/sqlite/node`)
+// when this shape appeared. That approach has a hole: the explicit subpath's
+// declaration may not actually cover the same surface the conditional
+// import path would resolve to, and proving equivalence requires either a
+// path-equality check (brittle, blocks legitimate divergence) or a separate
+// audit path that enumerates the nested declaration directly.
+//
+// The simpler answer: ban the conditional-only shape outright. If an export
+// has any nested `types` field, it must also carry a top-level `types`
+// field. The project follows this convention today; this assertion makes
+// it enforceable so a future contributor can't introduce the gap. If a
+// future export legitimately needs platform-specific types, split it into
+// explicit per-platform subpaths instead — those subpaths get audited as
+// first-class entry points with their own JSDoc coverage requirement.
+// ---------------------------------------------------------------------------
+
+function assertTopLevelTypes(pkg: PkgJson, failures: string[]): void {
+  if (!pkg.exports) return;
+  for (const [subpath, value] of Object.entries(pkg.exports)) {
+    if (typeof value !== 'object' || value === null) continue;
+    const obj = value as Record<string, unknown>;
+    if (typeof obj['types'] === 'string') continue;
+    // Iterate every condition key on the export object (excluding the
+    // top-level `types` field itself, which we already handled above). The
+    // package-exports spec doesn't bound the condition vocabulary — `bun`,
+    // `node`, `import`, `default` are the ones the project uses today, but
+    // a future contributor could add `browser`, `deno`, `worker`, or any
+    // user-defined condition. The check has to detect any of them, not
+    // just a hardcoded set, otherwise a new condition with nested `types`
+    // would silently slip past the audit and recreate the coverage gap
+    // this check exists to close.
+    const nestedTypesConditions: string[] = [];
+    for (const [key, inner] of Object.entries(obj)) {
+      if (key === 'types') continue;
+      if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
+        const innerTypes = (inner as Record<string, unknown>)['types'];
+        if (typeof innerTypes === 'string') nestedTypesConditions.push(key);
+      }
+    }
+    if (nestedTypesConditions.length > 0) {
+      const conditionsList = nestedTypesConditions.map((c) => `\`${c}.types\``).join(', ');
+      failures.push(
+        `  top-level-types: \`${subpath}\` has nested types conditions (${conditionsList}) but no top-level \`types\` field. Add a top-level \`types\` field, or split into explicit per-platform subpaths (each with its own top-level \`types\`). The conditional-only shape silently drops public coverage from the audit.`,
+      );
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -211,9 +246,6 @@ function detectCurrentStateFromSource(
   if (!sourceFile) {
     if (!existsSync(absolute)) return 'no-jsdoc';
     const text = readFileSync(absolute, 'utf8');
-    // setParentNodes: true is required for ts.getJSDocCommentsAndTags to walk
-    // the JSDoc node graph — program.getSourceFile() doesn't always preserve
-    // those bindings the way createSourceFile + setParentNodes does.
     sourceFile = ts.createSourceFile(absolute, text, ts.ScriptTarget.Latest, true);
     sourceFileCache.set(absolute, sourceFile);
   }
@@ -317,17 +349,13 @@ function assertEqualSets(
 // ---------------------------------------------------------------------------
 
 function main(): void {
-  if (!existsSync(MANIFEST_PATH)) {
-    console.error(`audit-jsdoc-manifest: manifest not found at ${MANIFEST_PATH}`);
-    process.exit(1);
-  }
-  const manifest: Manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
+  const manifest = buildManifest();
   const pkg = loadPackageJson();
 
   const unclassified = manifest.entries.filter((e) => e.classification === 'unclassified');
   if (unclassified.length > 0) {
     console.error(
-      `audit-jsdoc-manifest: manifest contains ${unclassified.length} unclassified entries; classification pass required`,
+      `audit-jsdoc-manifest: in-memory manifest contains ${unclassified.length} unclassified entries; classification logic in scripts/lib/jsdoc-manifest.ts is broken`,
     );
     process.exit(1);
   }
@@ -337,6 +365,11 @@ function main(): void {
   // Assertion 1: publicEntryPoints.
   const recomputedPEP = recomputePublicEntryPoints(pkg);
   assertEqualMaps('publicEntryPoints', manifest.publicEntryPoints, recomputedPEP, failures);
+
+  // Assertion 1b: every export with nested `types` conditions must also
+  // carry a top-level `types` field (otherwise the conditional surface is
+  // silently skipped by the manifest builder and the audit).
+  assertTopLevelTypes(pkg, failures);
 
   // Assertion 2: declaration-derived public-face set vs manifest publicFaces.
   const { triples: declTriples, missingFiles } = collectFromDeclarations(recomputedPEP, pkg);
@@ -378,16 +411,13 @@ function main(): void {
       [
         '',
         'How to fix:',
-        '  - "publicEntryPoints: key X present/missing": package.json `exports` changed.',
-        '    Run `bun run scripts/build-jsdoc-manifest.ts` to regenerate the manifest, then',
-        '    `bun run scripts/classify-jsdoc-manifest.ts` to re-apply classifications.',
+        '  - "publicEntryPoints: key X present/missing": package.json `exports` and the build are out of sync.',
+        '    Run `bun run build` to regenerate dist/.',
         '  - "public-face set: X in manifest but missing from declarations": a public export was',
-        '    removed from the runtime surface but still appears in the manifest.',
-        '    Run the build pipeline (`bun run build && bun run scripts/build-jsdoc-manifest.ts`).',
+        '    removed from the runtime surface but still appears in source. Run `bun run build` first.',
         '  - "public-face set: X in declarations but missing from manifest": a NEW public export',
-        '    was added without regenerating the manifest. Run',
-        '    `bun run scripts/build-jsdoc-manifest.ts && bun run scripts/classify-jsdoc-manifest.ts`,',
-        '    review the diff, then re-run the audit.',
+        '    was added — the in-memory builder should pick it up automatically. If this fires,',
+        '    inspect scripts/lib/jsdoc-manifest.ts (the source walker may not be reaching the symbol).',
         '  - "example-required entry has currentState=...": JSDoc is missing or incomplete on the',
         "    source declaration. Add prose + an @example block (`import { X } from '<face>'` first),",
         '    then re-run.',

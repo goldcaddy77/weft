@@ -114,17 +114,17 @@ try {
   ok = false;
 }
 
-// 6) JSDoc manifest audit (only when source/manifest/package.json changed)
+// 6) JSDoc manifest audit (only when source/scripts/package.json changed)
 const stagedTouchesPublicSurface = staged.some(
   (file) =>
     file.startsWith('src/') ||
     file === 'package.json' ||
-    file === 'reference/jsdoc-manifest.json' ||
+    file.startsWith('scripts/lib/jsdoc-manifest') ||
     file.startsWith('scripts/audit-jsdoc-manifest') ||
     file.startsWith('scripts/build-jsdoc-manifest') ||
     file.startsWith('scripts/check-declaration-jsdoc') ||
-    file.startsWith('scripts/classify-jsdoc-manifest') ||
-    file.startsWith('scripts/extract-doctests'),
+    file.startsWith('scripts/extract-doctests') ||
+    file.startsWith('scripts/extract-markdown-doctests'),
 );
 if (stagedTouchesPublicSurface) {
   info('Running JSDoc audit…');
@@ -133,7 +133,7 @@ if (stagedTouchesPublicSurface) {
     success('JSDoc audit passed');
   } catch {
     error(
-      'JSDoc audit failed — see hint above. Run `bun run scripts/build-jsdoc-manifest.ts && bun run scripts/classify-jsdoc-manifest.ts` if a public export was added.',
+      'JSDoc audit failed — see hint above. The manifest is built in-memory; failures usually mean a new public export needs JSDoc + @example, or `dist/` is stale (run `bun run build`), or scripts/lib/jsdoc-manifest.ts cannot reach the symbol.',
     );
     ok = false;
   }
