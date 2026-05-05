@@ -108,18 +108,15 @@ If you do not pass a storage option to the `Engine` constructor, it defaults to 
 const engine = new Engine(); // uses MemoryStorage
 ```
 
-### `resolveDefaultStorage` for runtime detection
+### `resolveDefaultStorage` for runtime detection (Bun & Node only)
 
-`weft/storage/auto` exposes `resolveDefaultStorage()`, a developer-convenience helper that detects the runtime and picks a persistent backend for you:
+`weft/storage/auto` exposes `resolveDefaultStorage()`, a developer-convenience helper that detects the runtime and picks a persistent SQLite backend:
 
 - **Bun** → `BunSQLiteStorage`
-- **Browser** (or any environment with `indexedDB`) → `IndexedDBStorage`
-- **Node.js** (no IndexedDB) → `NodeSQLiteStorage`
-- **Otherwise** → throws with a clear message telling you to pass `storage` explicitly
+- **Node.js** → `NodeSQLiteStorage`
+- **Otherwise** → throws telling you to pass `storage` explicitly
 
-IndexedDB wins over Node SQLite when both globals are present (Electron, jsdom).
-
-The path for the SQLite branches is under the OS temp directory, namespaced by the project's `cwd` hash (or `WEFT_DEFAULT_STORAGE_PATH` if set). The parent directory is created automatically. Production deployments should pass an explicit storage instance — this helper is meant for demos, scripts, and Hello World.
+The path is under the OS temp directory, namespaced by the project's `cwd` hash (or `WEFT_DEFAULT_STORAGE_PATH` if set). The parent directory is created automatically. Production deployments should pass an explicit storage instance — this helper is for demos, scripts, and Hello World.
 
 ```typescript
 import { Engine } from 'weft';
@@ -129,7 +126,7 @@ await using storage = await resolveDefaultStorage();
 await using engine = new Engine({ storage });
 ```
 
-`resolveDefaultStorage` lives in its own subpath so the service-worker bundle (and any other browser-targeted entrypoint) never pulls Bun/Node SQLite code into the dependency graph.
+`weft/storage/auto` is **not for browsers**. The module statically imports `node:fs`/`node:os`/`node:path`/`node:crypto`, so it can't be bundled into a browser target. Browser and Service Worker contexts should use `IndexedDBStorage` directly (or `setupServiceWorker()` from `weft/service-worker`, which constructs IndexedDB internally).
 
 ## IndexedDBStorage
 

@@ -1,42 +1,42 @@
 /**
- * Runtime-detected default storage backend.
+ * Runtime-detected default storage backend for **Bun and Node** processes.
  *
  * Imported via `weft/storage/auto`. Resolves a persistent storage
  * adapter appropriate for the current runtime:
  *
  *   1. Bun → `BunSQLiteStorage`
- *   2. IndexedDB-if-present (over Node, for Electron / jsdom) → `IndexedDBStorage`
- *   3. Node → `NodeSQLiteStorage`
- *   4. otherwise → throw
+ *   2. Node → `NodeSQLiteStorage`
+ *   3. otherwise → throw
  *
- * Path policy for SQLite branches:
+ * Path policy:
  *   - `process.env.WEFT_DEFAULT_STORAGE_PATH` if set
  *   - else `${tmpdir()}/weft-default/<cwd-hash>.db`
  *
  * The parent directory is created (recursive) before the path is returned.
  *
+ * **Not for browsers.** This module statically imports `node:fs`,
+ * `node:os`, `node:path`, and `node:crypto`, so bundling it into a
+ * browser target will fail. Browser/Service Worker contexts should use
+ * `IndexedDBStorage` directly (or `setupServiceWorker()` from
+ * `weft/service-worker`, which constructs IndexedDB internally).
+ *
  * `resolveDefaultStorage()` is for developer convenience. Production
  * deployments should pick an explicit adapter and pass it to
  * `new Engine({ storage })`.
  *
- * Imported only when needed — service-worker and other browser bundles
- * never reach into this module's Node/Bun-only code paths because they
- * never import `weft/storage/auto`.
- *
  * @module weft/storage/auto
  */
 
-import * as nodeCrypto from 'node:crypto';
-import * as nodeFs from 'node:fs';
-import * as nodeOs from 'node:os';
-import * as nodePath from 'node:path';
+import { createHash } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 
 import type { Storage as WeftStorage } from './interface.ts';
 
 interface DetectionGlobals {
   hasBun: boolean;
   hasNode: boolean;
-  hasIndexedDB: boolean;
 }
 
 function detectGlobals(): DetectionGlobals {
@@ -45,13 +45,12 @@ function detectGlobals(): DetectionGlobals {
     hasNode:
       typeof process !== 'undefined' &&
       typeof (process as { versions?: { node?: unknown } }).versions?.node === 'string',
-    hasIndexedDB: typeof (globalThis as { indexedDB?: unknown }).indexedDB !== 'undefined',
   };
 }
 
 function projectStorageHash(): string {
   const cwd = typeof process !== 'undefined' ? process.cwd() : 'weft-default';
-  return nodeCrypto.createHash('sha256').update(cwd).digest('hex').slice(0, 16);
+  return createHash('sha256').update(cwd).digest('hex').slice(0, 16);
 }
 
 function defaultSqlitePath(): string {
@@ -60,15 +59,22 @@ function defaultSqlitePath(): string {
   const path =
     override !== undefined && override.length > 0
       ? override
-      : nodePath.join(nodeOs.tmpdir(), 'weft-default', `${projectStorageHash()}.db`);
-  nodeFs.mkdirSync(nodePath.dirname(path), { recursive: true });
+      : join(tmpdir(), 'weft-default', `${projectStorageHash()}.db`);
+  mkdirSync(dirname(path), { recursive: true });
   return path;
 }
 
+function describeGlobal(name: 'Bun' | 'process'): string {
+  if (name === 'Bun') {
+    return typeof (globalThis as { Bun?: unknown }).Bun;
+  }
+  return typeof process;
+}
+
 /**
- * Resolve a runtime-appropriate persistent storage adapter.
- *
- * @param overrides - Test hook. Production callers leave this undefined.
+ * Resolve a runtime-appropriate persistent storage adapter for Bun or
+ * Node. Throws in browser/Service Worker contexts (and any environment
+ * that exposes neither `Bun` nor a Node-shaped `process`).
  *
  * @example
  * ```ts
@@ -80,20 +86,12 @@ function defaultSqlitePath(): string {
  * void engine;
  * ```
  */
-export async function resolveDefaultStorage(
-  overrides?: Partial<DetectionGlobals>,
-): Promise<WeftStorage> {
-  const detected = { ...detectGlobals(), ...overrides };
+export async function resolveDefaultStorage(): Promise<WeftStorage> {
+  const detected = detectGlobals();
 
   if (detected.hasBun) {
     const { BunSQLiteStorage } = await import('./bun-sql.ts');
     return new BunSQLiteStorage(defaultSqlitePath());
-  }
-
-  if (detected.hasIndexedDB) {
-    // IndexedDB wins over Node when both are present (Electron / jsdom).
-    const { IndexedDBStorage } = await import('./indexeddb.ts');
-    return new IndexedDBStorage('weft');
   }
 
   if (detected.hasNode) {
@@ -102,11 +100,9 @@ export async function resolveDefaultStorage(
   }
 
   throw new Error(
-    'resolveDefaultStorage: could not auto-detect a storage backend. ' +
-      'Checked globals: ' +
-      `typeof Bun=${detected.hasBun ? 'object' : 'undefined'}, ` +
-      `typeof process=${detected.hasNode ? 'object' : 'undefined'}, ` +
-      `typeof indexedDB=${detected.hasIndexedDB ? 'object' : 'undefined'}. ` +
-      'Pass `storage` explicitly to `new Engine({ storage })`.',
+    'resolveDefaultStorage: requires Bun or Node. ' +
+      `Detected: typeof Bun=${describeGlobal('Bun')}, typeof process=${describeGlobal('process')}. ` +
+      'In browser/Service Worker contexts, use `IndexedDBStorage` directly ' +
+      'or `setupServiceWorker()` from `weft/service-worker`.',
   );
 }

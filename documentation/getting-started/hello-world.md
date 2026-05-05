@@ -164,7 +164,7 @@ const engine = new Engine({
 
 Now your checkpoints live in a SQLite database on disk. Crash the process, restart it, and the workflow picks up where it left off. That's the whole point.
 
-For quick experiments where you don't want to think about which adapter to pick, `resolveDefaultStorage()` detects the runtime and picks one for you (Bun → SQLite, Node → SQLite, browser → IndexedDB). The path goes under the OS temp directory; production deployments should pass `storage` explicitly.
+For quick experiments where you don't want to think about which adapter to pick, `resolveDefaultStorage()` detects Bun or Node and picks the matching SQLite backend (it's not for browsers — use `IndexedDBStorage` directly there). The path goes under the OS temp directory; production deployments should pass `storage` explicitly.
 
 ```typescript
 import { Engine } from 'weft';
