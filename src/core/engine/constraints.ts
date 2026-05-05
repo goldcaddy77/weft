@@ -2,6 +2,7 @@ import type { ConstraintCheckState } from '../constraint.ts';
 import { ConstraintViolatedEvent } from '../events.ts';
 import type { OperationOutcome } from '../types.ts';
 import type { EngineInternals } from './internals.ts';
+import type { CapturedRejectionReason } from './strategy-helpers.ts';
 
 export type ConstraintCallbacks = {
   cancelWorkflowInStrategy: (workflowId: string) => void;
@@ -10,7 +11,7 @@ export type ConstraintCallbacks = {
   feedOperationResult: (
     workflowId: string,
     outcome: OperationOutcome,
-    originalError?: Error,
+    originalError?: CapturedRejectionReason,
   ) => void;
 };
 
@@ -103,7 +104,7 @@ export async function evaluateConstraints(
       callbacks.feedOperationResult(
         workflowId,
         { status: 'failed', error: violationError.message },
-        violationError,
+        { value: violationError },
       );
     }
     return true;

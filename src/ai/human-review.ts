@@ -85,8 +85,9 @@ export type EscalationAction =
  *
  * @example Catch a review timeout and escalate
  * ```ts
- * import { TestEngine, ReviewTimeoutError } from 'weft';
+ * import { ReviewTimeoutError } from 'weft';
  * import type { Context, WorkflowContext } from 'weft';
+ * import { TestEngine } from 'weft/testing';
  *
  * const engine = new TestEngine({ startTime: 0 });
  * engine.register('needs-review', async function* (ctx: WorkflowContext) {

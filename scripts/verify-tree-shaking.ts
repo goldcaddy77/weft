@@ -136,7 +136,199 @@ if (!tursoBundle.includes('@libsql/client')) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 5: weft/service-worker bundle must not pull in Bun/Node SQLite adapters
+// Test 5: root entrypoint must not export testing primitives
+// ---------------------------------------------------------------------------
+{
+  const tempDir = mkdtempSync(join(tmpdir(), 'weft-root-testing-export-'));
+  const entryFile = join(tempDir, 'entry.ts');
+  const fixtureFile = join(import.meta.dir, 'fixtures/root-import-testing.ts');
+  const rootEntrypoint = join(distPath, 'index.js');
+
+  try {
+    const fixtureSource = await Bun.file(fixtureFile).text();
+    const patchedSource = fixtureSource.replace("'weft'", JSON.stringify(rootEntrypoint));
+    if (patchedSource === fixtureSource) {
+      throw new Error(
+        `Test 5: fixture replacement produced no change. ${fixtureFile} no longer contains the literal "'weft'" — update the fixture or the replacement target.`,
+      );
+    }
+    await Bun.write(entryFile, patchedSource);
+
+    try {
+      const result = await Bun.build({
+        entrypoints: [entryFile],
+        outdir: join(tempDir, 'out'),
+        target: 'bun',
+        format: 'esm',
+        minify: true,
+        packages: 'bundle',
+        throw: false,
+      });
+      const messages = result.logs.map((log) => log.message).join('\n');
+
+      if (result.success) {
+        fail('weft root entrypoint still exports TestEngine');
+      } else if (!/TestEngine|no matching export/i.test(messages)) {
+        fail(`weft root TestEngine import failed with an unexpected message:\n${messages}`);
+      } else {
+        pass('weft root entrypoint rejects TestEngine imports');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/TestEngine|no matching export/i.test(message)) {
+        fail(`weft root TestEngine import threw an unexpected error:\n${message}`);
+      } else {
+        pass('weft root entrypoint rejects TestEngine imports');
+      }
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Test 6: root bundle must not contain testing source files or identifiers
+// ---------------------------------------------------------------------------
+const rootBundle = await buildEntry('index.js', 'Engine', ['lmdb', '@libsql/client', 'bun:sqlite']);
+
+const testingSourceTokens = [
+  'src/testing/test-engine',
+  'src/testing/time-control',
+  'src/testing/mocks',
+  'src/testing/chaos',
+];
+const testingIdentifierTokens = [
+  'TestEngine',
+  'TimeControl',
+  'ActivityMockRegistry',
+  'ChaosTransientError',
+  'ChaosTimeoutError',
+  'ChaosNonRetryableError',
+  'withChaos',
+];
+const foundTestingBundleTokens = [...testingSourceTokens, ...testingIdentifierTokens].filter(
+  (token) => rootBundle.includes(token),
+);
+
+if (foundTestingBundleTokens.length > 0) {
+  fail(`weft root bundle contains testing code: ${foundTestingBundleTokens.join(', ')}`);
+} else {
+  pass('weft root bundle excludes testing source files and identifiers');
+}
+
+// ---------------------------------------------------------------------------
+// Test 7: testing subpath exports testing primitives
+// ---------------------------------------------------------------------------
+{
+  const tempDir = mkdtempSync(join(tmpdir(), 'weft-testing-subpath-'));
+  const entryFile = join(tempDir, 'entry.ts');
+  const testingEntrypoint = join(distPath, 'testing/index.js');
+
+  try {
+    await Bun.write(
+      entryFile,
+      [
+        `import { ActivityMockRegistry, TestEngine, TimeControl, withChaos } from ${JSON.stringify(testingEntrypoint)};`,
+        'export { ActivityMockRegistry, TestEngine, TimeControl, withChaos };',
+      ].join('\n'),
+    );
+
+    const result = await Bun.build({
+      entrypoints: [entryFile],
+      outdir: join(tempDir, 'out'),
+      target: 'bun',
+      format: 'esm',
+      minify: true,
+      packages: 'bundle',
+      external: ['lmdb', '@libsql/client', 'bun:sqlite'],
+    });
+
+    if (!result.success) {
+      const messages = result.logs.map((log) => log.message).join('\n');
+      fail(`weft/testing failed to export testing primitives:\n${messages}`);
+    } else {
+      const outputs = await Promise.all(result.outputs.map((output) => output.text()));
+      const bundleText = outputs.join('\n');
+      const requiredIdentifiers = [
+        'ActivityMockRegistry',
+        'TestEngine',
+        'TimeControl',
+        'withChaos',
+      ];
+      const missing = requiredIdentifiers.filter((token) => !bundleText.includes(token));
+      if (missing.length > 0) {
+        fail(`weft/testing bundle is missing expected exports: ${missing.join(', ')}`);
+      } else {
+        pass('weft/testing exports testing primitives');
+      }
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Test 8: weft/storage and weft/testing barrels load cleanly and expose
+// their value exports.
+//
+// The Bun 1.3.13 minifier emits broken JavaScript for pure re-export barrels,
+// where Node's loader rejects the dist file with `Export 'B' is not defined
+// in module`. The aliased-const-export workaround in src/storage/index.ts
+// and src/testing/index.ts fixes that. This test guards against regression:
+// load each dist barrel in-process and confirm every documented value
+// export resolves. Without these, a future refactor that flattens either
+// barrel back to direct re-exports would silently break the package.
+// ---------------------------------------------------------------------------
+{
+  const cases: Array<{ entrypoint: string; label: string; expectedExports: string[] }> = [
+    {
+      entrypoint: join(distPath, 'storage/index.js'),
+      label: 'weft/storage',
+      expectedExports: [
+        'KEYS',
+        'MemoryStorage',
+        'ScopedStorage',
+        'jsonCodec',
+        'msgpackCodec',
+        'scopedStorage',
+        'storageConditionalBatch',
+        'storageValuesEqual',
+        'withCodec',
+      ],
+    },
+    {
+      entrypoint: join(distPath, 'testing/index.js'),
+      label: 'weft/testing',
+      expectedExports: [
+        'ActivityMockRegistry',
+        'ChaosNonRetryableError',
+        'ChaosTimeoutError',
+        'ChaosTransientError',
+        'TestEngine',
+        'TimeControl',
+        'withChaos',
+      ],
+    },
+  ];
+
+  for (const { entrypoint, label, expectedExports } of cases) {
+    try {
+      const module = (await import(entrypoint)) as Record<string, unknown>;
+      const missing = expectedExports.filter((name) => module[name] === undefined);
+      if (missing.length > 0) {
+        fail(`${label} barrel is missing exports: ${missing.join(', ')}`);
+      } else {
+        pass(`${label} barrel loads cleanly with all value exports`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      fail(`${label} barrel failed to load: ${message}`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Test 9: weft/service-worker bundle must not pull in Bun/Node SQLite adapters
 //
 // `resolveDefaultStorage` is exported only from `weft/storage/auto`, which the
 // service-worker entrypoint must never import (directly or transitively).

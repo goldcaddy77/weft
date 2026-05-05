@@ -1,4 +1,4 @@
-import type { OtelSpan } from './no-op-telemetry';
+import type { OpenTelemetrySpan } from './no-op-telemetry';
 import { injectTraceParent } from './propagation';
 import type { InterceptionContext, ObservabilityState } from './types';
 
@@ -30,7 +30,7 @@ export function toError(error: unknown): Error {
 }
 
 /** Inject the traceparent header from a span's context into a headers map. */
-export function injectSpanContext(span: OtelSpan, headers: Map<string, string>): void {
+export function injectSpanContext(span: OpenTelemetrySpan, headers: Map<string, string>): void {
   const ctx = span.spanContext();
   injectTraceParent(headers, {
     version: '00',
@@ -42,7 +42,7 @@ export function injectSpanContext(span: OtelSpan, headers: Map<string, string>):
 
 export function applyCustomAttributes(
   state: ObservabilityState,
-  span: OtelSpan,
+  span: OpenTelemetrySpan,
   interception: InterceptionContext,
 ): void {
   const attributeExtractor = state.attributeExtractor;

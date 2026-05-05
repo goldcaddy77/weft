@@ -20,16 +20,16 @@ const result = await handoff({
 
 The `HandoffOptions`:
 
-| Field                | Type                   | Description                                                                      |
-| -------------------- | ---------------------- | -------------------------------------------------------------------------------- |
-| `agent`              | `AgentDefinition`      | The agent to hand off to (created via [`defineAgent()`](./agent-declaration.md)) |
-| `input`              | `string`               | The task description for the receiving agent                                     |
-| `provider`           | `LLMProvider`          | The LLM provider to use                                                          |
-| `forwardContext`     | `ForwardContext`       | How much of the parent's conversation to include                                 |
-| `parentConversation` | `Message[]`            | The parent agent's conversation history                                          |
-| `budget`             | `BudgetTracker?`       | Shared budget tracker—child agent usage accumulates here                         |
-| `signal`             | `AbortSignal?`         | Abort signal propagated to the child agent                                       |
-| `headers`            | `Map<string, string>?` | Trace context headers for OTel propagation (use `createChildHeaders()` to build) |
+| Field                | Type                   | Description                                                                               |
+| -------------------- | ---------------------- | ----------------------------------------------------------------------------------------- |
+| `agent`              | `AgentDefinition`      | The agent to hand off to (created via [`defineAgent()`](./agent-declaration.md))          |
+| `input`              | `string`               | The task description for the receiving agent                                              |
+| `provider`           | `LLMProvider`          | The LLM provider to use                                                                   |
+| `forwardContext`     | `ForwardContext`       | How much of the parent's conversation to include                                          |
+| `parentConversation` | `Message[]`            | The parent agent's conversation history                                                   |
+| `budget`             | `BudgetTracker?`       | Shared budget tracker—child agent usage accumulates here                                  |
+| `signal`             | `AbortSignal?`         | Abort signal propagated to the child agent                                                |
+| `headers`            | `Map<string, string>?` | Trace context headers for OpenTelemetry propagation (use `createChildHeaders()` to build) |
 
 The `headers` field carries W3C trace context (`traceparent`/`tracestate`) so child agent spans participate in the same OpenTelemetry trace. Use `createChildHeaders(parentHeaders)` to forward trace context from a parent workflow.
 

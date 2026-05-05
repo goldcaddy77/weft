@@ -77,7 +77,7 @@ bun build --compile --target=bun-windows-x64  src/cli-main.ts --outfile dist/wef
 
 ## What Ships Inside the Binary
 
-The compiled binary includes the Bun runtime (with SQLite, HTTP server, and WebSocket built in), the Weft engine and server code, the web dashboard, and default configuration. It does not include native bindings for optional peers — `lmdb`, `@libsql/client`, and `@opentelemetry/api` — install those separately if you use Turso, LMDB, or OTel.
+The compiled binary includes the Bun runtime (with SQLite, HTTP server, and WebSocket built in), the Weft engine and server code, the web dashboard, and default configuration. It does not include native bindings for optional peers — `lmdb`, `@libsql/client`, and `@opentelemetry/api` — install those separately if you use Turso, LMDB, or OpenTelemetry.
 
 ## Next Steps
 

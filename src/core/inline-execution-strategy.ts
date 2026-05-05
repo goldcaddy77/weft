@@ -241,7 +241,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
    * Throw an error into the generator (used by the engine for propagating
    * activity failures, etc.).
    */
-  throwIntoWorkflow(workflowId: string, error: Error): void {
+  throwIntoWorkflow(workflowId: string, error: unknown): void {
     const generator = this.#generators.get(workflowId);
     if (!generator) return;
     void this.#throwIntoGenerator(workflowId, generator, error);
@@ -339,7 +339,11 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
     );
   }
 
-  #throwIntoGenerator(workflowId: string, generator: AsyncGenerator, error: Error): Promise<void> {
+  #throwIntoGenerator(
+    workflowId: string,
+    generator: AsyncGenerator,
+    error: unknown,
+  ): Promise<void> {
     return this.#trackWorkflowAdvance(
       workflowId,
       (async () => {
