@@ -13,6 +13,7 @@
 
 import {
   isDefinitionSchema,
+  validateDefinitionSchemaMetadata,
   type DefinitionSchema,
   type Duration,
   type RetryPolicy,
@@ -166,11 +167,6 @@ function copyRetryPolicy(retry: RetryPolicy): RetryPolicy {
       ? {}
       : { nonRetryableErrors: [...retry.nonRetryableErrors] }),
   };
-}
-
-function validateDefinitionSchemaMetadata(value: unknown, fieldName: string): DefinitionSchema {
-  if (isDefinitionSchema(value)) return value;
-  throw new TypeError(`${fieldName} must be Standard Schema-compatible definition metadata.`);
 }
 
 // ---------------------------------------------------------------------------

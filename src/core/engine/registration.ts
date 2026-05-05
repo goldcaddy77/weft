@@ -2,9 +2,8 @@ import type { AgentContextOptions } from '../context.ts';
 import { Context } from '../context.ts';
 import { compileStepWorkflow, isAsyncGeneratorFunction } from '../step-context.ts';
 import {
-  isDefinitionSchema,
-  type DefinitionSchema,
   type StepWorkflowFunction,
+  validateDefinitionSchemaMetadata,
   type WorkflowFunction,
   type WorkflowRegistration,
 } from '../types.ts';
@@ -38,11 +37,6 @@ export type RegistrationCallbacks = {
 
 function copiedTags(tags: ReadonlyArray<string> | undefined): string[] | undefined {
   return tags === undefined ? undefined : [...tags];
-}
-
-function validateDefinitionSchemaMetadata(value: unknown, fieldName: string): DefinitionSchema {
-  if (isDefinitionSchema(value)) return value;
-  throw new TypeError(`${fieldName} must be Standard Schema-compatible definition metadata.`);
 }
 
 // oxlint-disable-next-line complexity -- ID:core-engine-register-complexity

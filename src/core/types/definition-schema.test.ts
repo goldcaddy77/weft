@@ -1,18 +1,22 @@
 import { describe, expect, it } from 'bun:test';
 
-import { isDefinitionSchema } from './definition-schema.ts';
+import {
+  isDefinitionSchema,
+  validateDefinitionSchemaMetadata,
+  type DefinitionSchema,
+} from './definition-schema.ts';
 
 describe('isDefinitionSchema', () => {
+  const definitionSchema = {
+    '~standard': {
+      version: 1,
+      vendor: 'weft-test',
+      validate: (value: unknown) => ({ value }),
+    },
+  } satisfies DefinitionSchema;
+
   it('accepts Standard Schema validators', () => {
-    expect(
-      isDefinitionSchema({
-        '~standard': {
-          version: 1,
-          vendor: 'weft-test',
-          validate: (value: unknown) => ({ value }),
-        },
-      }),
-    ).toBe(true);
+    expect(isDefinitionSchema(definitionSchema)).toBe(true);
   });
 
   it('accepts Standard JSON Schema converters', () => {
@@ -89,5 +93,17 @@ describe('isDefinitionSchema', () => {
         }),
       ).toBe(false);
     }
+  });
+
+  it('returns valid definition schema metadata from the throwing helper', () => {
+    expect(validateDefinitionSchemaMetadata(definitionSchema, 'test.inputSchema')).toBe(
+      definitionSchema,
+    );
+  });
+
+  it('throws with the field name for invalid definition schema metadata', () => {
+    expect(() => validateDefinitionSchemaMetadata({}, 'test.outputSchema')).toThrow(
+      'test.outputSchema must be Standard Schema-compatible definition metadata.',
+    );
   });
 });

@@ -348,6 +348,14 @@ export function isDefinitionSchema(value: unknown): value is DefinitionSchema {
   return isStandardJsonSchemaConverter(standardRecord.jsonSchema);
 }
 
+export function validateDefinitionSchemaMetadata(
+  value: unknown,
+  fieldName: string,
+): DefinitionSchema {
+  if (isDefinitionSchema(value)) return value;
+  throw new TypeError(`${fieldName} must be Standard Schema-compatible definition metadata.`);
+}
+
 function getStandardMetadataRecord(value: unknown): StandardMetadataRecord | undefined {
   if (value === null || typeof value !== 'object') return undefined;
   const standard = (value as { '~standard'?: unknown })['~standard'];

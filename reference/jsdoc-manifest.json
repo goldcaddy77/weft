@@ -1069,6 +1069,14 @@
       "classification": "example-required"
     },
     {
+      "sourceFile": "src/core/activity-registry.ts",
+      "sourceName": "copyActivityMetadata",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
       "sourceFile": "src/core/checkpoint/lifecycle.ts",
       "sourceName": "advanceCheckpoint",
       "kind": "value",
@@ -3149,6 +3157,14 @@
     {
       "sourceFile": "src/core/types/definition-schema.ts",
       "sourceName": "isDefinitionSchema",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/core/types/definition-schema.ts",
+      "sourceName": "validateDefinitionSchemaMetadata",
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
