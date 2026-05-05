@@ -22,12 +22,88 @@ import { ActivityMockRegistry } from './mocks';
 import { TestEngine } from './test-engine';
 import { TimeControl } from './time-control';
 
+/**
+ * Re-exported {@link ActivityMockRegistry}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { ActivityMockRegistry } from 'weft/testing';
+ * const registry = new ActivityMockRegistry();
+ * void registry;
+ * ```
+ */
 const exportedActivityMockRegistry = ActivityMockRegistry;
+
+/**
+ * Re-exported {@link ChaosNonRetryableError}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { ChaosNonRetryableError } from 'weft/testing';
+ * const error = new ChaosNonRetryableError('chaos');
+ * void error;
+ * ```
+ */
 const exportedChaosNonRetryableError = ChaosNonRetryableError;
+
+/**
+ * Re-exported {@link ChaosTimeoutError}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { ChaosTimeoutError } from 'weft/testing';
+ * const error = new ChaosTimeoutError(1000);
+ * void error;
+ * ```
+ */
 const exportedChaosTimeoutError = ChaosTimeoutError;
+
+/**
+ * Re-exported {@link ChaosTransientError}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { ChaosTransientError } from 'weft/testing';
+ * const error = new ChaosTransientError('transient');
+ * void error;
+ * ```
+ */
 const exportedChaosTransientError = ChaosTransientError;
+
+/**
+ * Re-exported {@link TestEngine}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { TestEngine } from 'weft/testing';
+ * await using engine = new TestEngine();
+ * void engine;
+ * ```
+ */
 const exportedTestEngine = TestEngine;
+
+/**
+ * Re-exported {@link TimeControl}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { TimeControl } from 'weft/testing';
+ * const control = new TimeControl();
+ * void control;
+ * ```
+ */
 const exportedTimeControl = TimeControl;
+
+/**
+ * Re-exported {@link withChaos}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { withChaos } from 'weft/testing';
+ * const wrapped = withChaos(async () => 'ok', { faultRate: 0.1 });
+ * void wrapped;
+ * ```
+ */
 const exportedWithChaos = withChaos;
 
 export type { ChaosScenario, FaultClass } from './chaos';
