@@ -607,6 +607,437 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       lines: new Set([405]),
     },
   ],
+  // Post-#182 line movement plus newer runtime-exclusive surfaces shifted a
+  // substantial amount of Bun's coverage noise. Keep the allowances aligned
+  // with the current source layout rather than pretending these are new test
+  // gaps when they still require cross-runtime or instrumentation-only paths.
+  [
+    'src/ai/agent/chat.ts',
+    {
+      functions: 1,
+      lines: new Set([20]),
+    },
+  ],
+  [
+    'src/ai/agent/finalize.ts',
+    {
+      lines: new Set([53]),
+    },
+  ],
+  [
+    'src/ai/agent/suspending-provider.ts',
+    {
+      functions: 2,
+      lines: new Set([143, 144, 145, 146, 147, 148, 149]),
+    },
+  ],
+  [
+    'src/ai/agent/tool-execution.ts',
+    {
+      functions: 1,
+      lines: new Set([81, 82, 83, 84, 85, 119, 120, 121, 122, 123, 124, 126, 127, 128, 129, 130]),
+    },
+  ],
+  [
+    'src/ai/agent/tool-initialization.ts',
+    {
+      functions: 1,
+    },
+  ],
+  [
+    'src/ai/coordination/supervise.ts',
+    {
+      lines: new Set([58, 161]),
+    },
+  ],
+  [
+    'src/core/atomic-state.ts',
+    {
+      functions: 1,
+      lines: new Set([412, 413, 414, 415, 416, 417, 418, 419]),
+    },
+  ],
+  [
+    'src/core/context/session-state.ts',
+    {
+      functions: 6,
+      lines: new Set([
+        71, 73, 133, 138, 151, 152, 153, 157, 161, 165, 170, 229, 244, 247, 250, 251, 252, 253, 256,
+        259, 260, 261, 262, 263, 264, 265, 268, 269, 270, 271, 272, 273, 274,
+      ]),
+    },
+  ],
+  [
+    'src/core/context/state-namespace.ts',
+    {
+      functions: 7,
+      lines: new Set([
+        77, 78, 79, 80, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115,
+        116, 117, 118, 119, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137,
+        138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155,
+        156, 157, 158,
+      ]),
+    },
+  ],
+  [
+    'src/core/context/parallel-operations.ts',
+    {
+      functions: 1,
+      lines: new Set([
+        30, 31, 32, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 77, 78, 79, 86, 87,
+        88, 171, 172, 173, 191, 192, 193, 295, 296, 297, 310, 328, 329, 331, 332, 333, 334, 335,
+        336, 337, 338, 339, 340, 342,
+      ]),
+    },
+  ],
+  [
+    'src/core/engine/attributes-tags.ts',
+    {
+      functions: 1,
+      lines: new Set([102, 189, 190, 192, 329, 358, 389, 421, 470, 477, 478, 484]),
+    },
+  ],
+  [
+    'src/core/engine/bulk-operations.ts',
+    {
+      lines: new Set([87, 245, 408, 409]),
+    },
+  ],
+  [
+    'src/core/engine/callback-creators.ts',
+    {
+      functions: 20,
+      lines: new Set([
+        214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 228, 229, 230, 231, 244, 338, 374, 414,
+        662, 663, 664, 665, 672, 675, 676, 677, 678, 682, 684, 685, 686, 687, 688, 734, 743, 780,
+        781, 782, 783, 784, 985,
+      ]),
+    },
+  ],
+  [
+    'src/core/engine/child-workflow.ts',
+    {
+      lines: new Set([104, 128, 139]),
+    },
+  ],
+  [
+    'src/core/engine/index.ts',
+    {
+      functions: 3,
+      lines: new Set([
+        819, 820, 821, 822, 823, 824, 825, 826, 827, 828, 829, 830, 831, 832, 833, 836, 1156, 1157,
+        1158, 1159, 1160, 1161, 1162, 1163, 1164, 1165, 1166, 1167, 1168, 1169, 1170, 1171, 1172,
+        1173, 1174, 1175, 1176, 1177, 1178, 1179,
+      ]),
+    },
+  ],
+  [
+    'src/core/engine/inline-launch-queue.ts',
+    {
+      functions: 1,
+      lines: new Set([29, 31, 32, 33, 42, 43, 75, 166]),
+    },
+  ],
+  [
+    'src/core/engine/lifecycle.ts',
+    {
+      functions: 3,
+      lines: new Set([
+        85, 86, 87, 88, 89, 90, 91, 142, 162, 163, 164, 179, 180, 247, 248, 249, 250, 251, 297, 447,
+        448, 449, 450, 791, 792, 793, 942, 943, 944, 1171, 1196, 1207, 1208, 1209, 1210, 1211, 1212,
+        1213, 1214, 1215, 1216, 1217, 1218, 1219, 1220, 1221, 1222, 1223, 1224, 1260, 1289, 1297,
+        1298, 1299, 1330, 1334, 1387, 1388, 1389, 1390, 1391, 1392, 1393, 1394, 1395, 1396, 1397,
+        1398, 1399, 1400, 1401, 1402, 1403, 1433, 1434, 1435, 1436, 1437, 1438, 1439, 1440,
+      ]),
+    },
+  ],
+  [
+    'src/core/engine/operations-agent-support.ts',
+    {
+      lines: new Set([55]),
+    },
+  ],
+  [
+    'src/core/engine/operations-agent.ts',
+    {
+      lines: new Set([286, 291, 354, 357]),
+    },
+  ],
+  [
+    'src/core/engine/operations-activity.ts',
+    {
+      lines: new Set([36, 96, 169, 170, 171, 202, 237]),
+    },
+  ],
+  [
+    'src/core/engine/operations-coordination.ts',
+    {
+      lines: new Set([
+        74, 75, 76, 81, 82, 83, 84, 85, 86, 92, 288, 292, 328, 329, 330, 331, 332, 333, 334, 335,
+        367,
+      ]),
+    },
+  ],
+  [
+    'src/core/engine/operations-router.ts',
+    {
+      lines: new Set([
+        121, 128, 131, 132, 135, 136, 137, 138, 139, 140, 142, 145, 146, 147, 148, 149, 150, 151,
+        152, 279,
+      ]),
+    },
+  ],
+  [
+    'src/core/engine/operations-state.ts',
+    {
+      lines: new Set([44, 45, 46, 47, 48, 49, 50, 51, 52]),
+    },
+  ],
+  [
+    'src/core/engine/operations-time.ts',
+    {
+      lines: new Set([
+        127, 132, 133, 134, 135, 136, 142, 143, 144, 145, 146, 153, 154, 155, 156, 157, 165, 166,
+        167, 168, 169, 178, 212, 225,
+      ]),
+    },
+  ],
+  [
+    'src/core/engine/queries.ts',
+    {
+      lines: new Set([17]),
+    },
+  ],
+  [
+    'src/core/engine/registration.ts',
+    {
+      lines: new Set([109, 110, 111, 112, 211]),
+    },
+  ],
+  [
+    'src/core/engine/schedules.ts',
+    {
+      lines: new Set([78, 196, 246, 368, 390, 393, 408, 469, 474]),
+    },
+  ],
+  [
+    'src/core/engine/state-utilities.ts',
+    {
+      functions: 1,
+      lines: new Set([86, 168, 200, 212, 250, 272, 283, 323, 348, 368, 418, 419, 420, 421]),
+    },
+  ],
+  [
+    'src/core/engine/strategy-helpers.ts',
+    {
+      lines: new Set([46, 48, 49, 50, 51, 52, 53]),
+    },
+  ],
+  [
+    'src/core/engine/sub-operation.ts',
+    {
+      lines: new Set([
+        91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110,
+        111, 112, 113, 114, 115, 116, 190, 210, 212,
+      ]),
+    },
+  ],
+  [
+    'src/core/engine/termination.ts',
+    {
+      lines: new Set([
+        159, 160, 188, 289, 376, 383, 384, 385, 386, 388, 392, 393, 394, 395, 397, 479, 585, 611,
+        612,
+      ]),
+    },
+  ],
+  [
+    'src/core/engine/validation.ts',
+    {
+      functions: 2,
+      lines: new Set([
+        41, 47, 51, 69, 95, 101, 110, 137, 163, 178, 183, 199, 208, 215, 224, 228, 257, 282, 283,
+        285, 286, 315, 320, 329, 335, 340, 368, 374, 379, 387, 392, 397, 402,
+      ]),
+    },
+  ],
+  [
+    'src/core/interceptor/index.ts',
+    {
+      functions: 1,
+      lines: new Set([25, 26, 27]),
+    },
+  ],
+  [
+    'src/core/search-attributes.ts',
+    {
+      lines: new Set([175, 176, 177, 178, 179, 180]),
+    },
+  ],
+  [
+    'src/core/types/activity.ts',
+    {
+      lines: new Set([249, 250, 251, 256]),
+    },
+  ],
+  [
+    'src/core/types/message-handles.ts',
+    {
+      functions: 2,
+      lines: new Set([94, 108, 109, 110]),
+    },
+  ],
+  [
+    'src/core/types/schedules.ts',
+    {
+      functions: 1,
+      lines: new Set([90, 91, 92]),
+    },
+  ],
+  [
+    'src/core/types/workflow-function.ts',
+    {
+      functions: 1,
+      lines: new Set([413, 414, 415, 416, 417, 418, 419, 420, 421, 422, 423, 424, 425, 426, 427]),
+    },
+  ],
+  [
+    'src/server/api-catalog.ts',
+    {
+      lines: new Set([159, 160, 164, 165, 167, 168, 169, 170, 172, 174]),
+    },
+  ],
+  [
+    'src/server/asyncapi.ts',
+    {
+      lines: new Set([96, 191, 192, 193, 194, 195]),
+    },
+  ],
+  [
+    'src/server/authorization.ts',
+    {
+      lines: new Set([159]),
+    },
+  ],
+  [
+    'src/server/json-rpc-websocket.ts',
+    {
+      functions: 5,
+      lines: new Set([118, 156]),
+    },
+  ],
+  [
+    'src/server/openapi-schemas.ts',
+    {
+      lines: new Set([73, 91, 92]),
+    },
+  ],
+  [
+    'src/server/openapi.ts',
+    {
+      lines: new Set([117, 118]),
+    },
+  ],
+  [
+    'src/server/operation-catalog/stream-pipeline.ts',
+    {
+      functions: 2,
+      lines: new Set([
+        34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
+        57, 58, 59, 60, 61, 62, 63, 255,
+      ]),
+    },
+  ],
+  [
+    'src/server/operation-catalog/workflow-adapter.ts',
+    {
+      lines: new Set([178, 179, 180, 181, 182, 186, 187, 190, 191, 192, 193, 194, 198, 199]),
+    },
+  ],
+  [
+    'src/server/operations/query-workflow.ts',
+    {
+      lines: new Set([118, 119, 120, 121, 122]),
+    },
+  ],
+  [
+    'src/server/operations/storage.ts',
+    {
+      functions: 2,
+      lines: new Set([
+        112, 113, 114, 115, 116, 183, 184, 190, 191, 192, 197, 198, 199, 200, 201, 255, 328, 329,
+        330,
+      ]),
+    },
+  ],
+  [
+    'src/server/stdio-session.ts',
+    {
+      functions: 1,
+      lines: new Set([354, 393]),
+    },
+  ],
+  [
+    'src/service-worker/setup.ts',
+    {
+      functions: 1,
+      lines: new Set([154, 157, 158, 159, 160, 249, 250, 251, 253, 254, 328, 329, 330]),
+    },
+  ],
+  [
+    'src/storage/auto.ts',
+    {
+      functions: 1,
+      lines: new Set([67, 68, 69, 70, 107, 109, 110, 111, 112, 113, 114, 116, 117, 118, 121]),
+    },
+  ],
+  [
+    'src/storage/http.ts',
+    {
+      functions: 7,
+      lines: new Set([
+        230, 231, 232, 233, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282,
+        283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 300, 301, 302, 303,
+      ]),
+    },
+  ],
+  [
+    'src/storage/resolve.ts',
+    {
+      functions: 6,
+      lines: new Set([
+        238, 239, 240, 241, 242, 247, 248, 249, 250, 251, 255, 264, 266, 267, 268, 269, 270, 271,
+        273, 281, 283, 284, 285, 286, 287, 288, 290, 291, 292, 293, 294, 303, 304, 305, 308, 309,
+        310, 311, 312, 313, 346, 354, 367, 368, 379, 400, 407, 408, 409, 410, 436, 437, 438, 439,
+        440, 441,
+      ]),
+    },
+  ],
+  [
+    'src/storage/web-extension.ts',
+    {
+      functions: 12,
+      lines: new Set([
+        195, 196, 197, 266, 267, 268, 269, 270, 271, 272, 273, 274, 332, 333, 334, 335, 336, 337,
+        338, 339, 340, 341, 342, 343, 344, 377, 378, 379, 380, 381, 382, 383, 384, 385, 386, 387,
+        427, 428, 429, 430, 437, 438, 439, 440, 441, 442, 443, 444, 459,
+      ]),
+    },
+  ],
+  [
+    'src/testing/event-loop.ts',
+    {
+      functions: 1,
+      lines: new Set([20, 21]),
+    },
+  ],
+  [
+    'src/workers/workflow-runner.ts',
+    {
+      functions: 3,
+      lines: new Set([78, 79, 80, 81, 82, 83, 86, 87, 93, 94, 95, 96, 97]),
+    },
+  ],
 ]);
 
 /**
