@@ -441,7 +441,7 @@ self.addEventListener('periodicsync', (event: PeriodicSyncEvent) => {
 
 The current implementation is already HTTP-first and authenticates the incoming `Request` before accepting a WebSocket upgrade. Track 8 extends this section with a shared runtime operation catalog that generates OpenAPI for REST-ish HTTP routes and OpenRPC for JSON-RPC over HTTP, WebSocket, and opt-in stdio. That work does not replace the existing `Engine`, `EventTarget`, `BroadcastChannel`, or Worker `postMessage` internals; it exposes them through machine-readable contracts and a transport-neutral authorization layer.
 
-Bun 1.3 introduced route-based `Bun.serve()` which is the most idiomatic way to define an HTTP API:
+Modern Bun releases include route-based `Bun.serve()`, which is the most idiomatic way to define an HTTP API:
 
 ```typescript
 import { serve } from 'bun';
