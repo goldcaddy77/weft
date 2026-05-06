@@ -38,7 +38,7 @@ function createMergedLineSet(...lineSets: Array<Set<number>>): Set<number> {
   return new Set(lineSets.flatMap((lineSet) => [...lineSet]));
 }
 
-const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
+const BASE_COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
   [
     'scripts/check-coverage.ts',
     {
@@ -607,6 +607,9 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       lines: new Set([405]),
     },
   ],
+]);
+
+const COVERAGE_ALLOWANCE_OVERRIDES = new Map<string, CoverageAllowance>([
   // Post-#182 line movement plus newer runtime-exclusive surfaces shifted a
   // substantial amount of Bun's coverage noise. Keep the allowances aligned
   // with the current source layout rather than pretending these are new test
@@ -1038,6 +1041,11 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       lines: new Set([78, 79, 80, 81, 82, 83, 86, 87, 93, 94, 95, 96, 97]),
     },
   ],
+]);
+
+const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
+  ...BASE_COVERAGE_ALLOWANCES,
+  ...COVERAGE_ALLOWANCE_OVERRIDES,
 ]);
 
 /**
