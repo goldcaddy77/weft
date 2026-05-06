@@ -2,13 +2,13 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 
-type Finding = {
+export type Finding = {
   file: string;
   line: number;
   message: string;
 };
 
-type DocumentationFile = {
+export type DocumentationFile = {
   absolutePath: string;
   relativePath: string;
   text: string;
@@ -16,7 +16,7 @@ type DocumentationFile = {
 
 const REPOSITORY_ROOT = resolve(import.meta.dir, '..');
 
-const DOCUMENTATION_ROOTS = [
+export const DOCUMENTATION_ROOTS = [
   'README.md',
   'ROADMAP.md',
   'BREAKING-CHANGES.md',
@@ -29,35 +29,43 @@ const DOCUMENTATION_ROOTS = [
 
 const IGNORED_PATH_SEGMENTS = new Set(['.git', 'coverage', 'dist', 'node_modules', 'tmp']);
 
-function repositoryRelativePath(absolutePath: string): string {
-  return relative(REPOSITORY_ROOT, absolutePath).split(sep).join('/');
+type VerificationOptions = {
+  repositoryRoot?: string;
+  documentationRoots?: readonly string[];
+};
+
+export function repositoryRelativePath(
+  absolutePath: string,
+  repositoryRoot = REPOSITORY_ROOT,
+): string {
+  return relative(repositoryRoot, absolutePath).split(sep).join('/');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseMinimumBunVersion(): string {
-  const packageJsonPath = resolve(REPOSITORY_ROOT, 'package.json');
+export function parseMinimumBunVersion(repositoryRoot = REPOSITORY_ROOT): string {
+  const packageJsonPath = resolve(repositoryRoot, 'package.json');
   const packageJson: unknown = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
   if (!isRecord(packageJson) || !isRecord(packageJson.engines)) {
     throw new Error('package.json must define engines.bun');
   }
   const bunRange = packageJson.engines.bun;
   if (typeof bunRange !== 'string') throw new Error('package.json engines.bun must be a string');
-  const match = bunRange.match(/>=\s*(\d+\.\d+\.\d+)/);
+  const match = bunRange.match(/(?:^|\s|[<>=~^])v?(\d+\.\d+\.\d+)/);
   if (!match?.[1]) throw new Error(`Unsupported Bun engine range: ${bunRange}`);
   return match[1];
 }
 
-function markdownFilesInDirectory(directoryPath: string): string[] {
+function markdownFilesInDirectory(directoryPath: string, repositoryRoot: string): string[] {
   const files: string[] = [];
   for (const entry of readdirSync(directoryPath, { withFileTypes: true })) {
     const absolutePath = resolve(directoryPath, entry.name);
-    const relativePath = repositoryRelativePath(absolutePath);
+    const relativePath = repositoryRelativePath(absolutePath, repositoryRoot);
     if (relativePath.split('/').some((segment) => IGNORED_PATH_SEGMENTS.has(segment))) continue;
     if (entry.isDirectory()) {
-      files.push(...markdownFilesInDirectory(absolutePath));
+      files.push(...markdownFilesInDirectory(absolutePath, repositoryRoot));
     } else if (entry.isFile() && extname(entry.name) === '.md') {
       files.push(absolutePath);
     }
@@ -65,28 +73,36 @@ function markdownFilesInDirectory(directoryPath: string): string[] {
   return files;
 }
 
-function collectDocumentationFiles(): DocumentationFile[] {
+export function collectDocumentationFiles(options: VerificationOptions = {}): DocumentationFile[] {
+  const repositoryRoot = resolve(options.repositoryRoot ?? REPOSITORY_ROOT);
+  const documentationRoots = options.documentationRoots ?? DOCUMENTATION_ROOTS;
   const absolutePaths = new Set<string>();
-  for (const root of DOCUMENTATION_ROOTS) {
-    const absoluteRoot = resolve(REPOSITORY_ROOT, root);
+  for (const root of documentationRoots) {
+    const absoluteRoot = resolve(repositoryRoot, root);
     if (!existsSync(absoluteRoot)) continue;
     const stat = statSync(absoluteRoot);
     if (stat.isDirectory()) {
-      for (const filePath of markdownFilesInDirectory(absoluteRoot)) absolutePaths.add(filePath);
+      for (const filePath of markdownFilesInDirectory(absoluteRoot, repositoryRoot)) {
+        absolutePaths.add(filePath);
+      }
     } else if (stat.isFile() && extname(absoluteRoot) === '.md') {
       absolutePaths.add(absoluteRoot);
     }
   }
   return [...absolutePaths]
-    .toSorted((a, b) => repositoryRelativePath(a).localeCompare(repositoryRelativePath(b)))
+    .toSorted((a, b) =>
+      repositoryRelativePath(a, repositoryRoot).localeCompare(
+        repositoryRelativePath(b, repositoryRoot),
+      ),
+    )
     .map((absolutePath) => ({
       absolutePath,
-      relativePath: repositoryRelativePath(absolutePath),
+      relativePath: repositoryRelativePath(absolutePath, repositoryRoot),
       text: readFileSync(absolutePath, 'utf8'),
     }));
 }
 
-function markdownHeadingSlug(heading: string): string {
+export function markdownHeadingSlug(heading: string): string {
   return heading
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
     .replace(/`([^`]+)`/g, '$1')
@@ -99,7 +115,7 @@ function markdownHeadingSlug(heading: string): string {
     .replace(/\s+/g, '-');
 }
 
-function collectAnchors(text: string): Set<string> {
+export function collectAnchors(text: string): Set<string> {
   const anchors = new Set<string>();
   const seen = new Map<string, number>();
   for (const line of text.split('\n')) {
@@ -154,7 +170,10 @@ function lineNumberForIndex(text: string, index: number): number {
   return line;
 }
 
-function collectLinkFindings(files: DocumentationFile[]): Finding[] {
+export function collectLinkFindings(
+  files: DocumentationFile[],
+  repositoryRoot = REPOSITORY_ROOT,
+): Finding[] {
   const findings: Finding[] = [];
   const filesByAbsolutePath = new Map(files.map((file) => [file.absolutePath, file]));
   const anchorsByAbsolutePath = new Map(
@@ -190,7 +209,7 @@ function collectLinkFindings(files: DocumentationFile[]): Finding[] {
           decodedPathPart.length === 0
             ? file.absolutePath
             : decodedPathPart.startsWith('/')
-              ? resolve(REPOSITORY_ROOT, `.${decodedPathPart}`)
+              ? resolve(repositoryRoot, `.${decodedPathPart}`)
               : resolve(dirname(file.absolutePath), decodedPathPart);
 
         if (!existsSync(resolvedPath)) {
@@ -205,8 +224,10 @@ function collectLinkFindings(files: DocumentationFile[]): Finding[] {
         const stat = statSync(resolvedPath);
         if (stat.isDirectory() || anchor === undefined || anchor.length === 0) continue;
         const targetFile = filesByAbsolutePath.get(resolvedPath);
-        if (!targetFile || extname(resolvedPath) !== '.md') continue;
-        const anchors = anchorsByAbsolutePath.get(resolvedPath) ?? new Set<string>();
+        if (extname(resolvedPath) !== '.md') continue;
+        const anchors =
+          anchorsByAbsolutePath.get(resolvedPath) ??
+          collectAnchors(targetFile?.text ?? readFileSync(resolvedPath, 'utf8'));
         const normalizedAnchor = markdownHeadingSlug(anchor);
         if (!anchors.has(normalizedAnchor)) {
           findings.push({
@@ -222,16 +243,16 @@ function collectLinkFindings(files: DocumentationFile[]): Finding[] {
   return findings;
 }
 
-function parseSemanticVersion(version: string): [number, number, number] | undefined {
+export function parseSemanticVersion(version: string): [number, number, number] | undefined {
   const match = version.match(/^v?(\d+)\.(\d+)(?:\.(\d+))?$/);
   if (!match?.[1] || !match[2]) return undefined;
   return [Number(match[1]), Number(match[2]), Number(match[3] ?? 0)];
 }
 
-function compareSemanticVersions(left: string, right: string): number {
+export function compareSemanticVersions(left: string, right: string): number | undefined {
   const parsedLeft = parseSemanticVersion(left);
   const parsedRight = parseSemanticVersion(right);
-  if (!parsedLeft || !parsedRight) return 0;
+  if (!parsedLeft || !parsedRight) return undefined;
   for (let index = 0; index < parsedLeft.length; index++) {
     const difference = parsedLeft[index] - parsedRight[index];
     if (difference !== 0) return difference;
@@ -239,21 +260,31 @@ function compareSemanticVersions(left: string, right: string): number {
   return 0;
 }
 
-function collectWorkflowBunVersionFindings(minimumBunVersion: string): Finding[] {
-  const workflowsDirectory = resolve(REPOSITORY_ROOT, '.github/workflows');
+export function collectWorkflowBunVersionFindings(
+  minimumBunVersion: string,
+  repositoryRoot = REPOSITORY_ROOT,
+): Finding[] {
+  const workflowsDirectory = resolve(repositoryRoot, '.github/workflows');
   if (!existsSync(workflowsDirectory)) return [];
   const findings: Finding[] = [];
 
   for (const entry of readdirSync(workflowsDirectory, { withFileTypes: true })) {
     if (!entry.isFile() || !/\.ya?ml$/.test(entry.name)) continue;
     const absolutePath = resolve(workflowsDirectory, entry.name);
-    const relativePath = repositoryRelativePath(absolutePath);
+    const relativePath = repositoryRelativePath(absolutePath, repositoryRoot);
     const lines = readFileSync(absolutePath, 'utf8').split('\n');
     for (const [index, line] of lines.entries()) {
       const match = line.match(/\bbun-version:\s*['"]?([^'"\s#]+)['"]?/);
       const version = match?.[1];
-      if (!version || version === 'latest') continue;
-      if (compareSemanticVersions(version, minimumBunVersion) < 0) {
+      if (!version) continue;
+      const comparison = compareSemanticVersions(version, minimumBunVersion);
+      if (comparison === undefined) {
+        findings.push({
+          file: relativePath,
+          line: index + 1,
+          message: `Unsupported bun-version format: ${version}. Use a concrete semver pin.`,
+        });
+      } else if (comparison < 0) {
         findings.push({
           file: relativePath,
           line: index + 1,
@@ -266,9 +297,13 @@ function collectWorkflowBunVersionFindings(minimumBunVersion: string): Finding[]
   return findings;
 }
 
-function collectBunClaimFindings(files: DocumentationFile[], minimumBunVersion: string): Finding[] {
+export function collectBunClaimFindings(
+  files: DocumentationFile[],
+  minimumBunVersion: string,
+): Finding[] {
   const findings: Finding[] = [];
-  const staleBunVersionPattern = /\bBun\b.*\b1\.3(?:\.0)?(?!\.)\b/i;
+  const bunVersionRequirementPattern =
+    /\bbun\b(?=.*\b(?:minimum|need|needs|required|requires?|runtime version|or later)\b).*?\bv?(\d+\.\d+(?:\.\d+)?)\b/gi;
   const escapedMinimumVersion = minimumBunVersion.replaceAll('.', '\\.');
   const requiredClaims = [
     {
@@ -290,11 +325,17 @@ function collectBunClaimFindings(files: DocumentationFile[], minimumBunVersion: 
 
   for (const file of files) {
     for (const [index, line] of file.text.split('\n').entries()) {
-      if (staleBunVersionPattern.test(line)) {
+      bunVersionRequirementPattern.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = bunVersionRequirementPattern.exec(line)) !== null) {
+        const candidateVersion = match[1];
+        if (!candidateVersion) continue;
+        const comparison = compareSemanticVersions(candidateVersion, minimumBunVersion);
+        if (comparison === undefined || comparison >= 0) continue;
         findings.push({
           file: file.relativePath,
           line: index + 1,
-          message: `Stale Bun version claim; package.json requires >=${minimumBunVersion}.`,
+          message: `Stale Bun version claim ${candidateVersion}; package.json requires >=${minimumBunVersion}.`,
         });
       }
     }
@@ -319,14 +360,24 @@ function collectBunClaimFindings(files: DocumentationFile[], minimumBunVersion: 
   return findings;
 }
 
-function main(): void {
-  const minimumBunVersion = parseMinimumBunVersion();
-  const files = collectDocumentationFiles();
+export function verifyDocumentation(options: VerificationOptions = {}): {
+  filesChecked: number;
+  findings: Finding[];
+} {
+  const repositoryRoot = resolve(options.repositoryRoot ?? REPOSITORY_ROOT);
+  const minimumBunVersion = parseMinimumBunVersion(repositoryRoot);
+  const files = collectDocumentationFiles({ ...options, repositoryRoot });
   const findings = [
-    ...collectLinkFindings(files),
+    ...collectLinkFindings(files, repositoryRoot),
     ...collectBunClaimFindings(files, minimumBunVersion),
-    ...collectWorkflowBunVersionFindings(minimumBunVersion),
+    ...collectWorkflowBunVersionFindings(minimumBunVersion, repositoryRoot),
   ];
+
+  return { filesChecked: files.length, findings };
+}
+
+function main(): void {
+  const { filesChecked, findings } = verifyDocumentation();
 
   if (findings.length > 0) {
     console.error(`verify-documentation: ${findings.length} finding(s)`);
@@ -337,8 +388,10 @@ function main(): void {
   }
 
   console.log(
-    `verify-documentation: checked ${files.length} Markdown files, local links, anchors, Bun version claims, and workflow Bun pins.`,
+    `verify-documentation: checked ${filesChecked} Markdown files, local links, anchors, Bun version claims, and workflow Bun pins.`,
   );
 }
 
-main();
+if (import.meta.main) {
+  main();
+}

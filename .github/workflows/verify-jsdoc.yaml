@@ -5,8 +5,13 @@ on:
     paths:
       - 'src/**'
       - 'README.md'
+      - 'ROADMAP.md'
+      - 'BREAKING-CHANGES.md'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
       - 'documentation/**'
       - 'reference/**'
+      - 'src/server/__fixtures__/subscription-wire/README.md'
       - 'package.json'
       - 'scripts/lib/jsdoc-manifest.ts'
       - 'scripts/audit-jsdoc-manifest.ts'
