@@ -2,11 +2,14 @@
  * Type-level tests asserting that the schema-driven inference overloads on
  * the definition helpers produce the right `TInput` / `TOutput` types when a
  * Standard Schema is supplied — without requiring an explicit generic.
+ *
+ * Every assertion uses `Equals<actual, expected>` to catch silent `unknown`
+ * widening, which `expectType<T>(value)` (assignability only) would miss.
  */
 
 import { z } from 'zod';
 
-import { activity } from './activity.ts';
+import { activity, type ActivityCallable } from './activity.ts';
 import {
   query,
   signal,
@@ -15,35 +18,46 @@ import {
   type SignalDefinition,
   type UpdateDefinition,
 } from './message-handles.ts';
-import { workflow } from './workflow-function.ts';
+import { workflow, type WorkflowDefinition } from './workflow-function.ts';
 
 // ---------------------------------------------------------------------------
-// Helper: type equality
+// Helper: strict type equality
 // ---------------------------------------------------------------------------
 
 type Equals<X, Y> =
   (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2 ? true : false;
 
-function expectType<T>(_value: T): void {
-  // intentionally empty; runs at type-check time only
-}
+// Each `_check_*: Equals<...> = true` line is the assertion. If inference
+// regresses to `unknown`, the conditional resolves to `false` and the
+// assignment fails, surfacing the regression at typecheck time.
 
 // ---------------------------------------------------------------------------
-// signal()
+// signal() — inference + transform
 // ---------------------------------------------------------------------------
 
 const approvalSchema = z.object({ approved: z.boolean() });
 const inferredSignal = signal('approval', { inputSchema: approvalSchema });
-expectType<SignalDefinition<{ approved: boolean }>>(inferredSignal);
+const _check_signal_inference: Equals<
+  typeof inferredSignal,
+  SignalDefinition<{ approved: boolean }>
+> = true;
+void _check_signal_inference;
 
 const explicitSignal = signal<{ approved: boolean }>('approval');
-expectType<SignalDefinition<{ approved: boolean }>>(explicitSignal);
+const _check_signal_explicit_equals_inferred: Equals<typeof explicitSignal, typeof inferredSignal> =
+  true;
+void _check_signal_explicit_equals_inferred;
 
-const _signalEquals: Equals<typeof inferredSignal, typeof explicitSignal> = true;
-void _signalEquals;
+// Transform: handler should receive the schema's *output* type (post-parse),
+// not the raw input. `z.string().transform(s => s.length)` parses string ->
+// number; the handler reads `number`.
+const transformedSchema = z.string().transform((s) => s.length);
+const transformedSignal = signal('count', { inputSchema: transformedSchema });
+const _check_signal_transform: Equals<typeof transformedSignal, SignalDefinition<number>> = true;
+void _check_signal_transform;
 
 // ---------------------------------------------------------------------------
-// update()
+// update() — input + output, input-only, transform
 // ---------------------------------------------------------------------------
 
 const updateInputSchema = z.object({ id: z.string() });
@@ -53,30 +67,46 @@ const inferredUpdate = update('approve', {
   inputSchema: updateInputSchema,
   outputSchema: updateOutputSchema,
 });
-expectType<UpdateDefinition<{ id: string }, { accepted: boolean }>>(inferredUpdate);
+const _check_update_both: Equals<
+  typeof inferredUpdate,
+  UpdateDefinition<{ id: string }, { accepted: boolean }>
+> = true;
+void _check_update_both;
 
 const inferredUpdateInputOnly = update('approve', {
   inputSchema: updateInputSchema,
 });
-expectType<UpdateDefinition<{ id: string }>>(inferredUpdateInputOnly);
+const _check_update_input_only: Equals<
+  typeof inferredUpdateInputOnly,
+  UpdateDefinition<{ id: string }>
+> = true;
+void _check_update_input_only;
 
 // ---------------------------------------------------------------------------
-// query()
+// query() — output-only, both
 // ---------------------------------------------------------------------------
 
 const queryOutputSchema = z.object({ state: z.string() });
 
 const inferredQueryOutputOnly = query('status', { outputSchema: queryOutputSchema });
-expectType<QueryDefinition<unknown, { state: string }>>(inferredQueryOutputOnly);
+const _check_query_output_only: Equals<
+  typeof inferredQueryOutputOnly,
+  QueryDefinition<void, { state: string }>
+> = true;
+void _check_query_output_only;
 
 const inferredQueryBoth = query('status', {
   inputSchema: z.object({ id: z.string() }),
   outputSchema: queryOutputSchema,
 });
-expectType<QueryDefinition<{ id: string }, { state: string }>>(inferredQueryBoth);
+const _check_query_both: Equals<
+  typeof inferredQueryBoth,
+  QueryDefinition<{ id: string }, { state: string }>
+> = true;
+void _check_query_both;
 
 // ---------------------------------------------------------------------------
-// workflow()
+// workflow() — input + output via schema
 // ---------------------------------------------------------------------------
 
 const workflowInputSchema = z.object({ orderId: z.string() });
@@ -86,18 +116,21 @@ const inferredWorkflow = workflow({
   name: 'checkout',
   inputSchema: workflowInputSchema,
   outputSchema: workflowOutputSchema,
-  // eslint-disable-next-line require-yield
   handler: async function* (_ctx, input) {
-    expectType<{ orderId: string }>(input);
+    const _check_workflow_input: Equals<typeof input, { orderId: string }> = true;
+    void _check_workflow_input;
+    yield;
     return { shipped: true };
   },
 });
-expectType<{ orderId: string }>(
-  inferredWorkflow.handler.length === 0 ? ({} as { orderId: string }) : ({} as { orderId: string }),
-);
+const _check_workflow_definition: Equals<
+  typeof inferredWorkflow,
+  WorkflowDefinition<{ orderId: string }, { shipped: boolean }>
+> = true;
+void _check_workflow_definition;
 
 // ---------------------------------------------------------------------------
-// activity()
+// activity() — input + output, transform on input
 // ---------------------------------------------------------------------------
 
 const activityInputSchema = z.object({ to: z.string() });
@@ -108,10 +141,29 @@ const inferredActivity = activity({
   inputSchema: activityInputSchema,
   outputSchema: activityOutputSchema,
   execute: async (input) => {
-    expectType<{ to: string }>(input);
+    const _check_activity_input: Equals<typeof input, { to: string }> = true;
+    void _check_activity_input;
     return { sent: true };
   },
 });
+const _check_activity_callable: Equals<
+  typeof inferredActivity,
+  ActivityCallable<{ to: string }, { sent: boolean }>
+> = true;
+void _check_activity_callable;
 
 // Calling the activity with the inferred input type should typecheck.
 void inferredActivity({ to: 'a@b.co' });
+
+// Transform: input schema may parse string -> number; the handler reads number.
+const transformedActivityInput = z.string().transform((s) => Number(s));
+const transformedActivity = activity({
+  name: 'parseNumber',
+  inputSchema: transformedActivityInput,
+  execute: async (input: number) => input * 2,
+});
+const _check_activity_transform: Equals<
+  typeof transformedActivity,
+  ActivityCallable<number, number>
+> = true;
+void _check_activity_transform;

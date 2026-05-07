@@ -14,11 +14,6 @@
  * @module core/constraint
  */
 
-import {
-  validateDefinitionSchemaMetadata,
-  type DefinitionSchema,
-} from './types/definition-schema.ts';
-
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -127,12 +122,6 @@ export interface ConstraintDefinition {
    * - `'warn'`       — logs a warning and continues execution.
    */
   onViolation: ConstraintViolation;
-  /**
-   * Optional Standard Schema validator describing the constraint's input
-   * payload, when one is supplied. Most constraints read state from the
-   * enclosing scope and have no payload — leave this undefined in that case.
-   */
-  inputSchema?: DefinitionSchema<unknown, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -164,11 +153,5 @@ export interface ConstraintDefinition {
  * ```
  */
 export function constraint(definition: ConstraintDefinition): ConstraintDefinition {
-  if (definition.inputSchema !== undefined) {
-    validateDefinitionSchemaMetadata(
-      definition.inputSchema,
-      `constraint("${definition.name}").inputSchema`,
-    );
-  }
   return definition;
 }

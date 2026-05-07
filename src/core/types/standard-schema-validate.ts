@@ -52,6 +52,12 @@ export interface StandardSchemaValidationContext {
  * operation identifier, and the list of issues with RFC 6901 JSON Pointer
  * paths so transport code can translate it into the right fault shape.
  *
+ * **Reserved for boundary integration.** Nothing in the engine calls
+ * {@link validateStandardSchema} yet; the runtime validator is exported here
+ * so transport-operation modules and worker dispatch paths can wire it in
+ * during a follow-up. Definition helpers carry schemas as inert metadata
+ * today.
+ *
  * @example
  * ```ts
  * import { StandardSchemaValidationError } from 'weft';
@@ -94,6 +100,11 @@ export class StandardSchemaValidationError extends Error {
  * Pointers. Throws a {@link TypeError} when the schema only carries a JSON
  * Schema converter (no runtime validator).
  *
+ * **Reserved for boundary integration.** This helper is exported for use by
+ * transport-operation modules and worker-side activity dispatch paths during
+ * boundary validation work. Nothing in the engine calls it today; the
+ * definition helpers' schemas are inert metadata until that wiring lands.
+ *
  * @example
  * ```ts
  * import { validateStandardSchema } from 'weft';
@@ -128,7 +139,7 @@ export async function validateStandardSchema<Output>(
 
   throw new StandardSchemaValidationError({
     fieldName: context.fieldName,
-    operation: context.operation ?? undefined,
+    operation: context.operation,
     issues: result.issues.map(toValidationIssue),
   });
 }

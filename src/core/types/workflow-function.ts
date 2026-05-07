@@ -1,10 +1,5 @@
 import type { ConstraintDefinition } from '../constraint.ts';
-import {
-  validateDefinitionSchemaMetadata,
-  type DefinitionSchema,
-  type InferSchemaInput,
-  type InferSchemaOutput,
-} from './definition-schema.ts';
+import type { DefinitionSchema, InferSchemaInput, InferSchemaOutput } from './definition-schema.ts';
 import type { RetentionPolicy } from './retry-retention.ts';
 import type { SearchAttributeSchema } from './search-attributes.ts';
 import type { WorkflowContext } from './workflow-context.ts';
@@ -417,21 +412,21 @@ export function workflow<
   TOutputSchema extends DefinitionSchema<unknown, unknown>,
 >(
   options: Omit<
-    WorkflowDefinitionOptions<InferSchemaInput<TInputSchema>, InferSchemaOutput<TOutputSchema>>,
+    WorkflowDefinitionOptions<InferSchemaOutput<TInputSchema>, InferSchemaInput<TOutputSchema>>,
     'inputSchema' | 'outputSchema'
   > & {
     inputSchema: TInputSchema;
     outputSchema: TOutputSchema;
   },
-): WorkflowDefinition<InferSchemaInput<TInputSchema>, InferSchemaOutput<TOutputSchema>>;
+): WorkflowDefinition<InferSchemaOutput<TInputSchema>, InferSchemaInput<TOutputSchema>>;
 export function workflow<TInputSchema extends DefinitionSchema<unknown, unknown>, TOutput>(
   options: Omit<
-    WorkflowDefinitionOptions<InferSchemaInput<TInputSchema>, TOutput>,
+    WorkflowDefinitionOptions<InferSchemaOutput<TInputSchema>, TOutput>,
     'inputSchema'
   > & {
     inputSchema: TInputSchema;
   },
-): WorkflowDefinition<InferSchemaInput<TInputSchema>, TOutput>;
+): WorkflowDefinition<InferSchemaOutput<TInputSchema>, TOutput>;
 export function workflow<TInput, TOutput>(
   options: WorkflowDefinitionOptions<TInput, TOutput>,
 ): WorkflowDefinition<TInput, TOutput>;
@@ -450,18 +445,10 @@ export function workflow<TInput, TOutput>(
     throw new Error('workflow() requires a named function or an options object with name.');
   }
 
-  if (definition.inputSchema !== undefined) {
-    validateDefinitionSchemaMetadata(
-      definition.inputSchema,
-      `workflow("${definition.name}").inputSchema`,
-    );
-  }
-  if (definition.outputSchema !== undefined) {
-    validateDefinitionSchemaMetadata(
-      definition.outputSchema,
-      `workflow("${definition.name}").outputSchema`,
-    );
-  }
+  // Schema metadata is validated at registration time
+  // (`src/core/engine/registration.ts`), not here. Keeping the helper as a
+  // pure constructor avoids double validation and the helper-vs-registration
+  // surface mismatch the previous version had.
 
   return definition;
 }

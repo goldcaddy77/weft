@@ -335,18 +335,22 @@ export type DefinitionSchema<Input = unknown, Output = Input> =
   | StandardJSONSchemaV1<Input, Output>;
 
 /**
- * Extract the input type from a {@link DefinitionSchema} or `undefined` when
- * no schema is present. Used by definition helpers to infer payload types
- * from `inputSchema` without requiring an explicit generic.
+ * Extract the schema's *input* type — what the validator accepts before any
+ * transform runs. For a schema like `z.string().transform(s => s.length)`,
+ * `InferSchemaInput` is `string`. Helpers in the codebase use this when they
+ * want the wire-side / pre-validation type; for handler-side / post-validation
+ * payloads, see {@link InferSchemaOutput}. Returns `unknown` when the schema
+ * carries no `~standard.types` markers; returns `never` when the argument is
+ * not a `StandardTypedV1`-shaped value.
  *
  * @example
  * ```ts
  * import type { InferSchemaInput } from 'weft';
  * import { z } from 'zod';
  *
- * const schema = z.object({ id: z.string() });
- * type Input = InferSchemaInput<typeof schema>;
- * const value: Input = { id: 'order-1' };
+ * const schema = z.string().transform((s) => s.length);
+ * type Input = InferSchemaInput<typeof schema>; // string
+ * const value: Input = 'hello';
  * void value;
  * ```
  */
@@ -354,18 +358,21 @@ export type InferSchemaInput<TSchema> =
   TSchema extends StandardTypedV1<infer Input, unknown> ? Input : never;
 
 /**
- * Extract the output type from a {@link DefinitionSchema} or `undefined` when
- * no schema is present. Used by definition helpers to infer payload types
- * from `outputSchema` without requiring an explicit generic.
+ * Extract the schema's *output* type — what the validator produces after any
+ * transform runs. For a schema like `z.string().transform(s => s.length)`,
+ * `InferSchemaOutput` is `number`. The definition helpers use this for
+ * handler-side payload types: handlers see the validated, parsed value.
+ * Returns `unknown` when the schema carries no `~standard.types` markers;
+ * returns `never` when the argument is not a `StandardTypedV1`-shaped value.
  *
  * @example
  * ```ts
  * import type { InferSchemaOutput } from 'weft';
  * import { z } from 'zod';
  *
- * const schema = z.object({ id: z.string() });
- * type Output = InferSchemaOutput<typeof schema>;
- * const value: Output = { id: 'order-1' };
+ * const schema = z.string().transform((s) => s.length);
+ * type Output = InferSchemaOutput<typeof schema>; // number
+ * const value: Output = 5;
  * void value;
  * ```
  */
@@ -391,7 +398,22 @@ export function validateDefinitionSchemaMetadata(
   fieldName: string,
 ): DefinitionSchema {
   if (isDefinitionSchema(value)) return value;
-  throw new TypeError(`${fieldName} must be Standard Schema-compatible definition metadata.`);
+  throw new TypeError(
+    `${fieldName} must be Standard Schema-compatible definition metadata. ` +
+      `Pass a Zod, Valibot, ArkType (or any Standard Schema v1) validator, or ` +
+      `attach a \`~standard.jsonSchema\` converter directly. ` +
+      `Received: ${describeReceivedValue(value)}.`,
+  );
+}
+
+function describeReceivedValue(value: unknown): string {
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
+  if (Array.isArray(value)) return 'array';
+  if (typeof value !== 'object') return typeof value;
+  const keys = Object.keys(value as Record<string, unknown>);
+  if (keys.length === 0) return 'an empty object';
+  return `an object with keys [${keys.slice(0, 5).join(', ')}${keys.length > 5 ? ', …' : ''}]`;
 }
 
 function getStandardMetadataRecord(value: unknown): StandardMetadataRecord | undefined {

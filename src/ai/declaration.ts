@@ -197,6 +197,11 @@ export function isAgentDefinition(value: unknown): value is AgentDefinition {
 export function agent<TInput = unknown, TOutput = unknown>(
   options: AgentDefinitionOptions<TInput, TOutput>,
 ): AgentDefinition<TInput, TOutput> {
+  // Validate schema metadata here. Unlike workflow() and activity() — whose
+  // schemas pass through engine/activity registration sites that already
+  // validate — the agent registration path constructs an internal workflow
+  // registration that does not propagate the agent's inputSchema/outputSchema.
+  // Without this guard a malformed schema would slip into the registry.
   if (options.inputSchema !== undefined) {
     validateDefinitionSchemaMetadata(options.inputSchema, `agent("${options.name}").inputSchema`);
   }

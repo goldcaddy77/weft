@@ -137,7 +137,7 @@ export interface SignalOptions<TInput = void> {
 export function signal<TSchema extends DefinitionSchema<unknown, unknown>>(
   name: string,
   options: { inputSchema: TSchema },
-): SignalDefinition<InferSchemaInput<TSchema>>;
+): SignalDefinition<InferSchemaOutput<TSchema>>;
 export function signal<TInput = void>(
   name: string,
   options?: SignalOptions<TInput>,
@@ -201,11 +201,11 @@ export function update<
 >(
   name: string,
   options: { inputSchema: TInputSchema; outputSchema: TOutputSchema },
-): UpdateDefinition<InferSchemaInput<TInputSchema>, InferSchemaOutput<TOutputSchema>>;
+): UpdateDefinition<InferSchemaOutput<TInputSchema>, InferSchemaInput<TOutputSchema>>;
 export function update<TInputSchema extends DefinitionSchema<unknown, unknown>>(
   name: string,
   options: { inputSchema: TInputSchema },
-): UpdateDefinition<InferSchemaInput<TInputSchema>>;
+): UpdateDefinition<InferSchemaOutput<TInputSchema>>;
 export function update<TInput = void, TOutput = unknown>(
   name: string,
   options?: UpdateOptions<TInput, TOutput>,
@@ -272,26 +272,32 @@ export function query<
 >(
   name: string,
   options: { readonly inputSchema: TInputSchema; readonly outputSchema: TOutputSchema },
-): QueryDefinition<InferSchemaInput<TInputSchema>, InferSchemaOutput<TOutputSchema>>;
+): QueryDefinition<InferSchemaOutput<TInputSchema>, InferSchemaInput<TOutputSchema>>;
 export function query<TOutputSchema extends DefinitionSchema<unknown, unknown>>(
   name: string,
   options: { readonly outputSchema: TOutputSchema },
-): QueryDefinition<unknown, InferSchemaOutput<TOutputSchema>>;
+): QueryDefinition<void, InferSchemaInput<TOutputSchema>>;
 export function query<TInputSchema extends DefinitionSchema<unknown, unknown>>(
   name: string,
   options: { readonly inputSchema: TInputSchema },
-): QueryDefinition<InferSchemaInput<TInputSchema>>;
+): QueryDefinition<InferSchemaOutput<TInputSchema>>;
 export function query<TInput = void, TOutput = unknown>(
   name: string,
   options?: QueryOptions<TInput, TOutput>,
 ): QueryDefinition<TInput, TOutput>;
-export function query(name: string, options?: QueryOptions<unknown>): QueryDefinition<unknown> {
+export function query(
+  name: string,
+  options?: QueryOptions<unknown>,
+): QueryDefinition<unknown> | QueryDefinition {
   if (options?.inputSchema !== undefined) {
     validateDefinitionSchemaMetadata(options.inputSchema, `query("${name}").inputSchema`);
   }
   if (options?.outputSchema !== undefined) {
     validateDefinitionSchemaMetadata(options.outputSchema, `query("${name}").outputSchema`);
   }
+  // The implementation return is a structural object satisfying every overload
+  // shape; the union signals to the typechecker that overload 2's
+  // `QueryDefinition<void, ...>` is also a valid return.
   return {
     name,
     ...(options?.inputSchema !== undefined ? { inputSchema: options.inputSchema } : {}),
