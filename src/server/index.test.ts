@@ -797,7 +797,19 @@ describe('worker WebSocket protocol', () => {
       });
 
       ws.send(JSON.stringify({ type: 'heartbeat', workerId: 'w-heartbeat-write-fail' }));
-      await waitForRealTimersForTesting(250);
+      await waitFor(
+        () =>
+          errorSpy.mock.calls.some(
+            ([message, error]) =>
+              message ===
+                '[weft] Failed to extend visibility for task "heartbeat-write-fail-op":' &&
+              error instanceof Error &&
+              error.message === 'heartbeat write failed',
+          ),
+        {
+          label: 'heartbeat visibility persistence failure log',
+        },
+      );
 
       expect(errorSpy).toHaveBeenCalledWith(
         '[weft] Failed to extend visibility for task "heartbeat-write-fail-op":',
