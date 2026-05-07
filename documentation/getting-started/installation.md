@@ -6,7 +6,7 @@ Weft runs on Bun. If you don't have it yet, the install is a one-liner:
 curl -fsSL https://bun.sh/install | bash
 ```
 
-You'll need Bun 1.3 or later. Verify with `bun --version`.
+You'll need Bun 1.3.13 or later. Verify with `bun --version`.
 
 ## Library Mode
 

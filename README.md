@@ -393,7 +393,7 @@ import { WebExtensionStorage } from 'weft/storage/web-extension';
 import { HTTPStorage } from 'weft/storage/http';
 ```
 
-The `bun` runtime version `1.3.0` or later is required.
+The `bun` runtime version `1.3.13` or later is required.
 
 ## Step API for `async`/`await` Users
 
@@ -455,6 +455,10 @@ Architecture and reference:
 - [Design Philosophy](documentation/architecture/design-philosophy.md), [Checkpoint vs. Replay](documentation/architecture/checkpoint-versus-replay.md), [Web Standards](documentation/architecture/web-standards.md)
 - [Browser Runtime](documentation/architecture/browser-runtime.md), [Web Workers](documentation/architecture/web-workers.md), [Single Binary](documentation/architecture/single-binary.md)
 - [API Reference](documentation/reference/) (Engine, Context, Storage, Server, Workers, Agent, Testing, Events, Interceptors, Observability, CLI, Configuration, Types)
+
+Contributing:
+
+- [Development Setup](documentation/contributing/development-setup.md), [Documentation Maintenance](documentation/contributing/documentation-maintenance.md), [Architecture Decisions](documentation/contributing/architecture-decisions.md)
 
 ## License
 

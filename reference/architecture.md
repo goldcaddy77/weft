@@ -497,7 +497,7 @@ const results =
 
 **The Temporal problem.** Teams building AI agent orchestration on Temporal must model agent loops as activities, manually handle token streaming, build their own cost tracking, and figure out human-in-the-loop patterns from scratch. Temporal's primitives were designed for microservice RPC, not multi-turn LLM interactions. The Temporal community calls this the "Lord of the Loop" problem: when integrating third-party agent frameworks (OpenAI Agents SDK, PydanticAI, LangGraph), who controls the execution loop? Temporal or the framework? A community member's extensive analysis argues that current integrations force agents to be "extremely narrow in scope—with only a few tools available." Community members have explicitly requested an "Agent Builder layer over Temporal," and multiple forum threads ask for higher-level orchestration primitives: conversation history management, guardrail hooks, agent task queues. Temporal's response: "We are examining higher level primitives...no roadmap or announcements to share about that yet."
 
-**The Weft answer.** `ctx.agent()` as a first-class primitive with durable tool execution, token streaming, budget enforcement, and human-in-the-loop built in. (See: [AI-First Primitives](#12-ai-first-primitives).)
+**The Weft answer.** `ctx.agent()` as a first-class primitive with durable tool execution, token streaming, budget enforcement, and human-in-the-loop built in. (See: [Agent-Native Engine](#12-agent-native-engine).)
 
 **Why this cannot be bolted onto Temporal.** Temporal's determinism constraint means LLM API calls must be activities. But activities are opaque to the workflow — you cannot stream tokens from an activity back to the workflow in real time. You cannot checkpoint mid-tool-call within an activity. Temporal's model forces agent loops into one of two bad choices:
 
@@ -2506,7 +2506,7 @@ self.addEventListener('periodicsync', (event: PeriodicSyncEvent) => {
 
 ### 10. HTTP + WebSocket — No gRPC, No Protobuf
 
-Bun 1.3 introduced route-based `Bun.serve()` which is the most idiomatic way to define an HTTP API:
+Modern Bun releases include route-based `Bun.serve()`, which is the most idiomatic way to define an HTTP API:
 
 ```typescript
 import { serve } from 'bun';

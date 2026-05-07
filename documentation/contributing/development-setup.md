@@ -4,7 +4,7 @@ Weft is a Bun-native project. Everything---from the runtime to the test runner t
 
 ## Prerequisites
 
-You need [Bun](https://bun.sh) installed. The minimum version is 1.3.0, but I'd recommend the latest stable release. If you don't have it yet:
+You need [Bun](https://bun.sh) installed. The minimum version is 1.3.13, but I'd recommend the latest stable release. If you don't have it yet:
 
 ```bash
 curl -fsSL https://bun.sh/install | bash
@@ -92,6 +92,7 @@ Several `verify:*` scripts run additional checks beyond lint and typecheck:
 
 ```bash
 bun run verify:exports          # Check all public exports resolve correctly
+bun run verify:documentation    # Check documentation links, anchors, and version claims
 bun run verify:portability      # Check that code avoids Bun-only APIs in portable modules
 bun run verify:jsdoc            # Validate JSDoc coverage on public API
 bun run verify:markdown-doctests # Check TypeScript code blocks in documentation

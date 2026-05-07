@@ -4,17 +4,25 @@ on:
   pull_request:
     paths:
       - 'src/**'
+      - 'README.md'
+      - 'ROADMAP.md'
+      - 'BREAKING-CHANGES.md'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
       - 'documentation/**'
+      - 'reference/**'
+      - 'src/server/__fixtures__/subscription-wire/README.md'
       - 'package.json'
       - 'scripts/lib/jsdoc-manifest.ts'
       - 'scripts/audit-jsdoc-manifest.ts'
       - 'scripts/build-jsdoc-manifest.ts'
       - 'scripts/check-declaration-jsdoc.ts'
+      - 'scripts/verify-documentation.ts'
       - 'scripts/extract-doctests.ts'
       - 'scripts/extract-markdown-doctests.ts'
       - 'scripts/markdown-doctest-skip-counts.json'
       - 'scripts/markdown-doctest-skip-reasons.txt'
-      - '.github/workflows/verify-jsdoc.yaml'
+      - '.github/workflows/*.yaml'
   push:
     branches: [main]
 
@@ -31,10 +39,13 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: 1.3.2
+          bun-version: 1.3.13
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Verify documentation links and metadata
+        run: bun run verify:documentation
 
       - name: Build package (so emitted .d.ts exists for audit + declaration checks)
         run: bun run build
