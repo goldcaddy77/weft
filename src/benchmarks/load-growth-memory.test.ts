@@ -3,9 +3,11 @@ import { fileURLToPath } from 'node:url';
 
 import { isConstrainedCodexRunner } from './benchmark-environment.ts';
 import { runBenchmarkSubprocess } from './benchmark-subprocess.ts';
+import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
 import type { LoadGrowthMemoryMeasurement } from './load-growth-memory-runner.ts';
 
 const IS_CONSTRAINED_CODEX_RUNNER = isConstrainedCodexRunner();
+const IS_COVERAGE_INSTRUMENTATION_ENABLED = isCoverageInstrumentationEnabled();
 const TARGET_WORKFLOWS_PER_SECOND = IS_CONSTRAINED_CODEX_RUNNER ? 500 : 10_000;
 const MAX_MEDIAN_RSS_GROWTH_BYTES_PER_SECOND = (IS_CONSTRAINED_CODEX_RUNNER ? 5 : 1) * 1024 * 1024;
 const MAX_MEDIAN_POST_WARMUP_RSS_DELTA_BYTES = (IS_CONSTRAINED_CODEX_RUNNER ? 32 : 8) * 1024 * 1024;
@@ -140,7 +142,8 @@ describe('Load-growth memory stability', () => {
         `    Median RSS delta:  ${medianPostWarmupRssDeltaBytes.toLocaleString()} bytes`,
         `    Median RSS band:   ${medianPostWarmupRssRangeBytes.toLocaleString()} bytes`,
         `    Max RSS delta:     ${maximumPostWarmupRssDeltaBytes.toLocaleString()} bytes`,
-        `    Max RSS band:      ${maximumPostWarmupRssRangeBytes.toLocaleString()} bytes\n`,
+        `    Max RSS band:      ${maximumPostWarmupRssRangeBytes.toLocaleString()} bytes`,
+        `    Coverage mode:     ${IS_COVERAGE_INSTRUMENTATION_ENABLED ? 'yes' : 'no'}\n`,
       ].join('\n'),
     );
 
@@ -148,20 +151,22 @@ describe('Load-growth memory stability', () => {
     expect(medianAbsoluteRssGrowthRatePerSecond).toBeLessThanOrEqual(
       MAX_MEDIAN_RSS_GROWTH_BYTES_PER_SECOND,
     );
-    expect(maximumAbsoluteRssGrowthRatePerSecond).toBeLessThanOrEqual(
-      MAX_SINGLE_TRIAL_RSS_GROWTH_BYTES_PER_SECOND,
-    );
     expect(medianPostWarmupRssDeltaBytes).toBeLessThanOrEqual(
       MAX_MEDIAN_POST_WARMUP_RSS_DELTA_BYTES,
     );
     expect(medianPostWarmupRssRangeBytes).toBeLessThanOrEqual(
       MAX_MEDIAN_POST_WARMUP_RSS_RANGE_BYTES,
     );
-    expect(maximumPostWarmupRssDeltaBytes).toBeLessThanOrEqual(
-      MAX_SINGLE_TRIAL_POST_WARMUP_RSS_DELTA_BYTES,
-    );
-    expect(maximumPostWarmupRssRangeBytes).toBeLessThanOrEqual(
-      MAX_SINGLE_TRIAL_POST_WARMUP_RSS_RANGE_BYTES,
-    );
+    if (!IS_COVERAGE_INSTRUMENTATION_ENABLED) {
+      expect(maximumAbsoluteRssGrowthRatePerSecond).toBeLessThanOrEqual(
+        MAX_SINGLE_TRIAL_RSS_GROWTH_BYTES_PER_SECOND,
+      );
+      expect(maximumPostWarmupRssDeltaBytes).toBeLessThanOrEqual(
+        MAX_SINGLE_TRIAL_POST_WARMUP_RSS_DELTA_BYTES,
+      );
+      expect(maximumPostWarmupRssRangeBytes).toBeLessThanOrEqual(
+        MAX_SINGLE_TRIAL_POST_WARMUP_RSS_RANGE_BYTES,
+      );
+    }
   }, 120_000);
 });
