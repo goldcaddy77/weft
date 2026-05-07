@@ -14,10 +14,30 @@
  * @module core/constraint
  */
 
+import {
+  validateDefinitionSchemaMetadata,
+  type DefinitionSchema,
+} from './types/definition-schema.ts';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Reaction to a violated {@link ConstraintDefinition}. `'fail'` immediately
+ * fails the workflow without running saga compensators; `'compensate'`
+ * throws into the workflow generator so an active `ctx.saga()` can run its
+ * compensators in reverse before the error propagates; `'warn'` logs and
+ * continues. Returned from `onViolation` on every constraint definition.
+ *
+ * @example
+ * ```ts
+ * import type { ConstraintViolation } from 'weft';
+ *
+ * const policy: ConstraintViolation = 'compensate';
+ * void policy;
+ * ```
+ */
 export type ConstraintViolation = 'compensate' | 'fail' | 'warn';
 
 /**
@@ -107,6 +127,12 @@ export interface ConstraintDefinition {
    * - `'warn'`       — logs a warning and continues execution.
    */
   onViolation: ConstraintViolation;
+  /**
+   * Optional Standard Schema validator describing the constraint's input
+   * payload, when one is supplied. Most constraints read state from the
+   * enclosing scope and have no payload — leave this undefined in that case.
+   */
+  inputSchema?: DefinitionSchema<unknown, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,5 +164,11 @@ export interface ConstraintDefinition {
  * ```
  */
 export function constraint(definition: ConstraintDefinition): ConstraintDefinition {
+  if (definition.inputSchema !== undefined) {
+    validateDefinitionSchemaMetadata(
+      definition.inputSchema,
+      `constraint("${definition.name}").inputSchema`,
+    );
+  }
   return definition;
 }

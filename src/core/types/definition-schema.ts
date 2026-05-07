@@ -334,6 +334,44 @@ export type DefinitionSchema<Input = unknown, Output = Input> =
   | StandardSchemaV1<Input, Output>
   | StandardJSONSchemaV1<Input, Output>;
 
+/**
+ * Extract the input type from a {@link DefinitionSchema} or `undefined` when
+ * no schema is present. Used by definition helpers to infer payload types
+ * from `inputSchema` without requiring an explicit generic.
+ *
+ * @example
+ * ```ts
+ * import type { InferSchemaInput } from 'weft';
+ * import { z } from 'zod';
+ *
+ * const schema = z.object({ id: z.string() });
+ * type Input = InferSchemaInput<typeof schema>;
+ * const value: Input = { id: 'order-1' };
+ * void value;
+ * ```
+ */
+export type InferSchemaInput<TSchema> =
+  TSchema extends StandardTypedV1<infer Input, unknown> ? Input : never;
+
+/**
+ * Extract the output type from a {@link DefinitionSchema} or `undefined` when
+ * no schema is present. Used by definition helpers to infer payload types
+ * from `outputSchema` without requiring an explicit generic.
+ *
+ * @example
+ * ```ts
+ * import type { InferSchemaOutput } from 'weft';
+ * import { z } from 'zod';
+ *
+ * const schema = z.object({ id: z.string() });
+ * type Output = InferSchemaOutput<typeof schema>;
+ * const value: Output = { id: 'order-1' };
+ * void value;
+ * ```
+ */
+export type InferSchemaOutput<TSchema> =
+  TSchema extends StandardTypedV1<unknown, infer Output> ? Output : never;
+
 type StandardMetadataRecord = {
   jsonSchema?: unknown;
   validate?: unknown;

@@ -94,12 +94,12 @@ export function buildSseChannel(
  */
 export function buildWebSocketMessages(
   operation: ErasedOperation,
-  zodToJsonSchema: (schema: z.ZodType) => Record<string, unknown>,
+  definitionSchemaToJsonSchema: (schema: z.ZodType) => Record<string, unknown>,
 ): Record<string, Record<string, unknown>> {
   const names = webSocketMessageNames(operation);
-  const inputSchema = zodToJsonSchema(operation.inputSchema);
-  const outputSchema = zodToJsonSchema(operation.outputSchema);
-  const eventSchema = eventJsonSchema(operation, zodToJsonSchema);
+  const inputSchema = definitionSchemaToJsonSchema(operation.inputSchema);
+  const outputSchema = definitionSchemaToJsonSchema(operation.outputSchema);
+  const eventSchema = eventJsonSchema(operation, definitionSchemaToJsonSchema);
 
   return {
     [names.subscribeRequest]: {
@@ -163,10 +163,10 @@ export function buildWebSocketMessages(
  */
 export function buildSseMessages(
   operation: ErasedOperation,
-  zodToJsonSchema: (schema: z.ZodType) => Record<string, unknown>,
+  definitionSchemaToJsonSchema: (schema: z.ZodType) => Record<string, unknown>,
 ): Record<string, Record<string, unknown>> {
   const names = sseMessageNames(operation);
-  const logicalEventSchema = eventJsonSchema(operation, zodToJsonSchema);
+  const logicalEventSchema = eventJsonSchema(operation, definitionSchemaToJsonSchema);
 
   return {
     [names.tokenEvent]: {
@@ -368,10 +368,10 @@ function jsonRpcErrorPayload(): unknown {
 
 function eventJsonSchema(
   operation: ErasedOperation,
-  zodToJsonSchema: (schema: z.ZodType) => Record<string, unknown>,
+  definitionSchemaToJsonSchema: (schema: z.ZodType) => Record<string, unknown>,
 ): Record<string, unknown> {
   if (operation.eventSchema === undefined) return { type: 'object' };
-  return zodToJsonSchema(operation.eventSchema);
+  return definitionSchemaToJsonSchema(operation.eventSchema);
 }
 
 function jsonPointerEscape(value: string): string {

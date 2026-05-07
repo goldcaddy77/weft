@@ -1,4 +1,5 @@
 import type { TenantContext } from '../tenant.ts';
+import { validateDefinitionSchemaMetadata, type DefinitionSchema } from './definition-schema.ts';
 import type { WorkflowDefinition } from './workflow-function.ts';
 
 // ---------------------------------------------------------------------------
@@ -75,6 +76,12 @@ export interface ScheduleDefinition<TInput = unknown> {
   id?: string;
   overlapPolicy?: ScheduleOverlapPolicy;
   backfill?: boolean;
+  /**
+   * Optional Standard Schema validator describing the input passed to the
+   * triggered workflow. Validated for metadata shape only at definition time;
+   * runtime validation happens at the cron-driven start boundary.
+   */
+  inputSchema?: DefinitionSchema<unknown, TInput>;
 }
 
 /**
@@ -90,6 +97,14 @@ export interface ScheduleDefinition<TInput = unknown> {
 export function schedule<TInput>(
   definition: ScheduleDefinition<TInput>,
 ): ScheduleDefinition<TInput> {
+  if (definition.inputSchema !== undefined) {
+    const workflowName =
+      typeof definition.workflow === 'string' ? definition.workflow : definition.workflow.name;
+    validateDefinitionSchemaMetadata(
+      definition.inputSchema,
+      `schedule("${workflowName}").inputSchema`,
+    );
+  }
   return definition;
 }
 

@@ -1,3 +1,7 @@
+import {
+  validateDefinitionSchemaMetadata,
+  type DefinitionSchema,
+} from '../core/types/definition-schema.ts';
 import type { ToolDefinition } from './agent/types.ts';
 
 /** @internal Brand string for runtime identification of AgentDefinition objects. */
@@ -37,6 +41,10 @@ export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   tools?: AgentToolDefinition[];
   maxTurns?: number;
   description?: string;
+  /** Optional input schema metadata for introspection; registration validates metadata shape only. */
+  inputSchema?: DefinitionSchema<unknown, TInput>;
+  /** Optional output schema metadata for introspection; registration validates metadata shape only. */
+  outputSchema?: DefinitionSchema<unknown, TOutput>;
   /** @internal Phantom field to carry the input type parameter. */
   readonly _inputType?: TInput;
   /** @internal Phantom field to carry the output type parameter. */
@@ -135,6 +143,10 @@ export interface AgentDefinitionOptions<TInput = unknown, TOutput = unknown> {
   tools?: AgentToolDefinition[];
   maxTurns?: number;
   description?: string;
+  /** Optional Standard Schema validator describing the agent's input payload. */
+  inputSchema?: DefinitionSchema<unknown, TInput>;
+  /** Optional Standard Schema validator describing the agent's output payload. */
+  outputSchema?: DefinitionSchema<unknown, TOutput>;
   /** @internal Phantom field to carry the input type parameter. */
   readonly _inputType?: TInput;
   /** @internal Phantom field to carry the output type parameter. */
@@ -185,6 +197,12 @@ export function isAgentDefinition(value: unknown): value is AgentDefinition {
 export function agent<TInput = unknown, TOutput = unknown>(
   options: AgentDefinitionOptions<TInput, TOutput>,
 ): AgentDefinition<TInput, TOutput> {
+  if (options.inputSchema !== undefined) {
+    validateDefinitionSchemaMetadata(options.inputSchema, `agent("${options.name}").inputSchema`);
+  }
+  if (options.outputSchema !== undefined) {
+    validateDefinitionSchemaMetadata(options.outputSchema, `agent("${options.name}").outputSchema`);
+  }
   return {
     ...options,
     version: options.version ?? '0.0.0',

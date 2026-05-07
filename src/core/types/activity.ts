@@ -1,4 +1,9 @@
-import type { DefinitionSchema } from './definition-schema.ts';
+import {
+  validateDefinitionSchemaMetadata,
+  type DefinitionSchema,
+  type InferSchemaInput,
+  type InferSchemaOutput,
+} from './definition-schema.ts';
 import type { Duration, RetryPolicy } from './retry-retention.ts';
 
 // ---------------------------------------------------------------------------
@@ -238,6 +243,23 @@ export function activity<TOutput>(
     execute: () => Promise<TOutput> | TOutput;
   },
 ): ActivityCallable<void, TOutput>;
+export function activity<
+  TInputSchema extends DefinitionSchema<unknown, unknown>,
+  TOutputSchema extends DefinitionSchema<unknown, unknown>,
+>(
+  options: Omit<
+    ActivityDefinition<InferSchemaInput<TInputSchema>, InferSchemaOutput<TOutputSchema>>,
+    'inputSchema' | 'outputSchema'
+  > & {
+    inputSchema: TInputSchema;
+    outputSchema: TOutputSchema;
+  },
+): ActivityCallable<InferSchemaInput<TInputSchema>, InferSchemaOutput<TOutputSchema>>;
+export function activity<TInputSchema extends DefinitionSchema<unknown, unknown>, TOutput>(
+  options: Omit<ActivityDefinition<InferSchemaInput<TInputSchema>, TOutput>, 'inputSchema'> & {
+    inputSchema: TInputSchema;
+  },
+): ActivityCallable<InferSchemaInput<TInputSchema>, TOutput>;
 export function activity<TInput, TOutput>(
   options: ActivityDefinition<TInput, TOutput>,
 ): ActivityCallable<TInput, TOutput>;
@@ -254,6 +276,19 @@ export function activity<TInput, TOutput>(
 
   if (!options.name) {
     throw new Error('activity() requires a named function or an options object with name.');
+  }
+
+  if (options.inputSchema !== undefined) {
+    validateDefinitionSchemaMetadata(
+      options.inputSchema,
+      `activity("${options.name}").inputSchema`,
+    );
+  }
+  if (options.outputSchema !== undefined) {
+    validateDefinitionSchemaMetadata(
+      options.outputSchema,
+      `activity("${options.name}").outputSchema`,
+    );
   }
 
   const fn = ((inputValue: TInput, activityContext?: ActivityContext) =>

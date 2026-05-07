@@ -1,5 +1,10 @@
 import type { ConstraintDefinition } from '../constraint.ts';
-import type { DefinitionSchema } from './definition-schema.ts';
+import {
+  validateDefinitionSchemaMetadata,
+  type DefinitionSchema,
+  type InferSchemaInput,
+  type InferSchemaOutput,
+} from './definition-schema.ts';
 import type { RetentionPolicy } from './retry-retention.ts';
 import type { SearchAttributeSchema } from './search-attributes.ts';
 import type { WorkflowContext } from './workflow-context.ts';
@@ -407,6 +412,26 @@ export interface WorkflowDefinitionOptions<
 export function workflow<TInput, TOutput>(
   handler: WorkflowFunction<TInput, TOutput>,
 ): WorkflowDefinition<TInput, TOutput>;
+export function workflow<
+  TInputSchema extends DefinitionSchema<unknown, unknown>,
+  TOutputSchema extends DefinitionSchema<unknown, unknown>,
+>(
+  options: Omit<
+    WorkflowDefinitionOptions<InferSchemaInput<TInputSchema>, InferSchemaOutput<TOutputSchema>>,
+    'inputSchema' | 'outputSchema'
+  > & {
+    inputSchema: TInputSchema;
+    outputSchema: TOutputSchema;
+  },
+): WorkflowDefinition<InferSchemaInput<TInputSchema>, InferSchemaOutput<TOutputSchema>>;
+export function workflow<TInputSchema extends DefinitionSchema<unknown, unknown>, TOutput>(
+  options: Omit<
+    WorkflowDefinitionOptions<InferSchemaInput<TInputSchema>, TOutput>,
+    'inputSchema'
+  > & {
+    inputSchema: TInputSchema;
+  },
+): WorkflowDefinition<InferSchemaInput<TInputSchema>, TOutput>;
 export function workflow<TInput, TOutput>(
   options: WorkflowDefinitionOptions<TInput, TOutput>,
 ): WorkflowDefinition<TInput, TOutput>;
@@ -423,6 +448,19 @@ export function workflow<TInput, TOutput>(
 
   if (!definition.name) {
     throw new Error('workflow() requires a named function or an options object with name.');
+  }
+
+  if (definition.inputSchema !== undefined) {
+    validateDefinitionSchemaMetadata(
+      definition.inputSchema,
+      `workflow("${definition.name}").inputSchema`,
+    );
+  }
+  if (definition.outputSchema !== undefined) {
+    validateDefinitionSchemaMetadata(
+      definition.outputSchema,
+      `workflow("${definition.name}").outputSchema`,
+    );
   }
 
   return definition;

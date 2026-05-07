@@ -24,9 +24,10 @@
 
 import { z } from 'zod';
 
+import { definitionSchemaToJsonSchema } from '../core/types/definition-schema-to-json.ts';
 import { isDiscoverable } from './discovery-filter.ts';
 import { applyDiscoveryInfo, type DiscoveryInfo } from './discovery-info.ts';
-import { asPlainObject, compareStrings, zodToJsonSchema } from './json-schema-utilities.ts';
+import { asPlainObject, compareStrings } from './json-schema-utilities.ts';
 import { OpenRpcDocumentSchema } from './openrpc-document-schema.ts';
 import { buildOpenRpcComponentsErrors } from './openrpc-errors.ts';
 import {
@@ -172,7 +173,7 @@ function buildMethod(operation: ErasedOperation): OpenRpcMethod {
   const inputSchema = operation.inputSchema;
   const paramsSchema = zodObjectToJsonSchema(inputSchema, operation.unknownKeyPolicy.jsonRpc);
   const descriptors = buildContentDescriptors(paramsSchema);
-  const resultSchema = zodToJsonSchema(operation.outputSchema);
+  const resultSchema = definitionSchemaToJsonSchema(operation.outputSchema);
 
   const method: OpenRpcMethod = {
     name: operation.name,
@@ -197,7 +198,7 @@ function buildDiscoverMethod(): OpenRpcMethod {
     params: [],
     result: {
       name: 'openRpcDocument',
-      schema: zodToJsonSchema(OpenRpcDocumentSchema),
+      schema: definitionSchemaToJsonSchema(OpenRpcDocumentSchema),
       required: true,
     },
     errors: buildUniversalErrorReferences(),
@@ -239,7 +240,7 @@ function zodObjectToJsonSchema(
   schema: z.ZodObject,
   jsonRpcPolicy: 'reject' | 'strip' | 'passthrough',
 ): Record<string, unknown> {
-  const base = zodToJsonSchema(schema);
+  const base = definitionSchemaToJsonSchema(schema);
   return {
     ...base,
     additionalProperties: jsonRpcPolicy !== 'reject',
