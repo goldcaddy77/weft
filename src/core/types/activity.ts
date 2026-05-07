@@ -1,4 +1,4 @@
-import type { DefinitionSchema, InferSchemaInput, InferSchemaOutput } from './definition-schema.ts';
+import type { DefinitionSchema, InferSchemaOutput } from './definition-schema.ts';
 import type { Duration, RetryPolicy } from './retry-retention.ts';
 
 // ---------------------------------------------------------------------------
@@ -243,13 +243,13 @@ export function activity<
   TOutputSchema extends DefinitionSchema<unknown, unknown>,
 >(
   options: Omit<
-    ActivityDefinition<InferSchemaOutput<TInputSchema>, InferSchemaInput<TOutputSchema>>,
+    ActivityDefinition<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>>,
     'inputSchema' | 'outputSchema'
   > & {
     inputSchema: TInputSchema;
     outputSchema: TOutputSchema;
   },
-): ActivityCallable<InferSchemaOutput<TInputSchema>, InferSchemaInput<TOutputSchema>>;
+): ActivityCallable<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>>;
 export function activity<TInputSchema extends DefinitionSchema<unknown, unknown>, TOutput>(
   options: Omit<ActivityDefinition<InferSchemaOutput<TInputSchema>, TOutput>, 'inputSchema'> & {
     inputSchema: TInputSchema;

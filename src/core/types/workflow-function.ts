@@ -1,5 +1,5 @@
 import type { ConstraintDefinition } from '../constraint.ts';
-import type { DefinitionSchema, InferSchemaInput, InferSchemaOutput } from './definition-schema.ts';
+import type { DefinitionSchema, InferSchemaOutput } from './definition-schema.ts';
 import type { RetentionPolicy } from './retry-retention.ts';
 import type { SearchAttributeSchema } from './search-attributes.ts';
 import type { WorkflowContext } from './workflow-context.ts';
@@ -412,13 +412,13 @@ export function workflow<
   TOutputSchema extends DefinitionSchema<unknown, unknown>,
 >(
   options: Omit<
-    WorkflowDefinitionOptions<InferSchemaOutput<TInputSchema>, InferSchemaInput<TOutputSchema>>,
+    WorkflowDefinitionOptions<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>>,
     'inputSchema' | 'outputSchema'
   > & {
     inputSchema: TInputSchema;
     outputSchema: TOutputSchema;
   },
-): WorkflowDefinition<InferSchemaOutput<TInputSchema>, InferSchemaInput<TOutputSchema>>;
+): WorkflowDefinition<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>>;
 export function workflow<TInputSchema extends DefinitionSchema<unknown, unknown>, TOutput>(
   options: Omit<
     WorkflowDefinitionOptions<InferSchemaOutput<TInputSchema>, TOutput>,

@@ -167,3 +167,65 @@ const _check_activity_transform: Equals<
   ActivityCallable<number, number>
 > = true;
 void _check_activity_transform;
+
+// ---------------------------------------------------------------------------
+// Transform on outputSchema — caller-visible result is the schema's *output*
+// (post-parse) type. This guards against regressing back to using
+// `InferSchemaInput<TOutputSchema>` for the definition's TOutput position.
+// ---------------------------------------------------------------------------
+
+const transformedOutputSchema = z.string().transform(() => 42);
+
+const updateTransformOutput = update('compute', {
+  inputSchema: z.object({ x: z.number() }),
+  outputSchema: transformedOutputSchema,
+});
+const _check_update_transform_output: Equals<
+  typeof updateTransformOutput,
+  UpdateDefinition<{ x: number }, number>
+> = true;
+void _check_update_transform_output;
+
+const queryTransformOutputOnly = query('count', { outputSchema: transformedOutputSchema });
+const _check_query_transform_output_only: Equals<
+  typeof queryTransformOutputOnly,
+  QueryDefinition<void, number>
+> = true;
+void _check_query_transform_output_only;
+
+const queryTransformBoth = query('count', {
+  inputSchema: z.object({ kind: z.string() }),
+  outputSchema: transformedOutputSchema,
+});
+const _check_query_transform_both: Equals<
+  typeof queryTransformBoth,
+  QueryDefinition<{ kind: string }, number>
+> = true;
+void _check_query_transform_both;
+
+const workflowTransformOutput = workflow({
+  name: 'project',
+  inputSchema: z.object({ x: z.number() }),
+  outputSchema: transformedOutputSchema,
+  handler: async function* (_ctx, _input) {
+    yield;
+    return 42;
+  },
+});
+const _check_workflow_transform_output: Equals<
+  typeof workflowTransformOutput,
+  WorkflowDefinition<{ x: number }, number>
+> = true;
+void _check_workflow_transform_output;
+
+const activityTransformOutput = activity({
+  name: 'project',
+  inputSchema: z.object({ x: z.number() }),
+  outputSchema: transformedOutputSchema,
+  execute: async (_input) => 42,
+});
+const _check_activity_transform_output: Equals<
+  typeof activityTransformOutput,
+  ActivityCallable<{ x: number }, number>
+> = true;
+void _check_activity_transform_output;

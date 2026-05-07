@@ -63,4 +63,16 @@ describe('query()', () => {
     expect(handle.inputSchema).toBe(inputSchema);
     expect(handle.outputSchema).toBe(outputSchema);
   });
+
+  it('rejects an invalid outputSchema', () => {
+    expect(() => query('status', { outputSchema: { not: 'a schema' } as never })).toThrow(
+      /Standard Schema-compatible/,
+    );
+  });
+
+  it('rejects an invalid inputSchema', () => {
+    expect(() => query('status', { inputSchema: { not: 'a schema' } as never })).toThrow(
+      /Standard Schema-compatible/,
+    );
+  });
 });

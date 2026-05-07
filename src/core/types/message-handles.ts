@@ -1,7 +1,6 @@
 import {
   validateDefinitionSchemaMetadata,
   type DefinitionSchema,
-  type InferSchemaInput,
   type InferSchemaOutput,
 } from './definition-schema.ts';
 
@@ -146,6 +145,9 @@ export function signal(name: string, options?: SignalOptions<unknown>): SignalDe
   if (options?.inputSchema !== undefined) {
     validateDefinitionSchemaMetadata(options.inputSchema, `signal("${name}").inputSchema`);
   }
+  // Phantom `_input` only exists in type space (it's a `_input?:` field that
+  // is never written), so casting from the structural literal to
+  // `SignalDefinition<unknown>` is the correct narrowing here.
   return {
     name,
     ...(options?.inputSchema !== undefined ? { inputSchema: options.inputSchema } : {}),
@@ -201,7 +203,7 @@ export function update<
 >(
   name: string,
   options: { inputSchema: TInputSchema; outputSchema: TOutputSchema },
-): UpdateDefinition<InferSchemaOutput<TInputSchema>, InferSchemaInput<TOutputSchema>>;
+): UpdateDefinition<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>>;
 export function update<TInputSchema extends DefinitionSchema<unknown, unknown>>(
   name: string,
   options: { inputSchema: TInputSchema },
@@ -217,6 +219,9 @@ export function update(name: string, options?: UpdateOptions<unknown>): UpdateDe
   if (options?.outputSchema !== undefined) {
     validateDefinitionSchemaMetadata(options.outputSchema, `update("${name}").outputSchema`);
   }
+  // Phantom `_input` / `_output` only exist in type space; the structural
+  // literal satisfies every overload's return shape, so narrowing via `as`
+  // is the correct escape hatch.
   return {
     name,
     ...(options?.inputSchema !== undefined ? { inputSchema: options.inputSchema } : {}),
@@ -272,11 +277,11 @@ export function query<
 >(
   name: string,
   options: { readonly inputSchema: TInputSchema; readonly outputSchema: TOutputSchema },
-): QueryDefinition<InferSchemaOutput<TInputSchema>, InferSchemaInput<TOutputSchema>>;
+): QueryDefinition<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>>;
 export function query<TOutputSchema extends DefinitionSchema<unknown, unknown>>(
   name: string,
   options: { readonly outputSchema: TOutputSchema },
-): QueryDefinition<void, InferSchemaInput<TOutputSchema>>;
+): QueryDefinition<void, InferSchemaOutput<TOutputSchema>>;
 export function query<TInputSchema extends DefinitionSchema<unknown, unknown>>(
   name: string,
   options: { readonly inputSchema: TInputSchema },

@@ -65,12 +65,28 @@ describe('validateStandardSchema', () => {
   });
 
   it('throws StandardSchemaValidationError on failure', async () => {
-    expect(
+    await expect(
       validateStandardSchema(stringSchema, 123, {
         fieldName: 'payload',
         operation: 'weft.workflows.signal',
       }),
     ).rejects.toBeInstanceOf(StandardSchemaValidationError);
+  });
+
+  it('propagates async validator throws', async () => {
+    const throwingSchema: StandardSchemaV1<unknown, number> = {
+      '~standard': {
+        version: 1,
+        vendor: 'weft-test',
+        validate: async () => {
+          throw new Error('validator blew up');
+        },
+      },
+    };
+
+    await expect(validateStandardSchema(throwingSchema, 1, { fieldName: 'input' })).rejects.toThrow(
+      /validator blew up/,
+    );
   });
 
   it('attaches fieldName, operation, and issues on the thrown error', async () => {
@@ -168,7 +184,7 @@ describe('validateStandardSchema', () => {
       },
     };
 
-    expect(
+    await expect(
       validateStandardSchema(jsonSchemaOnly, {}, { fieldName: 'input' }),
     ).rejects.toBeInstanceOf(TypeError);
   });
@@ -185,7 +201,7 @@ describe('validateStandardSchema', () => {
       },
     };
 
-    expect(
+    await expect(
       validateStandardSchema(jsonSchemaOnly, {}, { fieldName: 'workflow.input' }),
     ).rejects.toThrow(/workflow\.input/);
   });
@@ -210,5 +226,9 @@ describe('formatStandardSchemaIssues', () => {
   it('omits the leading colon for root-level issues', () => {
     const formatted = formatStandardSchemaIssues([{ message: 'bad payload', path: '' }]);
     expect(formatted).toBe('bad payload');
+  });
+
+  it('returns an empty string when the issue list is empty', () => {
+    expect(formatStandardSchemaIssues([])).toBe('');
   });
 });
