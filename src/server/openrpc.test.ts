@@ -14,6 +14,7 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 import { z } from 'zod';
 
+import type { StandardJSONSchemaV1 } from '../core/types/definition-schema.ts';
 import { OpenRpcDocumentSchema } from './openrpc-document-schema.ts';
 import { generateOpenRpcDocument } from './openrpc.ts';
 import {
@@ -53,6 +54,23 @@ function createRegistryDouble(operations: ReadonlyArray<RegistrableOperation>): 
     },
     list() {
       return erased;
+    },
+  };
+}
+
+function makeDirectionalSchema(
+  vendor: string,
+  inputShape: Record<string, unknown>,
+  outputShape: Record<string, unknown>,
+): StandardJSONSchemaV1 {
+  return {
+    '~standard': {
+      version: 1,
+      vendor,
+      jsonSchema: {
+        input: () => inputShape,
+        output: () => outputShape,
+      },
     },
   };
 }
@@ -612,6 +630,32 @@ describe('generateOpenRpcDocument — Codex regressions', () => {
     expect(methods).toHaveLength(1);
     expect(methods[0]!['name']).toBe('rpc.discover');
     expect(methods[0]!['summary']).toBe('custom discover');
+  });
+
+  it('uses output-direction JSON Schema for result descriptors', () => {
+    const outputSchema = makeDirectionalSchema(
+      'openrpc-output-direction',
+      { type: 'object', properties: { beforeParse: { type: 'string' } } },
+      { type: 'string' },
+    );
+    const registry = createRegistryDouble([
+      makeOp({
+        name: 'weft.directional.result',
+        inputSchema: z.object({ id: z.string() }),
+        outputSchema: outputSchema as unknown as RegistrableOperation['outputSchema'],
+      }),
+    ]);
+
+    const document = generateOpenRpcDocument({
+      registry,
+      transports: ['http'],
+    });
+    const method = (document['methods'] as Array<Record<string, unknown>>).find(
+      (candidate) => candidate['name'] === 'weft.directional.result',
+    )!;
+    const result = method['result'] as Record<string, unknown>;
+
+    expect(result['schema']).toEqual({ type: 'string' });
   });
 
   it('throws when a registry entry violates the object-input invariant at runtime', () => {

@@ -50,7 +50,7 @@ export function extractComponentsSchemas(registry: OperationRegistry): OpenApiSc
     for (const [slot, schema] of slots) {
       if (schema === undefined) continue;
 
-      const jsonSchema = definitionSchemaToJsonSchema(schema);
+      const jsonSchema = definitionSchemaToJsonSchema(schema, directionForSlot(slot));
       const canonical = canonicalJson(jsonSchema);
       const owner = { operationName: operation.name, slot };
       operationSlotToCanonical.set(ownerKey(owner.operationName, owner.slot), canonical);
@@ -114,6 +114,10 @@ export function extractComponentsSchemas(registry: OperationRegistry): OpenApiSc
 
 function ownerKey(operationName: string, slot: OpenApiSchemaSlot): string {
   return `${operationName}:${slot}`;
+}
+
+function directionForSlot(slot: OpenApiSchemaSlot): 'input' | 'output' {
+  return slot === 'Input' ? 'input' : 'output';
 }
 
 function compareOwners(left: Owner, right: Owner): number {

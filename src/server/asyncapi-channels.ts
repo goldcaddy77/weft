@@ -1,5 +1,6 @@
 import type { z } from 'zod';
 
+import type { DefinitionSchemaDirection } from '../core/types/definition-schema-to-json.ts';
 import { compareStrings } from './json-schema-utilities.ts';
 import type { ErasedOperation } from './operation-catalog.ts';
 
@@ -94,11 +95,14 @@ export function buildSseChannel(
  */
 export function buildWebSocketMessages(
   operation: ErasedOperation,
-  definitionSchemaToJsonSchema: (schema: z.ZodType) => Record<string, unknown>,
+  definitionSchemaToJsonSchema: (
+    schema: z.ZodType,
+    direction?: DefinitionSchemaDirection,
+  ) => Record<string, unknown>,
 ): Record<string, Record<string, unknown>> {
   const names = webSocketMessageNames(operation);
   const inputSchema = definitionSchemaToJsonSchema(operation.inputSchema);
-  const outputSchema = definitionSchemaToJsonSchema(operation.outputSchema);
+  const outputSchema = definitionSchemaToJsonSchema(operation.outputSchema, 'output');
   const eventSchema = eventJsonSchema(operation, definitionSchemaToJsonSchema);
 
   return {
@@ -163,7 +167,10 @@ export function buildWebSocketMessages(
  */
 export function buildSseMessages(
   operation: ErasedOperation,
-  definitionSchemaToJsonSchema: (schema: z.ZodType) => Record<string, unknown>,
+  definitionSchemaToJsonSchema: (
+    schema: z.ZodType,
+    direction?: DefinitionSchemaDirection,
+  ) => Record<string, unknown>,
 ): Record<string, Record<string, unknown>> {
   const names = sseMessageNames(operation);
   const logicalEventSchema = eventJsonSchema(operation, definitionSchemaToJsonSchema);
@@ -368,10 +375,13 @@ function jsonRpcErrorPayload(): unknown {
 
 function eventJsonSchema(
   operation: ErasedOperation,
-  definitionSchemaToJsonSchema: (schema: z.ZodType) => Record<string, unknown>,
+  definitionSchemaToJsonSchema: (
+    schema: z.ZodType,
+    direction?: DefinitionSchemaDirection,
+  ) => Record<string, unknown>,
 ): Record<string, unknown> {
   if (operation.eventSchema === undefined) return { type: 'object' };
-  return definitionSchemaToJsonSchema(operation.eventSchema);
+  return definitionSchemaToJsonSchema(operation.eventSchema, 'output');
 }
 
 function jsonPointerEscape(value: string): string {

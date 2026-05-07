@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { z } from 'zod';
 
+import type { StandardJSONSchemaV1 } from '../core/types/definition-schema.ts';
 import { extractComponentsSchemas } from './openapi-schemas.ts';
 import { createOperationRegistry, type RegistrableOperation } from './operation-catalog.ts';
 import { defineOperation } from './operation-registry.ts';
@@ -50,6 +51,23 @@ function makeOperation(options: {
 
 function isReference(value: unknown): value is { readonly $ref: string } {
   return value !== null && typeof value === 'object' && '$ref' in value;
+}
+
+function makeDirectionalSchema(
+  vendor: string,
+  inputShape: Record<string, unknown>,
+  outputShape: Record<string, unknown>,
+): StandardJSONSchemaV1 {
+  return {
+    '~standard': {
+      version: 1,
+      vendor,
+      jsonSchema: {
+        input: () => inputShape,
+        output: () => outputShape,
+      },
+    },
+  };
 }
 
 describe('extractComponentsSchemas', () => {
@@ -148,5 +166,31 @@ describe('extractComponentsSchemas', () => {
     expect(helper.refFor('weft.events.beta', 'Event')).toEqual({
       $ref: '#/components/schemas/WeftEventsAlphaEvent',
     });
+  });
+
+  it('uses output-direction JSON Schema for Output and Event slots', () => {
+    const outputSchema = makeDirectionalSchema(
+      'output-slot-test',
+      { type: 'object', properties: { accepted: { type: 'boolean' } } },
+      { type: 'string' },
+    );
+    const eventSchema = makeDirectionalSchema(
+      'event-slot-test',
+      { type: 'object', properties: { sequence: { type: 'number' } } },
+      { type: 'integer' },
+    );
+    const registry = createOperationRegistry([
+      makeOperation({
+        name: 'weft.directional.stream',
+        inputSchema: z.object({ id: z.string() }),
+        outputSchema: outputSchema as unknown as z.ZodType,
+        eventSchema: eventSchema as unknown as z.ZodType,
+      }),
+    ]);
+
+    const helper = extractComponentsSchemas(registry);
+
+    expect(helper.refFor('weft.directional.stream', 'Output')).toEqual({ type: 'string' });
+    expect(helper.refFor('weft.directional.stream', 'Event')).toEqual({ type: 'integer' });
   });
 });

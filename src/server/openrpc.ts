@@ -173,7 +173,7 @@ function buildMethod(operation: ErasedOperation): OpenRpcMethod {
   const inputSchema = operation.inputSchema;
   const paramsSchema = zodObjectToJsonSchema(inputSchema, operation.unknownKeyPolicy.jsonRpc);
   const descriptors = buildContentDescriptors(paramsSchema);
-  const resultSchema = definitionSchemaToJsonSchema(operation.outputSchema);
+  const resultSchema = definitionSchemaToJsonSchema(operation.outputSchema, 'output');
 
   const method: OpenRpcMethod = {
     name: operation.name,

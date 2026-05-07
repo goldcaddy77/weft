@@ -339,9 +339,9 @@ export type DefinitionSchema<Input = unknown, Output = Input> =
  * transform runs. For a schema like `z.string().transform(s => s.length)`,
  * `InferSchemaInput` is `string`. Helpers in the codebase use this when they
  * want the wire-side / pre-validation type; for handler-side / post-validation
- * payloads, see {@link InferSchemaOutput}. Returns `never` for any schema not
- * carrying `~standard.types` markers (including `StandardJSONSchemaV1` and
- * untyped `StandardSchemaV1` values).
+ * payloads, see {@link InferSchemaOutput}. When a schema omits
+ * `~standard.types`, inference usually widens to `unknown`, so typed markers
+ * are required to preserve a concrete input type.
  *
  * @example
  * ```ts
@@ -361,9 +361,9 @@ export type InferSchemaInput<TSchema> =
  * Extract the schema's *output* type — what the validator produces after any
  * transform runs. For a schema like `z.string().transform(s => s.length)`,
  * `InferSchemaOutput` is `number`. The definition helpers use this for
- * handler-side payload types: handlers see the validated, parsed value.
- * Returns `never` for any schema not carrying `~standard.types` markers
- * (including `StandardJSONSchemaV1` and untyped `StandardSchemaV1` values).
+ * handler-side payload types: handlers see the validated, parsed value. When a
+ * schema omits `~standard.types`, inference usually widens to `unknown`, so
+ * typed markers are required to preserve a concrete output type.
  *
  * @example
  * ```ts

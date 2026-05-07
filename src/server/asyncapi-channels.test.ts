@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { z } from 'zod';
 
+import type { DefinitionSchemaDirection } from '../core/types/definition-schema-to-json.ts';
 import {
   buildOperationEntry,
   buildSseChannel,
@@ -10,7 +11,10 @@ import {
 import type { ErasedOperation } from './operation-catalog.ts';
 import { createLiveOperationRegistry } from './rest-bindings.ts';
 
-function definitionSchemaToJsonSchema(schema: z.ZodType): Record<string, unknown> {
+function definitionSchemaToJsonSchema(
+  schema: z.ZodType,
+  _direction?: DefinitionSchemaDirection,
+): Record<string, unknown> {
   const result: unknown = z.toJSONSchema(schema, {
     unrepresentable: 'any',
   });
@@ -133,6 +137,32 @@ describe('AsyncAPI channel builders', () => {
       'server-closed',
       'validation-failed',
     ]);
+  });
+
+  it('uses output-direction conversion for websocket output and event schemas', () => {
+    const subscription = operation('weft.workflows.events');
+    const calls: Array<{ schema: z.ZodType; direction: DefinitionSchemaDirection }> = [];
+
+    buildWebSocketMessages(subscription, (schema, direction = 'input') => {
+      calls.push({ schema, direction });
+      return { type: 'object' };
+    });
+
+    expect(calls).toContainEqual({ schema: subscription.inputSchema, direction: 'input' });
+    expect(calls).toContainEqual({ schema: subscription.outputSchema, direction: 'output' });
+    expect(calls).toContainEqual({ schema: subscription.eventSchema!, direction: 'output' });
+  });
+
+  it('uses output-direction conversion for SSE event schemas', () => {
+    const stream = operation('weft.workflows.streams.sse');
+    const calls: Array<{ schema: z.ZodType; direction: DefinitionSchemaDirection }> = [];
+
+    buildSseMessages(stream, (schema, direction = 'input') => {
+      calls.push({ schema, direction });
+      return { type: 'object' };
+    });
+
+    expect(calls).toContainEqual({ schema: stream.eventSchema!, direction: 'output' });
   });
 
   it('buildOperationEntry returns a channel reference and action', () => {

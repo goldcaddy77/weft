@@ -120,7 +120,8 @@ export interface SignalOptions<TInput = void> {
 /**
  * Create a typed workflow signal handle. When an `inputSchema` is supplied
  * via options, the payload type is inferred from the schema's
- * `~standard.types.input` marker — no explicit generic required.
+ * `~standard.types.output` marker — no explicit generic required, and
+ * transform schemas surface their parsed payload type.
  *
  * @example
  * ```ts
