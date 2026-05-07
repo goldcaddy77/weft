@@ -2,13 +2,13 @@
 
 A Bun-native durable execution engine.
 
-> _Weft_---the cross-threads in weaving that bind the warp together.
+> _Weft_—the cross-threads in weaving that bind the warp together.
 
 ## The Problem
 
-Imagine you're building an e-commerce checkout: charge the customer's credit card, reserve inventory, send a confirmation email, schedule shipping. What happens if your server crashes between step one and step two? The customer has been charged, but the inventory was never reserved. You can't just re-run the whole flow---you'd double-charge them.
+Imagine you're building an e-commerce checkout: charge the customer's credit card, reserve inventory, send a confirmation email, schedule shipping. What happens if your server crashes between step one and step two? The customer has been charged, but the inventory was never reserved. You can't just re-run the whole flow—you'd double-charge them.
 
-**Durable execution** solves this. You write a normal-looking function and the runtime guarantees it will complete---even if the process crashes and restarts a hundred times along the way. Each step is checkpointed so recovery picks up exactly where it stopped.
+**Durable execution** solves this. You write a normal-looking function and the runtime guarantees it will complete—even if the process crashes and restarts a hundred times along the way. Each step is checkpointed so recovery picks up exactly where it stopped.
 
 Temporal is the most prominent durable execution engine, built in 2019 with Go, gRPC, and Cassandra. It works. But we can do better with modern tools.
 
@@ -18,8 +18,8 @@ Weft runs async workflows to completion across crashes, retries, and arbitrary s
 
 It's built for two execution shapes that traditional workflow engines treat as second-class:
 
-- **Long-running business processes**---checkouts, onboarding flows, fulfillment pipelines---where a process crash mid-flight must not lose money or leave the system in a partial state.
-- **AI agent loops**---durable ReAct-style LLM execution where each tool call is a checkpoint boundary. Bring any provider; Weft drives the loop and survives crashes mid-conversation.
+- **Long-running business processes**—checkouts, onboarding flows, fulfillment pipelines—where a process crash mid-flight must not lose money or leave the system in a partial state.
+- **AI agent loops**—durable ReAct-style LLM execution where each tool call is a checkpoint boundary. Bring any provider; Weft drives the loop and survives crashes mid-conversation.
 
 ## Design Constraints
 
@@ -29,87 +29,74 @@ Weft is a ground-up rethink: what would durable execution look like if you desig
 - **Bun-native on the server.** `Bun.serve()`, `Bun.SQL`, `Bun.build()`, `bun:test`. The full Bun platform, not just "Node.js but faster."
 - **Single binary, every OS.** `bun build --compile` produces standalone executables for darwin-arm64, darwin-x64, linux-x64, linux-arm64, and windows-x64. One CI pipeline, six binaries, zero runtime dependencies.
 - **Runs in the browser.** The core engine (minus the server shell) runs in Web Workers with a Service Worker as its persistence backbone. Same workflow code, different environment.
-- **Agent-native.** Dynamic execution graphs, durable agent loops, human-in-the-loop oversight, and multi-agent coordination are built into the core---each tool call a checkpoint boundary, each conversation durable across crashes.
+- **Agent-native.** Dynamic execution graphs, durable agent loops, human-in-the-loop oversight, and multi-agent coordination are built into the core—each tool call a checkpoint boundary, each conversation durable across crashes.
 
 > [!IMPORTANT]
 > Workflows run in TypeScript on the engine; activities can run in any language via the `RemoteWorker` protocol. This split is intentional — the checkpoint model requires single-process generator state, so workflow code is TypeScript-only by design. See [ADR 0001](documentation/contributing/architecture-decisions/0001-workflows-typescript-only.md) for the design rationale.
 
 ## Hello, World
 
+The smallest useful Weft program has four moving pieces: a storage backend, a named activity, a named workflow, and a handle that waits for the result.
+
 ```typescript
-import {
-  Engine,
-  WorkflowAlreadyExistsError,
-  activity,
-  signal,
-  type WorkflowContext,
-  type WorkflowHandle,
-} from 'weft';
+import { Engine, activity, type WorkflowContext } from 'weft';
 import { SQLiteStorage } from 'weft/storage/sqlite';
 
-const engine = new Engine({ storage: new SQLiteStorage('./weft.db') });
-
-interface ReadmeWelcomeInput {
+type WelcomeInput = {
   name: string;
-}
+};
 
-interface ReadmeWelcomeOutput {
+type WelcomeOutput = {
   greeting: string;
   onboarded: boolean;
-}
+};
 
 declare module 'weft' {
   interface WorkflowRegistry {
-    readmeWelcome: { input: ReadmeWelcomeInput; output: ReadmeWelcomeOutput };
+    welcome: { input: WelcomeInput; output: WelcomeOutput };
   }
 
   interface ActivityTypes {
-    readmeFormatGreeting: (input: ReadmeWelcomeInput) => Promise<string>;
+    formatGreeting: (input: WelcomeInput) => Promise<string>;
   }
 }
 
-const readmeFormatGreeting = activity({
-  name: 'readmeFormatGreeting',
-  execute: async (input: ReadmeWelcomeInput) => `Hello, ${input.name}!`,
+const formatGreeting = activity({
+  name: 'formatGreeting',
+  execute: async ({ name }: WelcomeInput) => `Hello, ${name}!`,
 });
 
-engine.registerActivity(readmeFormatGreeting.name, readmeFormatGreeting);
+const engine = new Engine({ storage: new SQLiteStorage('./weft.db') });
 
-engine.register('readmeWelcome', async function* (ctx: WorkflowContext, user: ReadmeWelcomeInput) {
-  const greeting = yield* ctx.run('readmeFormatGreeting', { name: user.name });
-  yield* ctx.sleep('1s');
+engine.registerActivity(formatGreeting.name, formatGreeting);
+
+engine.register('welcome', async function* (context: WorkflowContext, input: WelcomeInput) {
+  const greeting = yield* context.run('formatGreeting', input);
+  yield* context.sleep('1s');
   return { greeting, onboarded: true };
 });
 
 await engine.recoverAll();
 
-const workflowId = 'readmeWelcome:steve';
-const workflowInput = { name: 'Steve' };
-let handle: WorkflowHandle;
-
-try {
-  handle = await engine.start('readmeWelcome', workflowInput, { id: workflowId });
-} catch (error) {
-  if (!(error instanceof WorkflowAlreadyExistsError)) throw error;
-  handle = await engine.resume(workflowId).catch(() => engine.getHandle(workflowId));
-}
-
+const handle = await engine.start('welcome', { name: 'Steve' });
 const result = await handle.result();
 // result is { greeting: "Hello, Steve!", onboarded: true }
 ```
 
-That's a complete durable workflow with a real recovery path. Checkpoints are written to `./weft.db` at every `yield*` boundary. `engine.recoverAll()` resumes workflows that were already running when this process started, and the stable `workflowId` prevents a rerun from silently creating a second workflow. If you call `engine.start()` without `options.id`, Weft generates a fresh `crypto.randomUUID()` and starts a new execution.
+That's the core loop: `engine.registerActivity()` gives side effects a durable dispatch name, `engine.register()` gives the workflow a durable type, every `yield*` is a checkpoint boundary, and `handle.result()` waits for the output. Checkpoints are written to `./weft.db`, so running workflows can survive process crashes.
+
+This example starts a new workflow execution each time it runs. In a long-lived process, register activities and workflows first, then call `engine.recoverAll()` during boot. For operations you may retry from another request or script, pass a stable `options.id` to `engine.start()` and resume that ID instead of starting a duplicate execution.
 
 > [!NOTE]
-> `MemoryStorage` (also exported from `weft`) is fine for tests and ephemeral scripts, but it lives in process memory---a crash takes the checkpoints with it. Use a persistent backend like `SQLiteStorage` whenever durability actually matters.
+> `MemoryStorage` (also exported from `weft`) is fine for tests and ephemeral scripts, but it lives in process memory—a crash takes the checkpoints with it. Use a persistent backend like `SQLiteStorage` whenever durability actually matters.
 
 ## How It Works
 
 Weft uses a **checkpoint model**, not a replay model. This is the single most important design decision and it shapes everything else.
 
-In a replay-based system (Temporal, Cadence), the workflow runtime re-executes your function from the beginning on every recovery, replaying recorded activity results to reconstruct state. That's why those systems demand strict determinism---no `Date.now()`, no `Math.random()`, no random control flow---and why they need separate sandboxes, bundlers, and version-pinning protocols.
+In a replay-based system (Temporal, Cadence), the workflow runtime re-executes your function from the beginning on every recovery, replaying recorded activity results to reconstruct state. That's why those systems demand strict determinism—no `Date.now()`, no `Math.random()`, no random control flow—and why they need separate sandboxes, bundlers, and version-pinning protocols.
 
-Weft does the opposite. At each `yield*`, the engine snapshots the workflow's current state---the values of local variables in scope at that boundary, plus the position in the generator---using `structuredClone` semantics, and writes that snapshot to storage. On recovery the engine reads the snapshot and resumes from the same boundary. Your code can use `Date.now()`, `Math.random()`, dynamic imports, anything---because nothing replays. The checkpoint is the source of truth for "where am I and what do I know."
+Weft does the opposite. At each `yield*`, the engine snapshots the workflow's current state—the values of local variables in scope at that boundary, plus the position in the generator—using `structuredClone` semantics, and writes that snapshot to storage. On recovery the engine reads the snapshot and resumes from the same boundary. Your code can use `Date.now()`, `Math.random()`, dynamic imports, anything—because nothing replays. The checkpoint is the source of truth for "where am I and what do I know."
 
 A few consequences fall out of this:
 
@@ -153,11 +140,11 @@ engine.register('checkout', async function* (ctx, order) {
 });
 ```
 
-If `scheduleShipping` fails, `sendConfirmation`'s result is recorded in the parent operation's cache entry before the error is thrown into the workflow. If the workflow catches and yields again (e.g., to retry shipping or compensate), the next checkpoint persists that entry---a resumed run reuses the confirmation result instead of sending a duplicate email. See the [parallel execution guide](documentation/guides/parallel-execution.md) for the precise failure-semantics contract, including the catch-and-yield requirement.
+If `scheduleShipping` fails, `sendConfirmation`'s result is recorded in the parent operation's cache entry before the error is thrown into the workflow. If the workflow catches and yields again (e.g., to retry shipping or compensate), the next checkpoint persists that entry—a resumed run reuses the confirmation result instead of sending a duplicate email. See the [parallel execution guide](documentation/guides/parallel-execution.md) for the precise failure-semantics contract, including the catch-and-yield requirement.
 
 ### Durable Timers and Signals
 
-Sleeps survive process restarts. Signals pause workflows for seconds, days, or weeks at no cost---the checkpoint just sits in storage.
+Sleeps survive process restarts. Signals pause workflows for seconds, days, or weeks at no cost—the checkpoint just sits in storage.
 
 ```typescript
 const approvalSignal = signal<{ approved: boolean }>('approval');
@@ -253,7 +240,7 @@ const handle = await engine.start('research', 'How did the 2026 Treasury auction
 const { messages, turnUsage } = await handle.result();
 ```
 
-Crash after 7 of 30 tool calls and the agent picks up at tool call 8---no replay, no re-execution of side effects.
+Crash after 7 of 30 tool calls and the agent picks up at tool call 8—no replay, no re-execution of side effects.
 
 ### Pluggable Storage
 
@@ -270,7 +257,7 @@ A small `Storage` interface over string keys and `Uint8Array` values: five requi
 - **`HTTPStorage`** (subpath `weft/storage/http`) for remote storage over Weft's HTTP storage routes
 - **`CompressedStorage`** wrapper for transparent `gzip` or `brotli` compression
 
-Bring your own backend by implementing the interface---five methods is enough.
+Bring your own backend by implementing the interface—five methods is enough.
 
 ### Server Mode
 
@@ -292,7 +279,7 @@ Endpoints under `/v1/` cover the full lifecycle: start workflows, list, signal, 
 
 ### Remote Workers
 
-Workers can connect to the server over WebSocket, pull tasks, execute activities, and report results back. The same activity code runs inline in development and remote in production---no API changes.
+Workers can connect to the server over WebSocket, pull tasks, execute activities, and report results back. The same activity code runs inline in development and remote in production—no API changes.
 
 ```typescript
 import { RemoteWorker } from 'weft';
@@ -307,7 +294,7 @@ await worker.start();
 
 ### Browser Support
 
-The core engine runs inside a Web Worker, with a Service Worker acting as the durable persistence layer over `IndexedDB`. Browser-compatible workflow logic ships across server and browser without modification---useful for offline-first apps that need durable client-side workflows. Activities, storage adapters, and other environment-bound pieces still need browser-safe implementations: use `IndexedDBStorage` or `WebExtensionStorage` instead of SQLite storage, swap server-only activities for `fetch`-based equivalents, and so on. See the [Service Worker guide](documentation/guides/service-worker.md) for the browser runtime wiring.
+The core engine runs inside a Web Worker, with a Service Worker acting as the durable persistence layer over `IndexedDB`. Browser-compatible workflow logic ships across server and browser without modification—useful for offline-first apps that need durable client-side workflows. Activities, storage adapters, and other environment-bound pieces still need browser-safe implementations: use `IndexedDBStorage` or `WebExtensionStorage` instead of SQLite storage, swap server-only activities for `fetch`-based equivalents, and so on. See the [Service Worker guide](documentation/guides/service-worker.md) for the browser runtime wiring.
 
 ### Multi-Tenancy
 
@@ -330,7 +317,7 @@ The [Multi-Tenancy guide](documentation/guides/multi-tenancy.md) covers tenant r
 
 ### Observability
 
-Built-in event system (`EventTarget`-based, so it composes with everything), W3C `traceparent` propagation, and OpenTelemetry-compatible metrics. Composable interceptors layer cross-cutting concerns---tracing, validation, encryption---without any of them knowing about each other.
+Built-in event system (`EventTarget`-based, so it composes with everything), W3C `traceparent` propagation, and OpenTelemetry-compatible metrics. Composable interceptors layer cross-cutting concerns—tracing, validation, encryption—without any of them knowing about each other.
 
 ```typescript
 import { createObservabilityInterceptors, createOpenTelemetryMetrics } from 'weft';
@@ -374,7 +361,7 @@ For chaos testing, `withChaos()` wraps activities with configurable transient fa
 
 ### Single-Binary Distribution
 
-`bun build --compile` produces standalone executables for darwin-arm64, darwin-x64, linux-x64, linux-arm64, and windows-x64. The engine, server, dashboard, and your workflow code embed into a single file with zero runtime dependencies---download, run, done.
+`bun build --compile` produces standalone executables for darwin-arm64, darwin-x64, linux-x64, linux-arm64, and windows-x64. The engine, server, dashboard, and your workflow code embed into a single file with zero runtime dependencies—download, run, done.
 
 ## Installation
 
