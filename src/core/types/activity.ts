@@ -1,4 +1,4 @@
-import type { DefinitionSchema } from './definition-schema.ts';
+import type { DefinitionSchema, InferSchemaOutput } from './definition-schema.ts';
 import type { Duration, RetryPolicy } from './retry-retention.ts';
 
 // ---------------------------------------------------------------------------
@@ -238,6 +238,23 @@ export function activity<TOutput>(
     execute: () => Promise<TOutput> | TOutput;
   },
 ): ActivityCallable<void, TOutput>;
+export function activity<
+  TInputSchema extends DefinitionSchema<unknown, unknown>,
+  TOutputSchema extends DefinitionSchema<unknown, unknown>,
+>(
+  options: Omit<
+    ActivityDefinition<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>>,
+    'inputSchema' | 'outputSchema'
+  > & {
+    inputSchema: TInputSchema;
+    outputSchema: TOutputSchema;
+  },
+): ActivityCallable<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>>;
+export function activity<TInputSchema extends DefinitionSchema<unknown, unknown>, TOutput>(
+  options: Omit<ActivityDefinition<InferSchemaOutput<TInputSchema>, TOutput>, 'inputSchema'> & {
+    inputSchema: TInputSchema;
+  },
+): ActivityCallable<InferSchemaOutput<TInputSchema>, TOutput>;
 export function activity<TInput, TOutput>(
   options: ActivityDefinition<TInput, TOutput>,
 ): ActivityCallable<TInput, TOutput>;
@@ -255,6 +272,10 @@ export function activity<TInput, TOutput>(
   if (!options.name) {
     throw new Error('activity() requires a named function or an options object with name.');
   }
+
+  // Schema metadata is validated at registration time by the activity registry
+  // (`src/core/activity-registry.ts`), not here. Holding off on construction-time
+  // validation keeps the helper transport-neutral and avoids double validation.
 
   const fn = ((inputValue: TInput, activityContext?: ActivityContext) =>
     options.execute(inputValue, activityContext)) as ActivityCallable<TInput, TOutput>;

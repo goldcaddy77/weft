@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { z } from 'zod';
 
+import type { DefinitionSchemaDirection } from '../core/types/definition-schema-to-json.ts';
 import {
   buildOperationEntry,
   buildSseChannel,
@@ -10,7 +11,10 @@ import {
 import type { ErasedOperation } from './operation-catalog.ts';
 import { createLiveOperationRegistry } from './rest-bindings.ts';
 
-function zodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
+function definitionSchemaToJsonSchema(
+  schema: z.ZodType,
+  _direction?: DefinitionSchemaDirection,
+): Record<string, unknown> {
   const result: unknown = z.toJSONSchema(schema, {
     unrepresentable: 'any',
   });
@@ -35,7 +39,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 describe('AsyncAPI channel builders', () => {
   it('buildWebSocketMessages returns all subscription message keys with operation prefixes', () => {
-    const messages = buildWebSocketMessages(operation('weft.workflows.events'), zodToJsonSchema);
+    const messages = buildWebSocketMessages(
+      operation('weft.workflows.events'),
+      definitionSchemaToJsonSchema,
+    );
 
     expect(Object.keys(messages).toSorted()).toEqual([
       'weft_workflows_events_errorFrame',
@@ -48,7 +55,10 @@ describe('AsyncAPI channel builders', () => {
   });
 
   it('buildSseMessages returns all stream message keys with operation prefixes', () => {
-    const messages = buildSseMessages(operation('weft.workflows.streams.sse'), zodToJsonSchema);
+    const messages = buildSseMessages(
+      operation('weft.workflows.streams.sse'),
+      definitionSchemaToJsonSchema,
+    );
 
     expect(Object.keys(messages).toSorted()).toEqual([
       'weft_workflows_streams_sse_doneEvent',
@@ -68,8 +78,8 @@ describe('AsyncAPI channel builders', () => {
 
   it('builds message payloads as JSON Schema objects', () => {
     const messages = {
-      ...buildWebSocketMessages(operation('weft.workflows.events'), zodToJsonSchema),
-      ...buildSseMessages(operation('weft.workflows.streams.sse'), zodToJsonSchema),
+      ...buildWebSocketMessages(operation('weft.workflows.events'), definitionSchemaToJsonSchema),
+      ...buildSseMessages(operation('weft.workflows.streams.sse'), definitionSchemaToJsonSchema),
     };
 
     for (const message of Object.values(messages)) {
@@ -87,7 +97,10 @@ describe('AsyncAPI channel builders', () => {
     // `mapTokenChunkToText` emits the raw `token` string verbatim. The
     // logical schema is preserved as `x-weft-event-schema` for clients
     // that need it.
-    const messages = buildSseMessages(operation('weft.workflows.streams.sse'), zodToJsonSchema);
+    const messages = buildSseMessages(
+      operation('weft.workflows.streams.sse'),
+      definitionSchemaToJsonSchema,
+    );
     const token = messages['weft_workflows_streams_sse_tokenEvent'] as {
       payload: Record<string, unknown>;
       'x-weft-event-schema': Record<string, unknown>;
@@ -107,7 +120,10 @@ describe('AsyncAPI channel builders', () => {
     // `validation-failed` (the engine-error / overflow cases collapse
     // into `server-closed` with a `fault` payload). Discovery docs that
     // promise reasons clients will never observe break codegen.
-    const messages = buildWebSocketMessages(operation('weft.workflows.events'), zodToJsonSchema);
+    const messages = buildWebSocketMessages(
+      operation('weft.workflows.events'),
+      definitionSchemaToJsonSchema,
+    );
     const terminated = messages['weft_workflows_events_terminated'] as
       | { payload: Record<string, unknown> }
       | undefined;
@@ -121,6 +137,32 @@ describe('AsyncAPI channel builders', () => {
       'server-closed',
       'validation-failed',
     ]);
+  });
+
+  it('uses output-direction conversion for websocket output and event schemas', () => {
+    const subscription = operation('weft.workflows.events');
+    const calls: Array<{ schema: z.ZodType; direction: DefinitionSchemaDirection }> = [];
+
+    buildWebSocketMessages(subscription, (schema, direction = 'input') => {
+      calls.push({ schema, direction });
+      return { type: 'object' };
+    });
+
+    expect(calls).toContainEqual({ schema: subscription.inputSchema, direction: 'input' });
+    expect(calls).toContainEqual({ schema: subscription.outputSchema, direction: 'output' });
+    expect(calls).toContainEqual({ schema: subscription.eventSchema!, direction: 'output' });
+  });
+
+  it('uses output-direction conversion for SSE event schemas', () => {
+    const stream = operation('weft.workflows.streams.sse');
+    const calls: Array<{ schema: z.ZodType; direction: DefinitionSchemaDirection }> = [];
+
+    buildSseMessages(stream, (schema, direction = 'input') => {
+      calls.push({ schema, direction });
+      return { type: 'object' };
+    });
+
+    expect(calls).toContainEqual({ schema: stream.eventSchema!, direction: 'output' });
   });
 
   it('buildOperationEntry returns a channel reference and action', () => {

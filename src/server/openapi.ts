@@ -8,9 +8,10 @@
  * @module server/openapi
  */
 
+import { definitionSchemaToJsonSchema } from '../core/types/definition-schema-to-json.ts';
 import { isDiscoverable } from './discovery-filter.ts';
 import { applyDiscoveryInfo, type DiscoveryInfo } from './discovery-info.ts';
-import { asPlainObject, compareStrings, zodToJsonSchema } from './json-schema-utilities.ts';
+import { asPlainObject, compareStrings } from './json-schema-utilities.ts';
 import { buildErrorResponses, ERROR_SCHEMA } from './openapi-error-responses.ts';
 import { extractComponentsSchemas, type OpenApiSchemaHelper } from './openapi-schemas.ts';
 import type { ErasedOperation, OperationRegistry } from './operation-catalog.ts';
@@ -88,7 +89,7 @@ function inputSourceEntries(binding: UnknownRestBinding): Array<[string, ParamSo
 }
 
 function inputJsonSchema(operation: ErasedOperation): OpenApiSchema {
-  return zodToJsonSchema(operation.inputSchema);
+  return definitionSchemaToJsonSchema(operation.inputSchema);
 }
 
 function fieldSchema(operation: ErasedOperation, field: string): OpenApiSchema {

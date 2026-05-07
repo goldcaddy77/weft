@@ -1,5 +1,5 @@
 import type { ConstraintDefinition } from '../constraint.ts';
-import type { DefinitionSchema } from './definition-schema.ts';
+import type { DefinitionSchema, InferSchemaOutput } from './definition-schema.ts';
 import type { RetentionPolicy } from './retry-retention.ts';
 import type { SearchAttributeSchema } from './search-attributes.ts';
 import type { WorkflowContext } from './workflow-context.ts';
@@ -407,6 +407,26 @@ export interface WorkflowDefinitionOptions<
 export function workflow<TInput, TOutput>(
   handler: WorkflowFunction<TInput, TOutput>,
 ): WorkflowDefinition<TInput, TOutput>;
+export function workflow<
+  TInputSchema extends DefinitionSchema<unknown, unknown>,
+  TOutputSchema extends DefinitionSchema<unknown, unknown>,
+>(
+  options: Omit<
+    WorkflowDefinitionOptions<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>>,
+    'inputSchema' | 'outputSchema'
+  > & {
+    inputSchema: TInputSchema;
+    outputSchema: TOutputSchema;
+  },
+): WorkflowDefinition<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>>;
+export function workflow<TInputSchema extends DefinitionSchema<unknown, unknown>, TOutput>(
+  options: Omit<
+    WorkflowDefinitionOptions<InferSchemaOutput<TInputSchema>, TOutput>,
+    'inputSchema'
+  > & {
+    inputSchema: TInputSchema;
+  },
+): WorkflowDefinition<InferSchemaOutput<TInputSchema>, TOutput>;
 export function workflow<TInput, TOutput>(
   options: WorkflowDefinitionOptions<TInput, TOutput>,
 ): WorkflowDefinition<TInput, TOutput>;
@@ -424,6 +444,11 @@ export function workflow<TInput, TOutput>(
   if (!definition.name) {
     throw new Error('workflow() requires a named function or an options object with name.');
   }
+
+  // Schema metadata is validated at registration time
+  // (`src/core/engine/registration.ts`), not here. Keeping the helper as a
+  // pure constructor avoids double validation and the helper-vs-registration
+  // surface mismatch the previous version had.
 
   return definition;
 }

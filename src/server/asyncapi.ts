@@ -4,6 +4,7 @@
  * @module server/asyncapi
  */
 
+import { definitionSchemaToJsonSchema } from '../core/types/definition-schema-to-json.ts';
 import {
   buildOperationEntry,
   buildSseChannel,
@@ -13,12 +14,7 @@ import {
 } from './asyncapi-channels.ts';
 import { isDiscoverable } from './discovery-filter.ts';
 import { applyDiscoveryInfo, type DiscoveryInfo } from './discovery-info.ts';
-import {
-  compareStrings,
-  isPlainObject,
-  normalizeJsonObject,
-  zodToJsonSchema,
-} from './json-schema-utilities.ts';
+import { compareStrings, isPlainObject, normalizeJsonObject } from './json-schema-utilities.ts';
 import { canonicalJson } from './openapi-canonical-json.ts';
 import type { ErasedOperation, OperationRegistry } from './operation-catalog.ts';
 import { createLiveRestBindings, type UnknownRestBinding } from './rest-bindings.ts';
@@ -81,8 +77,8 @@ export function generateAsyncApiDocument(options: AsyncApiOptions): Record<strin
         : buildSseChannel(operation, sseAddressByOperationName.get(operation.name));
     const operationMessages =
       operation.kind === 'subscription'
-        ? buildWebSocketMessages(operation, zodToJsonSchema)
-        : buildSseMessages(operation, zodToJsonSchema);
+        ? buildWebSocketMessages(operation, definitionSchemaToJsonSchema)
+        : buildSseMessages(operation, definitionSchemaToJsonSchema);
 
     for (const [messageName, message] of Object.entries(operationMessages).toSorted(
       ([left], [right]) => compareStrings(left, right),

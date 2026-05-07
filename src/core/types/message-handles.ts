@@ -1,9 +1,16 @@
+import {
+  validateDefinitionSchemaMetadata,
+  type DefinitionSchema,
+  type InferSchemaOutput,
+} from './definition-schema.ts';
+
 // ---------------------------------------------------------------------------
 // Message-shaped workflow handles
 // ---------------------------------------------------------------------------
 
 /**
- * Typed handle for a workflow signal. The runtime value is only `{ name }`;
+ * Typed handle for a workflow signal. The runtime value is `{ name }` plus an
+ * optional `inputSchema` carried for introspection and boundary validation;
  * the generic parameter exists to carry the payload type through call sites.
  *
  * @example
@@ -19,12 +26,14 @@
  */
 export interface SignalDefinition<TInput = void> {
   readonly name: string;
+  readonly inputSchema?: DefinitionSchema<unknown, TInput>;
   readonly _input?: (input: TInput) => void;
 }
 
 /**
  * Typed handle for a workflow update. Updates accept an input payload and
- * return a response to the caller.
+ * return a response to the caller. Optional `inputSchema` and `outputSchema`
+ * carry validation metadata to the boundary.
  *
  * @example
  * ```ts
@@ -39,18 +48,21 @@ export interface SignalDefinition<TInput = void> {
  * const approveOrder: UpdateDefinition<{ orderId: string }, { status: string }> =
  *   update('approveOrder');
  * const result = await handle.update(approveOrder, { orderId: 'ord_123' });
- * console.log(result.status);
+ * void result.status;
  * ```
  */
 export interface UpdateDefinition<TInput = void, TOutput = unknown> {
   readonly name: string;
+  readonly inputSchema?: DefinitionSchema<unknown, TInput>;
+  readonly outputSchema?: DefinitionSchema<unknown, TOutput>;
   readonly _input?: (input: TInput) => void;
   readonly _output?: () => TOutput;
 }
 
 /**
  * Typed handle for a workflow query. Queries are read-only accessors and may
- * optionally accept an input payload.
+ * optionally accept an input payload. Optional `inputSchema` and
+ * `outputSchema` carry validation metadata to the boundary.
  *
  * @example
  * ```ts
@@ -65,11 +77,13 @@ export interface UpdateDefinition<TInput = void, TOutput = unknown> {
  * const orderStatus: QueryDefinition<{ orderId: string }, { state: string }> =
  *   query('orderStatus');
  * const status = await handle.query(orderStatus, { orderId: 'ord_123' });
- * console.log(status.state);
+ * void status.state;
  * ```
  */
 export interface QueryDefinition<TInput = void, TOutput = unknown> {
   readonly name: string;
+  readonly inputSchema?: DefinitionSchema<unknown, TInput>;
+  readonly outputSchema?: DefinitionSchema<unknown, TOutput>;
   readonly _input?: (input: TInput) => void;
   readonly _output?: () => TOutput;
 }
@@ -81,51 +95,225 @@ export type MessageDefinition =
 
 export type MessageName = string | { readonly name: string };
 
+// ---------------------------------------------------------------------------
+// signal()
+// ---------------------------------------------------------------------------
+
 /**
- * Create a typed workflow signal handle.
+ * Options accepted by {@link signal} when declaring schema metadata.
+ *
+ * @example
+ * ```ts
+ * import type { SignalOptions } from 'weft';
+ * import { z } from 'zod';
+ *
+ * const options: SignalOptions<{ approved: boolean }> = {
+ *   inputSchema: z.object({ approved: z.boolean() }),
+ * };
+ * void options;
+ * ```
+ */
+export interface SignalOptions<TInput = void> {
+  readonly inputSchema?: DefinitionSchema<unknown, TInput>;
+}
+
+/**
+ * Create a typed workflow signal handle. When an `inputSchema` is supplied
+ * via options, the payload type is inferred from the schema's
+ * `~standard.types.output` marker — no explicit generic required, and
+ * transform schemas surface their parsed payload type.
  *
  * @example
  * ```ts
  * import { signal } from 'weft';
+ * import { z } from 'zod';
  *
  * const approval = signal<{ approved: boolean }>('approval');
+ *
+ * const approval2 = signal('approval', { inputSchema: z.object({ approved: z.boolean() }) });
+ * void approval2;
  * ```
  */
-export function signal<TInput = void>(name: string): SignalDefinition<TInput> {
-  return { name } as SignalDefinition<TInput>;
+export function signal<TSchema extends DefinitionSchema<unknown, unknown>>(
+  name: string,
+  options: { inputSchema: TSchema },
+): SignalDefinition<InferSchemaOutput<TSchema>>;
+export function signal<TInput = void>(
+  name: string,
+  options?: SignalOptions<TInput>,
+): SignalDefinition<TInput>;
+export function signal(name: string, options?: SignalOptions<unknown>): SignalDefinition<unknown> {
+  if (options?.inputSchema !== undefined) {
+    validateDefinitionSchemaMetadata(options.inputSchema, `signal("${name}").inputSchema`);
+  }
+  // Phantom `_input` only exists in type space (it's a `_input?:` field that
+  // is never written), so casting from the structural literal to
+  // `SignalDefinition<unknown>` is the correct narrowing here.
+  return {
+    name,
+    ...(options?.inputSchema !== undefined ? { inputSchema: options.inputSchema } : {}),
+  } as SignalDefinition<unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// update()
+// ---------------------------------------------------------------------------
+
+/**
+ * Options accepted by {@link update} when declaring schema metadata.
+ *
+ * @example
+ * ```ts
+ * import type { UpdateOptions } from 'weft';
+ * import { z } from 'zod';
+ *
+ * const options: UpdateOptions<{ id: string }, { ok: true }> = {
+ *   inputSchema: z.object({ id: z.string() }),
+ *   outputSchema: z.object({ ok: z.literal(true) }),
+ * };
+ * void options;
+ * ```
+ */
+export interface UpdateOptions<TInput = void, TOutput = unknown> {
+  readonly inputSchema?: DefinitionSchema<unknown, TInput>;
+  readonly outputSchema?: DefinitionSchema<unknown, TOutput>;
 }
 
 /**
- * Create a typed workflow update handle.
+ * Create a typed workflow update handle. When `inputSchema` and/or
+ * `outputSchema` are supplied via options, payload types are inferred from
+ * the schemas — no explicit generic required.
  *
  * @example
  * ```ts
  * import { update } from 'weft';
+ * import { z } from 'zod';
  *
  * const approve = update<{ id: string }, { accepted: boolean }>('approve');
+ *
+ * const approve2 = update('approve', {
+ *   inputSchema: z.object({ id: z.string() }),
+ *   outputSchema: z.object({ accepted: z.boolean() }),
+ * });
+ * void approve2;
  * ```
  */
+export function update<
+  TInputSchema extends DefinitionSchema<unknown, unknown>,
+  TOutputSchema extends DefinitionSchema<unknown, unknown>,
+>(
+  name: string,
+  options: { inputSchema: TInputSchema; outputSchema: TOutputSchema },
+): UpdateDefinition<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>>;
+export function update<TInputSchema extends DefinitionSchema<unknown, unknown>>(
+  name: string,
+  options: { inputSchema: TInputSchema },
+): UpdateDefinition<InferSchemaOutput<TInputSchema>>;
 export function update<TInput = void, TOutput = unknown>(
   name: string,
-): UpdateDefinition<TInput, TOutput> {
-  return { name } as UpdateDefinition<TInput, TOutput>;
+  options?: UpdateOptions<TInput, TOutput>,
+): UpdateDefinition<TInput, TOutput>;
+export function update(name: string, options?: UpdateOptions<unknown>): UpdateDefinition<unknown> {
+  if (options?.inputSchema !== undefined) {
+    validateDefinitionSchemaMetadata(options.inputSchema, `update("${name}").inputSchema`);
+  }
+  if (options?.outputSchema !== undefined) {
+    validateDefinitionSchemaMetadata(options.outputSchema, `update("${name}").outputSchema`);
+  }
+  // Phantom `_input` / `_output` only exist in type space; the structural
+  // literal satisfies every overload's return shape, so narrowing via `as`
+  // is the correct escape hatch.
+  return {
+    name,
+    ...(options?.inputSchema !== undefined ? { inputSchema: options.inputSchema } : {}),
+    ...(options?.outputSchema !== undefined ? { outputSchema: options.outputSchema } : {}),
+  } as UpdateDefinition<unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// query()
+// ---------------------------------------------------------------------------
+
+/**
+ * Options accepted by {@link query} when declaring schema metadata.
+ *
+ * @example
+ * ```ts
+ * import type { QueryOptions } from 'weft';
+ * import { z } from 'zod';
+ *
+ * const options: QueryOptions<{ id: string }, { state: string }> = {
+ *   inputSchema: z.object({ id: z.string() }),
+ *   outputSchema: z.object({ state: z.string() }),
+ * };
+ * void options;
+ * ```
+ */
+export interface QueryOptions<TInput = void, TOutput = unknown> {
+  readonly inputSchema?: DefinitionSchema<unknown, TInput>;
+  readonly outputSchema?: DefinitionSchema<unknown, TOutput>;
 }
 
 /**
- * Create a typed workflow query handle.
+ * Create a typed workflow query handle. When `inputSchema` and/or
+ * `outputSchema` are supplied via options, payload types are inferred from
+ * the schemas — no explicit generic required.
  *
  * @example
  * ```ts
  * import { query } from 'weft';
+ * import { z } from 'zod';
  *
  * const status = query<void, { state: string }>('status');
+ *
+ * const status2 = query('status', {
+ *   outputSchema: z.object({ state: z.string() }),
+ * });
+ * void status2;
  * ```
  */
+export function query<
+  TInputSchema extends DefinitionSchema<unknown, unknown>,
+  TOutputSchema extends DefinitionSchema<unknown, unknown>,
+>(
+  name: string,
+  options: { readonly inputSchema: TInputSchema; readonly outputSchema: TOutputSchema },
+): QueryDefinition<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>>;
+export function query<TOutputSchema extends DefinitionSchema<unknown, unknown>>(
+  name: string,
+  options: { readonly outputSchema: TOutputSchema },
+): QueryDefinition<void, InferSchemaOutput<TOutputSchema>>;
+export function query<TInputSchema extends DefinitionSchema<unknown, unknown>>(
+  name: string,
+  options: { readonly inputSchema: TInputSchema },
+): QueryDefinition<InferSchemaOutput<TInputSchema>>;
 export function query<TInput = void, TOutput = unknown>(
   name: string,
-): QueryDefinition<TInput, TOutput> {
-  return { name } as QueryDefinition<TInput, TOutput>;
+  options?: QueryOptions<TInput, TOutput>,
+): QueryDefinition<TInput, TOutput>;
+export function query(
+  name: string,
+  options?: QueryOptions<unknown>,
+): QueryDefinition<unknown> | QueryDefinition {
+  if (options?.inputSchema !== undefined) {
+    validateDefinitionSchemaMetadata(options.inputSchema, `query("${name}").inputSchema`);
+  }
+  if (options?.outputSchema !== undefined) {
+    validateDefinitionSchemaMetadata(options.outputSchema, `query("${name}").outputSchema`);
+  }
+  // The implementation return is a structural object satisfying every overload
+  // shape; the union signals to the typechecker that overload 2's
+  // `QueryDefinition<void, ...>` is also a valid return.
+  return {
+    name,
+    ...(options?.inputSchema !== undefined ? { inputSchema: options.inputSchema } : {}),
+    ...(options?.outputSchema !== undefined ? { outputSchema: options.outputSchema } : {}),
+  } as QueryDefinition<unknown>;
 }
+
+// ---------------------------------------------------------------------------
+// utilities
+// ---------------------------------------------------------------------------
 
 export function messageName(definition: MessageName): string {
   return typeof definition === 'string' ? definition : definition.name;

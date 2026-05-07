@@ -1,21 +1,7 @@
-import { z } from 'zod';
-
 import { canonicalJson } from './openapi-canonical-json.ts';
 
 export function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-export function zodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
-  const result: unknown = z.toJSONSchema(schema, {
-    unrepresentable: 'any',
-  });
-  const object = asPlainObject(result);
-  if (!('$schema' in object)) return object;
-
-  const schemaWithoutDialect = { ...object };
-  delete schemaWithoutDialect['$schema'];
-  return schemaWithoutDialect;
 }
 
 export function asPlainObject(value: unknown): Record<string, unknown> {

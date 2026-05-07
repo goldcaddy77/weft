@@ -18,6 +18,21 @@
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Reaction to a violated {@link ConstraintDefinition}. `'fail'` immediately
+ * fails the workflow without running saga compensators; `'compensate'`
+ * throws into the workflow generator so an active `ctx.saga()` can run its
+ * compensators in reverse before the error propagates; `'warn'` logs and
+ * continues. Returned from `onViolation` on every constraint definition.
+ *
+ * @example
+ * ```ts
+ * import type { ConstraintViolation } from 'weft';
+ *
+ * const policy: ConstraintViolation = 'compensate';
+ * void policy;
+ * ```
+ */
 export type ConstraintViolation = 'compensate' | 'fail' | 'warn';
 
 /**

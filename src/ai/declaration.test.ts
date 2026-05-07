@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { z } from 'zod';
 
 import type { AgentToolDefinition } from './declaration.ts';
 import { agent as createAgentDefinition, isAgentDefinition } from './declaration.ts';
@@ -70,6 +71,38 @@ describe('agent', () => {
     });
 
     expect(agentDefinition.description).toBe('A compact assistant.');
+  });
+
+  it('preserves a Standard Schema inputSchema', () => {
+    const inputSchema = z.object({ question: z.string() });
+    const agentDefinition = createAgentDefinition({
+      name: 'assistant',
+      model: 'claude-3',
+      inputSchema,
+    });
+
+    expect(agentDefinition.inputSchema).toBe(inputSchema);
+  });
+
+  it('preserves a Standard Schema outputSchema', () => {
+    const outputSchema = z.object({ answer: z.string() });
+    const agentDefinition = createAgentDefinition({
+      name: 'assistant',
+      model: 'claude-3',
+      outputSchema,
+    });
+
+    expect(agentDefinition.outputSchema).toBe(outputSchema);
+  });
+
+  it('rejects an inputSchema that is not Standard Schema-shaped', () => {
+    expect(() =>
+      createAgentDefinition({
+        name: 'assistant',
+        model: 'claude-3',
+        inputSchema: { not: 'a schema' } as never,
+      }),
+    ).toThrow(/Standard Schema-compatible/);
   });
 
   it('carries generic input and output phantom types without runtime fields', () => {
