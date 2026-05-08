@@ -278,6 +278,11 @@ const _narrowInputActivityGuard: AnyActivityDefinition = activity({
 });
 void _narrowInputActivityGuard;
 
+// Smoke-test for zero-input activities. A zero-argument function is
+// assignable to most function types regardless of constraint variance, so
+// this guard is not the contravariance regression detector — it pins that
+// the constraint shape continues to accept the no-input case after future
+// edits to AnyActivityDefinition.
 const _zeroInputActivityGuard: AnyActivityDefinition = activity({
   name: 'zeroInputActivityGuard',
   execute: async () => 'ok',

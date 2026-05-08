@@ -160,7 +160,11 @@ describe('Engine', () => {
     // alert manager) start before registration runs. If a key mismatch or
     // recovery error escapes, the engine reference never reaches the caller —
     // so Engine.create has to dispose what it constructed before rethrowing.
-    // We observe disposal by patching the prototype method.
+    // We observe disposal by patching the prototype method. Instance-level
+    // spying isn't possible because the engine reference never escapes
+    // Engine.create on the failure path, and Bun's test runner runs cases
+    // within a file serially, so the prototype patch only intercepts the
+    // engine constructed by THIS test.
     const originalDispose = Engine.prototype[Symbol.asyncDispose];
     let disposeCount = 0;
     Engine.prototype[Symbol.asyncDispose] = async function () {
@@ -253,6 +257,8 @@ describe('Engine', () => {
     // introspect activity I/O contracts.
     const createdMetadata = createdEngine.getActivityDefinition('metadataActivity');
     const builderMetadata = builderEngine.getActivityDefinition('metadataActivity');
+    expect(createdMetadata).toBeDefined();
+    expect(builderMetadata).toBeDefined();
     expect(createdMetadata?.inputSchema).toBe(inputSchema);
     expect(createdMetadata?.outputSchema).toBe(outputSchema);
     expect(builderMetadata?.inputSchema).toBe(inputSchema);

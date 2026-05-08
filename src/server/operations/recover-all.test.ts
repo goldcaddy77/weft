@@ -154,4 +154,37 @@ describe('weft.recover.all', () => {
       engine.recoverAll = originalRecoverAll;
     }
   });
+
+  it('invoke ignores any input it receives, regardless of transport', async () => {
+    // Transport-agnostic guard: if a future transport reintroduces input
+    // extraction for this operation, the invoke handler must still drop the
+    // dangerous flag. Calling recoverAllOperation.invoke directly bypasses
+    // schema validation, so any field that slips past Zod still cannot reach
+    // the engine — proving the contract is enforced at two layers (schema
+    // + handler).
+    engine = createEngine();
+    const originalRecoverAll = engine.recoverAll.bind(engine);
+    let observedOptions: unknown;
+
+    try {
+      engine.recoverAll = async (options) => {
+        observedOptions = options;
+        return [] as Awaited<ReturnType<Engine['recoverAll']>>;
+      };
+
+      const result = await recoverAllOperation.invoke({
+        // Cast: we intentionally pass an input shape the schema would reject
+        // to prove the handler does not read it.
+        input: { acknowledgeUnknownWorkflowTypes: true } as never,
+        principal: { method: 'unauthenticated' },
+        engine,
+        transport: 'jsonRpcWebSocket',
+      });
+
+      expect(result).toEqual({ recovered: [] });
+      expect(observedOptions).toBeUndefined();
+    } finally {
+      engine.recoverAll = originalRecoverAll;
+    }
+  });
 });
