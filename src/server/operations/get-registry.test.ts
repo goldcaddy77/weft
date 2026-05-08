@@ -282,11 +282,14 @@ describe('GET /v1/registry — error shaping', () => {
     engine = undefined;
   });
 
-  it('returns 500 with "Internal server error" when the snapshot builder throws', async () => {
+  it('returns 500 with "Internal server error" when a registered schema fails to convert', async () => {
     // Register a workflow with a Standard Schema validator the converter
-    // cannot handle. The snapshot builder re-throws with the workflow name
-    // included; the operation pipeline then turns that into an
-    // EngineFailure fault, which the REST shaper renders as 500.
+    // cannot handle. The builder throws RegistrySchemaConversionError; the
+    // operation pipeline reduces it to an EngineFailure fault and the REST
+    // shaper masks the wire response. The typed error message (which names
+    // the offending entity and direction) reaches server-side logs so
+    // operators can locate the bad registration; clients see only the
+    // generic 500 to avoid leaking internal schema layout.
     engine = createEngine();
     const brokenSchema: any = {
       '~standard': {
@@ -305,6 +308,33 @@ describe('GET /v1/registry — error shaping', () => {
       engine,
       {
         operationRegistry: createOperationRegistry([getRegistryOperation]),
+        restBindings: [getRegistryRestBinding],
+        ...authContextWithSystemRead(),
+      },
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: 'Internal server error' });
+  });
+
+  it('returns 500 with "Internal server error" for unrelated EngineFailure faults', async () => {
+    engine = createEngine();
+    const failingOperation = {
+      ...getRegistryOperation,
+      invoke: async () => {
+        throw {
+          code: 'EngineFailure' as const,
+          message: 'secret internal detail',
+          data: {},
+        };
+      },
+    };
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/registry', { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: createOperationRegistry([failingOperation]),
         restBindings: [getRegistryRestBinding],
         ...authContextWithSystemRead(),
       },

@@ -7,7 +7,11 @@ import { z } from 'zod';
 
 import { MemoryStorage } from '../storage/memory.ts';
 import { Engine } from './engine.ts';
-import { buildRegistrySnapshot, REGISTRY_VERSION } from './registry-snapshot.ts';
+import {
+  buildRegistrySnapshot,
+  REGISTRY_VERSION,
+  RegistrySchemaConversionError,
+} from './registry-snapshot.ts';
 
 function createEngine(): Engine {
   return new Engine({ storage: new MemoryStorage() });
@@ -132,7 +136,7 @@ describe('buildRegistrySnapshot', () => {
 
   it('omits activity schema fields that are absent on registration', () => {
     engine = createEngine();
-    engine.registerActivity('noop', async function* () {});
+    engine.registerActivity('noop', async () => undefined);
 
     const snapshot = buildRegistrySnapshot(engine);
     const entry = snapshot.activities['noop'];
@@ -163,9 +167,9 @@ describe('buildRegistrySnapshot', () => {
 
   it('orders activity keys alphabetically by codepoint', () => {
     engine = createEngine();
-    engine.registerActivity('xyz', async function* () {});
-    engine.registerActivity('abc', async function* () {});
-    engine.registerActivity('mno', async function* () {});
+    engine.registerActivity('xyz', async () => undefined);
+    engine.registerActivity('abc', async () => undefined);
+    engine.registerActivity('mno', async () => undefined);
 
     const snapshot = buildRegistrySnapshot(engine);
     expect(Object.keys(snapshot.activities)).toEqual(['abc', 'mno', 'xyz']);
@@ -184,7 +188,7 @@ describe('buildRegistrySnapshot', () => {
     expect(Object.keys(snapshot.workflows)).toEqual(['42', 'alpha', 'beta']);
   });
 
-  it('throws with workflow name and direction when input schema conversion fails', () => {
+  it('throws RegistrySchemaConversionError with workflow context when input schema conversion fails', () => {
     engine = createEngine();
     const brokenSchema = makeBrokenSchema('input');
     engine.register('broken', {
@@ -192,12 +196,21 @@ describe('buildRegistrySnapshot', () => {
       inputSchema: brokenSchema,
     });
 
-    expect(() => buildRegistrySnapshot(engine!)).toThrow(
-      /Failed to convert inputSchema for workflow "broken"/,
-    );
+    let captured: unknown;
+    try {
+      buildRegistrySnapshot(engine);
+    } catch (error) {
+      captured = error;
+    }
+    expect(captured).toBeInstanceOf(RegistrySchemaConversionError);
+    const error = captured as RegistrySchemaConversionError;
+    expect(error.entityKind).toBe('workflow');
+    expect(error.entityName).toBe('broken');
+    expect(error.direction).toBe('inputSchema');
+    expect(error.message).toMatch(/Failed to convert inputSchema for workflow "broken"/);
   });
 
-  it('throws with workflow name and direction when output schema conversion fails', () => {
+  it('throws RegistrySchemaConversionError with workflow context when output schema conversion fails', () => {
     engine = createEngine();
     const brokenSchema = makeBrokenSchema('output');
     engine.register('broken', {
@@ -205,33 +218,57 @@ describe('buildRegistrySnapshot', () => {
       outputSchema: brokenSchema,
     });
 
-    expect(() => buildRegistrySnapshot(engine!)).toThrow(
-      /Failed to convert outputSchema for workflow "broken"/,
-    );
+    let captured: unknown;
+    try {
+      buildRegistrySnapshot(engine);
+    } catch (error) {
+      captured = error;
+    }
+    expect(captured).toBeInstanceOf(RegistrySchemaConversionError);
+    const error = captured as RegistrySchemaConversionError;
+    expect(error.entityKind).toBe('workflow');
+    expect(error.entityName).toBe('broken');
+    expect(error.direction).toBe('outputSchema');
   });
 
-  it('throws with activity name and direction when input schema conversion fails', () => {
+  it('throws RegistrySchemaConversionError with activity context when input schema conversion fails', () => {
     engine = createEngine();
     const brokenSchema = makeBrokenSchema('input');
-    engine.registerActivity('brokenActivity', async function* () {}, {
+    engine.registerActivity('brokenActivity', async () => undefined, {
       inputSchema: brokenSchema,
     });
 
-    expect(() => buildRegistrySnapshot(engine!)).toThrow(
-      /Failed to convert inputSchema for activity "brokenActivity"/,
-    );
+    let captured: unknown;
+    try {
+      buildRegistrySnapshot(engine);
+    } catch (error) {
+      captured = error;
+    }
+    expect(captured).toBeInstanceOf(RegistrySchemaConversionError);
+    const error = captured as RegistrySchemaConversionError;
+    expect(error.entityKind).toBe('activity');
+    expect(error.entityName).toBe('brokenActivity');
+    expect(error.direction).toBe('inputSchema');
   });
 
-  it('throws with activity name and direction when output schema conversion fails', () => {
+  it('throws RegistrySchemaConversionError with activity context when output schema conversion fails', () => {
     engine = createEngine();
     const brokenSchema = makeBrokenSchema('output');
-    engine.registerActivity('brokenActivity', async function* () {}, {
+    engine.registerActivity('brokenActivity', async () => undefined, {
       outputSchema: brokenSchema,
     });
 
-    expect(() => buildRegistrySnapshot(engine!)).toThrow(
-      /Failed to convert outputSchema for activity "brokenActivity"/,
-    );
+    let captured: unknown;
+    try {
+      buildRegistrySnapshot(engine);
+    } catch (error) {
+      captured = error;
+    }
+    expect(captured).toBeInstanceOf(RegistrySchemaConversionError);
+    const error = captured as RegistrySchemaConversionError;
+    expect(error.entityKind).toBe('activity');
+    expect(error.entityName).toBe('brokenActivity');
+    expect(error.direction).toBe('outputSchema');
   });
 
   it('does not include remote-only activities (workers without local registrations are excluded)', () => {
@@ -240,11 +277,47 @@ describe('buildRegistrySnapshot', () => {
     // on a connected worker, not in the engine's activity registry. Since
     // buildRegistrySnapshot only reads from engine.listActivityDefinitions(), there is
     // no path through which a remote-only name could leak into the snapshot.
-    engine.registerActivity('local', async function* () {});
+    engine.registerActivity('local', async () => undefined);
     const snapshot = buildRegistrySnapshot(engine);
     expect(Object.keys(snapshot.activities)).toEqual(['local']);
     // Sanity: a fictitious remote-only name must not appear.
     expect(snapshot.activities).not.toHaveProperty('remoteOnly');
+  });
+
+  it('safely handles workflows and activities named "__proto__"', () => {
+    // Plain `{}` objects treat assignment to `__proto__` as a prototype mutation
+    // rather than an own property, which would silently drop the entry from
+    // JSON output. Null-prototype maps store it as a normal property.
+    engine = createEngine();
+    engine.register('__proto__', { handler: async function* () {} });
+    engine.registerActivity('__proto__', async () => undefined);
+
+    const snapshot = buildRegistrySnapshot(engine);
+    expect(Object.keys(snapshot.workflows)).toContain('__proto__');
+    expect(Object.keys(snapshot.activities)).toContain('__proto__');
+
+    // The serialized JSON must also include the entries — this is the
+    // observable contract for HTTP consumers.
+    const serialized = JSON.parse(JSON.stringify(snapshot)) as {
+      workflows: Record<string, unknown>;
+      activities: Record<string, unknown>;
+    };
+    expect(serialized.workflows['__proto__']).toBeDefined();
+    expect(serialized.activities['__proto__']).toBeDefined();
+  });
+
+  it('omits activity tags from the snapshot (tags do not surface in codegen function types)', () => {
+    // Documented contract: activity entries do not include `tags`. The codegen
+    // CLI (the primary consumer) emits activities as TypeScript function types,
+    // which have no place for tags. If the contract changes, this test will
+    // start failing and the type/comment can be updated together.
+    engine = createEngine();
+    engine.registerActivity('tagged', async () => undefined, {
+      tags: ['observability', 'critical'],
+    });
+
+    const snapshot = buildRegistrySnapshot(engine);
+    expect(snapshot.activities['tagged']).not.toHaveProperty('tags');
   });
 });
 

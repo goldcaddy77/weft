@@ -25,7 +25,37 @@ import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 
 const getRegistryInput = z.object({});
-const getRegistryOutput = z.unknown();
+
+// JSON Schema fragments are arbitrary JSON objects (we don't validate the
+// schemas themselves — that's a different layer's job), but we DO validate
+// the surrounding registry envelope so callers and codegen can rely on it.
+const jsonSchemaFragment = z.record(z.string(), z.unknown());
+
+const registryWorkflowEntry = z
+  .object({
+    inputSchema: jsonSchemaFragment.optional(),
+    outputSchema: jsonSchemaFragment.optional(),
+    description: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+  })
+  .strict();
+
+const registryActivityEntry = z
+  .object({
+    inputSchema: jsonSchemaFragment.optional(),
+    outputSchema: jsonSchemaFragment.optional(),
+    queue: z.string(),
+    description: z.string().optional(),
+  })
+  .strict();
+
+const getRegistryOutput = z
+  .object({
+    registryVersion: z.literal(1),
+    workflows: z.record(z.string(), registryWorkflowEntry),
+    activities: z.record(z.string(), registryActivityEntry),
+  })
+  .strict();
 
 export type GetRegistryInput = z.infer<typeof getRegistryInput>;
 export type GetRegistryOutput = RegistrySnapshot;
@@ -36,7 +66,7 @@ export const getRegistryOperation = defineOperation<GetRegistryInput, GetRegistr
   summary: 'Get a snapshot of registered workflows and activities with their JSON Schemas',
   tags: ['System'],
   inputSchema: getRegistryInput,
-  outputSchema: getRegistryOutput as z.ZodType<GetRegistryOutput>,
+  outputSchema: getRegistryOutput as unknown as z.ZodType<GetRegistryOutput>,
   access: {
     kind: 'scoped',
     scopes: { kind: 'anyOf', scopes: ['system:read'] },
@@ -45,25 +75,18 @@ export const getRegistryOperation = defineOperation<GetRegistryInput, GetRegistr
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ engine }): Promise<GetRegistryOutput> => {
-    const e = engine as Engine;
-    return buildRegistrySnapshot(e);
+    return buildRegistrySnapshot(engine as Engine);
   },
 });
 
 function shapeGetRegistryFault(fault: OperationFault): Response {
-  if (fault.code === 'Unauthorized') {
-    return new Response(JSON.stringify({ error: fault.message }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  if (fault.code === 'Forbidden') {
-    return new Response(JSON.stringify({ error: fault.message }), {
-      status: 403,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
   if (fault.code === 'EngineFailure') {
+    // Mask internal error details from the wire. The typed
+    // `RegistrySchemaConversionError` thrown by the builder includes the
+    // offending entity name and direction in `error.message`, which is
+    // logged server-side (the operation pipeline writes `error.message` to
+    // the engine's failure log) so operators can locate the bad
+    // registration without leaking schema layout to clients.
     return new Response(JSON.stringify({ error: 'Internal server error' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },

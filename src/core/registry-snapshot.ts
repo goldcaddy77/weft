@@ -6,8 +6,8 @@
  * The output is a plain object designed to be safe for JSON serialization:
  * keys are inserted in alphabetical (codepoint) order; absent metadata fields
  * are omitted (never `null`, never `{}`); and converter exceptions are
- * re-thrown with the entity name and direction prepended so callers know
- * exactly which registration caused the failure.
+ * surfaced as a typed {@link RegistrySchemaConversionError} so REST handlers
+ * can return an actionable diagnostic to codegen consumers.
  *
  * @module core/registry-snapshot
  */
@@ -32,11 +32,22 @@ export type RegistryWorkflowEntry = {
   tags?: ReadonlyArray<string>;
 };
 
-/** Metadata reported per activity in a registry snapshot. */
+/**
+ * Metadata reported per activity in a registry snapshot.
+ *
+ * `tags` is intentionally omitted: the registry feeds `weft codegen`, which
+ * models activities as TypeScript function signatures. Tags are catalog
+ * metadata for documentation/observability surfaces and don't appear on a
+ * function type. Workflows include tags because the workflow registry
+ * augmentation point (`WorkflowRegistry`) is an interface where extra
+ * metadata can be attached structurally; the activity augmentation point
+ * (`ActivityTypes`) is a function map and has no place for tags.
+ */
 export type RegistryActivityEntry = {
   inputSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
-  queue?: string;
+  /** Engine assigns a default queue when none is specified, so this is always populated. */
+  queue: string;
   description?: string;
 };
 
@@ -45,10 +56,37 @@ export type RegistryActivityEntry = {
  * serialization as the `GET /v1/registry` response body.
  */
 export type RegistrySnapshot = {
-  registryVersion: typeof REGISTRY_VERSION;
+  registryVersion: 1;
   workflows: Record<string, RegistryWorkflowEntry>;
   activities: Record<string, RegistryActivityEntry>;
 };
+
+/**
+ * Thrown when a registered workflow or activity schema cannot be converted
+ * to JSON Schema. Carries the offending entity name and direction so the
+ * REST layer can return a diagnostic the codegen client can act on.
+ */
+export class RegistrySchemaConversionError extends Error {
+  readonly entityKind: 'workflow' | 'activity';
+  readonly entityName: string;
+  readonly direction: 'inputSchema' | 'outputSchema';
+
+  constructor(
+    entityKind: 'workflow' | 'activity',
+    entityName: string,
+    direction: 'inputSchema' | 'outputSchema',
+    cause: unknown,
+  ) {
+    const causeMessage = cause instanceof Error ? cause.message : String(cause);
+    super(`Failed to convert ${direction} for ${entityKind} "${entityName}": ${causeMessage}`, {
+      cause,
+    });
+    this.name = 'RegistrySchemaConversionError';
+    this.entityKind = entityKind;
+    this.entityName = entityName;
+    this.direction = direction;
+  }
+}
 
 /**
  * Build a registry snapshot from an engine's locally-registered workflows
@@ -56,24 +94,35 @@ export type RegistrySnapshot = {
  * worker but never registered with the local engine) are excluded by
  * construction — `engine.listActivityDefinitions()` is the only source.
  *
- * Throws if any registered schema fails JSON Schema conversion. The thrown
- * error names the entity (workflow/activity), its registered name, and the
- * direction (`inputSchema`/`outputSchema`) so the caller can locate the
- * offending registration without further introspection.
+ * Throws {@link RegistrySchemaConversionError} if any registered schema
+ * fails JSON Schema conversion.
  */
 export function buildRegistrySnapshot(engine: Engine): RegistrySnapshot {
   const workflowDefinitions = engine.listWorkflowDefinitions();
   const activityDefinitions = engine.listActivityDefinitions();
 
-  const sortedWorkflows = workflowDefinitions.toSorted(compareByName('type'));
-  const sortedActivities = activityDefinitions.toSorted(compareByName('name'));
+  // Sort with explicit codepoint comparators rather than `localeCompare`
+  // (project rule: deterministic comparisons in runtime logic).
+  const sortedWorkflows = workflowDefinitions.toSorted((a, b) => {
+    if (a.type < b.type) return -1;
+    if (a.type > b.type) return 1;
+    return 0;
+  });
+  const sortedActivities = activityDefinitions.toSorted((a, b) => {
+    if (a.name < b.name) return -1;
+    if (a.name > b.name) return 1;
+    return 0;
+  });
 
-  const workflows: Record<string, RegistryWorkflowEntry> = {};
+  // Use null-prototype objects so a workflow or activity literally named
+  // `__proto__` is stored as an own property rather than mutating the
+  // prototype chain (which would silently drop the entry from JSON output).
+  const workflows = Object.create(null) as Record<string, RegistryWorkflowEntry>;
   for (const definition of sortedWorkflows) {
     workflows[definition.type] = buildWorkflowEntry(definition);
   }
 
-  const activities: Record<string, RegistryActivityEntry> = {};
+  const activities = Object.create(null) as Record<string, RegistryActivityEntry>;
   for (const metadata of sortedActivities) {
     activities[metadata.name] = buildActivityEntry(metadata);
   }
@@ -113,7 +162,7 @@ function buildWorkflowEntry(definition: RegisteredWorkflowDefinition): RegistryW
 }
 
 function buildActivityEntry(metadata: ActivityMetadata): RegistryActivityEntry {
-  const entry: RegistryActivityEntry = {};
+  const entry: RegistryActivityEntry = { queue: metadata.queue };
   if (metadata.inputSchema !== undefined) {
     entry.inputSchema = convertSchema(
       'activity',
@@ -129,9 +178,6 @@ function buildActivityEntry(metadata: ActivityMetadata): RegistryActivityEntry {
       'outputSchema',
       metadata.outputSchema,
     );
-  }
-  if (metadata.queue !== undefined) {
-    entry.queue = metadata.queue;
   }
   if (metadata.description !== undefined) {
     entry.description = metadata.description;
@@ -149,21 +195,6 @@ function convertSchema(
     const direction = field === 'inputSchema' ? 'input' : 'output';
     return definitionSchemaToJsonSchema(schema, direction);
   } catch (cause) {
-    const reason = cause instanceof Error ? cause.message : String(cause);
-    throw new Error(`Failed to convert ${field} for ${entityKind} "${entityName}": ${reason}`, {
-      cause,
-    });
+    throw new RegistrySchemaConversionError(entityKind, entityName, field, cause);
   }
-}
-
-function compareByName<TKey extends string>(
-  key: TKey,
-): (left: Record<TKey, string>, right: Record<TKey, string>) => number {
-  return (left, right) => {
-    const a = left[key];
-    const b = right[key];
-    if (a < b) return -1;
-    if (a > b) return 1;
-    return 0;
-  };
 }
