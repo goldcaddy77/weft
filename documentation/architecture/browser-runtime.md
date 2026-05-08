@@ -78,13 +78,11 @@ import { Engine } from 'weft';
 import { IndexedDBStorage } from 'weft/storage/indexeddb';
 
 const storage = new IndexedDBStorage('weft');
-const engine = new Engine({ storage });
+const engine = await Engine.create({ storage });
 const scheduler = new ServiceWorkerScheduler({
   storage,
   onTimerFired: (entry) => engine.fireTimer(entry),
 });
-
-await engine.recoverAll();
 
 const { install, activate } = createLifecycleHandlers();
 self.addEventListener('install', install);

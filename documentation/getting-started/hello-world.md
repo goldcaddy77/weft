@@ -21,12 +21,11 @@ import {
   Engine,
   WorkflowAlreadyExistsError,
   activity,
+  workflow,
   type WorkflowHandle,
   type WorkflowContext,
 } from 'weft';
 import { SQLiteStorage } from 'weft/storage/sqlite';
-
-const engine = new Engine({ storage: new SQLiteStorage('./weft.db') });
 
 interface HelloWorldWelcomeInput {
   name: string;
@@ -35,17 +34,6 @@ interface HelloWorldWelcomeInput {
 interface HelloWorldWelcomeOutput {
   greeting: string;
   notified: boolean;
-}
-
-declare module 'weft' {
-  interface WorkflowRegistry {
-    helloWorldWelcome: { input: HelloWorldWelcomeInput; output: HelloWorldWelcomeOutput };
-  }
-
-  interface ActivityTypes {
-    helloWorldFormatGreeting: (input: HelloWorldWelcomeInput) => Promise<string>;
-    helloWorldSendNotification: (input: { message: string }) => Promise<string>;
-  }
 }
 
 const helloWorldFormatGreeting = activity({
@@ -58,20 +46,22 @@ const helloWorldSendNotification = activity({
   execute: async (input: { message: string }) => `Notified: ${input.message}`,
 });
 
-engine.registerActivity(helloWorldFormatGreeting.name, helloWorldFormatGreeting);
-engine.registerActivity(helloWorldSendNotification.name, helloWorldSendNotification);
-
-engine.register(
-  'helloWorldWelcome',
-  async function* (ctx: WorkflowContext, input: HelloWorldWelcomeInput) {
-    const greeting = yield* ctx.run('helloWorldFormatGreeting', { name: input.name });
+const helloWorldWelcome = workflow({
+  name: 'helloWorldWelcome',
+  handler: async function* helloWorldWelcome(ctx: WorkflowContext, input: HelloWorldWelcomeInput) {
+    const greeting = yield* ctx.run(helloWorldFormatGreeting, { name: input.name });
     yield* ctx.sleep('1s');
-    yield* ctx.run('helloWorldSendNotification', { message: greeting });
-    return { greeting, notified: true };
+    yield* ctx.run(helloWorldSendNotification, { message: greeting });
+    const output: HelloWorldWelcomeOutput = { greeting, notified: true };
+    return output;
   },
-);
+});
 
-await engine.recoverAll();
+const engine = await Engine.create({
+  storage: new SQLiteStorage('./weft.db'),
+  activities: { helloWorldFormatGreeting, helloWorldSendNotification },
+  workflows: { helloWorldWelcome },
+});
 
 const workflowId = 'helloWorldWelcome:world';
 const workflowInput = { name: 'World' };
@@ -138,11 +128,13 @@ The workflow is a **generator function**---notice the `function*` and the `yield
 
 There's no replay happening here. Weft doesn't re-execute your workflow from the beginning and try to match up results. It literally picks up where it left off. That's why you don't need to worry about determinism---your workflow code can use `Date.now()`, `Math.random()`, or anything else. The only rule is that side effects go inside activities (the functions you pass to `ctx.run()`).
 
-`ctx.run('activityName', input)` is how you run an **activity** by its durable dispatch key. Function references still work for local development, but the activity name is the durable boundary. That is why the example registers `helloWorldFormatGreeting` and `helloWorldSendNotification` before the workflow starts: remote workers receive an activity name plus serialized input, not your in-process closure.
+`ctx.run(activity, input)` is how you run an **activity** through its durable dispatch boundary. You can pass either the activity definition (as the example does) or the activity's name string. Either way, remote workers receive an activity name plus serialized input — not your in-process closure — which is why activities have to be registered with the engine before a workflow can dispatch to them.
 
-`engine.register()` gives your workflow a name so the engine can find it. `engine.start()` kicks off a new execution and returns a handle. `handle.result()` waits for the workflow to finish and gives you the output.
+`Engine.create()` does the registration and recovery dance for you in one call: construct the engine, register every activity in the `activities` map, register every workflow in the `workflows` map, then call `engine.recoverAll()` so any workflows still running from a previous process pick up where they left off. The map keys (`helloWorldFormatGreeting`, `helloWorldWelcome`) become the inferred type-system names — Weft validates at runtime that each key matches its definition's `name` field, so you can't accidentally register `farewell` under the key `welcome`.
 
-`engine.start()` without `options.id` creates a brand-new workflow ID. If you want a rerun of the same script to pick up an existing execution, pass a stable id and handle the duplicate-start case as shown above. In a long-lived server process, call `engine.recoverAll()` during boot so workflows already stored as running are resumed.
+`engine.start()` kicks off a new execution and returns a handle. `handle.result()` waits for the workflow to finish and gives you the output. Without `options.id`, each call gets a fresh UUID; with a stable id, the second run of this script throws `WorkflowAlreadyExistsError` instead of double-starting — which is what the `try`/`catch` block handles by resuming the existing workflow.
+
+If you'd rather wire registration up yourself — useful for tests, multi-tenant setups, or dynamic plugin loading — `new Engine({ storage })`, `engine.register()`, `engine.registerActivity()`, and `await engine.recoverAll()` all still exist. `Engine.create()` is sugar over the same primitives.
 
 ## Adding a Sleep
 
@@ -222,12 +214,15 @@ Both activities run concurrently and the workflow resumes when all of them compl
 import { Engine } from 'weft';
 import { SQLiteStorage } from 'weft/storage/sqlite';
 
-const engine = new Engine({
+const engine = await Engine.create({
   storage: new SQLiteStorage('./weft.db'),
 });
 ```
 
-Now your checkpoints live in a SQLite database on disk. Crash the process, restart it, call `engine.recoverAll()` after registering the workflow and activities, and the workflow picks up where it left off. Persistent storage keeps the bytes; recovery tells the new engine process to own the work again.
+Now your checkpoints live in a SQLite database on disk. Crash the process, restart it, and `Engine.create` will resume any workflows that were running — `recoverAll()` runs as part of `create`, after every activity and workflow you passed in is registered. Persistent storage keeps the bytes; recovery tells the new engine process to own the work again.
+
+> [!IMPORTANT]
+> If your storage contains running workflows whose types aren't in the `workflows` map you passed to `Engine.create`, recovery will throw `WorkflowTypeNotRegisteredForRecoveryError` listing the unknown types. This is intentional: the alternative is silently abandoning workflows mid-flight. The [Recovery and deploys guide](../guides/recovery-and-deploys.md) covers how to handle this during rolling deploys and how to drain workflows whose types you want to retire.
 
 For quick experiments where you don't want to think about which adapter to pick, `resolveDefaultStorage()` detects Bun or Node and picks the matching SQLite backend (it's not for browsers — use `IndexedDBStorage` directly there). The path goes under the OS temp directory; production deployments should pass `storage` explicitly.
 
@@ -236,7 +231,7 @@ import { Engine } from 'weft';
 import { resolveDefaultStorage } from 'weft/storage/auto';
 
 await using storage = await resolveDefaultStorage();
-await using engine = new Engine({ storage });
+await using engine = await Engine.create({ storage });
 ```
 
 ## Next Steps

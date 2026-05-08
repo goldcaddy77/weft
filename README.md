@@ -39,7 +39,7 @@ Weft is a ground-up rethink: what would durable execution look like if you desig
 The smallest useful Weft program has four moving pieces: a storage backend, a named activity, a named workflow, and a handle that waits for the result.
 
 ```typescript
-import { Engine, activity, type WorkflowContext } from 'weft';
+import { Engine, activity, workflow, type WorkflowContext } from 'weft';
 import { SQLiteStorage } from 'weft/storage/sqlite';
 
 type WelcomeInput = {
@@ -51,41 +51,37 @@ type WelcomeOutput = {
   onboarded: boolean;
 };
 
-declare module 'weft' {
-  interface WorkflowRegistry {
-    welcome: { input: WelcomeInput; output: WelcomeOutput };
-  }
-
-  interface ActivityTypes {
-    formatGreeting: (input: WelcomeInput) => Promise<string>;
-  }
-}
-
 const formatGreeting = activity({
   name: 'formatGreeting',
   execute: async ({ name }: WelcomeInput) => `Hello, ${name}!`,
 });
 
-const engine = new Engine({ storage: new SQLiteStorage('./weft.db') });
-
-engine.registerActivity(formatGreeting.name, formatGreeting);
-
-engine.register('welcome', async function* (context: WorkflowContext, input: WelcomeInput) {
-  const greeting = yield* context.run('formatGreeting', input);
-  yield* context.sleep('1s');
-  return { greeting, onboarded: true };
+const welcome = workflow({
+  name: 'welcome',
+  handler: async function* welcome(context: WorkflowContext, input: WelcomeInput) {
+    const greeting = yield* context.run(formatGreeting, input);
+    yield* context.sleep('1s');
+    const output: WelcomeOutput = { greeting, onboarded: true };
+    return output;
+  },
 });
 
-await engine.recoverAll();
+const engine = await Engine.create({
+  storage: new SQLiteStorage('./weft.db'),
+  activities: { formatGreeting },
+  workflows: { welcome },
+});
 
 const handle = await engine.start('welcome', { name: 'Steve' });
 const result = await handle.result();
 // result is { greeting: "Hello, Steve!", onboarded: true }
 ```
 
-That's the core loop: `engine.registerActivity()` gives side effects a durable dispatch name, `engine.register()` gives the workflow a durable type, every `yield*` is a checkpoint boundary, and `handle.result()` waits for the output. Checkpoints are written to `./weft.db`, so running workflows can survive process crashes.
+That's the core loop: activities give side effects a durable dispatch name, workflows give the engine a durable type to drive, every `yield*` is a checkpoint boundary, and `handle.result()` waits for the output. Checkpoints are written to `./weft.db`, so running workflows survive process crashes.
 
-This example starts a new workflow execution each time it runs. In a long-lived process, register activities and workflows first, then call `engine.recoverAll()` during boot. For operations you may retry from another request or script, pass a stable `options.id` to `engine.start()` and resume that ID instead of starting a duplicate execution.
+`Engine.create()` does the boot dance for you: it constructs the engine, registers everything you passed in (activities first, then workflows), and calls `engine.recoverAll()` so any workflows still running from a previous process pick up where they left off. The next time you run this script, recovery resumes the in-flight `welcome` workflow before `engine.start()` runs — so passing a stable `options.id` is enough to make the script idempotent.
+
+If you'd rather wire things up by hand — useful for tests, multi-tenant setups, or dynamic registration — `new Engine({ storage })`, `engine.register()`, `engine.registerActivity()`, and `await engine.recoverAll()` all still exist as the underlying primitives. `Engine.create()` is sugar over the same surface.
 
 > [!NOTE]
 > `MemoryStorage` (also exported from `weft`) is fine for tests and ephemeral scripts, but it lives in process memory—a crash takes the checkpoints with it. Use a persistent backend like `SQLiteStorage` whenever durability actually matters.

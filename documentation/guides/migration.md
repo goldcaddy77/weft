@@ -5,6 +5,34 @@ This guide walks through the upgrade path for in-flight breaking changes. Pre-1.
 > [!NOTE]
 > Once everyone on a given upgrade has migrated, the corresponding section of this guide can be archived. Treat it as a working document, not historical record.
 
+## `recoverAll` Throws on Unknown Workflow Types
+
+`engine.recoverAll()` used to silently skip running workflows whose type was not registered on the current engine. Storage that referenced a retired or renamed workflow type would boot cleanly and leave those workflows abandoned mid-flight.
+
+The new behavior is to throw `WorkflowTypeNotRegisteredForRecoveryError` listing the missing types. If you call `recoverAll()` against a database that holds running workflows of types your build no longer registers, the call will throw before resuming anything.
+
+**To upgrade:**
+
+- The common case requires no change: storage with no drift recovers exactly as before.
+- If you're rolling deploys where old pods own workflow types the new build doesn't know about, pass `acknowledgeUnknownWorkflowTypes: true` to `recoverAll()` (or to `Engine.create()`) for the duration of the rollover. See the [Recovery and deploys guide](./recovery-and-deploys.md).
+- The HTTP `weft.recover.all` operation gains an `acknowledgeUnknownWorkflowTypes` request field and returns `409 Conflict` with `{ missingTypes, missingWorkflowCount, samplesTruncated }` when drift is detected. Workflow IDs are never serialized over HTTP.
+
+## `Engine.create` Replaces the Boot Dance
+
+The four-step `new Engine() → registerActivity() → register() → recoverAll()` boot sequence still works, but `Engine.create()` collapses it into a single `await`:
+
+```typescript partial
+const engine = await Engine.create({
+  storage: new SQLiteStorage('./weft.db'),
+  activities: { sendEmail, chargeCard },
+  workflows: { processOrder },
+});
+```
+
+`Engine.create()` registers activities first, then workflows, then runs `recoverAll()` (unless you pass `recover: false`). Map keys must match each definition's `name` field — `Engine.create({ workflows: { greet: farewellDefinition } })` throws `EngineCreateNameMismatchError` rather than silently registering `farewell` under the wrong key.
+
+The constructor and individual `register*` methods remain available for tests, multi-tenant setups, and dynamic plugin loading.
+
 ## AI Surface Shrinkage
 
 Weft's `src/ai/*` surface narrowed to the durability-essential primitives. The narrow agent pitch: _"Weft adds durability to your agent loop. Bring your provider; bring your tools. Weft drives the loop, checkpoints at every tool-call boundary, survives crashes mid-conversation."_

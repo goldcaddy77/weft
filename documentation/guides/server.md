@@ -218,9 +218,7 @@ import {
 } from 'weft/service-worker';
 
 const storage = new IndexedDBStorage('weft');
-const engine = new Engine({ storage });
-
-await engine.recoverAll();
+const engine = await Engine.create({ storage });
 
 const { install, activate } = createLifecycleHandlers();
 self.addEventListener('install', install);
