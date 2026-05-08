@@ -293,6 +293,44 @@ describe('emitBindings — body-accepting methods', () => {
     expect(legacyHealthRoute).toBeDefined();
     expect(legacyHealthRoute?.['operationId']).not.toBe('weft.test.hiddenhealth');
   });
+
+  it('treats output schemas with throwing safeParse implementations as non-nullable for octet-stream routes', () => {
+    const operation = defineOperation({
+      name: 'weft.storage.throwingoutput',
+      mcpExposable: false,
+      summary: 'throwing-output test op',
+      inputSchema: z.object({ key: z.string() }),
+      outputSchema: {
+        safeParse() {
+          throw new Error('unsafe output schema');
+        },
+      } as unknown as z.ZodType,
+      access: { kind: 'public' },
+      transports: { http: true, jsonRpcHttp: false, jsonRpcWebSocket: false, jsonRpcStdio: false },
+      unknownKeyPolicy: { http: 'reject', jsonRpc: 'reject' },
+      invoke: async () => new Uint8Array(),
+    });
+    const binding: UnknownRestBinding = {
+      method: 'GET',
+      path: '/v1/test/throwingoutput/:key',
+      pathParamNames: ['key'],
+      operationName: 'weft.storage.throwingoutput',
+      inputSources: { key: { kind: 'path', pathParam: 'key' } },
+      extractInput: async (_request, pathParams) => ({ key: pathParams['key'] ?? '' }),
+      success: { kind: 'streaming', mediaType: 'application/octet-stream' },
+    };
+    const registry = createOperationRegistry([operation]);
+    const paths: Record<string, Record<string, unknown>> = {};
+    emitBindings(paths, new Set(), [binding], registry);
+
+    const pathItem = paths['/v1/test/throwingoutput/{key}'] as
+      | Record<string, Record<string, unknown>>
+      | undefined;
+    const getOperation = pathItem?.['get'];
+    const responses = getOperation?.['responses'] as Record<string, unknown>;
+    expect(responses).toHaveProperty('200');
+    expect(responses).not.toHaveProperty('404');
+  });
 });
 
 describe('route-model helpers', () => {

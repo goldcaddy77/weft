@@ -3,7 +3,12 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { verifyDocumentation } from './verify-documentation.ts';
+import {
+  parseMinimumBunVersion,
+  runCli,
+  runMain,
+  verifyDocumentation,
+} from './verify-documentation.ts';
 
 const temporaryRepositories: string[] = [];
 
@@ -184,5 +189,126 @@ describe('verifyDocumentation', () => {
       line: 7,
       message: 'Unsupported bun-version format: latest. Use a concrete semver pin.',
     });
+  });
+
+  it('rejects package.json files that do not define engines.bun as a string semver range', async () => {
+    const missingEnginesRoot = await createFixtureRepository({
+      'package.json': JSON.stringify({}, null, 2),
+    });
+    expect(() => parseMinimumBunVersion(missingEnginesRoot)).toThrow(
+      'package.json must define engines.bun',
+    );
+
+    const nonStringRoot = await createFixtureRepository({
+      'package.json': JSON.stringify({ engines: { bun: 123 } }, null, 2),
+    });
+    expect(() => parseMinimumBunVersion(nonStringRoot)).toThrow(
+      'package.json engines.bun must be a string',
+    );
+
+    const unsupportedRangeRoot = await createFixtureRepository({
+      'package.json': JSON.stringify({ engines: { bun: 'workspace:*' } }, null, 2),
+    });
+    expect(() => parseMinimumBunVersion(unsupportedRangeRoot)).toThrow(
+      'Unsupported Bun engine range: workspace:*',
+    );
+  });
+
+  it('parses angle-bracket links without closing brackets and tolerates malformed percent escapes', async () => {
+    const repositoryRoot = await createFixtureRepository({
+      'README.md': [
+        '# Weft',
+        '',
+        'The bun runtime version 1.3.13 or later is required.',
+        '',
+        'See [Installation](<documentation/getting-started/installation.md#installation).',
+        'See [Odd path](documentation/%E0%A4%A.md).',
+        '',
+      ].join('\n'),
+      'documentation/%E0%A4%A.md': '# Odd path\n',
+    });
+
+    const result = verifyDocumentation({ repositoryRoot });
+    expect(result.findings).toEqual([]);
+  });
+
+  it('reports missing required documentation files', async () => {
+    const repositoryRoot = await createFixtureRepository({
+      'README.md': '# Weft\n\nThe bun runtime version 1.3.13 or later is required.\n',
+    });
+    rmSync(join(repositoryRoot, 'documentation/contributing/development-setup.md'));
+
+    const result = verifyDocumentation({ repositoryRoot });
+
+    expect(result.findings).toContainEqual({
+      file: 'documentation/contributing/development-setup.md',
+      line: 1,
+      message: 'Required documentation file missing.',
+    });
+  });
+
+  it('returns exit code 0 for a clean repository via the CLI helper', async () => {
+    const repositoryRoot = await createFixtureRepository({});
+    const logs: string[] = [];
+
+    const exitCode = runCli(repositoryRoot, {
+      log(message) {
+        logs.push(String(message));
+      },
+      error(message) {
+        logs.push(String(message));
+      },
+    });
+
+    expect(exitCode).toBe(0);
+    expect(logs.join('\n')).toContain('verify-documentation: checked 3 Markdown files');
+  });
+
+  it('runs the CLI entrypoint successfully in import.meta.main mode', async () => {
+    const scriptPath = join(import.meta.dir, 'verify-documentation.ts');
+    const proc = Bun.spawn(['bun', scriptPath], {
+      cwd: join(import.meta.dir, '..'),
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...Bun.env, FORCE_COLOR: '0' },
+    });
+
+    const exitCode = await proc.exited;
+
+    expect(exitCode).toBe(0);
+  });
+
+  it('returns exit code 1 for repositories with findings via the CLI helper', async () => {
+    const repositoryRoot = await createFixtureRepository({
+      'README.md': '# Weft\n\nThe bun runtime version 1.3.12 or later is required.\n',
+    });
+    const errors: string[] = [];
+
+    const exitCode = runCli(repositoryRoot, {
+      log(message) {
+        errors.push(String(message));
+      },
+      error(message) {
+        errors.push(String(message));
+      },
+    });
+
+    expect(exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('verify-documentation: 2 finding(s)');
+    expect(errors.join('\n')).toContain(
+      'README.md:3: Stale Bun version claim 1.3.12; package.json requires >=1.3.13.',
+    );
+  });
+
+  it('calls the provided exit function with the computed CLI status', async () => {
+    const repositoryRoot = await createFixtureRepository({
+      'README.md': '# Weft\n\nThe bun runtime version 1.3.12 or later is required.\n',
+    });
+
+    expect(() =>
+      runMain(repositoryRoot, { log() {}, error() {} }, ((code?: number) => {
+        throw new Error(`exit:${code ?? 0}`);
+      }) as (code?: number) => never),
+    ).toThrow('exit:1');
   });
 });

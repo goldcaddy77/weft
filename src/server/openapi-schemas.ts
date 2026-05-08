@@ -69,10 +69,7 @@ export function extractComponentsSchemas(registry: OperationRegistry): OpenApiSc
   const hoistCandidates = [...byCanonical.entries()]
     .filter(([, entry]) => entry.owners.length >= 2)
     .map(([canonical, entry]) => {
-      const firstOwner = [...entry.owners].toSorted(compareOwners)[0];
-      if (firstOwner === undefined) {
-        throw new Error('openapi schema extraction found a duplicate group without owners');
-      }
+      const firstOwner = [...entry.owners].toSorted(compareOwners)[0]!;
       return {
         canonical,
         entry,
@@ -86,14 +83,8 @@ export function extractComponentsSchemas(registry: OperationRegistry): OpenApiSc
     );
 
   for (const candidate of hoistCandidates) {
-    let name = candidate.baseName;
-    let suffix = 2;
-    while (name in components) {
-      name = `${candidate.baseName}_${suffix}`;
-      suffix += 1;
-    }
-    components[name] = candidate.entry.schema;
-    hoistedKeys.set(candidate.canonical, name);
+    components[candidate.baseName] = candidate.entry.schema;
+    hoistedKeys.set(candidate.canonical, candidate.baseName);
   }
 
   return {

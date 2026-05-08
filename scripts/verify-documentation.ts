@@ -376,22 +376,34 @@ export function verifyDocumentation(options: VerificationOptions = {}): {
   return { filesChecked: files.length, findings };
 }
 
-function main(): void {
-  const { filesChecked, findings } = verifyDocumentation();
+type CliConsole = Pick<typeof console, 'error' | 'log'>;
+type ExitFunction = (code?: number) => never;
+const DEFAULT_EXIT: ExitFunction = process.exit.bind(process) as ExitFunction;
+
+export function runCli(repositoryRoot = REPOSITORY_ROOT, cliConsole: CliConsole = console): number {
+  const { filesChecked, findings } = verifyDocumentation({ repositoryRoot });
 
   if (findings.length > 0) {
-    console.error(`verify-documentation: ${findings.length} finding(s)`);
+    cliConsole.error(`verify-documentation: ${findings.length} finding(s)`);
     for (const finding of findings) {
-      console.error(`${finding.file}:${finding.line}: ${finding.message}`);
+      cliConsole.error(`${finding.file}:${finding.line}: ${finding.message}`);
     }
-    process.exit(1);
+    return 1;
   }
 
-  console.log(
+  cliConsole.log(
     `verify-documentation: checked ${filesChecked} Markdown files, local links, anchors, Bun version claims, and workflow Bun pins.`,
   );
+  return 0;
 }
 
-if (import.meta.main) {
-  main();
+export function runMain(
+  repositoryRoot = REPOSITORY_ROOT,
+  cliConsole: CliConsole = console,
+  exit: ExitFunction = DEFAULT_EXIT,
+): never {
+  return exit(runCli(repositoryRoot, cliConsole));
 }
+
+const maybeRunMain = import.meta.main ? runMain : undefined;
+maybeRunMain?.();
