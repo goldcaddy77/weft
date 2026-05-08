@@ -15,7 +15,7 @@ The new behavior is to throw `WorkflowTypeNotRegisteredForRecoveryError` listing
 
 - The common case requires no change: storage with no drift recovers exactly as before.
 - If you're rolling deploys where old pods own workflow types the new build doesn't know about, pass `acknowledgeUnknownWorkflowTypes: true` to `recoverAll()` (or to `Engine.create()`) for the duration of the rollover. See the [Recovery and deploys guide](./recovery-and-deploys.md).
-- The HTTP `weft.recover.all` operation gains an `acknowledgeUnknownWorkflowTypes` request field and returns `409 Conflict` with `{ missingTypes, missingWorkflowCount, samplesTruncated }` when drift is detected. Workflow IDs are never serialized over HTTP.
+- The HTTP `weft.recover.all` operation returns `409 Conflict` with `{ missingTypes, missingWorkflowCount, samplesTruncated }` when drift is detected. Workflow IDs are never serialized over HTTP, and the `acknowledgeUnknownWorkflowTypes` opt-out is intentionally not exposed over the public HTTP surface — operators who need the dangerous skip can call `engine.recoverAll({ acknowledgeUnknownWorkflowTypes: true })` from their boot code.
 
 ## `Engine.create` Replaces the Boot Dance
 

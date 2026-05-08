@@ -353,6 +353,15 @@ function definitionEntries<TDefinition extends object>(
 function typedEngineView<TViewWorkflows extends object, TViewActivities extends object>(
   engine: object,
 ): Engine<TViewWorkflows, TViewActivities> {
+  // The runtime instance is the same Engine; this re-narrows the phantom type
+  // parameters after `register` / `registerActivity` has mutated the
+  // underlying registries. There is no sound type-system bridge: `Engine` is
+  // invariant in both type parameters because the `register` method makes them
+  // contravariant, so any cast that preserves the structural relationship
+  // would have to flow through `unknown`/`never`. The bypass is contained to
+  // this single helper and the `engine: object` parameter ensures callers can
+  // only pass an actual instance (the Engine class extends EventTarget which
+  // extends object).
   return engine as never;
 }
 
@@ -597,26 +606,35 @@ export class Engine<
   static async create(options: EngineCreateRuntimeOptions): Promise<unknown> {
     const engine = new Engine<object, object>(options);
 
-    for (const [name, definition] of definitionEntries(options.activities)) {
-      if (name !== definition.name) {
-        throw new EngineCreateNameMismatchError('activity', name, definition.name);
+    try {
+      for (const [name, definition] of definitionEntries(options.activities)) {
+        if (name !== definition.name) {
+          throw new EngineCreateNameMismatchError('activity', name, definition.name);
+        }
+        engine.#registerActivityDefinition(definition);
       }
-      engine.#registerActivityDefinition(definition);
-    }
 
-    for (const [name, definition] of definitionEntries(options.workflows)) {
-      if (name !== definition.name) {
-        throw new EngineCreateNameMismatchError('workflow', name, definition.name);
+      for (const [name, definition] of definitionEntries(options.workflows)) {
+        if (name !== definition.name) {
+          throw new EngineCreateNameMismatchError('workflow', name, definition.name);
+        }
+        engine.register(definition);
       }
-      engine.register(definition);
-    }
 
-    if (options.recover !== false) {
-      const recoverOptions =
-        options.acknowledgeUnknownWorkflowTypes === undefined
-          ? undefined
-          : { acknowledgeUnknownWorkflowTypes: options.acknowledgeUnknownWorkflowTypes };
-      await engine.recoverAll(recoverOptions);
+      if (options.recover !== false) {
+        const recoverOptions =
+          options.acknowledgeUnknownWorkflowTypes === undefined
+            ? undefined
+            : { acknowledgeUnknownWorkflowTypes: options.acknowledgeUnknownWorkflowTypes };
+        await engine.recoverAll(recoverOptions);
+      }
+    } catch (error) {
+      // Constructor side effects (broadcast channel, scheduler, dispatchers,
+      // alert manager) are alive even when registration or recovery fails.
+      // Dispose before propagating so callers don't have to recover from a
+      // half-booted engine they never received a reference to.
+      await engine[Symbol.asyncDispose]();
+      throw error;
     }
 
     return engine;

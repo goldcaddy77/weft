@@ -218,7 +218,9 @@ import {
 } from 'weft/service-worker';
 
 const storage = new IndexedDBStorage('weft');
-const engine = await Engine.create({ storage });
+// `recover: false` defers recovery until after registration — register your
+// activities and workflows below, then call `await engine.recoverAll()` once.
+const engine = await Engine.create({ storage, recover: false });
 
 const { install, activate } = createLifecycleHandlers();
 self.addEventListener('install', install);

@@ -347,11 +347,26 @@ describe('crash recovery', () => {
       resumedEvents.push(event as WorkflowResumedEvent);
     });
 
+    const checkpointKey = STORAGE_KEYS.checkpoint('preflight-known-id');
+    const stateKey = STORAGE_KEYS.workflow('preflight-known-id');
+    const checkpointBefore = await storage.get(checkpointKey);
+    const stateBefore = await storage.get(stateKey);
+    expect(checkpointBefore).not.toBeNull();
+    expect(stateBefore).not.toBeNull();
+
     await expect(recoveredEngine.recoverAll()).rejects.toBeInstanceOf(
       WorkflowTypeNotRegisteredForRecoveryError,
     );
     expect(resumedEvents).toHaveLength(0);
     expect(resumedRunCount).toBe(0);
+
+    // Preflight is read-only — the throw must leave every persisted byte
+    // identical so a follow-up `recoverAll()` (after registering the missing
+    // type) sees the same state the first call started from.
+    const checkpointAfter = await storage.get(checkpointKey);
+    const stateAfter = await storage.get(stateKey);
+    expect(checkpointAfter).toEqual(checkpointBefore);
+    expect(stateAfter).toEqual(stateBefore);
 
     recoveredEngine[Symbol.dispose]();
   });
@@ -443,6 +458,16 @@ describe('crash recovery', () => {
       'matrix-timed-out-id',
       'matrix-missing-timed-out',
       'timed-out',
+    );
+    // Registered-but-terminal cell: a completed workflow whose type IS
+    // registered should still be silently ignored. Terminal status takes
+    // precedence over registration; recovery only resumes records that need
+    // their generator function back to make progress.
+    await seedStoredWorkflowState(
+      storage,
+      'matrix-registered-completed-id',
+      'matrix-running',
+      'completed',
     );
 
     const recoveredEngine = new Engine({ storage });

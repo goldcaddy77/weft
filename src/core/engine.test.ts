@@ -155,6 +155,36 @@ describe('Engine', () => {
     ).rejects.toBeInstanceOf(EngineCreateNameMismatchError);
   });
 
+  it('Engine.create disposes the partially constructed engine on failure', async () => {
+    // Constructor side effects (broadcast channel, scheduler, dispatchers,
+    // alert manager) start before registration runs. If a key mismatch or
+    // recovery error escapes, the engine reference never reaches the caller —
+    // so Engine.create has to dispose what it constructed before rethrowing.
+    // We observe disposal by patching the prototype method.
+    const originalDispose = Engine.prototype[Symbol.asyncDispose];
+    let disposeCount = 0;
+    Engine.prototype[Symbol.asyncDispose] = async function () {
+      disposeCount += 1;
+      return originalDispose.call(this);
+    };
+
+    try {
+      const greetWorkflow = defineWorkflow({
+        name: 'disposalWorkflow',
+        handler: async function* () {
+          return 'ok';
+        },
+      });
+      await expect(
+        Engine.create({ workflows: { wrongKey: greetWorkflow }, recover: false }),
+      ).rejects.toBeInstanceOf(EngineCreateNameMismatchError);
+
+      expect(disposeCount).toBe(1);
+    } finally {
+      Engine.prototype[Symbol.asyncDispose] = originalDispose;
+    }
+  });
+
   it('withWorkflow and withActivity return a typed view of the same runtime engine', async () => {
     const formatBuilderGreeting = activity({
       name: 'formatBuilderGreeting',
@@ -216,6 +246,17 @@ describe('Engine', () => {
       retry,
       idempotent: true,
     });
+
+    // Both registration paths must preserve the colocated schema metadata —
+    // not just the simple scalar fields. A regression that drops schemas
+    // would still pass the toMatchObject above but break tools that
+    // introspect activity I/O contracts.
+    const createdMetadata = createdEngine.getActivityDefinition('metadataActivity');
+    const builderMetadata = builderEngine.getActivityDefinition('metadataActivity');
+    expect(createdMetadata?.inputSchema).toBe(inputSchema);
+    expect(createdMetadata?.outputSchema).toBe(outputSchema);
+    expect(builderMetadata?.inputSchema).toBe(inputSchema);
+    expect(builderMetadata?.outputSchema).toBe(outputSchema);
 
     createdEngine[Symbol.dispose]();
     builderEngine[Symbol.dispose]();

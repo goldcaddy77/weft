@@ -7,9 +7,13 @@ import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 import { shapeRestFault } from './operation-helpers.ts';
 
-const recoverAllInput = z.object({
-  acknowledgeUnknownWorkflowTypes: z.boolean().optional(),
-});
+// Intentionally accept no input fields. `acknowledgeUnknownWorkflowTypes` is
+// the dangerous opt-out that lets recovery silently skip unknown stored
+// workflow types — exposing it on this `kind: 'public'` operation would let
+// an unauthenticated caller abandon in-flight workflows over HTTP. The
+// in-process flag is still available via `engine.recoverAll(...)` for code
+// paths that have already established the operator's intent.
+const recoverAllInput = z.object({});
 
 const recoverAllOutput = z.object({
   recovered: z.array(z.string()),
@@ -29,15 +33,11 @@ export const recoverAllOperation = defineOperation<RecoverAllInput, RecoverAllOu
   producibleFaults: ['Conflict'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
-  invoke: async ({ engine, input }): Promise<RecoverAllOutput> => {
+  invoke: async ({ engine }): Promise<RecoverAllOutput> => {
     const typedEngine = engine as Engine;
 
     try {
-      const handles = await typedEngine.recoverAll(
-        input.acknowledgeUnknownWorkflowTypes === undefined
-          ? undefined
-          : { acknowledgeUnknownWorkflowTypes: input.acknowledgeUnknownWorkflowTypes },
-      );
+      const handles = await typedEngine.recoverAll();
       return { recovered: handles.map((handle) => handle.id) };
     } catch (error) {
       if (error instanceof WorkflowTypeNotRegisteredForRecoveryError) {
@@ -69,32 +69,8 @@ export const recoverAllRestBinding: UnknownRestBinding = {
   path: '/v1/recover',
   pathParamNames: [],
   operationName: 'weft.recover.all',
-  inputSources: {
-    acknowledgeUnknownWorkflowTypes: {
-      kind: 'body-field',
-      bodyField: 'acknowledgeUnknownWorkflowTypes',
-    },
-  },
-  extractInput: async (request) => {
-    const rawBody = await request.text();
-    if (rawBody.trim().length === 0) {
-      return {};
-    }
-
-    let body: unknown;
-    try {
-      body = JSON.parse(rawBody) as unknown;
-    } catch {
-      return {};
-    }
-
-    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-      return {};
-    }
-
-    const record = body as Record<string, unknown>;
-    return { acknowledgeUnknownWorkflowTypes: record['acknowledgeUnknownWorkflowTypes'] };
-  },
+  inputSources: {},
+  extractInput: async () => ({}),
   success: { kind: 'json', status: 200 },
   shapeFault: shapeRecoverAllFault,
 };

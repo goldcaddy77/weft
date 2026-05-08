@@ -117,12 +117,12 @@ If you're retiring an activity, the same drain-then-drop discipline applies — 
 
 ## Recovery from the server (HTTP)
 
-When you expose recovery over HTTP via the `weft.recover.all` operation, the same drift behavior applies, with an extra redaction step:
+When you expose recovery over HTTP via the `weft.recover.all` operation, the same drift behavior applies, with two extra constraints to keep the public surface safe:
 
-- Default: storage with unknown types causes the operation to return a `409 Conflict` fault. The fault payload includes `missingTypes` (array of type names), `missingWorkflowCount` (integer), and `samplesTruncated` (boolean) — but **never** workflow IDs. Workflow IDs stay on the structured error in-process; they do not cross the HTTP boundary.
-- Acknowledged: pass `acknowledgeUnknownWorkflowTypes: true` in the request body. The operation returns 200 with the recovered workflow IDs. Skipped workflows are observable in-process via `WorkflowRecoverySkippedEvent`, not in the HTTP response.
+- **Workflow IDs never cross the HTTP boundary.** Storage with unknown types causes the operation to return a `409 Conflict` fault. The fault payload includes `missingTypes` (array of type names), `missingWorkflowCount` (integer), and `samplesTruncated` (boolean) — but never workflow IDs. IDs stay on the structured error in-process.
+- **The `acknowledgeUnknownWorkflowTypes` opt-out is not exposed over HTTP.** Letting an unauthenticated caller silently skip recovery would be a footgun on a public route, so the HTTP request body has no input fields. Operators who need the opt-out call `engine.recoverAll({ acknowledgeUnknownWorkflowTypes: true })` from their own boot code, where the intent is established before the engine starts handling requests.
 
-This is intentionally one-way: an HTTP client gets enough information to know recovery is blocked and what types are missing, but not enough to enumerate every affected customer's workflow. If your operators need ID-level visibility, they should consult logs or metrics in the engine process, not the HTTP response.
+This is intentionally one-way: an HTTP client gets enough information to know recovery is blocked and what types are missing, but cannot enumerate affected workflows or skip the gate. If your operators need ID-level visibility or the skip behavior, they need access to the engine process — logs, metrics, or the in-process API — not the HTTP route.
 
 ## Demo: a workflow that survives a restart
 

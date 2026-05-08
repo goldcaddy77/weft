@@ -5,6 +5,8 @@ import {
   signal,
   update,
   workflow,
+  type AnyActivityDefinition,
+  type AnyWorkflowDefinition,
   type InferActivityEntry,
   type WorkflowContext,
   type WorkflowDefinition,
@@ -252,3 +254,32 @@ async function verifyEngineCreateInference(): Promise<void> {
   void both.start('missingFromBothMap', 'Steve');
 }
 void verifyEngineCreateInference;
+
+// Variance regression detector — reverting `AnyWorkflowDefinition` /
+// `AnyActivityDefinition` to `WorkflowDefinition<unknown, unknown>` /
+// `ActivityDefinition<unknown, unknown>` (i.e. removing the `never` in the
+// input position) makes these assignments fail to compile, because
+// `WorkflowFunction<{ id: string }, ...>` is not assignable to
+// `WorkflowFunction<unknown, ...>` under strict function-parameter
+// contravariance. Direct assignment is the load-bearing test: it succeeds
+// today because `AnyWorkflowDefinition` uses `never` in the input position.
+const _narrowInputWorkflowGuard: AnyWorkflowDefinition = workflow({
+  name: 'narrowInputGuard',
+  handler: async function* (_ctx, _input: { strict: true }) {
+    yield;
+    return 1;
+  },
+});
+void _narrowInputWorkflowGuard;
+
+const _narrowInputActivityGuard: AnyActivityDefinition = activity({
+  name: 'narrowInputActivityGuard',
+  execute: async (input: { strict: true; payload: number }) => input.payload,
+});
+void _narrowInputActivityGuard;
+
+const _zeroInputActivityGuard: AnyActivityDefinition = activity({
+  name: 'zeroInputActivityGuard',
+  execute: async () => 'ok',
+});
+void _zeroInputActivityGuard;

@@ -78,7 +78,12 @@ import { Engine } from 'weft';
 import { IndexedDBStorage } from 'weft/storage/indexeddb';
 
 const storage = new IndexedDBStorage('weft');
-const engine = await Engine.create({ storage });
+// `recover: false` — this snippet boots the service worker but does not show
+// workflow/activity registration. Register your definitions before calling
+// `await engine.recoverAll()` separately. Booting with `Engine.create({ storage })`
+// alone would throw on any running workflow because the engine has no
+// registrations yet.
+const engine = await Engine.create({ storage, recover: false });
 const scheduler = new ServiceWorkerScheduler({
   storage,
   onTimerFired: (entry) => engine.fireTimer(entry),
