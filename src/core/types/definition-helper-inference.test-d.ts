@@ -125,7 +125,7 @@ const inferredWorkflow = workflow({
 });
 const _check_workflow_definition: Equals<
   typeof inferredWorkflow,
-  WorkflowDefinition<{ orderId: string }, { shipped: boolean }>
+  WorkflowDefinition<{ orderId: string }, { shipped: boolean }, 'checkout'>
 > = true;
 void _check_workflow_definition;
 
@@ -148,7 +148,7 @@ const inferredActivity = activity({
 });
 const _check_activity_callable: Equals<
   typeof inferredActivity,
-  ActivityCallable<{ to: string }, { sent: boolean }>
+  ActivityCallable<{ to: string }, { sent: boolean }, 'sendEmail'>
 > = true;
 void _check_activity_callable;
 
@@ -164,7 +164,7 @@ const transformedActivity = activity({
 });
 const _check_activity_transform: Equals<
   typeof transformedActivity,
-  ActivityCallable<number, number>
+  ActivityCallable<number, number, 'parseNumber'>
 > = true;
 void _check_activity_transform;
 
@@ -214,7 +214,7 @@ const workflowTransformOutput = workflow({
 });
 const _check_workflow_transform_output: Equals<
   typeof workflowTransformOutput,
-  WorkflowDefinition<{ x: number }, number>
+  WorkflowDefinition<{ x: number }, number, 'project'>
 > = true;
 void _check_workflow_transform_output;
 
@@ -226,6 +226,6 @@ const activityTransformOutput = activity({
 });
 const _check_activity_transform_output: Equals<
   typeof activityTransformOutput,
-  ActivityCallable<{ x: number }, number>
+  ActivityCallable<{ x: number }, number, 'project'>
 > = true;
 void _check_activity_transform_output;

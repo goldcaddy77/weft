@@ -1,8 +1,13 @@
+import { z } from 'zod';
 import {
+  activity,
   Engine,
   signal,
   update,
+  workflow,
+  type InferActivityEntry,
   type WorkflowContext,
+  type WorkflowDefinition,
   type WorkflowHandle,
   type WorkflowRegistration,
 } from '../index.ts';
@@ -63,6 +68,8 @@ type RequiredWorkflowContextKeys =
 
 type MissingWorkflowContextKeys = Exclude<RequiredWorkflowContextKeys, keyof WorkflowContext>;
 type AssertNever<T extends never> = T;
+type Equals<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2 ? true : false;
 
 const workflowContextDriftGuard: AssertNever<MissingWorkflowContextKeys> = undefined as never;
 void workflowContextDriftGuard;
@@ -151,3 +158,97 @@ void engine.start('runtime-discovered', { id: 'dynamic' });
 engine.register('runtime-discovered', async () => {
   return 'dynamic';
 });
+
+const localGreet = workflow({
+  name: 'localGreet',
+  handler: async function* (_ctx: WorkflowContext, input: string) {
+    yield;
+    return `Hello, ${input}`;
+  },
+});
+
+const schemaDefinedWorkflow = workflow({
+  name: 'schemaDefinedWorkflow',
+  inputSchema: z.object({ id: z.string() }),
+  outputSchema: z.object({ ok: z.boolean() }),
+  handler: async function* (_ctx, input) {
+    const _inputCheck: Equals<typeof input, { id: string }> = true;
+    void _inputCheck;
+    yield;
+    return { ok: true };
+  },
+});
+
+const concreteWorkflow: WorkflowDefinition<string, string, 'concreteWorkflow'> = workflow({
+  name: 'concreteWorkflow',
+  handler: async function* (_ctx: WorkflowContext, input: string) {
+    yield;
+    return input.toUpperCase();
+  },
+});
+
+const sendEmail = activity({
+  name: 'sendEmail',
+  execute: async (input: { to: string }) => {
+    void input.to;
+  },
+});
+
+const zeroInputActivity = activity({
+  name: 'zeroInputActivity',
+  execute: async () => 'pong',
+});
+
+const strictLocalEngine = new Engine<{}, {}>()
+  .withWorkflow(localGreet)
+  .withWorkflow(concreteWorkflow)
+  .withWorkflow(schemaDefinedWorkflow)
+  .withActivity(sendEmail)
+  .withActivity(zeroInputActivity);
+
+void strictLocalEngine.start('localGreet', 'Steve');
+void strictLocalEngine.start('concreteWorkflow', 'Steve');
+void strictLocalEngine.start('schemaDefinedWorkflow', { id: 'wf-1' });
+// @ts-expect-error strict local engines reject workflow names not added by withWorkflow.
+void strictLocalEngine.start('unknownLocalWorkflow', 'Steve');
+// @ts-expect-error localGreet input is inferred from the workflow definition.
+void strictLocalEngine.start('localGreet', { id: 'wrong' });
+
+type ZeroInputActivityEntry = InferActivityEntry<typeof zeroInputActivity>;
+const zeroInputCallable: ZeroInputActivityEntry['zeroInputActivity'] = async () => 'pong';
+void zeroInputCallable();
+// @ts-expect-error zero-input activity entries must stay zero-argument.
+void zeroInputCallable('unexpected');
+
+async function verifyEngineCreateInference(): Promise<void> {
+  const neither = await Engine.create({ recover: false });
+  // @ts-expect-error no workflow definitions means no strict local workflow names.
+  void neither.start('localGreet', 'Steve');
+
+  const workflowsOnly = await Engine.create({
+    workflows: { localGreet },
+    recover: false,
+  });
+  void workflowsOnly.start('localGreet', 'Steve');
+  // @ts-expect-error absent activities do not widen the workflow registry.
+  void workflowsOnly.start('missingFromWorkflowMap', 'Steve');
+
+  const activitiesOnly = await Engine.create({
+    activities: { sendEmail },
+    recover: false,
+  });
+  // @ts-expect-error absent workflow maps collapse to an empty workflow registry.
+  void activitiesOnly.start('localGreet', 'Steve');
+
+  const both = await Engine.create({
+    workflows: { localGreet, concreteWorkflow, schemaDefinedWorkflow },
+    activities: { sendEmail, zeroInputActivity },
+    recover: false,
+  });
+  void both.start('localGreet', 'Steve');
+  void both.start('concreteWorkflow', 'Steve');
+  void both.start('schemaDefinedWorkflow', { id: 'wf-1' });
+  // @ts-expect-error Engine.create infers names from the definition map keys.
+  void both.start('missingFromBothMap', 'Steve');
+}
+void verifyEngineCreateInference;

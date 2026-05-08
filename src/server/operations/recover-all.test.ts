@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import { Engine } from '../../core/engine.ts';
+import { Engine, WorkflowTypeNotRegisteredForRecoveryError } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
@@ -15,8 +15,16 @@ function createEngine(): Engine {
   return engine;
 }
 
-function request(method: string, path: string): Request {
-  return new Request(`http://localhost${path}`, { method });
+function request(method: string, path: string, body?: unknown): Request {
+  return new Request(`http://localhost${path}`, {
+    method,
+    ...(body === undefined
+      ? {}
+      : {
+          body: JSON.stringify(body),
+          headers: { 'Content-Type': 'application/json' },
+        }),
+  });
 }
 
 const registry = createOperationRegistry([recoverAllOperation]);
@@ -71,6 +79,68 @@ describe('weft.recover.all', () => {
       expect(response.status).toBe(500);
       expect(await response.json()).toEqual({ error: 'Internal server error' });
       expect(response.headers.get('Content-Type')).toContain('application/json');
+    } finally {
+      engine.recoverAll = originalRecoverAll;
+    }
+  });
+
+  it('maps unknown workflow types to a redacted 409 response by default', async () => {
+    engine = createEngine();
+    const originalRecoverAll = engine.recoverAll.bind(engine);
+
+    try {
+      engine.recoverAll = async () => {
+        throw new WorkflowTypeNotRegisteredForRecoveryError({
+          registeredTypes: ['echo'],
+          missingWorkflows: [
+            { workflowId: 'wf-secret-1', type: 'missingAlpha' },
+            { workflowId: 'wf-secret-2', type: 'missingBeta' },
+          ],
+        });
+      };
+
+      const response = await handleRequest(request('POST', '/v1/recover'), engine, {
+        operationRegistry: registry,
+        restBindings: bindings,
+      });
+
+      expect(response.status).toBe(409);
+      const body = await response.json();
+      expect(body).toEqual({
+        error: 'workflow_type_not_registered_for_recovery',
+        missingTypes: ['missingAlpha', 'missingBeta'],
+        missingWorkflowCount: 2,
+        samplesTruncated: false,
+      });
+      expect(JSON.stringify(body)).not.toContain('wf-secret');
+    } finally {
+      engine.recoverAll = originalRecoverAll;
+    }
+  });
+
+  it('forwards acknowledgeUnknownWorkflowTypes to recoverAll', async () => {
+    engine = createEngine();
+    const originalRecoverAll = engine.recoverAll.bind(engine);
+    let acknowledged: boolean | undefined;
+
+    try {
+      engine.recoverAll = async (options) => {
+        acknowledged = options?.acknowledgeUnknownWorkflowTypes;
+        return [] as Awaited<ReturnType<Engine['recoverAll']>>;
+      };
+
+      const response = await handleRequest(
+        request('POST', '/v1/recover', { acknowledgeUnknownWorkflowTypes: true }),
+        engine,
+        {
+          operationRegistry: registry,
+          restBindings: bindings,
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ recovered: [] });
+      expect(acknowledged).toBe(true);
     } finally {
       engine.recoverAll = originalRecoverAll;
     }
