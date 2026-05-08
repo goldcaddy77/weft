@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import * as v from 'valibot';
 import { z } from 'zod';
 
-import { definitionSchemaToJsonSchema } from './definition-schema-to-json.ts';
+import { definitionSchemaToJsonSchema, loadValibotConverter } from './definition-schema-to-json.ts';
 import type { DefinitionSchema, StandardJSONSchemaV1 } from './definition-schema.ts';
 
 describe('definitionSchemaToJsonSchema', () => {
@@ -165,15 +165,16 @@ describe('definitionSchemaToJsonSchema', () => {
       expect(() => definitionSchemaToJsonSchema(schema, 'output')).toThrow(/asymmetric-test/);
     });
 
-    /**
-     * @internal Coverage gap: the missing-`@valibot/to-json-schema` and
-     * "module exports no `toJsonSchema`" branches in `loadValibotConverter`
-     * are not covered. They depend on `import.meta.resolveSync` failing or
-     * returning a module without the expected export, neither of which is
-     * cleanly mockable without restructuring the converter to take its
-     * loader as an injected dependency. The error messages are simple
-     * literals; the runtime behavior is exercised end-to-end whenever
-     * `@valibot/to-json-schema` is installed (the default).
-     */
+    it('throws when the installed Valibot converter module does not export toJsonSchema', () => {
+      expect(() => loadValibotConverter(() => ({ default: () => ({}) }))).toThrow(
+        /does not export `toJsonSchema`/,
+      );
+    });
+
+    it('returns the loaded Valibot converter when the module exports toJsonSchema', () => {
+      const toJsonSchema = () => ({ type: 'object' });
+
+      expect(loadValibotConverter(() => ({ toJsonSchema }))).toBe(toJsonSchema);
+    });
   });
 });

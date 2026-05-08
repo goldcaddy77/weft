@@ -85,4 +85,28 @@ describe('activity()', () => {
     expect(await recordHeartbeat('start', context)).toBe('recorded');
     expect(receivedContext).toBe(context);
   });
+
+  it('accepts a named function directly and derives the activity name from it', async () => {
+    const uppercase = createConfiguredActivity(async function uppercase(input: string) {
+      return input.toUpperCase();
+    });
+
+    expect(uppercase.name).toBe('uppercase');
+    expect(await uppercase('hello')).toBe('HELLO');
+  });
+
+  it('rejects unnamed activities created from either branch', () => {
+    expect(() =>
+      createConfiguredActivity(async function (input: string) {
+        return input;
+      }),
+    ).toThrow('activity() requires a named function or an options object with name.');
+
+    expect(() =>
+      createConfiguredActivity({
+        name: '',
+        execute: (input: string) => input,
+      }),
+    ).toThrow('activity() requires a named function or an options object with name.');
+  });
 });

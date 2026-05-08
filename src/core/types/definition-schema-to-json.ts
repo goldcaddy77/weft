@@ -115,18 +115,21 @@ function convertValibot(schema: DefinitionSchema): Record<string, unknown> {
   return stripDialect(requirePlainObject(result, 'valibot'));
 }
 
-function loadValibotConverter(): (schema: unknown, options?: unknown) => unknown {
-  if (cachedValibotConverter !== undefined) return cachedValibotConverter;
+export function loadValibotConverter(
+  requireModule?: (specifier: string) => unknown,
+): (schema: unknown, options?: unknown) => unknown {
+  const shouldUseCache = requireModule === undefined;
+  const resolver = requireModule ?? createRequire(import.meta.url);
+  if (shouldUseCache && cachedValibotConverter !== undefined) return cachedValibotConverter;
   // We let the runtime's package-resolution algorithm handle the `node_modules`
   // walk by passing the package name directly, rather than feeding `require`
   // an absolute path (which Bun's test runner can refuse mid-suite as an
   // "Unexpected require target"). Resolution is rooted at this module's
   // location via `createRequire(import.meta.url)`, which is what we want when
   // Weft is installed as a dependency.
-  const require = createRequire(import.meta.url);
   let valibotModule: { toJsonSchema?: (schema: unknown, options?: unknown) => unknown };
   try {
-    valibotModule = require('@valibot/to-json-schema') as {
+    valibotModule = resolver('@valibot/to-json-schema') as {
       toJsonSchema?: (schema: unknown, options?: unknown) => unknown;
     };
   } catch (error) {
@@ -144,8 +147,10 @@ function loadValibotConverter(): (schema: unknown, options?: unknown) => unknown
         `does not export \`toJsonSchema\`.`,
     );
   }
-  cachedValibotConverter = valibotModule.toJsonSchema;
-  return cachedValibotConverter;
+  const converter = shouldUseCache
+    ? (cachedValibotConverter = valibotModule.toJsonSchema)
+    : valibotModule.toJsonSchema;
+  return converter;
 }
 
 function stripDialect(object: Record<string, unknown>): Record<string, unknown> {

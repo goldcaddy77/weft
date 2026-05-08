@@ -202,4 +202,16 @@ describe('AsyncAPI document', () => {
       protocol: 'wss',
     });
   });
+
+  it('falls back to the raw host string when serverUrl is not a valid URL', () => {
+    const document = generateAsyncApiDocument({
+      registry: createLiveOperationRegistry(),
+      serverUrl: 'not-a-url',
+    }) as AsyncApiDocument;
+
+    expect(document.servers?.['default']).toEqual({
+      host: 'not-a-url',
+      protocol: 'ws',
+    });
+  });
 });

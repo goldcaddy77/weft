@@ -85,12 +85,11 @@ export function generateAsyncApiDocument(options: AsyncApiOptions): Record<strin
     )) {
       const canonical = canonicalJson(message);
       const existingName = messageNamesByCanonical.get(canonical);
+      const aliasedName = existingName ?? messageName;
+      messageAliases.set(messageName, aliasedName);
       if (existingName === undefined) {
         messageNamesByCanonical.set(canonical, messageName);
-        messageAliases.set(messageName, messageName);
         messages[messageName] = normalizeJsonObject(message);
-      } else {
-        messageAliases.set(messageName, existingName);
       }
     }
 
