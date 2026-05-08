@@ -83,8 +83,14 @@ export function extractComponentsSchemas(registry: OperationRegistry): OpenApiSc
     );
 
   for (const candidate of hoistCandidates) {
-    components[candidate.baseName] = candidate.entry.schema;
-    hoistedKeys.set(candidate.canonical, candidate.baseName);
+    let componentName = candidate.baseName;
+    let suffix = 2;
+    while (componentName in components) {
+      componentName = `${candidate.baseName}_${suffix}`;
+      suffix += 1;
+    }
+    components[componentName] = candidate.entry.schema;
+    hoistedKeys.set(candidate.canonical, componentName);
   }
 
   return {
