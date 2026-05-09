@@ -1,9 +1,11 @@
+import type { JSONValue } from '../agent/types.ts';
+
 /**
  * Fired immediately before a tool is executed within an agent turn. Carries the
- * tool name, raw input, source ('local'), and a per-operation UUID that
+ * tool name, JSON-safe arguments, source ('local'), and a per-operation UUID that
  * correlates with the matching {@link AgentToolReturnedEvent}.
  *
- * @example Audit all tool calls with their inputs
+ * @example Audit all tool calls with their arguments
  * ```ts
  * import { AgentToolCalledEvent } from 'weft';
  *
@@ -21,7 +23,7 @@ export class AgentToolCalledEvent extends Event {
   readonly agentId: string;
   readonly turnIndex: number;
   readonly toolName: string;
-  readonly toolInput: unknown;
+  readonly toolInput: JSONValue;
   readonly source: 'local';
   readonly operationId: string;
 
@@ -30,7 +32,7 @@ export class AgentToolCalledEvent extends Event {
     agentId: string,
     turnIndex: number,
     toolName: string,
-    toolInput: unknown,
+    toolInput: JSONValue,
     source: 'local',
     operationId: string,
   ) {

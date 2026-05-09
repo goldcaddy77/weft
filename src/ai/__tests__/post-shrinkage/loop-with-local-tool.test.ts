@@ -7,11 +7,9 @@ describe('executeAgentLoop — local tool round-trip', () => {
   it('runs a 2-turn loop: tool call then final answer', async () => {
     let toolCallCount = 0;
     const echoTool: AgentTool = {
-      definition: {
-        name: 'echo',
-        description: 'Returns the input string.',
-        inputSchema: { type: 'object', properties: { text: { type: 'string' } } },
-      },
+      name: 'echo',
+      description: 'Returns the input string.',
+      input: { type: 'object', properties: { text: { type: 'string' } } },
       execute: async (input) => {
         toolCallCount++;
         return (input as { text: string }).text;
@@ -21,7 +19,7 @@ describe('executeAgentLoop — local tool round-trip', () => {
     const responses: ChatResponse[] = [
       {
         content: '',
-        toolCalls: [{ id: 'tc-1', name: 'echo', input: { text: 'hello' } }],
+        toolCalls: [{ id: 'tc-1', name: 'echo', arguments: { text: 'hello' } }],
         usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
         model: 'test-1.0',
         stopReason: 'tool_use',

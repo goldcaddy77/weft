@@ -1313,7 +1313,9 @@ describe('Context', () => {
         provider: mockProvider,
         tools: [
           {
-            definition: { name: 'tool_a', description: 'A', inputSchema: { type: 'object' } },
+            name: 'tool_a',
+            description: 'A',
+            input: { type: 'object' },
             execute: async () => 'ok',
           },
         ],

@@ -5,20 +5,16 @@ import { executeAgentLoop } from './agent/index.ts';
 
 function pickToolsForTenant(tenant: string): AgentTool[] {
   const analyticsTool: AgentTool = {
-    definition: {
-      name: 'analytics_lookup',
-      description: 'Analytics lookup for tenant Alice.',
-      inputSchema: { type: 'object' },
-    },
+    name: 'analytics_lookup',
+    description: 'Analytics lookup for tenant Alice.',
+    input: { type: 'object' },
     execute: async () => 'analytics',
   };
 
   const billingTool: AgentTool = {
-    definition: {
-      name: 'billing_lookup',
-      description: 'Billing lookup for tenant Bob.',
-      inputSchema: { type: 'object' },
-    },
+    name: 'billing_lookup',
+    description: 'Billing lookup for tenant Bob.',
+    input: { type: 'object' },
     execute: async () => 'billing',
   };
 

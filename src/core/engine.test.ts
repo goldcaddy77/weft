@@ -4400,7 +4400,7 @@ describe('Engine', () => {
           if (callIndex < turns) {
             return {
               content: '',
-              toolCalls: [{ id: `call-${callIndex}`, name: 'noop', input: {} }],
+              toolCalls: [{ id: `call-${callIndex}`, name: 'noop', arguments: {} }],
               usage: {
                 inputTokens: callIndex * 100,
                 outputTokens: callIndex * 50,
@@ -4430,7 +4430,9 @@ describe('Engine', () => {
       const provider = createMultiTurnMockProvider(3);
 
       const noopTool = {
-        definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+        name: 'noop',
+        description: 'No-op',
+        input: { type: 'object' },
         execute: async () => 'ok',
       };
 
@@ -5089,7 +5091,7 @@ describe('Engine', () => {
                   name: 'noop',
                   // Distinct input per call so each produces a unique semantic
                   // hash and therefore a unique tool-effect storage key.
-                  input: { iteration: callIndex },
+                  arguments: { iteration: callIndex },
                 },
               ],
               usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
@@ -5108,7 +5110,9 @@ describe('Engine', () => {
       };
 
       const noopTool = {
-        definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+        name: 'noop',
+        description: 'No-op',
+        input: { type: 'object' },
         execute: async () => 'ok',
       };
 

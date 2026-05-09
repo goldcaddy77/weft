@@ -882,7 +882,7 @@ interface AgentOptions {
 ```ts partial
 interface AgentResult {
   content: string;
-  conversation: Message[];
+  conversation: ConversationHistory;
   totalTokens: TokenUsage;
   turnCount: number;
   reasoningTraces: string[];
@@ -908,7 +908,9 @@ type TurnUsageEntry =
 
 ```ts partial
 interface AgentTool {
-  definition: ToolDefinition;
+  name: string;
+  description?: string;
+  input: unknown;
   execute: (input: unknown) => Promise<unknown>;
   verify?: (result: unknown) => boolean | Promise<boolean>;
   identity?: (input: unknown) => ToolIdentityResult;
@@ -933,7 +935,9 @@ interface AgentDefinition<TInput = unknown, TOutput = unknown> {
 
 ```ts partial
 interface AgentToolDefinition {
-  definition: ToolDefinition;
+  name: string;
+  description?: string;
+  input: unknown;
   execute: (input: unknown) => Promise<unknown>;
   verify?: (result: unknown) => boolean | Promise<boolean>;
   version?: string;
@@ -969,7 +973,7 @@ interface LLMProvider {
 ```ts partial
 interface ChatOptions {
   model: string;
-  tools?: ToolDefinition[];
+  tools?: ToolDescriptor[];
   maxTokens?: number;
   temperature?: number;
   signal?: AbortSignal;
@@ -984,7 +988,7 @@ interface ChatOptions {
 ```ts partial
 interface ChatResponse {
   content: string;
-  toolCalls: ToolCall[];
+  toolCalls: ToolCallInput[];
   usage: TokenUsage;
   model: string;
   stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence';
@@ -1012,7 +1016,7 @@ type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
 interface ToolCall {
   id: string;
   name: string;
-  input: unknown;
+  arguments: JSONValue;
 }
 ```
 
@@ -1020,19 +1024,36 @@ interface ToolCall {
 
 ```ts partial
 interface ToolResult {
-  toolCallId: string;
-  output: string;
-  isError?: boolean;
+  callId: string;
+  outcome: 'success' | 'error' | 'action_required';
+  content: JSONValue;
+  error?: ToolErrorShape;
+  action?: ToolActionShape;
+  inputDigest?: string;
+  outputDigest?: string;
+}
+```
+
+### `ToolDescriptor`
+
+```ts partial
+interface ToolDescriptor<InputSchema = unknown> {
+  name: string;
+  description?: string;
+  input: InputSchema;
 }
 ```
 
 ### `ToolDefinition`
 
 ```ts partial
-interface ToolDefinition {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
+interface ToolDefinition<InputSchema = unknown> extends ToolDescriptor<InputSchema> {
+  execute: (input: unknown, context?: unknown) => Promise<unknown>;
+  verify?: (result: unknown) => boolean | Promise<boolean>;
+  identity?:
+    | ((input: unknown) => ToolIdentityResult)
+    | { namespace: string; name: string; version?: string };
+  version?: string;
 }
 ```
 

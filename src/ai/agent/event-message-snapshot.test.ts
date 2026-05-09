@@ -34,17 +34,19 @@ describe('snapshotConversationForEvent', () => {
     expect(result[0]?.content).toContain('[truncated 522 chars]');
   });
 
-  it('truncates oversized tool result output strings', () => {
+  it('truncates oversized string tool result content', () => {
     const longOutput = 'b'.repeat(MAX_TOOL_RESULT_CHARS + 200);
     const conversation: Message[] = [
       {
         role: 'tool',
         content: '',
-        toolResults: [{ toolCallId: 'call-1', output: longOutput }],
+        toolResults: [{ callId: 'call-1', outcome: 'success', content: longOutput }],
       },
     ];
     const result = snapshotConversationForEvent(conversation);
-    const truncatedOutput = result[0]?.toolResults?.[0]?.output ?? '';
+    const truncatedOutput = result[0]?.toolResults?.[0]?.content;
+    if (typeof truncatedOutput !== 'string')
+      throw new Error('Expected string tool result content.');
     expect(truncatedOutput.length).toBe(MAX_TOOL_RESULT_CHARS);
     expect(truncatedOutput).toContain('[truncated 222 chars]');
   });
@@ -54,14 +56,20 @@ describe('snapshotConversationForEvent', () => {
       {
         role: 'tool',
         content: 'x'.repeat(MAX_MESSAGE_CHARS + 100),
-        toolResults: [{ toolCallId: 'tc-1', output: 'y'.repeat(MAX_TOOL_RESULT_CHARS + 50) }],
+        toolResults: [
+          { callId: 'tc-1', outcome: 'success', content: 'y'.repeat(MAX_TOOL_RESULT_CHARS + 50) },
+        ],
       },
     ];
     const result = snapshotConversationForEvent(conversation);
+    const truncatedToolContent = result[0]?.toolResults?.[0]?.content;
+    if (typeof truncatedToolContent !== 'string') {
+      throw new Error('Expected string tool result content.');
+    }
     expect(result[0]?.content.length).toBe(MAX_MESSAGE_CHARS);
     expect(result[0]?.content).toContain('[truncated 122 chars]');
-    expect(result[0]?.toolResults?.[0]?.output.length).toBe(MAX_TOOL_RESULT_CHARS);
-    expect(result[0]?.toolResults?.[0]?.output).toContain('[truncated 71 chars]');
+    expect(truncatedToolContent.length).toBe(MAX_TOOL_RESULT_CHARS);
+    expect(truncatedToolContent).toContain('[truncated 71 chars]');
   });
 
   it('caps long conversations and preserves the first message', () => {
@@ -87,7 +95,7 @@ describe('snapshotConversationForEvent', () => {
       {
         role: 'tool',
         content: '',
-        toolResults: [{ toolCallId: 'tc-1', output: longOutput }],
+        toolResults: [{ callId: 'tc-1', outcome: 'success', content: longOutput }],
       },
     ];
     const first = snapshotConversationForEvent(conversation);

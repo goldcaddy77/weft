@@ -1,7 +1,7 @@
 import type { Message, ToolResult } from './types.ts';
 
 /**
- * Maximum characters retained for a single `ToolResult.output` string.
+ * Maximum characters retained for a single string `ToolResult.content` value.
  * Output beyond this is replaced with a `[truncated N chars]` marker so that
  * long-running agents cannot push multi-megabyte tool outputs through the
  * dashboard event stream.
@@ -46,12 +46,12 @@ function truncateString(value: string, cap: number): string {
 }
 
 function snapshotToolResult(result: ToolResult): ToolResult {
-  if (typeof result.output !== 'string' || result.output.length <= MAX_TOOL_RESULT_CHARS) {
+  if (typeof result.content !== 'string' || result.content.length <= MAX_TOOL_RESULT_CHARS) {
     return result;
   }
   return {
     ...result,
-    output: truncateString(result.output, MAX_TOOL_RESULT_CHARS),
+    content: truncateString(result.content, MAX_TOOL_RESULT_CHARS),
   };
 }
 
@@ -83,7 +83,7 @@ function snapshotMessage(message: Message): Message {
  * 1. Shallow-copies the input so later mutation of the source array cannot
  *    corrupt the captured snapshot.
  * 2. Truncates individual `Message.content` strings past {@link MAX_MESSAGE_CHARS}
- *    and individual `ToolResult.output` strings past {@link MAX_TOOL_RESULT_CHARS},
+ *    and individual string `ToolResult.content` values past {@link MAX_TOOL_RESULT_CHARS},
  *    marking each truncation with a `[truncated N chars]` suffix.
  * 3. If the conversation exceeds {@link MAX_SNAPSHOT_MESSAGES}, keeps the first
  *    message plus the last `N - 1` messages and prepends a synthetic system

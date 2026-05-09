@@ -189,14 +189,14 @@ describe('ToolEffectLog', () => {
 
   it('committed result is replayed from storage after a new log instance is created (simulates restore)', async () => {
     await log.record('hash-1', 'charge');
-    await log.commit('hash-1', 'charge', '{"status":"ok"}');
+    await log.commit('hash-1', 'charge', { status: 'ok' });
 
     // New ToolEffectLog instance — same storage, same scope
     const restoredLog = makeLog(storage);
     const entry = await restoredLog.lookup('hash-1');
     expect(entry?.status).toBe('committed');
     if (entry?.status === 'committed') {
-      expect(entry.output).toBe('{"status":"ok"}');
+      expect(entry.output).toEqual({ status: 'ok' });
     }
   });
 
@@ -357,7 +357,7 @@ function createSingleToolProvider(toolName: string, toolInput: unknown): LLMProv
         called = true;
         return {
           content: '',
-          toolCalls: [{ id: 'call-1', name: toolName, input: toolInput }],
+          toolCalls: [{ id: 'call-1', name: toolName, arguments: toolInput }],
           usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
           model: 'test-model',
           stopReason: 'tool_use',
@@ -376,7 +376,9 @@ function createSingleToolProvider(toolName: string, toolInput: unknown): LLMProv
 
 function createSimpleTool(name: string, onExecute?: () => void): AgentTool {
   return {
-    definition: { name, description: 'test tool', inputSchema: { type: 'object' } },
+    name,
+    description: 'test tool',
+    input: { type: 'object' },
     execute: async (_input: unknown) => {
       onExecute?.();
       return { result: 'ok' };
@@ -406,7 +408,7 @@ describe('effect log: identity() edge cases', () => {
     // Tool should have executed once despite identity() throwing
     expect(executeCount).toBe(1);
     // A record should have been written using the default hash
-    const defaultHash = computeSemanticHash({ name: 'charge', input: { amount: 50 } });
+    const defaultHash = computeSemanticHash({ name: 'charge', arguments: { amount: 50 } });
     const entry = await effectLog.lookup(defaultHash);
     expect(entry?.status).toBe('committed');
   });
@@ -433,7 +435,7 @@ describe('effect log: identity() edge cases', () => {
     // Tool should have executed once despite invalid identity hash
     expect(executeCount).toBe(1);
     // Record written under the default hash
-    const defaultHash = computeSemanticHash({ name: 'charge', input: { amount: 50 } });
+    const defaultHash = computeSemanticHash({ name: 'charge', arguments: { amount: 50 } });
     const entry = await effectLog.lookup(defaultHash);
     expect(entry?.status).toBe('committed');
   });
@@ -523,7 +525,7 @@ describe('effect log: dangling in-flight guard', () => {
     const storage = new MemoryStorage();
     const effectLog = new ToolEffectLog(storage, 'wf-conflict', 'agent-conflict');
     const provider = createSingleToolProvider('charge', { amount: 50 });
-    const hash = computeSemanticHash({ name: 'charge', input: { amount: 50 } });
+    const hash = computeSemanticHash({ name: 'charge', arguments: { amount: 50 } });
 
     await effectLog.record(hash, 'charge');
 
@@ -544,7 +546,7 @@ describe('effect log: dangling in-flight guard', () => {
     const storage = new MemoryStorage();
     const effectLog = new ToolEffectLog(storage, 'wf-fail', 'agent-fail');
     const provider = createSingleToolProvider('boom', {});
-    const hash = computeSemanticHash({ name: 'boom', input: {} });
+    const hash = computeSemanticHash({ name: 'boom', arguments: {} });
 
     await executeAgentLoop(
       {
@@ -552,7 +554,9 @@ describe('effect log: dangling in-flight guard', () => {
         provider,
         tools: [
           {
-            definition: { name: 'boom', description: 'boom', inputSchema: { type: 'object' } },
+            name: 'boom',
+            description: 'boom',
+            input: { type: 'object' },
             execute: async () => {
               throw new Error('boom');
             },
