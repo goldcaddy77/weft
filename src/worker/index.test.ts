@@ -236,6 +236,41 @@ describe('RemoteWorker', () => {
     worker[Symbol.dispose]();
   });
 
+  it('[Symbol.dispose] rejects a pending connect() before registerAck', async () => {
+    let registerReceived = false;
+    server = createTestServer({
+      autoRegisterAck: false,
+      onMessage(_ws, message) {
+        const parsed = JSON.parse(message);
+        if (parsed.type === 'register') registerReceived = true;
+      },
+    });
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      workerId: 'dispose-before-ack-worker',
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    const connectPromise = worker.connect();
+    await waitForCondition(() => registerReceived, {
+      timeoutMs: 1_000,
+      label: 'register before dispose',
+    });
+
+    worker[Symbol.dispose]();
+
+    const pendingTimeout = sleepForTesting(250).then(() => {
+      throw new Error('connect() remained pending after worker disposal');
+    });
+
+    await expect(Promise.race([connectPromise, pendingTimeout])).rejects.toThrow(
+      'Worker disposed before worker registration completed',
+    );
+  });
+
   it('starts heartbeats only after registerAck', async () => {
     const messages: any[] = [];
     const originalSetInterval = globalThis.setInterval;

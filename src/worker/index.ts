@@ -153,11 +153,7 @@ export class RemoteWorker implements Disposable {
       ws.addEventListener(
         'error',
         () => {
-          if (this.#pendingRegistration !== null) {
-            const pending = this.#pendingRegistration;
-            this.#pendingRegistration = null;
-            pending.reject(new Error('WebSocket connection failed'));
-          }
+          this.#rejectPendingRegistration('WebSocket connection failed');
         },
         { signal: this.#abortController.signal },
       );
@@ -167,11 +163,7 @@ export class RemoteWorker implements Disposable {
         () => {
           this.#heartbeat.stop();
           this.#ws = null;
-          if (this.#pendingRegistration !== null) {
-            const pending = this.#pendingRegistration;
-            this.#pendingRegistration = null;
-            pending.reject(new Error('WebSocket closed before worker registration completed'));
-          }
+          this.#rejectPendingRegistration('WebSocket closed before worker registration completed');
         },
         { signal: this.#abortController.signal },
       );
@@ -201,6 +193,7 @@ export class RemoteWorker implements Disposable {
 
   [Symbol.dispose](): void {
     this.#abortAllTasks();
+    this.#rejectPendingRegistration('Worker disposed before worker registration completed');
     this.#abortController.abort();
     this.#abortController = new AbortController();
     this.#heartbeat.stop();
@@ -250,6 +243,7 @@ export class RemoteWorker implements Disposable {
     // Always abort the old controller to detach event listeners, even if the
     // remote end already closed the connection (which sets #ws to null via the
     // close listener). Then swap to a fresh controller for future connect() calls.
+    this.#rejectPendingRegistration('Worker disconnected before worker registration completed');
     const oldAbortController = this.#abortController;
     this.#abortController = new AbortController();
     oldAbortController.abort();
@@ -291,13 +285,17 @@ export class RemoteWorker implements Disposable {
   }
 
   #handleRegisterError(message: string): void {
-    if (this.#pendingRegistration !== null) {
-      const pending = this.#pendingRegistration;
-      this.#pendingRegistration = null;
-      pending.reject(new Error(message));
-    }
+    this.#rejectPendingRegistration(message);
     this.#heartbeat.stop();
     this.#ws?.close();
+  }
+
+  #rejectPendingRegistration(message: string): void {
+    if (this.#pendingRegistration === null) return;
+
+    const pending = this.#pendingRegistration;
+    this.#pendingRegistration = null;
+    pending.reject(new Error(message));
   }
 
   #handleCancel(operationId: string): void {
