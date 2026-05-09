@@ -24,17 +24,18 @@
  * ```
  */
 export const VERSION = '0.0.1';
-
 // Core
 export {
   Engine,
+  EngineCreateNameMismatchError,
   ScheduleHandle,
   WorkflowAlreadyExistsError,
   WorkflowHandle,
   WorkflowNotFoundError,
   WorkflowNotRegisteredError,
+  WorkflowTypeNotRegisteredForRecoveryError,
 } from './core/engine';
-export type { EngineStateNamespace } from './core/engine';
+export type { EngineCreateOptions, EngineStateNamespace, RecoverAllOptions } from './core/engine';
 export {
   DEFAULT_CHECKPOINT_SIZE_WARNING_THRESHOLD,
   DEFAULT_MAX_NESTING_DEPTH,
@@ -53,6 +54,8 @@ export type {
   ActivityDefinition,
   ActivityFunction,
   ActivityTypes,
+  AnyActivityDefinition,
+  AnyWorkflowDefinition,
   BulkCancelResult,
   BulkDeleteResult,
   BulkOperationError,
@@ -68,6 +71,10 @@ export type {
   FailureCategory,
   ForkLineage,
   ForkOptions,
+  InferActivityEntries,
+  InferActivityEntry,
+  InferWorkflowEntries,
+  InferWorkflowEntry,
   ListFilter,
   NormalizedRetentionPolicy,
   PaginatedResult,
@@ -135,7 +142,6 @@ export type {
   WorkflowTimelineStatus,
   WorkflowTypeRetentionPolicy,
 } from './core/types';
-
 // Alerting
 export { AlertManager } from './alerting/index';
 export type {
@@ -147,7 +153,6 @@ export type {
   AlertingOptions,
   WebhookTarget,
 } from './alerting/types';
-
 // Events
 export {
   ActivityCompletedEvent,
@@ -168,21 +173,19 @@ export {
   WorkflowCancelledEvent,
   WorkflowCompletedEvent,
   WorkflowFailedEvent,
+  WorkflowRecoverySkippedEvent,
   WorkflowResumedEvent,
   WorkflowStartedEvent,
   WorkflowTimedOutEvent,
 } from './core/events';
-export type { TypedEventTarget, WeftEventMap } from './core/events';
-
+export type { TypedEventTarget, WeftEventMap, WorkflowRecoverySkippedReason } from './core/events';
 // Runtime — portable helpers for cross-runtime code
 export { detectRuntime, hashBytes, hashString, sleep } from './runtime/portable';
 export type { RuntimeKind } from './runtime/portable';
-
 // Compression
 export { createBunCompressor, createCompressor } from './core/compression';
 export type { CompressionAlgorithm, CompressionOptions, Compressor } from './core/compression';
 export { CompressedStorage } from './storage/compressed-storage';
-
 // Storage — interface, KEYS, and zero-native-dep backends only.
 // Heavy or runtime-bound backends are subpath-only:
 //   weft/storage/sqlite | weft/storage/lmdb | weft/storage/turso
@@ -204,7 +207,6 @@ export type {
   TypedBatchOperation,
   TypedStorage,
 } from './storage/typed-storage';
-
 // Codec
 export { decode, encode, validateCloneable } from './core/codec';
 
@@ -216,7 +218,6 @@ export {
   deserializeCheckpoint,
   serializeCheckpoint,
 } from './core/checkpoint';
-
 // Scheduler
 export { Scheduler, calculateBackoff, parseDuration } from './core/scheduler';
 export type { TimerEntry } from './core/types/checkpoint';

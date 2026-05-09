@@ -56,9 +56,16 @@ function extractFaultDataPayload(fault: OperationFault): Record<string, unknown>
       return {};
     case 'Unauthorized':
     case 'Forbidden':
-    case 'Conflict':
     case 'Unprocessable':
       return { reason: fault.data.reason };
+    case 'Conflict':
+      return filterDefined({
+        reason: fault.data.reason,
+        missingTypes:
+          fault.data.missingTypes === undefined ? undefined : [...fault.data.missingTypes],
+        missingWorkflowCount: fault.data.missingWorkflowCount,
+        samplesTruncated: fault.data.samplesTruncated,
+      });
     case 'NotFound':
       return fault.data.identifier === undefined
         ? { resource: fault.data.resource }
@@ -88,4 +95,12 @@ function extractFaultDataPayload(fault: OperationFault): Record<string, unknown>
     case 'MethodNotFound':
       return { method: fault.data.method };
   }
+}
+
+function filterDefined(input: Record<string, unknown>): Record<string, unknown> {
+  const output: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (value !== undefined) output[key] = value;
+  }
+  return output;
 }

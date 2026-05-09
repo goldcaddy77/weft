@@ -72,7 +72,16 @@ export type OperationFault =
       message: string;
       data: { resource: string; identifier?: string | undefined };
     }
-  | { code: 'Conflict'; message: string; data: { reason: string } }
+  | {
+      code: 'Conflict';
+      message: string;
+      data: {
+        reason: string;
+        missingTypes?: readonly string[] | undefined;
+        missingWorkflowCount?: number | undefined;
+        samplesTruncated?: boolean | undefined;
+      };
+    }
   | { code: 'Unprocessable'; message: string; data: { reason: string } }
   // Both `Timeout` and `RateLimited` allow callers to construct
   // `data: { hint: undefined }` legally — the wire serializers strip

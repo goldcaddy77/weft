@@ -1,11 +1,18 @@
 import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
+import { WorkflowTypeNotRegisteredForRecoveryError } from '../../core/engine.ts';
 import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 import { shapeRestFault } from './operation-helpers.ts';
 
+// Intentionally accept no input fields. `acknowledgeUnknownWorkflowTypes` is
+// the dangerous opt-out that lets recovery silently skip unknown stored
+// workflow types — exposing it on this `kind: 'public'` operation would let
+// an unauthenticated caller abandon in-flight workflows over HTTP. The
+// in-process flag is still available via `engine.recoverAll(...)` for code
+// paths that have already established the operator's intent.
 const recoverAllInput = z.object({});
 
 const recoverAllOutput = z.object({
@@ -23,6 +30,7 @@ export const recoverAllOperation = defineOperation<RecoverAllInput, RecoverAllOu
   inputSchema: recoverAllInput,
   outputSchema: recoverAllOutput,
   access: { kind: 'public' },
+  producibleFaults: ['Conflict'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ engine }): Promise<RecoverAllOutput> => {
@@ -32,6 +40,19 @@ export const recoverAllOperation = defineOperation<RecoverAllInput, RecoverAllOu
       const handles = await typedEngine.recoverAll();
       return { recovered: handles.map((handle) => handle.id) };
     } catch (error) {
+      if (error instanceof WorkflowTypeNotRegisteredForRecoveryError) {
+        const fault: OperationFault = {
+          code: 'Conflict',
+          message: error.message,
+          data: {
+            reason: error.message,
+            missingTypes: error.missingTypes,
+            missingWorkflowCount: error.missingWorkflowCount,
+            samplesTruncated: error.samplesTruncated,
+          },
+        };
+        throw fault;
+      }
       const message = error instanceof Error ? error.message : String(error);
       const fault: OperationFault = {
         code: 'EngineFailure',
@@ -51,5 +72,24 @@ export const recoverAllRestBinding: UnknownRestBinding = {
   inputSources: {},
   extractInput: async () => ({}),
   success: { kind: 'json', status: 200 },
-  shapeFault: shapeRestFault,
+  shapeFault: shapeRecoverAllFault,
 };
+
+function shapeRecoverAllFault(fault: OperationFault): Response {
+  if (fault.code !== 'Conflict' || fault.data.missingTypes === undefined) {
+    return shapeRestFault(fault);
+  }
+
+  return new Response(
+    JSON.stringify({
+      error: 'workflow_type_not_registered_for_recovery',
+      missingTypes: fault.data.missingTypes,
+      missingWorkflowCount: fault.data.missingWorkflowCount,
+      samplesTruncated: fault.data.samplesTruncated,
+    }),
+    {
+      status: 409,
+      headers: { 'Content-Type': 'application/json' },
+    },
+  );
+}

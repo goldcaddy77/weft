@@ -1,8 +1,15 @@
+import { z } from 'zod';
 import {
+  activity,
   Engine,
   signal,
   update,
+  workflow,
+  type AnyActivityDefinition,
+  type AnyWorkflowDefinition,
+  type InferActivityEntry,
   type WorkflowContext,
+  type WorkflowDefinition,
   type WorkflowHandle,
   type WorkflowRegistration,
 } from '../index.ts';
@@ -63,6 +70,8 @@ type RequiredWorkflowContextKeys =
 
 type MissingWorkflowContextKeys = Exclude<RequiredWorkflowContextKeys, keyof WorkflowContext>;
 type AssertNever<T extends never> = T;
+type Equals<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2 ? true : false;
 
 const workflowContextDriftGuard: AssertNever<MissingWorkflowContextKeys> = undefined as never;
 void workflowContextDriftGuard;
@@ -151,3 +160,151 @@ void engine.start('runtime-discovered', { id: 'dynamic' });
 engine.register('runtime-discovered', async () => {
   return 'dynamic';
 });
+
+const localGreet = workflow({
+  name: 'localGreet',
+  handler: async function* (_ctx: WorkflowContext, input: string) {
+    yield;
+    return `Hello, ${input}`;
+  },
+});
+
+const schemaDefinedWorkflow = workflow({
+  name: 'schemaDefinedWorkflow',
+  inputSchema: z.object({ id: z.string() }),
+  outputSchema: z.object({ ok: z.boolean() }),
+  handler: async function* (_ctx, input) {
+    const _inputCheck: Equals<typeof input, { id: string }> = true;
+    void _inputCheck;
+    yield;
+    return { ok: true };
+  },
+});
+
+const concreteWorkflow: WorkflowDefinition<string, string, 'concreteWorkflow'> = workflow({
+  name: 'concreteWorkflow',
+  handler: async function* (_ctx: WorkflowContext, input: string) {
+    yield;
+    return input.toUpperCase();
+  },
+});
+
+const sendEmail = activity({
+  name: 'sendEmail',
+  execute: async (input: { to: string }) => {
+    void input.to;
+  },
+});
+
+const zeroInputActivity = activity({
+  name: 'zeroInputActivity',
+  execute: async () => 'pong',
+});
+
+const strictLocalEngine = new Engine<{}, {}>()
+  .withWorkflow(localGreet)
+  .withWorkflow(concreteWorkflow)
+  .withWorkflow(schemaDefinedWorkflow)
+  .withActivity(sendEmail)
+  .withActivity(zeroInputActivity);
+
+void strictLocalEngine.start('localGreet', 'Steve');
+void strictLocalEngine.start('concreteWorkflow', 'Steve');
+void strictLocalEngine.start('schemaDefinedWorkflow', { id: 'wf-1' });
+// @ts-expect-error strict local engines reject workflow names not added by withWorkflow.
+void strictLocalEngine.start('unknownLocalWorkflow', 'Steve');
+// @ts-expect-error localGreet input is inferred from the workflow definition.
+void strictLocalEngine.start('localGreet', { id: 'wrong' });
+
+type ZeroInputActivityEntry = InferActivityEntry<typeof zeroInputActivity>;
+const zeroInputCallable: ZeroInputActivityEntry['zeroInputActivity'] = async () => 'pong';
+void zeroInputCallable();
+// @ts-expect-error zero-input activity entries must stay zero-argument.
+void zeroInputCallable('unexpected');
+
+async function verifyEngineCreateInference(): Promise<void> {
+  // No definition maps: the engine retains the same dynamic-name fallback as
+  // `new Engine()` — same module-augmented WorkflowRegistry / ActivityTypes,
+  // same legacy `start('any-name', ...)` overload. Engine.create is sugar
+  // over the constructor; without explicit definition maps the type contract
+  // does not narrow.
+  const neither = await Engine.create({ recover: false });
+  void neither.start('localGreet', 'Steve');
+
+  // workflows-only narrows TWorkflows to the inferred map keys; activities
+  // fall back to the module-augmented registry.
+  const workflowsOnly = await Engine.create({
+    workflows: { localGreet },
+    recover: false,
+  });
+  void workflowsOnly.start('localGreet', 'Steve');
+  // @ts-expect-error workflow names not in the map are rejected.
+  void workflowsOnly.start('missingFromWorkflowMap', 'Steve');
+
+  // activities-only mirrors workflows-only: TWorkflows keeps the fallback,
+  // TActivities narrows to the inferred map.
+  const activitiesOnly = await Engine.create({
+    activities: { sendEmail },
+    recover: false,
+  });
+  void activitiesOnly.start('localGreet', 'Steve');
+
+  const both = await Engine.create({
+    workflows: { localGreet, concreteWorkflow, schemaDefinedWorkflow },
+    activities: { sendEmail, zeroInputActivity },
+    recover: false,
+  });
+  void both.start('localGreet', 'Steve');
+  void both.start('concreteWorkflow', 'Steve');
+  void both.start('schemaDefinedWorkflow', { id: 'wf-1' });
+  // @ts-expect-error Engine.create infers names from the definition map keys.
+  void both.start('missingFromBothMap', 'Steve');
+
+  // Regression guard for the recover-then-register pattern that
+  // `Engine.create({ storage, recover: false })` is documented to support.
+  // If a future change collapses the no-maps overload to a strict-empty
+  // registry, `engine.register(...)` followed by `engine.start(name, ...)`
+  // will fail to compile because the dynamic-name overloads resolve to
+  // `never`.
+  const deferredRegistration = await Engine.create({ recover: false });
+  deferredRegistration.register('deferredWorkflow', async function* () {
+    yield;
+    return 'ok';
+  });
+  void deferredRegistration.start('deferredWorkflow', null);
+}
+void verifyEngineCreateInference;
+
+// Variance regression detector — reverting `AnyWorkflowDefinition` /
+// `AnyActivityDefinition` to `WorkflowDefinition<unknown, unknown>` /
+// `ActivityDefinition<unknown, unknown>` (i.e. removing the `never` in the
+// input position) makes these assignments fail to compile, because
+// `WorkflowFunction<{ id: string }, ...>` is not assignable to
+// `WorkflowFunction<unknown, ...>` under strict function-parameter
+// contravariance. Direct assignment is the load-bearing test: it succeeds
+// today because `AnyWorkflowDefinition` uses `never` in the input position.
+const _narrowInputWorkflowGuard: AnyWorkflowDefinition = workflow({
+  name: 'narrowInputGuard',
+  handler: async function* (_ctx, _input: { strict: true }) {
+    yield;
+    return 1;
+  },
+});
+void _narrowInputWorkflowGuard;
+
+const _narrowInputActivityGuard: AnyActivityDefinition = activity({
+  name: 'narrowInputActivityGuard',
+  execute: async (input: { strict: true; payload: number }) => input.payload,
+});
+void _narrowInputActivityGuard;
+
+// Smoke-test for zero-input activities. A zero-argument function is
+// assignable to most function types regardless of constraint variance, so
+// this guard is not the contravariance regression detector — it pins that
+// the constraint shape continues to accept the no-input case after future
+// edits to AnyActivityDefinition.
+const _zeroInputActivityGuard: AnyActivityDefinition = activity({
+  name: 'zeroInputActivityGuard',
+  execute: async () => 'ok',
+});
+void _zeroInputActivityGuard;

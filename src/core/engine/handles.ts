@@ -16,7 +16,6 @@ import type {
   WorkflowState,
 } from '../types.ts';
 import { messageName } from '../types.ts';
-import type { Engine } from './index.ts';
 
 type WorkflowHandleEventQueue = {
   events: Event[];
@@ -96,6 +95,42 @@ function synthesizeTerminalEventFromState(state: WorkflowState): Event | null {
 
 export const HANDLE_RESULT_PROMISE = Symbol('handleResultPromise');
 
+export interface WorkflowHandleEngine extends EventTarget {
+  [HANDLE_RESULT_PROMISE](workflowId: string): Promise<unknown>;
+  cancel(workflowId: string): Promise<void>;
+  signal(workflowId: string, name: string, payload?: unknown): Promise<void>;
+  update(
+    workflowId: string,
+    name: string,
+    payload?: unknown,
+    options?: { timeout?: number },
+  ): Promise<unknown>;
+  query(workflowId: string, name: string, input?: unknown): Promise<unknown>;
+  getAttributes(workflowId: string): Promise<Record<string, SearchAttributeValue> | null>;
+  setAttributes(
+    workflowId: string,
+    attributes: Record<string, SearchAttributeValue>,
+  ): Promise<void>;
+  addTags(workflowId: string, ...tags: string[]): Promise<void>;
+  removeTags(workflowId: string, ...tags: string[]): Promise<void>;
+  get(workflowId: string): Promise<WorkflowState | null>;
+}
+
+export interface ScheduleHandleEngine {
+  pauseSchedule(scheduleId: string, accessOptions?: ScheduleAccessOptions): Promise<void>;
+  resumeSchedule(scheduleId: string, accessOptions?: ScheduleAccessOptions): Promise<void>;
+  cancelSchedule(scheduleId: string, accessOptions?: ScheduleAccessOptions): Promise<void>;
+  updateSchedule(
+    scheduleId: string,
+    newCronExpression: string,
+    accessOptions?: ScheduleAccessOptions,
+  ): Promise<void>;
+  getSchedule(
+    scheduleId: string,
+    accessOptions?: ScheduleAccessOptions,
+  ): Promise<ScheduleSummary | null>;
+}
+
 /**
  * Handle to a running or completed workflow. Returned by {@link Engine.start}
  * and {@link Engine.getHandle}. Use `handle.result()` to await the final
@@ -140,10 +175,10 @@ export const HANDLE_RESULT_PROMISE = Symbol('handleResultPromise');
  */
 export class WorkflowHandle<TResult = unknown> extends EventTarget implements AsyncDisposable {
   readonly id: string;
-  readonly #engine: Engine;
+  readonly #engine: WorkflowHandleEngine;
   #resultPromise: Promise<TResult> | undefined;
 
-  constructor(id: string, engine: Engine) {
+  constructor(id: string, engine: WorkflowHandleEngine) {
     super();
     this.id = id;
     this.#engine = engine;
@@ -429,10 +464,10 @@ export class WorkflowHandle<TResult = unknown> extends EventTarget implements As
  */
 export class ScheduleHandle {
   readonly id: string;
-  readonly #engine: Engine;
+  readonly #engine: ScheduleHandleEngine;
   readonly #accessOptions: ScheduleAccessOptions | undefined;
 
-  constructor(id: string, engine: Engine, accessOptions?: ScheduleAccessOptions) {
+  constructor(id: string, engine: ScheduleHandleEngine, accessOptions?: ScheduleAccessOptions) {
     this.id = id;
     this.#engine = engine;
     this.#accessOptions = accessOptions;

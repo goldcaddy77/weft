@@ -179,3 +179,47 @@ export class WorkflowResumedEvent extends Event {
     this.fromStep = fromStep;
   }
 }
+
+/**
+ * Reason carried by {@link WorkflowRecoverySkippedEvent}.
+ *
+ * @example
+ * ```ts
+ * import type { WorkflowRecoverySkippedReason } from 'weft';
+ *
+ * const reason: WorkflowRecoverySkippedReason = 'type-not-registered';
+ * void reason;
+ * ```
+ */
+export type WorkflowRecoverySkippedReason = 'type-not-registered';
+
+/**
+ * Fired during acknowledged recovery when a running workflow is intentionally
+ * skipped because its workflow type is not registered on this engine. This
+ * event is only emitted when `recoverAll({ acknowledgeUnknownWorkflowTypes:
+ * true })` is used.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowRecoverySkippedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener(WorkflowRecoverySkippedEvent.type, (event) => {
+ *   const skipped = event as WorkflowRecoverySkippedEvent;
+ *   console.warn('skipped recovery for', skipped.workflowType);
+ * });
+ * ```
+ */
+export class WorkflowRecoverySkippedEvent extends Event {
+  static readonly type = 'workflow:recovery-skipped' as const;
+  readonly workflowId: string;
+  readonly workflowType: string;
+  readonly reason: WorkflowRecoverySkippedReason;
+
+  constructor(workflowId: string, workflowType: string, reason: WorkflowRecoverySkippedReason) {
+    super(WorkflowRecoverySkippedEvent.type);
+    this.workflowId = workflowId;
+    this.workflowType = workflowType;
+    this.reason = reason;
+  }
+}
