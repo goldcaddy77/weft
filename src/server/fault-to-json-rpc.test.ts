@@ -175,6 +175,31 @@ describe('faultToJsonRpcError', () => {
     expect(error.code).toBe(-32021);
   });
 
+  it('Conflict recovery details are serialized without workflow samples', () => {
+    const missingTypes = ['checkout'];
+    const error = faultToJsonRpcError({
+      code: 'Conflict',
+      message: 'workflow type not registered',
+      data: {
+        reason: 'register the missing workflow type',
+        missingTypes,
+        missingWorkflowCount: 2,
+        samplesTruncated: false,
+      },
+    });
+
+    expect(error.data).toMatchObject({
+      weftCode: 'Conflict',
+      httpStatus: 409,
+      reason: 'register the missing workflow type',
+      missingTypes: ['checkout'],
+      missingWorkflowCount: 2,
+      samplesTruncated: false,
+    });
+    expect(error.data['missingTypes']).not.toBe(missingTypes);
+    expect('missingWorkflowSamples' in error.data).toBe(false);
+  });
+
   it('Unprocessable -> -32022', () => {
     const error = faultToJsonRpcError({
       code: 'Unprocessable',

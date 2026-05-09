@@ -123,6 +123,22 @@ describe('OperationFault discriminated union', () => {
     expect(forbidden.data.reason).toContain('workflows:write');
   });
 
+  it('Conflict fault may carry recovery preflight details while keeping reason', () => {
+    const fault: OperationFault = {
+      code: 'Conflict',
+      message: 'workflow type not registered',
+      data: {
+        reason: 'register the missing workflow type',
+        missingTypes: ['checkout'],
+        missingWorkflowCount: 3,
+        samplesTruncated: false,
+      },
+    };
+    expect(fault.data.reason).toBe('register the missing workflow type');
+    expect(fault.data.missingTypes).toEqual(['checkout']);
+    expect(fault.data.missingWorkflowCount).toBe(3);
+  });
+
   it('UnsupportedTransport fault names the rejected transport and the supported list', () => {
     const fault: OperationFault = {
       code: 'UnsupportedTransport',

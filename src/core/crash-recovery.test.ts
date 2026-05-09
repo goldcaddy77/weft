@@ -14,9 +14,13 @@ import type { BatchOperation, ScanOptions, Storage } from '../storage/interface.
 import { KEYS as STORAGE_KEYS, encodeStorageKeyComponent } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { encode } from './codec.ts';
-import { ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING, Engine } from './engine.ts';
-import { WorkflowResumedEvent } from './events.ts';
-import type { WorkflowContext } from './types.ts';
+import {
+  ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING,
+  Engine,
+  WorkflowTypeNotRegisteredForRecoveryError,
+} from './engine.ts';
+import { WorkflowRecoverySkippedEvent, WorkflowResumedEvent } from './events.ts';
+import type { WorkflowContext, WorkflowState, WorkflowStatus } from './types.ts';
 
 /** Drain microtasks so fire-and-forget work completes. */
 async function flush(): Promise<void> {
@@ -70,6 +74,34 @@ function agentExecutionStatePrefix(workflowId: string): string {
 
 function internalAgentResumeSignalPrefix(workflowId: string, resumeToken: string): string {
   return `sig:${encodeStorageKeyComponent(workflowId)}:agent-resume:0000000000:${resumeToken}:`;
+}
+
+function createStoredWorkflowState(
+  workflowId: string,
+  workflowType: string,
+  status: WorkflowStatus,
+): WorkflowState {
+  return {
+    id: workflowId,
+    type: workflowType,
+    status,
+    input: null,
+    version: '1',
+    createdAt: 1,
+    updatedAt: 1,
+  };
+}
+
+async function seedStoredWorkflowState(
+  storage: MemoryStorage,
+  workflowId: string,
+  workflowType: string,
+  status: WorkflowStatus,
+): Promise<void> {
+  await storage.put(
+    STORAGE_KEYS.workflow(workflowId),
+    encode(createStoredWorkflowState(workflowId, workflowType, status)),
+  );
 }
 
 function isAgentExecutionStateKey(key: string): boolean {
@@ -289,6 +321,270 @@ async function waitForCrash(crashed: () => boolean): Promise<void> {
 }
 
 describe('crash recovery', () => {
+  it('recoverAll fails in preflight before resuming any registered workflow when a running type is missing', async () => {
+    const storage = new MemoryStorage();
+    const firstEngine = new Engine({ storage });
+
+    firstEngine.register('preflight-known', async function* (ctx: WorkflowContext) {
+      yield* ctx.waitForSignal('go');
+      return 'known-done';
+    });
+    await firstEngine.start('preflight-known', null, { id: 'preflight-known-id' });
+    await flush();
+    firstEngine[Symbol.dispose]();
+
+    await seedStoredWorkflowState(storage, 'preflight-missing-id', 'preflight-missing', 'running');
+
+    const recoveredEngine = new Engine({ storage });
+    let resumedRunCount = 0;
+    recoveredEngine.register('preflight-known', async function* (ctx: WorkflowContext) {
+      resumedRunCount += 1;
+      yield* ctx.waitForSignal('go');
+      return 'known-done';
+    });
+    const resumedEvents: WorkflowResumedEvent[] = [];
+    recoveredEngine.addEventListener(WorkflowResumedEvent.type, (event) => {
+      resumedEvents.push(event as WorkflowResumedEvent);
+    });
+
+    const checkpointKey = STORAGE_KEYS.checkpoint('preflight-known-id');
+    const stateKey = STORAGE_KEYS.workflow('preflight-known-id');
+    const checkpointBefore = await storage.get(checkpointKey);
+    const stateBefore = await storage.get(stateKey);
+    expect(checkpointBefore).not.toBeNull();
+    expect(stateBefore).not.toBeNull();
+
+    await expect(recoveredEngine.recoverAll()).rejects.toBeInstanceOf(
+      WorkflowTypeNotRegisteredForRecoveryError,
+    );
+    expect(resumedEvents).toHaveLength(0);
+    expect(resumedRunCount).toBe(0);
+
+    // Preflight is read-only — the throw must leave every persisted byte
+    // identical so a follow-up `recoverAll()` (after registering the missing
+    // type) sees the same state the first call started from.
+    const checkpointAfter = await storage.get(checkpointKey);
+    const stateAfter = await storage.get(stateKey);
+    expect(checkpointAfter).toEqual(checkpointBefore);
+    expect(stateAfter).toEqual(stateBefore);
+
+    recoveredEngine[Symbol.dispose]();
+  });
+
+  it('recoverAll can acknowledge unknown workflow types and emits one skipped event per skipped workflow', async () => {
+    const storage = new MemoryStorage();
+    const firstEngine = new Engine({ storage });
+
+    firstEngine.register('acknowledged-known', async function* (ctx: WorkflowContext) {
+      const signal = yield* ctx.waitForSignal<string>('go');
+      return `known:${signal}`;
+    });
+    await firstEngine.start('acknowledged-known', null, { id: 'acknowledged-known-id' });
+    await flush();
+    firstEngine[Symbol.dispose]();
+
+    await seedStoredWorkflowState(
+      storage,
+      'acknowledged-missing-id',
+      'acknowledged-missing',
+      'running',
+    );
+
+    const recoveredEngine = new Engine({ storage });
+    recoveredEngine.register('acknowledged-known', async function* (ctx: WorkflowContext) {
+      const signal = yield* ctx.waitForSignal<string>('go');
+      return `known:${signal}`;
+    });
+    const skippedEvents: WorkflowRecoverySkippedEvent[] = [];
+    recoveredEngine.addEventListener(WorkflowRecoverySkippedEvent.type, (event) => {
+      skippedEvents.push(event as WorkflowRecoverySkippedEvent);
+    });
+
+    const handles = await recoveredEngine.recoverAll({ acknowledgeUnknownWorkflowTypes: true });
+
+    expect(handles.map((handle) => handle.id)).toEqual(['acknowledged-known-id']);
+    expect(skippedEvents).toHaveLength(1);
+    expect(skippedEvents[0]).toMatchObject({
+      workflowId: 'acknowledged-missing-id',
+      workflowType: 'acknowledged-missing',
+      reason: 'type-not-registered',
+    });
+
+    await recoveredEngine.signal('acknowledged-known-id', 'go', 'done');
+    await expect(handles[0]!.result()).resolves.toBe('known:done');
+
+    recoveredEngine[Symbol.dispose]();
+  });
+
+  it('recoverAll state matrix handles pending and registered running workflows while skipping or ignoring the rest', async () => {
+    const storage = new MemoryStorage();
+    const firstEngine = new Engine({ storage });
+
+    firstEngine.register('matrix-running', async function* (ctx: WorkflowContext) {
+      const signal = yield* ctx.waitForSignal<string>('go');
+      return `matrix:${signal}`;
+    });
+    await firstEngine.start('matrix-running', null, { id: 'matrix-running-id' });
+    await flush();
+    firstEngine[Symbol.dispose]();
+
+    await seedStoredWorkflowState(
+      storage,
+      'matrix-pending-id',
+      'matrix-missing-pending',
+      'pending',
+    );
+    await seedStoredWorkflowState(
+      storage,
+      'matrix-missing-running-id',
+      'matrix-missing-running',
+      'running',
+    );
+    await seedStoredWorkflowState(
+      storage,
+      'matrix-completed-id',
+      'matrix-missing-completed',
+      'completed',
+    );
+    await seedStoredWorkflowState(storage, 'matrix-failed-id', 'matrix-missing-failed', 'failed');
+    await seedStoredWorkflowState(
+      storage,
+      'matrix-cancelled-id',
+      'matrix-missing-cancelled',
+      'cancelled',
+    );
+    await seedStoredWorkflowState(
+      storage,
+      'matrix-timed-out-id',
+      'matrix-missing-timed-out',
+      'timed-out',
+    );
+    // Registered-but-terminal cell: a completed workflow whose type IS
+    // registered should still be silently ignored. Terminal status takes
+    // precedence over registration; recovery only resumes records that need
+    // their generator function back to make progress.
+    await seedStoredWorkflowState(
+      storage,
+      'matrix-registered-completed-id',
+      'matrix-running',
+      'completed',
+    );
+
+    const recoveredEngine = new Engine({ storage });
+    recoveredEngine.register('matrix-running', async function* (ctx: WorkflowContext) {
+      const signal = yield* ctx.waitForSignal<string>('go');
+      return `matrix:${signal}`;
+    });
+    const skippedEvents: WorkflowRecoverySkippedEvent[] = [];
+    recoveredEngine.addEventListener(WorkflowRecoverySkippedEvent.type, (event) => {
+      skippedEvents.push(event as WorkflowRecoverySkippedEvent);
+    });
+
+    const handles = await recoveredEngine.recoverAll({ acknowledgeUnknownWorkflowTypes: true });
+
+    expect(handles.map((handle) => handle.id).toSorted()).toEqual([
+      'matrix-pending-id',
+      'matrix-running-id',
+    ]);
+    expect(skippedEvents.map((event) => event.workflowId)).toEqual(['matrix-missing-running-id']);
+
+    await recoveredEngine.signal('matrix-running-id', 'go', 'done');
+    await expect(recoveredEngine.getHandle('matrix-running-id').result()).resolves.toBe(
+      'matrix:done',
+    );
+
+    recoveredEngine[Symbol.dispose]();
+  });
+
+  it('recoverAll preserves storage-scan order across local and recoverable handles', async () => {
+    // Regression test for #195: the preflight refactor must not group local
+    // and recoverable handles into separate passes — that would change the
+    // observable handle-array order from storage-scan order to "all locals
+    // then all recoverables." MemoryStorage scans keys in lexicographic
+    // order, so the chosen IDs interleave running and pending workflows
+    // when sorted: a, b, c, d.
+    const storage = new MemoryStorage();
+    const firstEngine = new Engine({ storage });
+    firstEngine.register('order-known', async function* (ctx: WorkflowContext) {
+      yield* ctx.waitForSignal('go');
+      return 'done';
+    });
+
+    await firstEngine.start('order-known', null, { id: 'order-a-running' });
+    await flush();
+    await seedStoredWorkflowState(storage, 'order-b-pending', 'order-known', 'pending');
+    await firstEngine.start('order-known', null, { id: 'order-c-running' });
+    await flush();
+    await seedStoredWorkflowState(storage, 'order-d-pending', 'order-known', 'pending');
+    firstEngine[Symbol.dispose]();
+
+    const recoveredEngine = new Engine({ storage });
+    recoveredEngine.register('order-known', async function* (ctx: WorkflowContext) {
+      yield* ctx.waitForSignal('go');
+      return 'done';
+    });
+
+    const handles = await recoveredEngine.recoverAll();
+    expect(handles.map((handle) => handle.id)).toEqual([
+      'order-a-running',
+      'order-b-pending',
+      'order-c-running',
+      'order-d-pending',
+    ]);
+
+    recoveredEngine[Symbol.dispose]();
+  });
+
+  it('WorkflowTypeNotRegisteredForRecoveryError carries sorted full lists with capped samples and redacted messages', async () => {
+    const storage = new MemoryStorage();
+    for (let index = 0; index < 22; index += 1) {
+      const typeIndex = String(index % 12).padStart(2, '0');
+      const workflowIndex = String(index).padStart(2, '0');
+      await seedStoredWorkflowState(
+        storage,
+        `shape-workflow-${workflowIndex}`,
+        `shape-type-${typeIndex}`,
+        'running',
+      );
+    }
+
+    const engine = new Engine({ storage });
+    engine.register('registered-shape-type', async function* () {
+      return 'registered';
+    });
+
+    try {
+      await engine.recoverAll();
+      expect.unreachable('recoverAll should throw for unknown stored workflow types');
+    } catch (error) {
+      expect(error).toBeInstanceOf(WorkflowTypeNotRegisteredForRecoveryError);
+      const typedError = error as WorkflowTypeNotRegisteredForRecoveryError;
+      expect(typedError.registeredTypes).toEqual(['registered-shape-type']);
+      expect(typedError.missingTypes).toEqual([
+        'shape-type-00',
+        'shape-type-01',
+        'shape-type-02',
+        'shape-type-03',
+        'shape-type-04',
+        'shape-type-05',
+        'shape-type-06',
+        'shape-type-07',
+        'shape-type-08',
+        'shape-type-09',
+        'shape-type-10',
+        'shape-type-11',
+      ]);
+      expect(typedError.missingWorkflowCount).toBe(22);
+      expect(typedError.missingWorkflowSamples).toHaveLength(20);
+      expect(typedError.samplesTruncated).toBe(true);
+      expect(typedError.message).toContain('shape-type-00');
+      expect(typedError.message).toContain('+2 more');
+      expect(typedError.message).not.toContain('shape-workflow-00');
+    }
+
+    engine[Symbol.dispose]();
+  });
+
   it('resumes a multi-step workflow without re-executing completed steps', async () => {
     const storage = new MemoryStorage();
     let step1Calls = 0;

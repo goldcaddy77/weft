@@ -160,7 +160,9 @@ import {
   type UpdateCallbacks,
 } from './updates.ts';
 
-function createPendingUpdateCallbacks(engine: Engine): {
+function createPendingUpdateCallbacks<TWorkflows extends object, TActivities extends object>(
+  engine: Engine<TWorkflows, TActivities>,
+): {
   dispatchEvent: (event: Event) => boolean;
   broadcast: (message: { type: 'update:completed'; workflowId: string; updateId: string }) => void;
 } {
@@ -171,7 +173,9 @@ function createPendingUpdateCallbacks(engine: Engine): {
   };
 }
 
-function createInlineLaunchQueueCallbacks(engine: Engine): InlineLaunchQueueCallbacks {
+function createInlineLaunchQueueCallbacks<TWorkflows extends object, TActivities extends object>(
+  engine: Engine<TWorkflows, TActivities>,
+): InlineLaunchQueueCallbacks {
   return {
     processPendingUpdatesAfterInlineAdvance: (workflowId) =>
       processPendingUpdatesAfterInlineAdvanceForEngine(engine, workflowId),
@@ -179,10 +183,10 @@ function createInlineLaunchQueueCallbacks(engine: Engine): InlineLaunchQueueCall
   };
 }
 
-async function processPendingUpdatesAfterInlineAdvanceForEngine(
-  engine: Engine,
-  workflowId: string,
-): Promise<void> {
+async function processPendingUpdatesAfterInlineAdvanceForEngine<
+  TWorkflows extends object,
+  TActivities extends object,
+>(engine: Engine<TWorkflows, TActivities>, workflowId: string): Promise<void> {
   try {
     await processPendingUpdatesAfterInlineAdvance(
       getInternals(engine),
@@ -198,7 +202,9 @@ async function processPendingUpdatesAfterInlineAdvanceForEngine(
   }
 }
 
-export function createLifecycleCallbacks(engine: Engine): LifecycleCallbacks {
+export function createLifecycleCallbacks<TWorkflows extends object, TActivities extends object>(
+  engine: Engine<TWorkflows, TActivities>,
+): LifecycleCallbacks {
   return {
     dispatchEvent: (event) => {
       engine.dispatchEvent(event);
@@ -247,7 +253,9 @@ export function createLifecycleCallbacks(engine: Engine): LifecycleCallbacks {
   };
 }
 
-export function createTerminationCallbacks(engine: Engine): TerminationCallbacks {
+export function createTerminationCallbacks<TWorkflows extends object, TActivities extends object>(
+  engine: Engine<TWorkflows, TActivities>,
+): TerminationCallbacks {
   const dispatchEvent = (event: Event): void => {
     engine.dispatchEvent(event);
   };
@@ -276,23 +284,31 @@ export function createTerminationCallbacks(engine: Engine): TerminationCallbacks
   };
 }
 
-export function createRegistrationCallbacks(engine: Engine): RegistrationCallbacks {
+export function createRegistrationCallbacks<TWorkflows extends object, TActivities extends object>(
+  engine: Engine<TWorkflows, TActivities>,
+): RegistrationCallbacks {
   return {
     ensureRetentionSweepInterval: () => ensureRetentionSweepIntervalForEngine(engine),
     isAgentDefinition,
   };
 }
-export function createBroadcastCallbacks(engine: Engine): BroadcastCallbacks {
+export function createBroadcastCallbacks<TWorkflows extends object, TActivities extends object>(
+  engine: Engine<TWorkflows, TActivities>,
+): BroadcastCallbacks {
   return { dispatchEvent: (event) => engine.dispatchEvent(event) };
 }
-export function createGuardCallbacks(engine: Engine): GuardCallbacks {
+export function createGuardCallbacks<TWorkflows extends object, TActivities extends object>(
+  engine: Engine<TWorkflows, TActivities>,
+): GuardCallbacks {
   return {
     deleteRequestIfUnconsumed: (workflowId, updateId) =>
       getInternals(engine).updateCoordinator.deleteRequestIfUnconsumed(workflowId, updateId),
     getUpdateResponse: (updateId) => getInternals(engine).updateCoordinator.getResponse(updateId),
   };
 }
-export function createConstraintCallbacks(engine: Engine): ConstraintCallbacks {
+export function createConstraintCallbacks<TWorkflows extends object, TActivities extends object>(
+  engine: Engine<TWorkflows, TActivities>,
+): ConstraintCallbacks {
   return {
     cancelWorkflowInStrategy: (workflowId) =>
       getInternals(engine).strategy.cancelWorkflow(workflowId),
@@ -304,7 +320,9 @@ export function createConstraintCallbacks(engine: Engine): ConstraintCallbacks {
   };
 }
 
-export function createInlineParkingCallbacks(engine: Engine): InlineParkingCallbacks {
+export function createInlineParkingCallbacks<TWorkflows extends object, TActivities extends object>(
+  engine: Engine<TWorkflows, TActivities>,
+): InlineParkingCallbacks {
   return {
     createLifecycleCallbacks: () => createLifecycleCallbacks(engine),
     createTerminationCallbacks: () => createTerminationCallbacks(engine),
@@ -356,7 +374,9 @@ export function createInlineParkingCallbacks(engine: Engine): InlineParkingCallb
   };
 }
 
-export function createUpdateCallbacks(engine: Engine): UpdateCallbacks {
+export function createUpdateCallbacks<TWorkflows extends object, TActivities extends object>(
+  engine: Engine<TWorkflows, TActivities>,
+): UpdateCallbacks {
   return {
     dispatchEvent: (event) => engine.dispatchEvent(event),
     broadcast: (message) =>
@@ -411,11 +431,15 @@ export function createUpdateCallbacks(engine: Engine): UpdateCallbacks {
   };
 }
 
-export function createSubmitReviewCallbacks(engine: Engine): SubmitReviewCallbacks {
+export function createSubmitReviewCallbacks<TWorkflows extends object, TActivities extends object>(
+  engine: Engine<TWorkflows, TActivities>,
+): SubmitReviewCallbacks {
   return { dispatchEvent: engine.dispatchEvent.bind(engine) };
 }
 
-export function createScheduleCallbacks(engine: Engine): ScheduleCallbacks {
+export function createScheduleCallbacks<TWorkflows extends object, TActivities extends object>(
+  engine: Engine<TWorkflows, TActivities>,
+): ScheduleCallbacks {
   return {
     startWorkflow: async (type, input, options, tenantResolution, additionalStartOperations) => {
       await startWorkflow(
@@ -443,7 +467,10 @@ export function createScheduleCallbacks(engine: Engine): ScheduleCallbacks {
   };
 }
 
-export function createReviewOperationCallbacks(engine: Engine): ReviewOperationCallbacks {
+export function createReviewOperationCallbacks<
+  TWorkflows extends object,
+  TActivities extends object,
+>(engine: Engine<TWorkflows, TActivities>): ReviewOperationCallbacks {
   return {
     dispatchEvent: engine.dispatchEvent.bind(engine),
     failWorkflow: (workflowId, error) =>
@@ -455,7 +482,10 @@ export function createReviewOperationCallbacks(engine: Engine): ReviewOperationC
   };
 }
 
-export function createOperationRouterCallbacks(engine: Engine): OperationRouterCallbacks {
+export function createOperationRouterCallbacks<
+  TWorkflows extends object,
+  TActivities extends object,
+>(engine: Engine<TWorkflows, TActivities>): OperationRouterCallbacks {
   return {
     processActivityOperation: (workflowId, operation) =>
       processActivityOperation(
@@ -611,20 +641,33 @@ export function createOperationRouterCallbacks(engine: Engine): OperationRouterC
   };
 }
 
-export function createChildWorkflowOperationCallbacks(
-  engine: Engine,
-): ChildWorkflowOperationCallbacks {
+export function createChildWorkflowOperationCallbacks<
+  TWorkflows extends object,
+  TActivities extends object,
+>(engine: Engine<TWorkflows, TActivities>): ChildWorkflowOperationCallbacks {
   return {
     runOperationWithResult: (workflowId, operation, execute) =>
       runOperationWithResultForEngine(engine, workflowId, operation, execute),
-    start: (type, input, options) => engine.start(type, input, options),
+    start: (type, input, options) =>
+      startWorkflow(
+        getInternals(engine),
+        type,
+        input,
+        options,
+        undefined,
+        undefined,
+        createLifecycleCallbacks(engine),
+      ),
     loadWorkflowState: (workflowId) => loadWorkflowState(getInternals(engine), workflowId),
     getHandle: (workflowId) => engine.getHandle(workflowId),
     getComposedWorkflowInterceptor: () => getComposedWorkflowInterceptor(getInternals(engine)),
   };
 }
 
-export function createAgentOperationCallbacks(engine: Engine): AgentOperationCallbacks {
+export function createAgentOperationCallbacks<
+  TWorkflows extends object,
+  TActivities extends object,
+>(engine: Engine<TWorkflows, TActivities>): AgentOperationCallbacks {
   return {
     runOperationWithResult: (workflowId, operation, execute) =>
       runOperationWithResultForEngine(engine, workflowId, operation, execute),
@@ -693,7 +736,10 @@ export function createAgentOperationCallbacks(engine: Engine): AgentOperationCal
   };
 }
 
-export function createActivityOperationCallbacks(engine: Engine): ActivityOperationCallbacks {
+export function createActivityOperationCallbacks<
+  TWorkflows extends object,
+  TActivities extends object,
+>(engine: Engine<TWorkflows, TActivities>): ActivityOperationCallbacks {
   return {
     runOperationWithResult: (workflowId, operation, execute) =>
       runOperationWithResultForEngine(engine, workflowId, operation, execute),
@@ -701,9 +747,10 @@ export function createActivityOperationCallbacks(engine: Engine): ActivityOperat
     getComposedWorkflowInterceptor: () => getComposedWorkflowInterceptor(getInternals(engine)),
   };
 }
-export function createCoordinationOperationCallbacks(
-  engine: Engine,
-): CoordinationOperationCallbacks {
+export function createCoordinationOperationCallbacks<
+  TWorkflows extends object,
+  TActivities extends object,
+>(engine: Engine<TWorkflows, TActivities>): CoordinationOperationCallbacks {
   return {
     completeOperation: (workflowId, value) => completeOperationForEngine(engine, workflowId, value),
     runOperationWithResult: (workflowId, operation, execute) =>
@@ -713,13 +760,18 @@ export function createCoordinationOperationCallbacks(
     getActivityOperationCallbacks: () => createActivityOperationCallbacks(engine),
   };
 }
-export function createDataOperationCallbacks(engine: Engine): DataOperationCallbacks {
+export function createDataOperationCallbacks<TWorkflows extends object, TActivities extends object>(
+  engine: Engine<TWorkflows, TActivities>,
+): DataOperationCallbacks {
   return {
     runOperationWithResult: (workflowId, operation, execute) =>
       runOperationWithResultForEngine(engine, workflowId, operation, execute),
   };
 }
-export function createStateOperationCallbacks(engine: Engine): StateOperationCallbacks {
+export function createStateOperationCallbacks<
+  TWorkflows extends object,
+  TActivities extends object,
+>(engine: Engine<TWorkflows, TActivities>): StateOperationCallbacks {
   return {
     runOperationWithResult: (workflowId, operation, execute) =>
       runOperationWithResultForEngine(engine, workflowId, operation, execute),
@@ -727,7 +779,10 @@ export function createStateOperationCallbacks(engine: Engine): StateOperationCal
       ensureTerminalCleanupTracked(getInternals(engine), workflowId),
   };
 }
-export function createStreamOperationCallbacks(engine: Engine): StreamOperationCallbacks {
+export function createStreamOperationCallbacks<
+  TWorkflows extends object,
+  TActivities extends object,
+>(engine: Engine<TWorkflows, TActivities>): StreamOperationCallbacks {
   return {
     runOperationWithResult: (workflowId, operation, execute) =>
       runOperationWithResultForEngine(engine, workflowId, operation, execute),
@@ -736,7 +791,9 @@ export function createStreamOperationCallbacks(engine: Engine): StreamOperationC
   };
 }
 
-export function createTimeOperationCallbacks(engine: Engine): TimeOperationCallbacks {
+export function createTimeOperationCallbacks<TWorkflows extends object, TActivities extends object>(
+  engine: Engine<TWorkflows, TActivities>,
+): TimeOperationCallbacks {
   return {
     completeOperation: (workflowId, value) => completeOperationForEngine(engine, workflowId, value),
     loadWorkflowState: (workflowId) => loadWorkflowState(getInternals(engine), workflowId),
@@ -796,8 +853,8 @@ export function createTimeOperationCallbacks(engine: Engine): TimeOperationCallb
   };
 }
 
-export function completeOperationForEngine(
-  engine: Engine,
+export function completeOperationForEngine<TWorkflows extends object, TActivities extends object>(
+  engine: Engine<TWorkflows, TActivities>,
   workflowId: string,
   value: unknown,
 ): void {
@@ -808,8 +865,11 @@ export function completeOperationForEngine(
     createOperationRouterCallbacks(engine),
   );
 }
-export async function runOperationWithResultForEngine(
-  engine: Engine,
+export async function runOperationWithResultForEngine<
+  TWorkflows extends object,
+  TActivities extends object,
+>(
+  engine: Engine<TWorkflows, TActivities>,
   workflowId: string,
   operation: OperationWithCallerStack,
   execute: () => Promise<unknown>,
@@ -822,8 +882,11 @@ export async function runOperationWithResultForEngine(
     createOperationRouterCallbacks(engine),
   );
 }
-export async function runOperationWithoutResultForEngine(
-  engine: Engine,
+export async function runOperationWithoutResultForEngine<
+  TWorkflows extends object,
+  TActivities extends object,
+>(
+  engine: Engine<TWorkflows, TActivities>,
   workflowId: string,
   operation: OperationWithCallerStack,
   execute: () => Promise<void>,
@@ -836,8 +899,11 @@ export async function runOperationWithoutResultForEngine(
     createOperationRouterCallbacks(engine),
   );
 }
-export async function executeSubOperationForEngine(
-  engine: Engine,
+export async function executeSubOperationForEngine<
+  TWorkflows extends object,
+  TActivities extends object,
+>(
+  engine: Engine<TWorkflows, TActivities>,
   workflowId: string,
   operation: ContextOperationRequest,
   signal?: AbortSignal,
@@ -858,8 +924,11 @@ export async function executeSubOperationForEngine(
     speculativeState,
   );
 }
-export async function processReviewOperationForEngine(
-  engine: Engine,
+export async function processReviewOperationForEngine<
+  TWorkflows extends object,
+  TActivities extends object,
+>(
+  engine: Engine<TWorkflows, TActivities>,
   workflowId: string,
   options: HumanReviewOptions,
 ): Promise<void> {
@@ -870,44 +939,44 @@ export async function processReviewOperationForEngine(
     createReviewOperationCallbacks(engine),
   );
 }
-export async function refreshScheduledWorkflowStateForEngine(
-  engine: Engine,
-  state: ScheduleState,
-): Promise<RefreshedScheduleState> {
+export async function refreshScheduledWorkflowStateForEngine<
+  TWorkflows extends object,
+  TActivities extends object,
+>(engine: Engine<TWorkflows, TActivities>, state: ScheduleState): Promise<RefreshedScheduleState> {
   return refreshScheduledWorkflowState(
     getInternals(engine),
     state,
     createScheduleCallbacks(engine),
   );
 }
-export async function startScheduledRunForEngine(
-  engine: Engine,
-  state: ScheduleState,
-): Promise<string> {
+export async function startScheduledRunForEngine<
+  TWorkflows extends object,
+  TActivities extends object,
+>(engine: Engine<TWorkflows, TActivities>, state: ScheduleState): Promise<string> {
   return startScheduledRun(getInternals(engine), state, createScheduleCallbacks(engine));
 }
-export async function applyScheduleOccurrenceForEngine(
-  engine: Engine,
-  state: ScheduleState,
-): Promise<ScheduleState> {
+export async function applyScheduleOccurrenceForEngine<
+  TWorkflows extends object,
+  TActivities extends object,
+>(engine: Engine<TWorkflows, TActivities>, state: ScheduleState): Promise<ScheduleState> {
   return applyScheduleOccurrence(getInternals(engine), state, createScheduleCallbacks(engine));
 }
-export async function settleBackfillScheduleStateForEngine(
-  engine: Engine,
-  state: ScheduleState,
-): Promise<ScheduleState> {
+export async function settleBackfillScheduleStateForEngine<
+  TWorkflows extends object,
+  TActivities extends object,
+>(engine: Engine<TWorkflows, TActivities>, state: ScheduleState): Promise<ScheduleState> {
   return settleBackfillScheduleState(getInternals(engine), state, createScheduleCallbacks(engine));
 }
-export async function handleScheduleTimerForEngine(
-  engine: Engine,
-  entry: TimerEntry,
-): Promise<void> {
+export async function handleScheduleTimerForEngine<
+  TWorkflows extends object,
+  TActivities extends object,
+>(engine: Engine<TWorkflows, TActivities>, entry: TimerEntry): Promise<void> {
   return handleScheduleTimer(getInternals(engine), entry, createScheduleCallbacks(engine));
 }
-export async function handleScheduledWorkflowTerminalForEngine(
-  engine: Engine,
-  workflowId: string,
-): Promise<void> {
+export async function handleScheduledWorkflowTerminalForEngine<
+  TWorkflows extends object,
+  TActivities extends object,
+>(engine: Engine<TWorkflows, TActivities>, workflowId: string): Promise<void> {
   return handleScheduledWorkflowTerminal(
     getInternals(engine),
     workflowId,
@@ -915,8 +984,8 @@ export async function handleScheduledWorkflowTerminalForEngine(
   );
 }
 
-export function persistCheckpointForEngine(
-  engine: Engine,
+export function persistCheckpointForEngine<TWorkflows extends object, TActivities extends object>(
+  engine: Engine<TWorkflows, TActivities>,
   workflowId: string,
   operation: ContextOperationRequest,
   workerCheckpointBytes?: ArrayBuffer,
@@ -942,8 +1011,11 @@ export function persistCheckpointForEngine(
   });
 }
 
-async function persistCoordinatedUpdateResponse(
-  engine: Engine,
+async function persistCoordinatedUpdateResponse<
+  TWorkflows extends object,
+  TActivities extends object,
+>(
+  engine: Engine<TWorkflows, TActivities>,
   workflowId: string,
   updateName: string,
   updateId: string,
@@ -975,7 +1047,10 @@ async function persistCoordinatedUpdateResponse(
   }
 }
 
-function ensureRetentionSweepIntervalForEngine(engine: Engine): void {
+function ensureRetentionSweepIntervalForEngine<
+  TWorkflows extends object,
+  TActivities extends object,
+>(engine: Engine<TWorkflows, TActivities>): void {
   ensureRetentionSweepInterval(getInternals(engine), {
     hasConfiguredRetention: () => hasConfiguredRetention(getInternals(engine)),
     runRetentionSweep: () =>
