@@ -223,23 +223,30 @@ void zeroInputCallable();
 void zeroInputCallable('unexpected');
 
 async function verifyEngineCreateInference(): Promise<void> {
+  // No definition maps: the engine retains the same dynamic-name fallback as
+  // `new Engine()` — same module-augmented WorkflowRegistry / ActivityTypes,
+  // same legacy `start('any-name', ...)` overload. Engine.create is sugar
+  // over the constructor; without explicit definition maps the type contract
+  // does not narrow.
   const neither = await Engine.create({ recover: false });
-  // @ts-expect-error no workflow definitions means no strict local workflow names.
   void neither.start('localGreet', 'Steve');
 
+  // workflows-only narrows TWorkflows to the inferred map keys; activities
+  // fall back to the module-augmented registry.
   const workflowsOnly = await Engine.create({
     workflows: { localGreet },
     recover: false,
   });
   void workflowsOnly.start('localGreet', 'Steve');
-  // @ts-expect-error absent activities do not widen the workflow registry.
+  // @ts-expect-error workflow names not in the map are rejected.
   void workflowsOnly.start('missingFromWorkflowMap', 'Steve');
 
+  // activities-only mirrors workflows-only: TWorkflows keeps the fallback,
+  // TActivities narrows to the inferred map.
   const activitiesOnly = await Engine.create({
     activities: { sendEmail },
     recover: false,
   });
-  // @ts-expect-error absent workflow maps collapse to an empty workflow registry.
   void activitiesOnly.start('localGreet', 'Steve');
 
   const both = await Engine.create({
@@ -252,6 +259,19 @@ async function verifyEngineCreateInference(): Promise<void> {
   void both.start('schemaDefinedWorkflow', { id: 'wf-1' });
   // @ts-expect-error Engine.create infers names from the definition map keys.
   void both.start('missingFromBothMap', 'Steve');
+
+  // Regression guard for the recover-then-register pattern that
+  // `Engine.create({ storage, recover: false })` is documented to support.
+  // If a future change collapses the no-maps overload to a strict-empty
+  // registry, `engine.register(...)` followed by `engine.start(name, ...)`
+  // will fail to compile because the dynamic-name overloads resolve to
+  // `never`.
+  const deferredRegistration = await Engine.create({ recover: false });
+  deferredRegistration.register('deferredWorkflow', async function* () {
+    yield;
+    return 'ok';
+  });
+  void deferredRegistration.start('deferredWorkflow', null);
 }
 void verifyEngineCreateInference;
 

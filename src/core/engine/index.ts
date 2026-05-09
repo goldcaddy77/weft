@@ -322,16 +322,12 @@ export type EngineCreateOptions<
 type KnownWorkflowNames<TWorkflows extends object> = Extract<keyof TWorkflows, string>;
 declare const emptyWorkflowDefinitions: unique symbol;
 declare const emptyActivityDefinitions: unique symbol;
-declare const emptyWorkflowRegistry: unique symbol;
-declare const emptyActivityRegistry: unique symbol;
 type EmptyWorkflowDefinitions = Record<string, never> & {
   readonly [emptyWorkflowDefinitions]: true;
 };
 type EmptyActivityDefinitions = Record<string, never> & {
   readonly [emptyActivityDefinitions]: true;
 };
-type EmptyWorkflowRegistry = { readonly [emptyWorkflowRegistry]: true };
-type EmptyActivityRegistry = { readonly [emptyActivityRegistry]: true };
 type EngineCreateRuntimeOptions = EngineConstructorOptions & {
   activities?: Record<string, AnyActivityDefinition>;
   workflows?: Record<string, AnyWorkflowDefinition>;
@@ -579,19 +575,19 @@ export class Engine<
       activities?: undefined;
       workflows?: undefined;
     },
-  ): Promise<Engine<EmptyWorkflowRegistry, EmptyActivityRegistry>>;
+  ): Promise<Engine>;
   static create<TWorkflowDefinitions extends Record<string, AnyWorkflowDefinition>>(
     options: EngineCreateOptions<TWorkflowDefinitions, EmptyActivityDefinitions> & {
       activities?: undefined;
       workflows: TWorkflowDefinitions;
     },
-  ): Promise<Engine<InferWorkflowEntries<TWorkflowDefinitions>, EmptyActivityRegistry>>;
+  ): Promise<Engine<InferWorkflowEntries<TWorkflowDefinitions>>>;
   static create<TActivityDefinitions extends Record<string, AnyActivityDefinition>>(
     options: EngineCreateOptions<EmptyWorkflowDefinitions, TActivityDefinitions> & {
       activities: TActivityDefinitions;
       workflows?: undefined;
     },
-  ): Promise<Engine<EmptyWorkflowRegistry, InferActivityEntries<TActivityDefinitions>>>;
+  ): Promise<Engine<DefaultWorkflowRegistry, InferActivityEntries<TActivityDefinitions>>>;
   static create<
     TWorkflowDefinitions extends Record<string, AnyWorkflowDefinition>,
     TActivityDefinitions extends Record<string, AnyActivityDefinition>,
