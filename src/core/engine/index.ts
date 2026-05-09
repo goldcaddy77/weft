@@ -294,10 +294,10 @@ export interface EngineStateNamespace {
  *   },
  * });
  *
- * const options: EngineCreateOptions<{ welcome: typeof welcome }, { greet: typeof greet }> = {
+ * const options = {
  *   workflows: { welcome },
  *   activities: { greet },
- * };
+ * } satisfies EngineCreateOptions<{ welcome: typeof welcome }, { greet: typeof greet }>;
  * const engine = await Engine.create(options);
  * void engine;
  * ```

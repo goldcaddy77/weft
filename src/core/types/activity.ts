@@ -111,10 +111,7 @@ export interface ActivityCallOptions {
  * ```ts
  * import { activity, type ActivityDefinition } from 'weft';
  *
- * const sendEmail: ActivityDefinition<{ to: string; body: string }, void> = activity<
- *   { to: string; body: string },
- *   void
- * >({
+ * const sendEmail: ActivityDefinition<{ to: string; body: string }, void> = activity({
  *   name: 'sendEmail',
  *   timeout: '30s',
  *   retry: { maxAttempts: 3, initialBackoff: '1s', backoffMultiplier: 2, maxBackoff: '10s' },
