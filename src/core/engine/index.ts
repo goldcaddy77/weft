@@ -26,6 +26,9 @@ import {
   messageName,
   type ActivityContext,
   type ActivityTypes,
+  type AllowsDynamicWorkflowNames,
+  type AnyActivityDefinition,
+  type AnyWorkflowDefinition,
   type AttributeFilterKey,
   type BulkCancelResult,
   type BulkDeleteResult,
@@ -34,8 +37,13 @@ import {
   type CheckpointState,
   type CheckpointSummary,
   type CoordinatedUpdateResult,
+  type DefaultWorkflowRegistry,
   type EngineOptions,
   type ForkOptions,
+  type InferActivityEntries,
+  type InferActivityEntry,
+  type InferWorkflowEntries,
+  type InferWorkflowEntry,
   type ListFilter,
   type MessageName,
   type PaginatedResult,
@@ -59,13 +67,11 @@ import {
   type UnregisteredName,
   type UpdateDefinition,
   type WorkerOutboundMessage,
-  type WorkflowDefinition,
   type WorkflowEvent,
   type WorkflowFunction,
   type WorkflowInput,
   type WorkflowOutput,
   type WorkflowRegistration,
-  type WorkflowRegistry,
   type WorkflowReplay,
   type WorkflowState,
   type WorkflowSummary,
@@ -105,6 +111,7 @@ import type {
   RegistrationEntry,
   ResolvedOptions,
 } from './engine-internal-types.ts';
+import { EngineCreateNameMismatchError } from './errors.ts';
 import {
   createWorkflowHandleWithResultPromise as createWorkflowHandleWithResultPromiseFromInternals,
   getWorkflowResultPromise as getWorkflowResultPromiseFromInternals,
@@ -127,6 +134,7 @@ import {
   resume as resumeFromLifecycle,
   startWorkflow as startWorkflowFromLifecycle,
   type LifecycleCallbacks,
+  type RecoverAllOptions,
 } from './lifecycle.ts';
 import {
   addTags as addWorkflowTags,
@@ -208,11 +216,14 @@ export type {
 } from './engine-internal-types.ts';
 export {
   BulkDeleteRequiresTerminalWorkflowsError,
+  EngineCreateNameMismatchError,
   WorkflowAlreadyExistsError,
   WorkflowNotFoundError,
   WorkflowNotRegisteredError,
+  WorkflowTypeNotRegisteredForRecoveryError,
 } from './errors.ts';
 export { HANDLE_RESULT_PROMISE, ScheduleHandle, WorkflowHandle } from './handles.ts';
+export type { RecoverAllOptions } from './lifecycle.ts';
 export { withPendingChatResumeTurnIndex } from './operations-agent.ts';
 export type {
   WorkflowFeedListener,
@@ -264,6 +275,90 @@ export interface EngineStateNamespace {
     options?: AtomicStateOptions<T>,
   ): AtomicState<T>;
   tenant<T>(tenantId: string, key: string, options?: AtomicStateOptions<T>): AtomicState<T>;
+}
+
+/**
+ * Options accepted by {@link Engine.create}. Definition maps are used for
+ * type inference, then each map key is checked against the definition's
+ * runtime `name` before registration.
+ *
+ * @example
+ * ```ts
+ * import { activity, Engine, workflow, type EngineCreateOptions } from 'weft';
+ *
+ * const greet = activity({ name: 'greet', execute: async (name: string) => `Hello, ${name}` });
+ * const welcome = workflow({
+ *   name: 'welcome',
+ *   handler: async function* (ctx, input: string) {
+ *     return yield* ctx.run(greet, input);
+ *   },
+ * });
+ *
+ * const options = {
+ *   workflows: { welcome },
+ *   activities: { greet },
+ * } satisfies EngineCreateOptions<{ welcome: typeof welcome }, { greet: typeof greet }>;
+ * const engine = await Engine.create(options);
+ * void engine;
+ * ```
+ */
+export type EngineCreateOptions<
+  TWorkflowDefinitions extends Record<string, AnyWorkflowDefinition> = {},
+  TActivityDefinitions extends Record<string, AnyActivityDefinition> = {},
+> = EngineConstructorOptions & {
+  /** Workflow definitions to register before recovery. */
+  workflows?: TWorkflowDefinitions;
+  /** Activity definitions to register before workflows. */
+  activities?: TActivityDefinitions;
+  /** Whether to recover stored running workflows after registration. Defaults to `true`. */
+  recover?: boolean;
+  /**
+   * Forwarded to {@link Engine.recoverAll}. Only use this during rolling
+   * deploys, explicit storage migrations, or intentional tenant partitioning.
+   */
+  acknowledgeUnknownWorkflowTypes?: boolean;
+};
+
+type KnownWorkflowNames<TWorkflows extends object> = Extract<keyof TWorkflows, string>;
+declare const emptyWorkflowDefinitions: unique symbol;
+declare const emptyActivityDefinitions: unique symbol;
+type EmptyWorkflowDefinitions = Record<string, never> & {
+  readonly [emptyWorkflowDefinitions]: true;
+};
+type EmptyActivityDefinitions = Record<string, never> & {
+  readonly [emptyActivityDefinitions]: true;
+};
+type EngineCreateRuntimeOptions = EngineConstructorOptions & {
+  activities?: Record<string, AnyActivityDefinition>;
+  workflows?: Record<string, AnyWorkflowDefinition>;
+  recover?: boolean;
+  acknowledgeUnknownWorkflowTypes?: boolean;
+};
+
+type DynamicWorkflowName<TWorkflows extends object, TName extends string> =
+  AllowsDynamicWorkflowNames<TWorkflows> extends true
+    ? UnregisteredName<TName, KnownWorkflowNames<TWorkflows>>
+    : never;
+
+function definitionEntries<TDefinition extends object>(
+  definitions: Record<string, TDefinition> | undefined,
+): Array<[string, TDefinition]> {
+  return Object.entries(definitions ?? {});
+}
+
+function typedEngineView<TViewWorkflows extends object, TViewActivities extends object>(
+  engine: object,
+): Engine<TViewWorkflows, TViewActivities> {
+  // The runtime instance is the same Engine; this re-narrows the phantom type
+  // parameters after `register` / `registerActivity` has mutated the
+  // underlying registries. There is no sound type-system bridge: `Engine` is
+  // invariant in both type parameters because the `register` method makes them
+  // contravariant, so any cast that preserves the structural relationship
+  // would have to flow through `unknown`/`never`. The bypass is contained to
+  // this single helper and the `engine: object` parameter ensures callers can
+  // only pass an actual instance (the Engine class extends EventTarget which
+  // extends object).
+  return engine as never;
 }
 
 function resolveEngineStorage(
@@ -388,8 +483,11 @@ function createActivityWorkerDispatcher(
   );
 }
 
-function createAlertManagerForEngine(
-  engine: Engine,
+function createAlertManagerForEngine<
+  TAlertWorkflows extends object,
+  TAlertActivities extends object,
+>(
+  engine: Engine<TAlertWorkflows, TAlertActivities>,
   alerts: EngineOptions['alerts'] | undefined,
   getNow: () => number,
 ): AlertManager | null {
@@ -404,12 +502,17 @@ export const ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING = Symbol('engineSignalWaiter
 /**
  * Durable execution engine.
  *
- * Register workflow functions with {@link Engine.register}, start them with
- * {@link Engine.start}, and observe or cancel them via the returned
- * {@link WorkflowHandle}. Each workflow is a generator that yields to a
- * {@link Context}; the engine persists a checkpoint at every yield so the
- * workflow survives crashes, restarts, and worker reassignment without
- * losing progress.
+ * Register workflow functions with {@link Engine.register} or the typed
+ * {@link Engine.withWorkflow} builder, start them with {@link Engine.start},
+ * and observe or cancel them via the returned {@link WorkflowHandle}. Each
+ * workflow is a generator that yields to a {@link Context}; the engine
+ * persists a checkpoint at every yield so the workflow survives crashes,
+ * restarts, and worker reassignment without losing progress.
+ *
+ * The default type parameters preserve the module-augmentation registry
+ * model. Use `new Engine<{}, {}>()` when you want an engine-local registry
+ * that only accepts definitions added through `withWorkflow` and
+ * `withActivity`.
  *
  * @example Run a workflow with an activity
  * ```ts
@@ -436,7 +539,103 @@ export const ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING = Symbol('engineSignalWaiter
  * void engine;
  * ```
  */
-export class Engine extends EventTarget implements Disposable, AsyncDisposable {
+export class Engine<
+  TWorkflows extends object = DefaultWorkflowRegistry,
+  TActivities extends object = ActivityTypes,
+>
+  extends EventTarget
+  implements Disposable, AsyncDisposable
+{
+  /**
+   * Construct, register, and recover an engine in one step. Activities are
+   * registered before workflows, and recovery runs by default after all
+   * definitions are installed.
+   *
+   * @example
+   * ```ts
+   * import { activity, Engine, workflow } from 'weft';
+   *
+   * const greet = activity({ name: 'greet', execute: async (name: string) => `Hi ${name}` });
+   * const welcome = workflow({
+   *   name: 'welcome',
+   *   handler: async function* (ctx, input: string) {
+   *     return yield* ctx.run(greet, input);
+   *   },
+   * });
+   *
+   * const engine = await Engine.create({
+   *   activities: { greet },
+   *   workflows: { welcome },
+   * });
+   * void engine;
+   * ```
+   */
+  static create(
+    options: EngineCreateOptions<EmptyWorkflowDefinitions, EmptyActivityDefinitions> & {
+      activities?: undefined;
+      workflows?: undefined;
+    },
+  ): Promise<Engine>;
+  static create<TWorkflowDefinitions extends Record<string, AnyWorkflowDefinition>>(
+    options: EngineCreateOptions<TWorkflowDefinitions, EmptyActivityDefinitions> & {
+      activities?: undefined;
+      workflows: TWorkflowDefinitions;
+    },
+  ): Promise<Engine<InferWorkflowEntries<TWorkflowDefinitions>>>;
+  static create<TActivityDefinitions extends Record<string, AnyActivityDefinition>>(
+    options: EngineCreateOptions<EmptyWorkflowDefinitions, TActivityDefinitions> & {
+      activities: TActivityDefinitions;
+      workflows?: undefined;
+    },
+  ): Promise<Engine<DefaultWorkflowRegistry, InferActivityEntries<TActivityDefinitions>>>;
+  static create<
+    TWorkflowDefinitions extends Record<string, AnyWorkflowDefinition>,
+    TActivityDefinitions extends Record<string, AnyActivityDefinition>,
+  >(
+    options: EngineCreateOptions<TWorkflowDefinitions, TActivityDefinitions> & {
+      activities: TActivityDefinitions;
+      workflows: TWorkflowDefinitions;
+    },
+  ): Promise<
+    Engine<InferWorkflowEntries<TWorkflowDefinitions>, InferActivityEntries<TActivityDefinitions>>
+  >;
+  static async create(options: EngineCreateRuntimeOptions): Promise<unknown> {
+    const engine = new Engine<object, object>(options);
+
+    try {
+      for (const [name, definition] of definitionEntries(options.activities)) {
+        if (name !== definition.name) {
+          throw new EngineCreateNameMismatchError('activity', name, definition.name);
+        }
+        engine.#registerActivityDefinition(definition);
+      }
+
+      for (const [name, definition] of definitionEntries(options.workflows)) {
+        if (name !== definition.name) {
+          throw new EngineCreateNameMismatchError('workflow', name, definition.name);
+        }
+        engine.register(definition);
+      }
+
+      if (options.recover !== false) {
+        const recoverOptions =
+          options.acknowledgeUnknownWorkflowTypes === undefined
+            ? undefined
+            : { acknowledgeUnknownWorkflowTypes: options.acknowledgeUnknownWorkflowTypes };
+        await engine.recoverAll(recoverOptions);
+      }
+    } catch (error) {
+      // Constructor side effects (broadcast channel, scheduler, dispatchers,
+      // alert manager) are alive even when registration or recovery fails.
+      // Dispose before propagating so callers don't have to recover from a
+      // half-booted engine they never received a reference to.
+      await engine[Symbol.asyncDispose]();
+      throw error;
+    }
+
+    return engine;
+  }
+
   constructor(options?: EngineConstructorOptions) {
     super();
     initializeInternals(this);
@@ -640,45 +839,56 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return broadcastFromInternals(getInternals(this), message, this.#createBroadcastCallbacks());
   }
 
-  register<TName extends Extract<keyof WorkflowRegistry, string>>(
+  /**
+   * Register a workflow definition and return this same engine with the
+   * definition added to its phantom type registry. This is additive over the
+   * module-augmented default registry; construct `new Engine<{}, {}>()` for a
+   * strict local registry.
+   */
+  withWorkflow<TDefinition extends AnyWorkflowDefinition>(
+    definition: TDefinition,
+  ): Engine<TWorkflows & InferWorkflowEntry<TDefinition>, TActivities> {
+    this.register(definition);
+    return typedEngineView<TWorkflows & InferWorkflowEntry<TDefinition>, TActivities>(this);
+  }
+
+  /**
+   * Register an activity definition and return this same engine with the
+   * definition added to its phantom type registry. The callable definition is
+   * registered directly so retry, timeout, schema, verification, and
+   * compensation metadata stays attached to the function object.
+   */
+  withActivity<TDefinition extends AnyActivityDefinition>(
+    definition: TDefinition,
+  ): Engine<TWorkflows, TActivities & InferActivityEntry<TDefinition>> {
+    this.#registerActivityDefinition(definition);
+    return typedEngineView<TWorkflows, TActivities & InferActivityEntry<TDefinition>>(this);
+  }
+
+  register<TName extends KnownWorkflowNames<TWorkflows>>(
     name: TName,
     handler:
-      | WorkflowFunction<
-          WorkflowInput<WorkflowRegistry, TName>,
-          WorkflowOutput<WorkflowRegistry, TName>
-        >
-      | StepWorkflowFunction<
-          WorkflowInput<WorkflowRegistry, TName>,
-          WorkflowOutput<WorkflowRegistry, TName>
-        >,
+      | WorkflowFunction<WorkflowInput<TWorkflows, TName>, WorkflowOutput<TWorkflows, TName>>
+      | StepWorkflowFunction<WorkflowInput<TWorkflows, TName>, WorkflowOutput<TWorkflows, TName>>,
   ): void;
-  register<TName extends Extract<keyof WorkflowRegistry, string>>(
+  register<TName extends KnownWorkflowNames<TWorkflows>>(
     name: TName,
     registration: WorkflowRegistration<
-      WorkflowInput<WorkflowRegistry, TName>,
-      WorkflowOutput<WorkflowRegistry, TName>
+      WorkflowInput<TWorkflows, TName>,
+      WorkflowOutput<TWorkflows, TName>
     >,
   ): void;
   register<TName extends string, TInput = unknown, TOutput = unknown>(
-    name: UnregisteredName<TName, Extract<keyof WorkflowRegistry, string>>,
+    name: UnregisteredName<TName, KnownWorkflowNames<TWorkflows>>,
     handler: WorkflowFunction<TInput, TOutput> | StepWorkflowFunction<TInput, TOutput>,
   ): void;
   register<TName extends string, TInput = unknown, TOutput = unknown>(
-    name: UnregisteredName<TName, Extract<keyof WorkflowRegistry, string>>,
+    name: UnregisteredName<TName, KnownWorkflowNames<TWorkflows>>,
     registration: WorkflowRegistration<TInput, TOutput>,
   ): void;
-  register<TInput = unknown, TOutput = unknown>(
-    definition: WorkflowDefinition<TInput, TOutput>,
-  ): void;
+  register<TDefinition extends AnyWorkflowDefinition>(definition: TDefinition): void;
   register(agentDef: AgentDefinition, options: AgentRegistrationOptions): void;
-  register(
-    nameOrAgent: string | AgentDefinition | WorkflowDefinition,
-    handlerOrRegistrationOrOptions?:
-      | WorkflowFunction
-      | StepWorkflowFunction
-      | WorkflowRegistration
-      | AgentRegistrationOptions,
-  ): void {
+  register(nameOrAgent: unknown, handlerOrRegistrationOrOptions?: unknown): void {
     return registerWorkflow(
       getInternals(this),
       nameOrAgent,
@@ -695,18 +905,24 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     getInternals(this).composedWorkflowInterceptor = undefined;
     getInternals(this).composedActivityInterceptor = undefined;
   }
-  registerActivity<TName extends Extract<keyof ActivityTypes, string>>(
+  #registerActivityDefinition<TDefinition extends AnyActivityDefinition>(
+    definition: TDefinition,
+  ): void {
+    getInternals(this).activityRegistry.register(definition.name, definition);
+  }
+
+  registerActivity<TName extends Extract<keyof TActivities, string>>(
     name: TName,
-    fn: RegisteredActivityFunction<ActivityTypes, TName>,
+    fn: RegisteredActivityFunction<TActivities, TName>,
     options?: ActivityRegistrationOptions,
   ): void;
   registerActivity<TName extends string, TResult>(
-    name: UnregisteredName<TName, Extract<keyof ActivityTypes, string>>,
+    name: UnregisteredName<TName, Extract<keyof TActivities, string>>,
     fn: () => TResult | Promise<TResult>,
     options?: ActivityRegistrationOptions,
   ): void;
   registerActivity<TName extends string, TInput, TResult>(
-    name: UnregisteredName<TName, Extract<keyof ActivityTypes, string>>,
+    name: UnregisteredName<TName, Extract<keyof TActivities, string>>,
     fn: (input: TInput, context?: ActivityContext) => TResult | Promise<TResult>,
     options?: ActivityRegistrationOptions,
   ): void;
@@ -728,13 +944,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   listActivityDefinitions(): ActivityMetadata[] {
     return getInternals(this).activityRegistry.listDefinitions();
   }
-  async start<TName extends Extract<keyof WorkflowRegistry, string>>(
+  async start<TName extends KnownWorkflowNames<TWorkflows>>(
     type: TName,
-    input: WorkflowInput<WorkflowRegistry, TName>,
+    input: WorkflowInput<TWorkflows, TName>,
     options?: StartOptions,
-  ): Promise<WorkflowHandle<WorkflowOutput<WorkflowRegistry, TName>>>;
+  ): Promise<WorkflowHandle<WorkflowOutput<TWorkflows, TName>>>;
   async start<TName extends string>(
-    type: UnregisteredName<TName, Extract<keyof WorkflowRegistry, string>>,
+    type: DynamicWorkflowName<TWorkflows, TName>,
     input: unknown,
     options?: StartOptions,
   ): Promise<WorkflowHandle>;
@@ -983,8 +1199,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   async resume(workflowId: string): Promise<WorkflowHandle> {
     return resumeFromLifecycle(getInternals(this), workflowId, this.#createLifecycleCallbacks());
   }
-  async recoverAll(): Promise<WorkflowHandle[]> {
-    return recoverAllFromLifecycle(getInternals(this), this.#createLifecycleCallbacks());
+  /**
+   * Recover every running workflow found in storage. By default, recovery
+   * fails before doing any resume work if a stored running workflow has no
+   * registered workflow type on this engine.
+   *
+   * `acknowledgeUnknownWorkflowTypes` is a dangerous escape hatch for rolling
+   * deploys, explicit storage migrations, or intentional tenant partitioning.
+   * When set, unknown workflow types are skipped and reported through
+   * {@link WorkflowRecoverySkippedEvent}.
+   */
+  async recoverAll(options?: RecoverAllOptions): Promise<WorkflowHandle[]> {
+    return recoverAllFromLifecycle(getInternals(this), this.#createLifecycleCallbacks(), options);
   }
   async cancel(workflowId: string): Promise<void> {
     await cancelWorkflowFromTermination(

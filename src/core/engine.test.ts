@@ -14,6 +14,7 @@ import {
   Engine,
   ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING,
   ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING,
+  EngineCreateNameMismatchError,
   withPendingChatResumeTurnIndex,
   WorkflowHandle,
 } from './engine.ts';
@@ -37,7 +38,7 @@ import type {
   WorkflowContext,
   WorkflowState,
 } from './types.ts';
-import { activity } from './types.ts';
+import { activity, workflow as defineWorkflow } from './types.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -68,6 +69,203 @@ describe('Engine', () => {
     expect(engine).toBeInstanceOf(Engine);
     expect(engine).toBeInstanceOf(EventTarget);
     engine[Symbol.dispose]();
+  });
+
+  it('Engine.create registers activities before workflows and recovers stored running workflows', async () => {
+    const storage = new MemoryStorage();
+    const firstEngine = new Engine({ storage });
+    const formatFactoryGreeting = activity({
+      name: 'formatFactoryGreeting',
+      execute: async (input: { name: string }) => `Hello, ${input.name}`,
+    });
+    const factoryWelcome = defineWorkflow({
+      name: 'factoryWelcome',
+      handler: async function* (ctx: WorkflowContext, input: { name: string }) {
+        const greeting = yield* ctx.run(formatFactoryGreeting, input);
+        const suffix = yield* ctx.waitForSignal<string>('suffix');
+        return `${greeting}${suffix}`;
+      },
+    });
+
+    firstEngine.registerActivity(formatFactoryGreeting.name, formatFactoryGreeting);
+    firstEngine.register(factoryWelcome);
+    await firstEngine.start('factoryWelcome', { name: 'Ada' }, { id: 'factory-recover-id' });
+    await flush();
+    firstEngine[Symbol.dispose]();
+
+    const recoveredEngine = await Engine.create({
+      storage,
+      activities: { formatFactoryGreeting },
+      workflows: { factoryWelcome },
+    });
+
+    expect(recoveredEngine.getActivityDefinition('formatFactoryGreeting')).toMatchObject({
+      name: 'formatFactoryGreeting',
+    });
+    expect(recoveredEngine.getWorkflowDefinition('factoryWelcome')).toMatchObject({
+      type: 'factoryWelcome',
+    });
+
+    await recoveredEngine.signal('factory-recover-id', 'suffix', '!');
+    await expect(recoveredEngine.getHandle('factory-recover-id').result()).resolves.toBe(
+      'Hello, Ada!',
+    );
+    recoveredEngine[Symbol.dispose]();
+  });
+
+  it('Engine.create({ recover: false }) skips recovery preflight', async () => {
+    const storage = new MemoryStorage();
+    const unknownState: WorkflowState = {
+      id: 'factory-unknown-id',
+      type: 'factory-unknown',
+      status: 'running',
+      input: null,
+      version: '1',
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    await storage.put(KEYS.workflow('factory-unknown-id'), encode(unknownState));
+
+    const engine = await Engine.create({ storage, recover: false });
+    expect(await engine.get('factory-unknown-id')).toMatchObject({
+      id: 'factory-unknown-id',
+      type: 'factory-unknown',
+      status: 'running',
+    });
+    engine[Symbol.dispose]();
+  });
+
+  it('Engine.create rejects workflow and activity map keys that do not match definition names', async () => {
+    const greetWorkflow = defineWorkflow({
+      name: 'actualWorkflowName',
+      handler: async function* () {
+        return 'ok';
+      },
+    });
+    const greetActivity = activity({
+      name: 'actualActivityName',
+      execute: async () => 'ok',
+    });
+
+    await expect(
+      Engine.create({ workflows: { expectedWorkflowName: greetWorkflow }, recover: false }),
+    ).rejects.toBeInstanceOf(EngineCreateNameMismatchError);
+    await expect(
+      Engine.create({ activities: { expectedActivityName: greetActivity }, recover: false }),
+    ).rejects.toBeInstanceOf(EngineCreateNameMismatchError);
+  });
+
+  it('Engine.create disposes the partially constructed engine on failure', async () => {
+    // Constructor side effects (broadcast channel, scheduler, dispatchers,
+    // alert manager) start before registration runs. If a key mismatch or
+    // recovery error escapes, the engine reference never reaches the caller —
+    // so Engine.create has to dispose what it constructed before rethrowing.
+    // We observe disposal by patching the prototype method. Instance-level
+    // spying isn't possible because the engine reference never escapes
+    // Engine.create on the failure path, and Bun's test runner runs cases
+    // within a file serially, so the prototype patch only intercepts the
+    // engine constructed by THIS test.
+    const originalDispose = Engine.prototype[Symbol.asyncDispose];
+    let disposeCount = 0;
+    Engine.prototype[Symbol.asyncDispose] = async function () {
+      disposeCount += 1;
+      return originalDispose.call(this);
+    };
+
+    try {
+      const greetWorkflow = defineWorkflow({
+        name: 'disposalWorkflow',
+        handler: async function* () {
+          return 'ok';
+        },
+      });
+      await expect(
+        Engine.create({ workflows: { wrongKey: greetWorkflow }, recover: false }),
+      ).rejects.toBeInstanceOf(EngineCreateNameMismatchError);
+
+      expect(disposeCount).toBe(1);
+    } finally {
+      Engine.prototype[Symbol.asyncDispose] = originalDispose;
+    }
+  });
+
+  it('withWorkflow and withActivity return a typed view of the same runtime engine', async () => {
+    const formatBuilderGreeting = activity({
+      name: 'formatBuilderGreeting',
+      execute: async (input: { name: string }) => `Hello, ${input.name}`,
+    });
+    const builderWelcome = defineWorkflow({
+      name: 'builderWelcome',
+      handler: async function* (ctx: WorkflowContext, input: { name: string }) {
+        return yield* ctx.run(formatBuilderGreeting, input);
+      },
+    });
+
+    const engine = new Engine<{}, {}>()
+      .withActivity(formatBuilderGreeting)
+      .withWorkflow(builderWelcome);
+    const handle = await engine.start('builderWelcome', { name: 'Grace' });
+    await expect(handle.result()).resolves.toBe('Hello, Grace');
+    engine[Symbol.dispose]();
+  });
+
+  it('activity definition metadata is preserved through Engine.create and withActivity', async () => {
+    const inputSchema = makeDefinitionSchema<{ name: string }>();
+    const outputSchema = makeDefinitionSchema<string>();
+    const retry = {
+      maxAttempts: 4,
+      initialBackoff: '1s',
+      backoffMultiplier: 2,
+      maxBackoff: '10s',
+      nonRetryableErrors: ['ValidationError'],
+    };
+    const definition = activity({
+      name: 'metadataActivity',
+      description: 'Metadata activity',
+      tags: ['metadata'],
+      inputSchema,
+      outputSchema,
+      queue: 'metadata-queue',
+      timeout: '30s',
+      retry,
+      idempotent: true,
+      execute: async (input: { name: string }) => input.name,
+    });
+
+    const createdEngine = await Engine.create({
+      activities: { metadataActivity: definition },
+      recover: false,
+    });
+    const builderEngine = new Engine<{}, {}>().withActivity(definition);
+
+    expect(createdEngine.getActivityDefinition('metadataActivity')).toEqual(
+      builderEngine.getActivityDefinition('metadataActivity'),
+    );
+    expect(createdEngine.getActivityDefinition('metadataActivity')).toMatchObject({
+      name: 'metadataActivity',
+      description: 'Metadata activity',
+      tags: ['metadata'],
+      queue: 'metadata-queue',
+      timeout: '30s',
+      retry,
+      idempotent: true,
+    });
+
+    // Both registration paths must preserve the colocated schema metadata —
+    // not just the simple scalar fields. A regression that drops schemas
+    // would still pass the toMatchObject above but break tools that
+    // introspect activity I/O contracts.
+    const createdMetadata = createdEngine.getActivityDefinition('metadataActivity');
+    const builderMetadata = builderEngine.getActivityDefinition('metadataActivity');
+    expect(createdMetadata).toBeDefined();
+    expect(builderMetadata).toBeDefined();
+    expect(createdMetadata?.inputSchema).toBe(inputSchema);
+    expect(createdMetadata?.outputSchema).toBe(outputSchema);
+    expect(builderMetadata?.inputSchema).toBe(inputSchema);
+    expect(builderMetadata?.outputSchema).toBe(outputSchema);
+
+    createdEngine[Symbol.dispose]();
+    builderEngine[Symbol.dispose]();
   });
 
   it('register(name, fn) shorthand registers a workflow', async () => {

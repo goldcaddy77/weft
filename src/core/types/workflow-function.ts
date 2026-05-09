@@ -378,15 +378,17 @@ export interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
 export interface WorkflowDefinition<
   TInput = unknown,
   TOutput = unknown,
+  TName extends string = string,
 > extends WorkflowRegistration<TInput, TOutput> {
-  name: string;
+  name: TName;
 }
 
 export interface WorkflowDefinitionOptions<
   TInput = unknown,
   TOutput = unknown,
+  TName extends string = string,
 > extends WorkflowRegistration<TInput, TOutput> {
-  name: string;
+  name: TName;
 }
 
 /**
@@ -408,37 +410,46 @@ export function workflow<TInput, TOutput>(
   handler: WorkflowFunction<TInput, TOutput>,
 ): WorkflowDefinition<TInput, TOutput>;
 export function workflow<
+  const TName extends string,
   TInputSchema extends DefinitionSchema<unknown, unknown>,
   TOutputSchema extends DefinitionSchema<unknown, unknown>,
 >(
   options: Omit<
-    WorkflowDefinitionOptions<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>>,
+    WorkflowDefinitionOptions<
+      InferSchemaOutput<TInputSchema>,
+      InferSchemaOutput<TOutputSchema>,
+      TName
+    >,
     'inputSchema' | 'outputSchema'
   > & {
     inputSchema: TInputSchema;
     outputSchema: TOutputSchema;
   },
-): WorkflowDefinition<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>>;
-export function workflow<TInputSchema extends DefinitionSchema<unknown, unknown>, TOutput>(
+): WorkflowDefinition<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>, TName>;
+export function workflow<
+  const TName extends string,
+  TInputSchema extends DefinitionSchema<unknown, unknown>,
+  TOutput,
+>(
   options: Omit<
-    WorkflowDefinitionOptions<InferSchemaOutput<TInputSchema>, TOutput>,
+    WorkflowDefinitionOptions<InferSchemaOutput<TInputSchema>, TOutput, TName>,
     'inputSchema'
   > & {
     inputSchema: TInputSchema;
   },
-): WorkflowDefinition<InferSchemaOutput<TInputSchema>, TOutput>;
-export function workflow<TInput, TOutput>(
-  options: WorkflowDefinitionOptions<TInput, TOutput>,
-): WorkflowDefinition<TInput, TOutput>;
-export function workflow<TInput, TOutput>(
-  input: WorkflowFunction<TInput, TOutput> | WorkflowDefinitionOptions<TInput, TOutput>,
-): WorkflowDefinition<TInput, TOutput> {
+): WorkflowDefinition<InferSchemaOutput<TInputSchema>, TOutput, TName>;
+export function workflow<const TName extends string, TInput, TOutput>(
+  options: WorkflowDefinitionOptions<TInput, TOutput, TName>,
+): WorkflowDefinition<TInput, TOutput, TName>;
+export function workflow<TInput, TOutput, TName extends string = string>(
+  input: WorkflowFunction<TInput, TOutput> | WorkflowDefinitionOptions<TInput, TOutput, TName>,
+): WorkflowDefinition<TInput, TOutput, TName> {
   const definition =
     typeof input === 'function'
       ? ({
           name: input.name,
           handler: input,
-        } satisfies WorkflowDefinition<TInput, TOutput>)
+        } as WorkflowDefinition<TInput, TOutput, TName>)
       : input;
 
   if (!definition.name) {

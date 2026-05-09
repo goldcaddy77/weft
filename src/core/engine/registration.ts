@@ -43,13 +43,7 @@ function copiedTags(tags: ReadonlyArray<string> | undefined): string[] | undefin
 export function register(
   internals: EngineInternals,
   nameOrAgent: unknown,
-  handlerOrRegistrationOrOptions:
-    | WorkflowFunction
-    | StepWorkflowFunction
-    | WorkflowDefinition
-    | WorkflowRegistration
-    | AgentRegistrationOptionsLike
-    | undefined,
+  handlerOrRegistrationOrOptions: unknown,
   callbacks: RegistrationCallbacks,
 ): void {
   // --- AgentDefinition overload ---

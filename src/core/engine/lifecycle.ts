@@ -6,7 +6,11 @@ import { createCheckpoint, deserializeCheckpoint, serializeCheckpoint } from '..
 import { encode } from '../codec.ts';
 import { Context } from '../context.ts';
 import { EMPTY_EVENT_HEAD, EventLog } from '../event-log.ts';
-import { WorkflowResumedEvent, WorkflowStartedEvent } from '../events.ts';
+import {
+  WorkflowRecoverySkippedEvent,
+  WorkflowResumedEvent,
+  WorkflowStartedEvent,
+} from '../events.ts';
 import type { ComposedWorkflowInterceptor } from '../interceptor.ts';
 import { buildTimerBatchOperations, normalizeStorageTimestamp } from '../scheduler.ts';
 import { buildIndexOperations, validateAttributeType } from '../search-attributes.ts';
@@ -43,7 +47,11 @@ import {
 } from '../workflow-version-tuple.ts';
 import { validateAttributeValueSizes } from './attributes-tags.ts';
 import type { QueuedInlineWorkflowExecutionStart } from './engine-internal-types.ts';
-import { WorkflowAlreadyExistsError, WorkflowNotRegisteredError } from './errors.ts';
+import {
+  WorkflowAlreadyExistsError,
+  WorkflowNotRegisteredError,
+  WorkflowTypeNotRegisteredForRecoveryError,
+} from './errors.ts';
 import { getWorkflowExecutionStartedAt, type WorkflowHandle } from './handles.ts';
 import type { EngineInternals } from './internals.ts';
 import { createDelayedStartTimerEntry } from './operations-time.ts';
@@ -65,6 +73,29 @@ const FORK_LINEAGE_ATTRIBUTE = 'weft:forkedFrom';
 
 export const EMPTY_STORAGE_VALUE = new Uint8Array(0);
 
+/**
+ * Options for {@link Engine.recoverAll}. The acknowledgement flag is an
+ * explicit escape hatch for deployments that intentionally skip stored
+ * workflows whose type is not registered on this engine.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type RecoverAllOptions } from 'weft';
+ *
+ * const engine = new Engine();
+ * const options: RecoverAllOptions = { acknowledgeUnknownWorkflowTypes: true };
+ * await engine.recoverAll(options);
+ * ```
+ */
+export type RecoverAllOptions = {
+  /**
+   * Skip stored running workflows whose type is not registered. Use only for
+   * rolling deploys, explicit storage migrations, or intentional tenant
+   * partitioning.
+   */
+  acknowledgeUnknownWorkflowTypes?: boolean;
+};
+
 export type LifecycleCallbacks = {
   dispatchEvent: (event: Event) => void;
   getHandle: (workflowId: string) => WorkflowHandle;
@@ -82,6 +113,91 @@ export type LifecycleCallbacks = {
   swallowPromiseRejection: (promise: Promise<unknown> | undefined) => Promise<void>;
 };
 
+type MissingRecoveryWorkflow = { type: string; workflowId: string };
+
+type RecoveryPreflightEntry =
+  | { kind: 'local'; workflowId: string }
+  | { kind: 'missing'; workflow: MissingRecoveryWorkflow }
+  | { kind: 'recoverable'; workflowId: string };
+
+type RecoveryPreflightResult = {
+  // Storage-scan order, preserving the interleaving callers observed before
+  // the preflight refactor. Recovery iterates this list once, so the
+  // returned WorkflowHandle[] is in the same order the original
+  // single-pass `recoverAll` produced.
+  entries: RecoveryPreflightEntry[];
+  missingWorkflows: MissingRecoveryWorkflow[];
+};
+
+type RecoveryPreflightClassification = { kind: 'ignored' } | RecoveryPreflightEntry;
+
+function isWorkflowSideRecordKey(key: string): boolean {
+  return (
+    key.includes(':ckpt') ||
+    key.includes(':offload') ||
+    key.includes(':archive') ||
+    key.includes(':timeline:')
+  );
+}
+
+function classifyRecoveryState(
+  internals: EngineInternals,
+  callbacks: LifecycleCallbacks,
+  state: WorkflowState,
+): RecoveryPreflightClassification {
+  const hasLocalCheckpointOwnershipResult = callbacks.hasLocalCheckpointOwnership(
+    state.id,
+    state.status,
+  );
+  if (
+    state.status === 'pending' ||
+    callbacks.isInlineWorkflowLocallyOwned(state.id, state.status) ||
+    hasLocalCheckpointOwnershipResult
+  ) {
+    return { kind: 'local', workflowId: state.id };
+  }
+
+  if (state.status !== 'running') return { kind: 'ignored' };
+
+  if (!internals.registrations.has(state.type)) {
+    return { kind: 'missing', workflow: { type: state.type, workflowId: state.id } };
+  }
+
+  return { kind: 'recoverable', workflowId: state.id };
+}
+
+function appendRecoveryClassification(
+  result: RecoveryPreflightResult,
+  classification: RecoveryPreflightClassification,
+): void {
+  if (classification.kind === 'ignored') return;
+  result.entries.push(classification);
+  if (classification.kind === 'missing') {
+    result.missingWorkflows.push(classification.workflow);
+  }
+}
+
+async function preflightRecoverAll(
+  internals: EngineInternals,
+  callbacks: LifecycleCallbacks,
+): Promise<RecoveryPreflightResult> {
+  const result: RecoveryPreflightResult = {
+    entries: [],
+    missingWorkflows: [],
+  };
+
+  for await (const [key, value] of internals.storage.scan('wf:')) {
+    if (isWorkflowSideRecordKey(key)) continue;
+
+    appendRecoveryClassification(
+      result,
+      classifyRecoveryState(internals, callbacks, decodeWorkflowState(value)),
+    );
+  }
+
+  return result;
+}
+
 export async function start(
   internals: EngineInternals,
   type: string,
@@ -95,33 +211,37 @@ export async function start(
 export async function recoverAll(
   internals: EngineInternals,
   callbacks: LifecycleCallbacks,
+  options?: RecoverAllOptions,
 ): Promise<WorkflowHandle[]> {
+  const preflight = await preflightRecoverAll(internals, callbacks);
   const handles: WorkflowHandle[] = [];
 
-  for await (const [key, value] of internals.storage.scan('wf:')) {
-    // Skip checkpoint and history keys
-    if (key.includes(':ckpt') || key.includes(':offload') || key.includes(':archive')) continue;
+  if (preflight.missingWorkflows.length > 0 && options?.acknowledgeUnknownWorkflowTypes !== true) {
+    throw new WorkflowTypeNotRegisteredForRecoveryError({
+      registeredTypes: internals.registrations.keys(),
+      missingWorkflows: preflight.missingWorkflows,
+    });
+  }
 
-    const state = decodeWorkflowState(value);
-    const hasLocalCheckpointOwnershipResult = callbacks.hasLocalCheckpointOwnership(
-      state.id,
-      state.status,
-    );
-    if (
-      state.status === 'pending' ||
-      callbacks.isInlineWorkflowLocallyOwned(state.id, state.status) ||
-      hasLocalCheckpointOwnershipResult
-    ) {
-      handles.push(callbacks.getHandle(state.id));
+  // Walk preflight entries in storage-scan order so the returned handle
+  // list matches the interleaving callers observed before the preflight
+  // refactor (locals, missing, and recoverables stay in scan order).
+  for (const entry of preflight.entries) {
+    if (entry.kind === 'local') {
+      handles.push(callbacks.getHandle(entry.workflowId));
       continue;
     }
-    if (state.status !== 'running') continue;
-
-    const registration = internals.registrations.get(state.type);
-    if (!registration) continue;
-
-    const handle = await resume(internals, state.id, callbacks);
-    handles.push(handle);
+    if (entry.kind === 'missing') {
+      callbacks.dispatchEvent(
+        new WorkflowRecoverySkippedEvent(
+          entry.workflow.workflowId,
+          entry.workflow.type,
+          'type-not-registered',
+        ),
+      );
+      continue;
+    }
+    handles.push(await resume(internals, entry.workflowId, callbacks));
   }
 
   return handles;
