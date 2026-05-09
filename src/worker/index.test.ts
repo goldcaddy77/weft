@@ -10,6 +10,7 @@ import { RemoteWorker } from './index.ts';
 /** Create a minimal WebSocket server for testing. */
 function createTestServer(options?: {
   onMessage?: (ws: any, message: string) => void;
+  autoRegisterAck?: boolean;
 }): ReturnType<typeof Bun.serve> {
   return Bun.serve({
     port: 0,
@@ -20,6 +21,26 @@ function createTestServer(options?: {
     websocket: {
       message(ws, message) {
         const text = typeof message === 'string' ? message : new TextDecoder().decode(message);
+        const autoRegisterAck = options?.autoRegisterAck ?? true;
+        if (autoRegisterAck) {
+          try {
+            const parsed = JSON.parse(text);
+            if (parsed.type === 'register') {
+              ws.send(
+                JSON.stringify({
+                  type: 'registerAck',
+                  protocolVersion: 1,
+                  workerId: parsed.workerId,
+                  queue: parsed.queue ?? 'default',
+                  activities: parsed.activities,
+                  concurrency: parsed.concurrency ?? 10,
+                }),
+              );
+            }
+          } catch {
+            // Test helper ignores malformed client frames.
+          }
+        }
         options?.onMessage?.(ws, text);
       },
       open(_ws) {},
@@ -150,12 +171,137 @@ describe('RemoteWorker', () => {
       registerMessage = messages.find((m) => m.type === 'register');
     }
     expect(registerMessage).toBeDefined();
+    expect(registerMessage.protocolVersion).toBe(1);
     expect(registerMessage.workerId).toBe('test-worker-1');
     expect(registerMessage.activities).toEqual(['processOrder']);
     expect(registerMessage.concurrency).toBe(5);
     expect(registerMessage.queue).toBe('test-queue');
 
     await worker.disconnect();
+  });
+
+  it('connect() rejects when registration is rejected', async () => {
+    server = createTestServer({
+      autoRegisterAck: false,
+      onMessage(ws, message) {
+        const parsed = JSON.parse(message);
+        if (parsed.type === 'register') {
+          ws.send(
+            JSON.stringify({
+              type: 'registerError',
+              code: 'unsupported_protocol_version',
+              message: 'Unsupported protocol',
+              supportedProtocolVersions: [1],
+              requestedProtocolVersion: 99,
+            }),
+          );
+        }
+      },
+    });
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      workerId: 'rejected-worker',
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    await expect(worker.connect()).rejects.toThrow('Unsupported protocol');
+    worker[Symbol.dispose]();
+  });
+
+  it('connect() rejects when the socket closes before registerAck', async () => {
+    server = createTestServer({
+      autoRegisterAck: false,
+      onMessage(ws, message) {
+        const parsed = JSON.parse(message);
+        if (parsed.type === 'register') {
+          ws.close();
+        }
+      },
+    });
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      workerId: 'close-before-ack-worker',
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    await expect(worker.connect()).rejects.toThrow(
+      'WebSocket closed before worker registration completed',
+    );
+    worker[Symbol.dispose]();
+  });
+
+  it('starts heartbeats only after registerAck', async () => {
+    const messages: any[] = [];
+    const originalSetInterval = globalThis.setInterval;
+    const originalClearInterval = globalThis.clearInterval;
+    let nextIntervalHandle = 0;
+    let serverSocket: any;
+
+    server = createTestServer({
+      autoRegisterAck: false,
+      onMessage(ws, message) {
+        serverSocket = ws;
+        messages.push(JSON.parse(message));
+      },
+    });
+
+    globalThis.setInterval = ((callback: TimerHandler) => {
+      const handle = ++nextIntervalHandle;
+      queueMicrotask(() => {
+        if (typeof callback === 'function') {
+          callback();
+        }
+      });
+      return handle as unknown as ReturnType<typeof setInterval>;
+    }) as unknown as typeof setInterval;
+    globalThis.clearInterval = ((
+      _handle: ReturnType<typeof setInterval>,
+    ) => {}) as typeof clearInterval;
+
+    try {
+      const worker = new RemoteWorker({
+        serverUrl: `ws://localhost:${server.port}`,
+        workerId: 'ack-gated-heartbeat-worker',
+        activities: {
+          processOrder: async (input) => input,
+        },
+      });
+
+      const connectPromise = worker.connect();
+      await waitForCondition(() => messages.some((message) => message.type === 'register'), {
+        timeoutMs: 1_000,
+        label: 'register before ack',
+      });
+      await sleepForTesting(0);
+      expect(messages.some((message) => message.type === 'heartbeat')).toBe(false);
+
+      serverSocket.send(
+        JSON.stringify({
+          type: 'registerAck',
+          protocolVersion: 1,
+          workerId: 'ack-gated-heartbeat-worker',
+          queue: 'default',
+          activities: ['processOrder'],
+          concurrency: 10,
+        }),
+      );
+      await connectPromise;
+      await waitForCondition(() => messages.some((message) => message.type === 'heartbeat'), {
+        timeoutMs: 1_000,
+        label: 'heartbeat after ack',
+      });
+
+      await worker.disconnect();
+    } finally {
+      globalThis.setInterval = originalSetInterval;
+      globalThis.clearInterval = originalClearInterval;
+    }
   });
 
   it('connect() rejects when connection fails', async () => {

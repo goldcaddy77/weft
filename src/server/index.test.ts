@@ -56,6 +56,34 @@ async function waitFor(
     : new Error(message);
 }
 
+async function waitForSocketClose(ws: WebSocket, _label = 'WebSocket close'): Promise<void> {
+  try {
+    if (ws.readyState !== WebSocket.CLOSED) ws.close();
+  } catch {
+    // The server may already have completed the close handshake.
+  }
+  await waitForRealTimersForTesting(100);
+}
+
+async function waitForWorkerMessage(
+  ws: WebSocket,
+  predicate: (message: Record<string, unknown>) => boolean,
+  label: string,
+): Promise<Record<string, unknown>> {
+  let matched: Record<string, unknown> | undefined;
+  ws.addEventListener('message', (event) => {
+    try {
+      const parsed = JSON.parse(String(event.data)) as Record<string, unknown>;
+      if (predicate(parsed)) matched = parsed;
+    } catch {
+      // Ignore non-JSON frames while waiting for protocol diagnostics.
+    }
+  });
+
+  await waitFor(() => matched !== undefined, { label });
+  return matched!;
+}
+
 /** Count keys under a prefix by draining an async iterator. */
 async function countKeys(engine: Engine, prefix: string): Promise<number> {
   let count = 0;
@@ -610,6 +638,7 @@ describe('worker WebSocket protocol', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
+        protocolVersion: 1,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -638,6 +667,108 @@ describe('worker WebSocket protocol', () => {
 
     ws.close();
     await waitForRealTimersForTesting(50);
+  });
+
+  it('sends registerAck after accepting a worker', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const ws = await connectWorker(server);
+    const ackPromise = waitForWorkerMessage(
+      ws,
+      (message) => message['type'] === 'registerAck',
+      'registerAck',
+    );
+    await registerWorker(ws, {
+      workerId: 'w-register-ack',
+      activities: ['charge'],
+      concurrency: 5,
+    });
+
+    const ack = await ackPromise;
+    expect(ack).toEqual({
+      type: 'registerAck',
+      protocolVersion: 1,
+      workerId: 'w-register-ack',
+      queue: 'default',
+      activities: ['charge'],
+      concurrency: 5,
+    });
+
+    ws.close();
+    await waitForRealTimersForTesting(50);
+  });
+
+  it('rejects workers that omit protocolVersion', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const ws = await connectWorker(server);
+    const errorPromise = waitForWorkerMessage(
+      ws,
+      (message) => message['type'] === 'registerError',
+      'registerError',
+    );
+    ws.send(
+      JSON.stringify({
+        type: 'register',
+        workerId: 'missing-version-worker',
+        activities: ['charge'],
+      }),
+    );
+
+    const error = await errorPromise;
+    expect(error).toMatchObject({
+      type: 'registerError',
+      code: 'unsupported_protocol_version',
+      supportedProtocolVersions: [1],
+    });
+    await waitFor(() => server.registry.size === 0, { label: 'missing-version worker rejected' });
+    await waitForSocketClose(ws, 'missing-version socket close');
+  });
+
+  it('sends protocolError for invalid JSON, unknown messages, and pre-registration traffic', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const invalidJsonSocket = await connectWorker(server);
+    const invalidJsonError = waitForWorkerMessage(
+      invalidJsonSocket,
+      (message) => message['type'] === 'protocolError',
+      'invalid JSON protocolError',
+    );
+    invalidJsonSocket.send('not json at all');
+    expect(await invalidJsonError).toMatchObject({
+      type: 'protocolError',
+      code: 'invalid_json',
+    });
+    await waitForSocketClose(invalidJsonSocket, 'invalid JSON socket close');
+
+    const unknownSocket = await connectWorker(server);
+    const unknownError = waitForWorkerMessage(
+      unknownSocket,
+      (message) => message['type'] === 'protocolError',
+      'unknown message protocolError',
+    );
+    unknownSocket.send(JSON.stringify({ type: 'typo' }));
+    expect(await unknownError).toMatchObject({
+      type: 'protocolError',
+      code: 'unknown_message_type',
+    });
+    await waitForSocketClose(unknownSocket, 'unknown message socket close');
+
+    const preRegisterSocket = await connectWorker(server);
+    const preRegisterError = waitForWorkerMessage(
+      preRegisterSocket,
+      (message) => message['type'] === 'protocolError',
+      'pre-registration protocolError',
+    );
+    preRegisterSocket.send(JSON.stringify({ type: 'heartbeat', workerId: 'early' }));
+    expect(await preRegisterError).toMatchObject({
+      type: 'protocolError',
+      code: 'registration_required',
+    });
+    await waitForSocketClose(preRegisterSocket, 'pre-registration socket close');
   });
 
   it('clamps worker concurrency to at least 1 when 0 is sent', async () => {
@@ -832,7 +963,12 @@ describe('worker WebSocket protocol', () => {
     const received: Array<{ type: string; operationId?: string; activityName?: string }> = [];
 
     ws.addEventListener('message', (event) => {
-      received.push(JSON.parse(String(event.data)));
+      const message = JSON.parse(String(event.data)) as {
+        type: string;
+        operationId?: string;
+        activityName?: string;
+      };
+      if (message.type === 'task') received.push(message);
     });
 
     await registerWorker(ws, { workerId: 'w4', activities: ['charge'], concurrency: 5 });
@@ -914,15 +1050,22 @@ describe('worker WebSocket protocol', () => {
 
     const ws = await connectWorker(server);
 
+    const protocolError = waitForWorkerMessage(
+      ws,
+      (message) => message['type'] === 'protocolError',
+      'invalid JSON protocolError',
+    );
     ws.send('not json at all');
-    await waitForRealTimersForTesting(50);
 
-    // Server should still be running
+    expect(await protocolError).toMatchObject({
+      type: 'protocolError',
+      code: 'invalid_json',
+    });
+    await waitForSocketClose(ws, 'invalid JSON worker socket close');
+
+    // Server should still be running after rejecting the malformed worker.
     const response = await fetch(`${server.url}/v1/health`);
     expect(response.status).toBe(200);
-
-    ws.close();
-    await waitForRealTimersForTesting(50);
   });
 
   it('ignores worker protocol messages on non-worker paths', async () => {
@@ -935,6 +1078,7 @@ describe('worker WebSocket protocol', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
+        protocolVersion: 1,
         workerId: 'rogue',
         activities: ['charge'],
         concurrency: 5,
@@ -959,10 +1103,12 @@ describe('worker WebSocket protocol', () => {
     const received2: Array<{ type: string }> = [];
 
     ws1.addEventListener('message', (event) => {
-      received1.push(JSON.parse(String(event.data)));
+      const message = JSON.parse(String(event.data)) as { type: string };
+      if (message.type === 'task') received1.push(message);
     });
     ws2.addEventListener('message', (event) => {
-      received2.push(JSON.parse(String(event.data)));
+      const message = JSON.parse(String(event.data)) as { type: string };
+      if (message.type === 'task') received2.push(message);
     });
 
     await registerWorker(ws1, { workerId: 'w-a', activities: ['charge'], concurrency: 5 });
@@ -1250,14 +1396,28 @@ describe('worker WebSocket protocol', () => {
       const msg = JSON.parse(String(event.data)) as { type: string; operationId?: string };
       received1.push(msg);
       if (msg.type === 'task') {
-        ws1.send(JSON.stringify({ type: 'taskResult', operationId: msg.operationId }));
+        ws1.send(
+          JSON.stringify({
+            type: 'taskResult',
+            operationId: msg.operationId,
+            status: 'completed',
+            value: null,
+          }),
+        );
       }
     });
     ws2.addEventListener('message', (event) => {
       const msg = JSON.parse(String(event.data)) as { type: string; operationId?: string };
       received2.push(msg);
       if (msg.type === 'task') {
-        ws2.send(JSON.stringify({ type: 'taskResult', operationId: msg.operationId }));
+        ws2.send(
+          JSON.stringify({
+            type: 'taskResult',
+            operationId: msg.operationId,
+            status: 'completed',
+            value: null,
+          }),
+        );
       }
     });
 
@@ -1398,6 +1558,7 @@ describe('queue-aware worker stream', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
+        protocolVersion: 1,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -1431,10 +1592,12 @@ describe('queue-aware worker stream', () => {
     const shippingReceived: Array<{ type: string; operationId?: string }> = [];
 
     billingWs.addEventListener('message', (event) => {
-      billingReceived.push(JSON.parse(String(event.data)));
+      const message = JSON.parse(String(event.data)) as { type: string; operationId?: string };
+      if (message.type === 'task') billingReceived.push(message);
     });
     shippingWs.addEventListener('message', (event) => {
-      shippingReceived.push(JSON.parse(String(event.data)));
+      const message = JSON.parse(String(event.data)) as { type: string; operationId?: string };
+      if (message.type === 'task') shippingReceived.push(message);
     });
 
     await registerWorker(billingWs, { workerId: 'billing-w1', activities: ['charge'] });
@@ -1485,7 +1648,8 @@ describe('queue-aware worker stream', () => {
     const received: Array<{ type: string; operationId?: string }> = [];
 
     ws.addEventListener('message', (event) => {
-      received.push(JSON.parse(String(event.data)));
+      const message = JSON.parse(String(event.data)) as { type: string; operationId?: string };
+      if (message.type === 'task') received.push(message);
     });
 
     await registerWorker(ws, { workerId: 'default-w1', activities: ['charge'] });
@@ -1517,10 +1681,12 @@ describe('queue-aware worker stream', () => {
     const defaultReceived: Array<{ type: string }> = [];
 
     billingWs.addEventListener('message', (event) => {
-      billingReceived.push(JSON.parse(String(event.data)));
+      const message = JSON.parse(String(event.data)) as { type: string };
+      if (message.type === 'task') billingReceived.push(message);
     });
     defaultWs.addEventListener('message', (event) => {
-      defaultReceived.push(JSON.parse(String(event.data)));
+      const message = JSON.parse(String(event.data)) as { type: string };
+      if (message.type === 'task') defaultReceived.push(message);
     });
 
     await registerWorker(billingWs, { workerId: 'billing-w1', activities: ['charge'] });
@@ -2202,6 +2368,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
+        protocolVersion: 1,
         workerId: 'rogue',
         activities: ['charge'],
         concurrency: 5,
@@ -2535,6 +2702,7 @@ describe('task assignment deduplication', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
+        protocolVersion: 1,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -2551,7 +2719,8 @@ describe('task assignment deduplication', () => {
     const received: Array<{ type: string; operationId?: string }> = [];
 
     ws.addEventListener('message', (event) => {
-      received.push(JSON.parse(String(event.data)));
+      const message = JSON.parse(String(event.data)) as { type: string; operationId?: string };
+      if (message.type === 'task') received.push(message);
     });
 
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
@@ -2690,43 +2859,42 @@ describe('task assignment deduplication', () => {
     await waitForRealTimersForTesting(50);
   });
 
-  it('treats unexpected worker taskResult statuses as failed', async () => {
+  it('rejects unexpected worker taskResult statuses as protocol errors', async () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });
-    const warningSpy = spyOn(console, 'warn').mockImplementation(() => {});
 
-    try {
-      const ws = await connectWorker(server);
-      ws.addEventListener('message', (event) => {
-        const msg = JSON.parse(String(event.data)) as { type: string; operationId?: string };
-        if (msg.type === 'task') {
-          ws.send(
-            JSON.stringify({
-              type: 'taskResult',
-              operationId: msg.operationId,
-              status: 'mystery-status',
-            }),
-          );
-        }
-      });
+    const ws = await connectWorker(server);
+    const protocolError = waitForWorkerMessage(
+      ws,
+      (message) => message['type'] === 'protocolError',
+      'unexpected status protocolError',
+    );
+    ws.addEventListener('message', (event) => {
+      const msg = JSON.parse(String(event.data)) as { type: string; operationId?: string };
+      if (msg.type === 'task') {
+        ws.send(
+          JSON.stringify({
+            type: 'taskResult',
+            operationId: msg.operationId,
+            status: 'mystery-status',
+          }),
+        );
+      }
+    });
 
-      await registerWorker(ws, { workerId: 'w-unexpected-status', activities: ['charge'] });
-      await server.dispatchTask({
-        operationId: 'unexpected-status-op',
-        activityName: 'charge',
-        input: null,
-      });
+    await registerWorker(ws, { workerId: 'w-unexpected-status', activities: ['charge'] });
+    await server.dispatchTask({
+      operationId: 'unexpected-status-op',
+      activityName: 'charge',
+      input: null,
+    });
 
-      await waitForRealTimersForTesting(100);
-
-      expect(server.registry.isAssigned('unexpected-status-op')).toBe(false);
-      expect(warningSpy).toHaveBeenCalled();
-
-      ws.close();
-      await waitForRealTimersForTesting(50);
-    } finally {
-      warningSpy.mockRestore();
-    }
+    expect(await protocolError).toMatchObject({
+      type: 'protocolError',
+      code: 'invalid_message',
+    });
+    await waitForSocketClose(ws, 'unexpected status socket close');
+    expect(server.registry.getWorker('w-unexpected-status')).toBeUndefined();
   });
 
   it('treats cancelled worker taskResult statuses as failed resolutions', async () => {
@@ -2742,6 +2910,7 @@ describe('task assignment deduplication', () => {
             type: 'taskResult',
             operationId: msg.operationId,
             status: 'cancelled',
+            error: 'activity cancelled',
           }),
         );
       }
@@ -2779,6 +2948,7 @@ describe('task assignment deduplication', () => {
             type: 'taskResult',
             operationId: msg.operationId,
             status: 'completed',
+            value: null,
           }),
         );
       }
@@ -2818,41 +2988,36 @@ describe('task assignment deduplication', () => {
     }
   });
 
-  it('decrements the worker in-flight count when taskResult omits operationId', async () => {
+  it('rejects taskResult without operationId as a protocol error', async () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });
-    const warningSpy = spyOn(console, 'warn').mockImplementation(() => {});
 
-    try {
-      const ws = await connectWorker(server);
-      ws.addEventListener('message', (event) => {
-        const msg = JSON.parse(String(event.data)) as { type: string };
-        if (msg.type === 'task') {
-          ws.send(JSON.stringify({ type: 'taskResult', status: 'completed' }));
-        }
-      });
+    const ws = await connectWorker(server);
+    const protocolError = waitForWorkerMessage(
+      ws,
+      (message) => message['type'] === 'protocolError',
+      'missing operationId protocolError',
+    );
+    ws.addEventListener('message', (event) => {
+      const msg = JSON.parse(String(event.data)) as { type: string };
+      if (msg.type === 'task') {
+        ws.send(JSON.stringify({ type: 'taskResult', status: 'completed', value: null }));
+      }
+    });
 
-      await registerWorker(ws, { workerId: 'w-missing-op-id', activities: ['charge'] });
-      await server.dispatchTask({
-        operationId: 'missing-op-id-op',
-        activityName: 'charge',
-        input: null,
-      });
+    await registerWorker(ws, { workerId: 'w-missing-op-id', activities: ['charge'] });
+    await server.dispatchTask({
+      operationId: 'missing-op-id-op',
+      activityName: 'charge',
+      input: null,
+    });
 
-      await waitFor(
-        () =>
-          server.registry.getWorker('w-missing-op-id')?.inFlight === 0 &&
-          warningSpy.mock.calls.length > 0,
-        {
-          label: 'worker in-flight counter decrement after taskResult without operationId',
-        },
-      );
-
-      ws.close();
-      await waitForRealTimersForTesting(50);
-    } finally {
-      warningSpy.mockRestore();
-    }
+    expect(await protocolError).toMatchObject({
+      type: 'protocolError',
+      code: 'invalid_message',
+    });
+    await waitForSocketClose(ws, 'missing operationId socket close');
+    expect(server.registry.getWorker('w-missing-op-id')).toBeUndefined();
   });
 
   it('ignores stale socket close events after a worker reconnects', async () => {
@@ -2967,6 +3132,7 @@ describe('visibility timeout persistence', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
+        protocolVersion: 1,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -3279,6 +3445,7 @@ describe('worker disconnection triggers task reassignment', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
+        protocolVersion: 1,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -3656,6 +3823,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
+        protocolVersion: 1,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -4178,6 +4346,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
       ws.send(
         JSON.stringify({
           type: 'register',
+          protocolVersion: 1,
           workerId: 'race-worker',
           activities: ['charge'],
           concurrency: 1,
@@ -4292,6 +4461,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
             type: 'taskResult',
             operationId: message.operationId,
             status: 'completed',
+            value: null,
           }),
         );
       }
@@ -4465,6 +4635,7 @@ describe('concurrent scanner deduplication', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
+        protocolVersion: 1,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -4771,6 +4942,7 @@ describe('retry policy respected on reassignment', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
+        protocolVersion: 1,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -5169,6 +5341,7 @@ describe('worker shutdown and cancel propagation', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
+        protocolVersion: 1,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -5388,6 +5561,7 @@ describe('header propagation in task dispatch', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
+        protocolVersion: 1,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,

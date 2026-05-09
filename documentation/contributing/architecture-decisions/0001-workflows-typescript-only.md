@@ -46,11 +46,11 @@ If we want polyglot workflows, we have three theoretical paths:
 - The team's primary language is TypeScript. Polyglot workflow runtimes multiply the surface area for non-determinism bugs across languages we don't routinely write — that's a real cost, not a hypothetical one.
 - Activities cover the cross-language need in practice. Most "we have a Python ML model" stories are activity-shaped: stateless, called with input, returning output. The rare workflow-shaped problem in another language is better served by Temporal.
 
-## What stays open
+## Polyglot activity contract
 
-- **Conformance test suite for `RemoteWorker`.** Cross-language SDKs need a programmatic way to verify they implement the protocol correctly. Tracked in roadmap §9.
-- **Drift-prevention test for the protocol document.** Mirrors the discovery-parity test for `/openapi.json` and `/openrpc.json`. Tracked in roadmap §9.
-- **`protocolVersion` field.** Currently no version handshake exists; SDKs must target a specific `weft` version. Adding versioning is a breaking change to the protocol envelope. Tracked in roadmap §9.
+- **`RemoteWorker` conformance.** Cross-language SDKs can run `weft conformance -- <worker-command>` to verify the worker protocol behavior against a local Weft server.
+- **Protocol drift prevention.** The RemoteWorker protocol document is checked against the exported schema catalog so message names stay aligned with the TypeScript contract.
+- **Protocol versioning.** The worker WebSocket protocol is versioned. v1 requires `register.protocolVersion: 1` and rejects missing or unsupported versions with `registerError`.
 
 ## See also
 

@@ -45,7 +45,7 @@ interface RemoteWorkerOptions {
 }
 ```
 
-On connection, the worker sends a `register` message with its identity, available activity names, concurrency limit, and queue. The server tracks it in the `WorkerRegistry`.
+On connection, the worker sends a v1 `register` message with its identity, available activity names, concurrency limit, and queue. `connect()` resolves only after the server replies with `registerAck`; it rejects on `registerError` or if the socket closes before acknowledgement. The server tracks the accepted worker in the `WorkerRegistry`.
 
 ## Task dispatch
 
@@ -148,7 +148,7 @@ Multiple interceptors compose like middleware: the first one in the array is the
 
 ## Heartbeats
 
-The `HeartbeatManager` sends periodic keep-alive messages (every 10 seconds by default) to prevent the server from considering the worker dead. It starts automatically on connection and stops on disconnect.
+The `HeartbeatManager` sends periodic keep-alive messages (every 10 seconds by default) to prevent the server from considering the worker dead. It starts after the server acknowledges registration and stops on disconnect.
 
 ```typescript partial
 // Internally, the worker does:

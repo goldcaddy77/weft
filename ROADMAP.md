@@ -105,30 +105,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP client. Weft's 
   - Static metadata tests fail if MCP-enabled workflows are omitted.
   - Verification passes with `bun run lint`, `bun run typecheck`, targeted catalog tests, and `bun run verify:documentation`.
 
-## 3. Polyglot Activity Workers
-
-- [ ] **Finish RemoteWorker protocol hardening for non-TypeScript SDKs.**
-
-  **Where:** `documentation/reference/remote-worker-protocol.md`, `src/worker/index.ts`, `src/server/json-rpc-websocket.ts`, and the server-side worker-stream implementation.
-
-  The protocol reference exists. Remaining work is to make the contract executable and versioned.
-
-  **Remaining work:**
-  - Add a `protocolVersion` field to the `register` message and make the server accept an explicit supported range.
-  - Add observable registration outcomes, such as `registerAck` and `registerError`, so workers can distinguish an idle queue from a rejected registration.
-  - Add JSON Schema definitions for every worker-to-server and server-to-worker message.
-  - Add a drift-prevention test that compares the documented protocol schema with the TypeScript message handlers.
-  - Ship a conformance suite or `weft conformance` subcommand that SDK authors can run against a candidate worker.
-  - Cover lifecycle, unknown-message handling, heartbeat lapse, cancellation, reconnect with in-flight work, and graceful shutdown.
-
-  **Acceptance criteria:**
-  - A non-TypeScript worker implementation can validate its outbound and inbound messages against published schemas.
-  - The TypeScript `RemoteWorker` sends a protocol version and handles registration acknowledgement or rejection.
-  - The server rejects unsupported protocol versions with a clear error.
-  - The conformance suite can fail a deliberately broken worker fixture.
-  - Verification passes with `bun run lint`, `bun run typecheck`, targeted worker protocol tests, and `bun run verify:documentation`.
-
-## 4. Agent Bureau Compatibility
+## 3. Agent Bureau Compatibility
 
 **Architectural commitment:** Agent Bureau consumes Weft, never the reverse. Weft cannot import from `armorer`, `conversationalist`, or `interoperability` in runtime source.
 

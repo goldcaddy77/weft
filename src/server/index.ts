@@ -35,6 +35,7 @@ import {
   shutdownAllWorkers as shutdownAllWorkersImpl,
   shutdownWorker as shutdownWorkerImpl,
 } from './runtime/shutdown.ts';
+import { stopBunServerForShutdown } from './runtime/stop-server.ts';
 import { cancelTask, dispatchTaskImpl } from './runtime/task-dispatch.ts';
 import { reconcileOrphanedRecords, scanExpiredTasks } from './runtime/task-reconciliation.ts';
 import { publishTokenMessage } from './runtime/websocket-stream.ts';
@@ -368,7 +369,7 @@ export function serve(options: ServeOptions): WeftServer {
 
   // Register the HTTP server first — it is disposed last.
   // Force-close active connections to avoid hanging on drain.
-  stack.defer(() => server.stop(true));
+  stack.defer(() => stopBunServerForShutdown(server));
 
   // Wire up engine events → WebSocket broadcasting.
   // If wiring throws after the server is already listening, dispose the

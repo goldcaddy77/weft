@@ -9,6 +9,14 @@ import {
   type ComposedInterceptor,
 } from './execute-with-interceptors.ts';
 import { HeartbeatManager } from './heartbeat.ts';
+import {
+  REMOTE_WORKER_PROTOCOL_VERSION,
+  isRemoteWorkerJsonValue,
+  parseServerToWorkerMessage,
+  type RemoteWorkerJsonValue,
+  type ServerToWorkerMessage,
+  type TaskMessage,
+} from './protocol.ts';
 
 export { HeartbeatManager } from './heartbeat.ts';
 export { LongPollWorker } from './long-poll.ts';
@@ -36,20 +44,10 @@ export interface RemoteWorkerOptions {
   interceptors?: import('../core/interceptor.ts').ActivityInterceptor[];
 }
 
-interface TaskMessage {
-  type: 'task';
-  operationId: string;
-  activityName: string;
-  input: unknown;
-  attempt?: number;
-  /** Propagated interceptor headers from the dispatch path. */
-  headers?: Record<string, string>;
-}
-
-interface ServerMessage {
-  type: string;
-  [key: string]: unknown;
-}
+type PendingRegistration = {
+  resolve: () => void;
+  reject: (error: Error) => void;
+};
 
 // ---------------------------------------------------------------------------
 // RemoteWorker
@@ -96,6 +94,7 @@ export class RemoteWorker implements Disposable {
   #shuttingDown: boolean;
   #taskAbortControllers: Map<string, AbortController>;
   #composedInterceptor: ComposedInterceptor | null;
+  #pendingRegistration: PendingRegistration | null;
 
   constructor(options: RemoteWorkerOptions) {
     this.#options = {
@@ -110,6 +109,7 @@ export class RemoteWorker implements Disposable {
     this.#shuttingDown = false;
     this.#taskAbortControllers = new Map();
     this.#composedInterceptor = buildComposedInterceptor(options.interceptors);
+    this.#pendingRegistration = null;
     this.#heartbeat = new HeartbeatManager(() => {
       this.#sendMessage({ type: 'heartbeat', workerId: this.#options.workerId });
     }, HEARTBEAT_INTERVAL_MS);
@@ -123,23 +123,21 @@ export class RemoteWorker implements Disposable {
     this.#shuttingDown = false;
 
     return new Promise<void>((resolve, reject) => {
-      let settled = false;
       const ws = new WebSocket(this.#options.serverUrl);
+      this.#pendingRegistration = { resolve, reject };
 
       ws.addEventListener(
         'open',
         () => {
-          settled = true;
           this.#ws = ws;
           this.#sendMessage({
             type: 'register',
+            protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
             workerId: this.#options.workerId,
             activities: Object.keys(this.#options.activities),
             concurrency: this.#options.concurrency,
             queue: this.#options.queue,
           });
-          this.#heartbeat.start();
-          resolve();
         },
         { signal: this.#abortController.signal },
       );
@@ -155,9 +153,10 @@ export class RemoteWorker implements Disposable {
       ws.addEventListener(
         'error',
         () => {
-          if (!settled) {
-            settled = true;
-            reject(new Error('WebSocket connection failed'));
+          if (this.#pendingRegistration !== null) {
+            const pending = this.#pendingRegistration;
+            this.#pendingRegistration = null;
+            pending.reject(new Error('WebSocket connection failed'));
           }
         },
         { signal: this.#abortController.signal },
@@ -168,6 +167,11 @@ export class RemoteWorker implements Disposable {
         () => {
           this.#heartbeat.stop();
           this.#ws = null;
+          if (this.#pendingRegistration !== null) {
+            const pending = this.#pendingRegistration;
+            this.#pendingRegistration = null;
+            pending.reject(new Error('WebSocket closed before worker registration completed'));
+          }
         },
         { signal: this.#abortController.signal },
       );
@@ -256,27 +260,74 @@ export class RemoteWorker implements Disposable {
     }
   }
 
-  async #handleMessage(event: MessageEvent): Promise<void> {
-    const data = JSON.parse(String(event.data)) as ServerMessage;
+  #parseServerMessage(event: MessageEvent): ServerToWorkerMessage | null {
+    let rawData: unknown;
+    try {
+      rawData = JSON.parse(String(event.data));
+    } catch {
+      console.warn('[weft] Received non-JSON server message — ignoring');
+      return null;
+    }
 
-    if (data.type === 'task') {
-      if (this.#shuttingDown) return;
-      const task = data as unknown as TaskMessage;
-      await this.#executeTask(task);
-    } else if (data.type === 'shutdown') {
-      void this.#gracefulShutdown();
-    } else if (data.type === 'cancel') {
-      const operationId = data['operationId'];
-      if (typeof operationId !== 'string') {
-        console.warn(
-          '[weft] Received cancel message with missing or non-string operationId — ignoring',
-        );
-        return;
+    const parsed = parseServerToWorkerMessage(rawData);
+    if (!parsed.ok) {
+      if (parsed.error.code === 'unknown_message_type') {
+        return null;
       }
-      const controller = this.#taskAbortControllers.get(operationId);
-      if (controller) {
-        controller.abort();
-      }
+      console.warn(`[weft] Received malformed server message: ${parsed.error.message}`);
+      return null;
+    }
+
+    return parsed.message;
+  }
+
+  #handleRegisterAck(): void {
+    if (this.#pendingRegistration === null) return;
+
+    const pending = this.#pendingRegistration;
+    this.#pendingRegistration = null;
+    this.#heartbeat.start();
+    pending.resolve();
+  }
+
+  #handleRegisterError(message: string): void {
+    if (this.#pendingRegistration !== null) {
+      const pending = this.#pendingRegistration;
+      this.#pendingRegistration = null;
+      pending.reject(new Error(message));
+    }
+    this.#heartbeat.stop();
+    this.#ws?.close();
+  }
+
+  #handleCancel(operationId: string): void {
+    const controller = this.#taskAbortControllers.get(operationId);
+    if (controller) controller.abort();
+  }
+
+  async #handleMessage(event: MessageEvent): Promise<void> {
+    const data = this.#parseServerMessage(event);
+    if (data === null) return;
+
+    switch (data.type) {
+      case 'registerAck':
+        this.#handleRegisterAck();
+        break;
+      case 'registerError':
+        this.#handleRegisterError(data.message);
+        break;
+      case 'protocolError':
+        console.warn(`[weft] RemoteWorker protocol error from server: ${data.message}`);
+        break;
+      case 'task':
+        if (!this.#shuttingDown) await this.#executeTask(data);
+        break;
+      case 'shutdown':
+        void this.#gracefulShutdown();
+        break;
+      case 'cancel':
+        this.#handleCancel(data.operationId);
+        break;
     }
   }
 
@@ -308,7 +359,7 @@ export class RemoteWorker implements Disposable {
         type: 'taskResult',
         operationId: task.operationId,
         status: 'completed',
-        value: result,
+        value: normalizeWorkerJsonValue(result),
       });
     } catch (error) {
       if (taskAbortController.signal.aborted) {
@@ -338,4 +389,12 @@ export class RemoteWorker implements Disposable {
       this.#ws.send(JSON.stringify(message));
     }
   }
+}
+
+function normalizeWorkerJsonValue(value: unknown): RemoteWorkerJsonValue {
+  if (value === undefined) return null;
+  const encoded = JSON.stringify(value);
+  if (encoded === undefined) return null;
+  const parsed: unknown = JSON.parse(encoded);
+  return isRemoteWorkerJsonValue(parsed) ? parsed : null;
 }

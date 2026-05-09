@@ -17,6 +17,8 @@ export interface WebSocketData {
   resumeFrom?: number;
   queue?: string;
   workerId?: string;
+  workerRegistered?: boolean;
+  workerProtocolVersion?: number;
   lastDeliveredSequence?: number;
   replayInProgress?: boolean;
   pendingStreamMessages?: Array<{ sequence: number; message: string }>;

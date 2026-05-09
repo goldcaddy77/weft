@@ -21,6 +21,7 @@ await Bun.build({
     './src/storage/node-sqlite.ts',
     './src/storage/auto.ts',
     './src/testing/index.ts',
+    './src/worker/protocol.ts',
     // Bun-only server subpath (weft/server)
     './src/server/index.ts',
   ],
