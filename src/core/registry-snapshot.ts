@@ -3,11 +3,20 @@
  * workflows and activities, with their JSON Schemas. This is the data source
  * behind the `GET /v1/registry` REST endpoint and (later) the MCP server.
  *
- * The output is a plain object designed to be safe for JSON serialization:
- * keys are inserted in alphabetical (codepoint) order; absent metadata fields
- * are omitted (never `null`, never `{}`); and converter exceptions are
- * surfaced as a typed {@link RegistrySchemaConversionError} so REST handlers
- * can return an actionable diagnostic to codegen consumers.
+ * The output is a plain object designed to be safe for JSON serialization.
+ * Absent metadata fields are omitted (never `null`, never `{}`); converter
+ * exceptions surface as a typed {@link RegistrySchemaConversionError} (see
+ * its JSDoc for what reaches the wire vs server logs).
+ *
+ * **Ordering guarantee.** Builder code inserts keys in alphabetical
+ * (codepoint) order. The *observable* iteration and `JSON.stringify` order
+ * is the standard ECMAScript object iteration order: array-index-like keys
+ * (e.g. `"42"`) come first in numeric order, then string keys in insertion
+ * (codepoint) order. Workflows and activities are conventionally named with
+ * words and dot/colon-separated identifiers, so the integer-key case is a
+ * corner. Clients that care about a single ordering rule across all keys
+ * should sort `Object.keys(...)` themselves rather than relying on the
+ * map's iteration order.
  *
  * @module core/registry-snapshot
  */
@@ -63,8 +72,13 @@ export type RegistrySnapshot = {
 
 /**
  * Thrown when a registered workflow or activity schema cannot be converted
- * to JSON Schema. Carries the offending entity name and direction so the
- * REST layer can return a diagnostic the codegen client can act on.
+ * to JSON Schema. Carries the offending entity name and direction so
+ * server-side observability (logs and telemetry) and non-HTTP callers
+ * (the in-process MCP builder, programmatic users of `buildRegistrySnapshot`)
+ * can identify which registration is broken. The HTTP REST binding
+ * deliberately masks this on the wire as a generic `500 / Internal server
+ * error` so a misbehaving registration cannot leak schema layout to clients
+ * that only have `system:read`.
  */
 export class RegistrySchemaConversionError extends Error {
   readonly entityKind: 'workflow' | 'activity';

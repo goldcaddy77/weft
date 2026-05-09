@@ -6,7 +6,9 @@
  *   activities, with both schema-present and schema-absent cases.
  * - registryVersion: 1 in the response.
  * - Authorization: 401 unauthenticated, 403 missing scope, 200 with system:read.
- * - 500 with the offending workflow named when an unsupported validator throws.
+ * - Masked 500 (`{ error: 'Internal server error' }`) when an unsupported
+ *   validator throws; the offending entity name and direction reach
+ *   server-side logs only, never the wire.
  * - Workflows registered out of alphabetical order produce sorted keys.
  * - Remote-only activities are excluded by construction (engine never sees them).
  */
@@ -174,6 +176,40 @@ describe('GET /v1/registry — successful responses', () => {
     };
     expect(Object.keys(body.workflows)).toEqual(['alpha', 'bravo', 'charlie']);
     expect(Object.keys(body.activities)).toEqual(['alpha', 'zulu']);
+  });
+
+  it('preserves __proto__-named workflow and activity keys end-to-end through Zod outputSchema validation', async () => {
+    // Regression for the null-prototype map fix: a registered workflow or
+    // activity literally named `__proto__` must reach the wire. This is
+    // the REST-path counterpart to the builder-level test in
+    // registry-snapshot.test.ts — it confirms that the operation pipeline,
+    // including the strict Zod outputSchema, does not drop or reshape the
+    // entry.
+    engine = createEngine();
+    engine.register('__proto__', { handler: async function* () {} });
+    engine.registerActivity('__proto__', async () => undefined);
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/registry', { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: createOperationRegistry([getRegistryOperation]),
+        restBindings: [getRegistryRestBinding],
+        ...authContextWithSystemRead(),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      workflows: Record<string, unknown>;
+      activities: Record<string, unknown>;
+    };
+    expect(Object.keys(body.workflows)).toContain('__proto__');
+    expect(Object.keys(body.activities)).toContain('__proto__');
+    // Sanity: the keys are own properties on the parsed JSON, not prototype
+    // entries inherited from `Object.prototype`.
+    expect(Object.prototype.hasOwnProperty.call(body.workflows, '__proto__')).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(body.activities, '__proto__')).toBe(true);
   });
 
   it('excludes remote-only activities (engine never registers them)', async () => {
