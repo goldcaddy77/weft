@@ -115,17 +115,21 @@ export type LifecycleCallbacks = {
 
 type MissingRecoveryWorkflow = { type: string; workflowId: string };
 
-type RecoveryPreflightResult = {
-  recoverableWorkflowIds: string[];
-  localWorkflowIds: string[];
-  missingWorkflows: MissingRecoveryWorkflow[];
-};
-
-type RecoveryPreflightClassification =
-  | { kind: 'ignored' }
+type RecoveryPreflightEntry =
   | { kind: 'local'; workflowId: string }
   | { kind: 'missing'; workflow: MissingRecoveryWorkflow }
   | { kind: 'recoverable'; workflowId: string };
+
+type RecoveryPreflightResult = {
+  // Storage-scan order, preserving the interleaving callers observed before
+  // the preflight refactor. Recovery iterates this list once, so the
+  // returned WorkflowHandle[] is in the same order the original
+  // single-pass `recoverAll` produced.
+  entries: RecoveryPreflightEntry[];
+  missingWorkflows: MissingRecoveryWorkflow[];
+};
+
+type RecoveryPreflightClassification = { kind: 'ignored' } | RecoveryPreflightEntry;
 
 function isWorkflowSideRecordKey(key: string): boolean {
   return (
@@ -166,18 +170,10 @@ function appendRecoveryClassification(
   result: RecoveryPreflightResult,
   classification: RecoveryPreflightClassification,
 ): void {
-  switch (classification.kind) {
-    case 'ignored':
-      return;
-    case 'local':
-      result.localWorkflowIds.push(classification.workflowId);
-      return;
-    case 'missing':
-      result.missingWorkflows.push(classification.workflow);
-      return;
-    case 'recoverable':
-      result.recoverableWorkflowIds.push(classification.workflowId);
-      return;
+  if (classification.kind === 'ignored') return;
+  result.entries.push(classification);
+  if (classification.kind === 'missing') {
+    result.missingWorkflows.push(classification.workflow);
   }
 }
 
@@ -186,8 +182,7 @@ async function preflightRecoverAll(
   callbacks: LifecycleCallbacks,
 ): Promise<RecoveryPreflightResult> {
   const result: RecoveryPreflightResult = {
-    recoverableWorkflowIds: [],
-    localWorkflowIds: [],
+    entries: [],
     missingWorkflows: [],
   };
 
@@ -228,19 +223,25 @@ export async function recoverAll(
     });
   }
 
-  for (const workflow of preflight.missingWorkflows) {
-    callbacks.dispatchEvent(
-      new WorkflowRecoverySkippedEvent(workflow.workflowId, workflow.type, 'type-not-registered'),
-    );
-  }
-
-  for (const workflowId of preflight.localWorkflowIds) {
-    handles.push(callbacks.getHandle(workflowId));
-  }
-
-  for (const workflowId of preflight.recoverableWorkflowIds) {
-    const handle = await resume(internals, workflowId, callbacks);
-    handles.push(handle);
+  // Walk preflight entries in storage-scan order so the returned handle
+  // list matches the interleaving callers observed before the preflight
+  // refactor (locals, missing, and recoverables stay in scan order).
+  for (const entry of preflight.entries) {
+    if (entry.kind === 'local') {
+      handles.push(callbacks.getHandle(entry.workflowId));
+      continue;
+    }
+    if (entry.kind === 'missing') {
+      callbacks.dispatchEvent(
+        new WorkflowRecoverySkippedEvent(
+          entry.workflow.workflowId,
+          entry.workflow.type,
+          'type-not-registered',
+        ),
+      );
+      continue;
+    }
+    handles.push(await resume(internals, entry.workflowId, callbacks));
   }
 
   return handles;

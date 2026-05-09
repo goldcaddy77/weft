@@ -496,6 +496,45 @@ describe('crash recovery', () => {
     recoveredEngine[Symbol.dispose]();
   });
 
+  it('recoverAll preserves storage-scan order across local and recoverable handles', async () => {
+    // Regression test for #195: the preflight refactor must not group local
+    // and recoverable handles into separate passes — that would change the
+    // observable handle-array order from storage-scan order to "all locals
+    // then all recoverables." MemoryStorage scans keys in lexicographic
+    // order, so the chosen IDs interleave running and pending workflows
+    // when sorted: a, b, c, d.
+    const storage = new MemoryStorage();
+    const firstEngine = new Engine({ storage });
+    firstEngine.register('order-known', async function* (ctx: WorkflowContext) {
+      yield* ctx.waitForSignal('go');
+      return 'done';
+    });
+
+    await firstEngine.start('order-known', null, { id: 'order-a-running' });
+    await flush();
+    await seedStoredWorkflowState(storage, 'order-b-pending', 'order-known', 'pending');
+    await firstEngine.start('order-known', null, { id: 'order-c-running' });
+    await flush();
+    await seedStoredWorkflowState(storage, 'order-d-pending', 'order-known', 'pending');
+    firstEngine[Symbol.dispose]();
+
+    const recoveredEngine = new Engine({ storage });
+    recoveredEngine.register('order-known', async function* (ctx: WorkflowContext) {
+      yield* ctx.waitForSignal('go');
+      return 'done';
+    });
+
+    const handles = await recoveredEngine.recoverAll();
+    expect(handles.map((handle) => handle.id)).toEqual([
+      'order-a-running',
+      'order-b-pending',
+      'order-c-running',
+      'order-d-pending',
+    ]);
+
+    recoveredEngine[Symbol.dispose]();
+  });
+
   it('WorkflowTypeNotRegisteredForRecoveryError carries sorted full lists with capped samples and redacted messages', async () => {
     const storage = new MemoryStorage();
     for (let index = 0; index < 22; index += 1) {
