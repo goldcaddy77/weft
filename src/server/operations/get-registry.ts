@@ -66,7 +66,7 @@ export const getRegistryOperation = defineOperation<GetRegistryInput, GetRegistr
   summary: 'Get a snapshot of registered workflows and activities with their JSON Schemas',
   tags: ['System'],
   inputSchema: getRegistryInput,
-  outputSchema: getRegistryOutput as unknown as z.ZodType<GetRegistryOutput>,
+  outputSchema: getRegistryOutput as z.ZodType<GetRegistryOutput>,
   access: {
     kind: 'scoped',
     scopes: { kind: 'anyOf', scopes: ['system:read'] },
