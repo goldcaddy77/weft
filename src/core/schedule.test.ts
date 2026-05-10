@@ -18,7 +18,14 @@ import {
   parseCronExpression,
 } from './schedule.ts';
 import { tenantFromInputField, type TenantResolver } from './tenant.ts';
-import type { ScheduleSummary, WorkflowContext, WorkflowFunction, WorkflowState } from './types.ts';
+import {
+  schedule as defineSchedule,
+  workflow as defineWorkflow,
+  type ScheduleSummary,
+  type WorkflowContext,
+  type WorkflowFunction,
+  type WorkflowState,
+} from './types.ts';
 
 type Clock = {
   now: number;
@@ -293,6 +300,105 @@ describe('recurring schedules', () => {
     await tickEngine(engine, clock, requireNextFireAt(description));
 
     expect(executions).toEqual([{ value: 'first-run' }]);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('engine.schedule(definition) accepts declarative schedule definitions', async () => {
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const engine = createEngine(clock);
+    const executions: Array<{ value: string }> = [];
+    const scheduledWorkflow = defineWorkflow({
+      name: 'scheduled-definition-echo',
+      handler: async function* (_ctx: WorkflowContext, input: { value: string }) {
+        executions.push(input);
+        return input.value;
+      },
+    });
+
+    engine.register(scheduledWorkflow);
+
+    const schedule = await engine.schedule(
+      defineSchedule({
+        workflow: scheduledWorkflow,
+        input: { value: 'from-definition' },
+        cron: '* * * * *',
+        id: 'definition-schedule',
+        overlapPolicy: 'allow',
+        backfill: true,
+      }),
+    );
+    const description = await schedule.describe();
+
+    expect(description).toMatchObject({
+      id: 'definition-schedule',
+      workflowType: 'scheduled-definition-echo',
+      cronExpression: '* * * * *',
+      overlap: 'allow',
+      backfill: true,
+      status: 'active',
+    });
+
+    await tickEngine(engine, clock, requireNextFireAt(description));
+
+    expect(executions).toEqual([{ value: 'from-definition' }]);
+    engine[Symbol.dispose]();
+  });
+
+  it('engine.schedule(definition) accepts declarative schedule definitions that reference a registered workflow by string', async () => {
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const engine = createEngine(clock);
+    const executions: Array<{ value: string }> = [];
+
+    registerWorkflow(
+      engine,
+      'scheduled-definition-string-echo',
+      async function* (_ctx: WorkflowContext, input: { value: string }) {
+        executions.push(input);
+        return input.value;
+      },
+    );
+
+    const schedule = await engine.schedule(
+      defineSchedule({
+        workflow: 'scheduled-definition-string-echo',
+        input: { value: 'from-string-definition' },
+        cron: '* * * * *',
+        id: 'definition-string-schedule',
+      }),
+    );
+    const description = await schedule.describe();
+
+    expect(description).toMatchObject({
+      id: 'definition-string-schedule',
+      workflowType: 'scheduled-definition-string-echo',
+      cronExpression: '* * * * *',
+      overlap: 'skip',
+      backfill: false,
+      status: 'active',
+    });
+
+    await tickEngine(engine, clock, requireNextFireAt(description));
+
+    expect(executions).toEqual([{ value: 'from-string-definition' }]);
+    engine[Symbol.dispose]();
+  });
+
+  it('engine.schedule(type, input) rejects missing cron expressions for the positional overload', async () => {
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const engine = createEngine(clock);
+    const scheduleWithoutCron = engine.schedule as unknown as (
+      type: string,
+      input: unknown,
+    ) => Promise<unknown>;
+
+    registerWorkflow(engine, 'missing-cron-echo', async function* () {
+      return 'done';
+    });
+
+    await expect(scheduleWithoutCron('missing-cron-echo', null)).rejects.toThrow(
+      'cronExpression must be provided when scheduling by workflow type.',
+    );
 
     engine[Symbol.dispose]();
   });
