@@ -107,9 +107,9 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP client. Weft's 
 
 ## 3. Agent Bureau Compatibility
 
-**Architectural commitment:** Agent Bureau consumes Weft, never the reverse. Weft cannot import from `armorer`, `conversationalist`, or `interoperability` in runtime source.
+**Architectural commitment:** [Agent Bureau](https://github.com/stevekinney/agent-bureau) consumes Weft, never the reverse. Weft cannot import from [`armorer`](https://github.com/stevekinney/agent-bureau/tree/main/packages/armorer), [`conversationalist`](https://github.com/stevekinney/agent-bureau/tree/main/packages/conversationalist), or [`interoperability`](https://github.com/stevekinney/agent-bureau/tree/main/packages/interoperability) in runtime source.
 
-- [ ] **Design Weft's tool-and-conversation surface as a minimal durable-execution contract Agent Bureau can compose on top of.**
+- [x] **Design Weft's tool-and-conversation surface as a minimal durable-execution contract Agent Bureau can compose on top of.**
 
   **Where:** `src/ai/types.ts` or the surviving post-shrinkage agent type home, `src/ai/agent.ts`, `src/ai/declaration.ts`, and new documentation under `documentation/integrations/agent-bureau.md`.
 
@@ -118,10 +118,10 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP client. Weft's 
   **Target surface:**
   - `JSONValue`: recursive JSON-safe type matching Agent Bureau's shape.
   - `ToolCall`: `{ id: string; name: string; arguments: JSONValue }`.
-  - `ToolResult`: `{ id: string; value: JSONValue } | { id: string; error: ToolErrorShape }`.
-  - `ToolErrorShape`: `{ message: string; code?: string }`.
-  - `ToolDefinition`: `{ name: string; description?: string; inputSchema: JSONValue; execute: (input, ctx?) => Promise<JSONValue> }`.
-  - `ConversationHistory`: a minimal JSON-safe shape that Agent Bureau can wrap without translation.
+  - `ToolResult`: `{ callId: string; outcome: 'success' | 'error' | 'action_required'; content: JSONValue; error?; action?; inputDigest?; outputDigest? }`.
+  - `ToolErrorShape`: `{ code: string; category: ToolErrorCategory; retryable: boolean; message: string; details?: JSONValue }`.
+  - `ToolDefinition`: `{ name: string; description?: string; input: unknown; execute: (input, ctx?) => Promise<unknown>; verify?; identity?; version? }`.
+  - `ConversationHistory`: `Message[]` for Weft's built-in provider transcript, or a structural Agent Bureau conversation history object from `conversationalist`.
 
   Every field name and shape must either match Agent Bureau's structural type exactly or be absent. Do not import Agent Bureau packages from runtime source. Keep any compatibility assertions in tests or development-only type fixtures.
 

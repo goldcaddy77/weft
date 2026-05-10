@@ -42,7 +42,7 @@ function makeFinal(content: string): ChatResponse {
 function makeToolCall(name: string, id: string, input: unknown): ChatResponse {
   return {
     content: '',
-    toolCalls: [{ id, name, input }],
+    toolCalls: [{ id, name, arguments: input }],
     usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
     model: 'test-1.0',
     stopReason: 'tool_use',
@@ -51,11 +51,9 @@ function makeToolCall(name: string, id: string, input: unknown): ChatResponse {
 
 function makeTool(name = 'echo', output: unknown = 'tool-result'): AgentTool {
   return {
-    definition: {
-      name,
-      description: `Runs ${name}.`,
-      inputSchema: { type: 'object' },
-    },
+    name,
+    description: `Runs ${name}.`,
+    input: { type: 'object' },
     execute: async () => output,
   };
 }
@@ -70,11 +68,9 @@ describe('executeAgentLoop', () => {
   it('runs a basic two-turn loop with one local tool call before the final answer', async () => {
     let toolCallCount = 0;
     const tool: AgentTool = {
-      definition: {
-        name: 'echo',
-        description: 'Returns the provided text.',
-        inputSchema: { type: 'object', properties: { text: { type: 'string' } } },
-      },
+      name: 'echo',
+      description: 'Returns the provided text.',
+      input: { type: 'object', properties: { text: { type: 'string' } } },
       execute: async (input) => {
         toolCallCount++;
         return (input as { text: string }).text;
@@ -119,8 +115,8 @@ describe('executeAgentLoop', () => {
           {
             ...makeToolCall('tool_a', 'tc-1', {}),
             toolCalls: [
-              { id: 'tc-1', name: 'tool_a', input: {} },
-              { id: 'tc-2', name: 'tool_b', input: {} },
+              { id: 'tc-1', name: 'tool_a', arguments: {} },
+              { id: 'tc-2', name: 'tool_b', arguments: {} },
             ],
           },
           makeFinal('finished'),
@@ -132,9 +128,10 @@ describe('executeAgentLoop', () => {
 
     expect(result.content).toBe('finished');
     expect(executedTools).toEqual(['tool_a', 'tool_b']);
-    expect(result.conversation.find((message) => message.role === 'tool')?.toolResults).toEqual([
-      { toolCallId: 'tc-1', output: 'a', isError: false },
-      { toolCallId: 'tc-2', output: 'b', isError: false },
+    const conversation = result.conversation;
+    expect(conversation.find((message) => message.role === 'tool')?.toolResults).toEqual([
+      { callId: 'tc-1', outcome: 'success', content: 'a' },
+      { callId: 'tc-2', outcome: 'success', content: 'b' },
     ]);
   });
 
@@ -205,7 +202,9 @@ describe('executeAgentLoop', () => {
   it('deduplicates a committed tool call through the tool effect log on a later run', async () => {
     let toolExecutionCount = 0;
     const tool: AgentTool = {
-      definition: { name: 'charge', description: 'Charges once.', inputSchema: { type: 'object' } },
+      name: 'charge',
+      description: 'Charges once.',
+      input: { type: 'object' },
       execute: async () => {
         toolExecutionCount++;
         return 'charged';
@@ -363,18 +362,19 @@ describe('executeAgentLoop', () => {
       'look up value',
     );
 
-    expect(result.conversation.map((message) => message.role)).toEqual([
+    const conversation = result.conversation;
+    expect(conversation.map((message) => message.role)).toEqual([
       'user',
       'assistant',
       'tool',
       'assistant',
     ]);
-    expect(result.conversation[1]?.toolCalls).toEqual([
-      { id: 'tc-1', name: 'lookup', input: { id: 1 } },
+    expect(conversation[1]?.toolCalls).toEqual([
+      { id: 'tc-1', name: 'lookup', arguments: { id: 1 } },
     ]);
-    expect(result.conversation[2]?.toolResults).toEqual([
-      { toolCallId: 'tc-1', output: '{"value":42}', isError: false },
+    expect(conversation[2]?.toolResults).toEqual([
+      { callId: 'tc-1', outcome: 'success', content: { value: 42 } },
     ]);
-    expect(result.conversation[3]?.content).toBe('final');
+    expect(conversation[3]?.content).toBe('final');
   });
 });

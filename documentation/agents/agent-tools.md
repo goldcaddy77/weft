@@ -2,7 +2,7 @@
 
 Your agent is only as useful as the tools it can call.
 
-**Agent tool:** A structural object with a tool definition, an `execute()` function, and optional verification and identity hooks. Weft does not care where the tool came from. It only needs a stable shape it can pass to the agent loop and protect with the effect log.
+**Agent tool:** A flat structural object with a provider-facing descriptor, an `execute()` function, and optional verification and identity hooks. Weft does not care where the tool came from. It only needs a stable shape it can pass to the agent loop and protect with the effect log.
 
 ## `AgentTool`
 
@@ -24,17 +24,15 @@ function isSearchInput(input: unknown): input is SearchInput {
 }
 
 export const webSearch: AgentTool = {
-  definition: {
-    name: 'web_search',
-    description: 'Searches the web and returns matching documents.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: { type: 'string' },
-        limit: { type: 'number' },
-      },
-      required: ['query'],
+  name: 'web_search',
+  description: 'Searches the web and returns matching documents.',
+  input: {
+    type: 'object',
+    properties: {
+      query: { type: 'string' },
+      limit: { type: 'number' },
     },
+    required: ['query'],
   },
   async execute(input) {
     if (!isSearchInput(input)) throw new Error('Expected a search query.');
@@ -56,11 +54,15 @@ export const webSearch: AgentTool = {
 
 ```typescript partial
 interface AgentToolDefinition {
-  definition: ToolDefinition;
+  name: string;
+  description?: string;
+  input: unknown;
   execute: (input: unknown) => Promise<unknown>;
   verify?: (result: unknown) => Promise<boolean> | boolean;
   version?: string;
-  identity?: (input: unknown) => ToolIdentityResult;
+  identity?:
+    | ((input: unknown) => ToolIdentityResult)
+    | { namespace: string; name: string; version?: string };
 }
 ```
 
@@ -74,24 +76,26 @@ Use `version` when a tool's behavior changes in a way that matters for workflow 
 import { computeSemanticHash, type AgentToolDefinition } from 'weft';
 
 const createTicket: AgentToolDefinition = {
-  definition: {
-    name: 'create_ticket',
-    description: 'Creates a support ticket.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        title: { type: 'string' },
-        customerId: { type: 'string' },
-        requestId: { type: 'string' },
-      },
-      required: ['title', 'customerId'],
+  name: 'create_ticket',
+  description: 'Creates a support ticket.',
+  input: {
+    type: 'object',
+    properties: {
+      title: { type: 'string' },
+      customerId: { type: 'string' },
+      requestId: { type: 'string' },
     },
+    required: ['title', 'customerId'],
   },
   async execute(input) {
     return createSupportTicket(input);
   },
   identity(input) {
-    return computeSemanticHash(input, ['title', 'customerId']);
+    const { title, customerId } = input as { title: string; customerId: string };
+    return {
+      semanticHash: computeSemanticHash({ title, customerId }),
+      intentCriticalFields: ['title', 'customerId'],
+    };
   },
 };
 ```
@@ -146,11 +150,9 @@ async function toolsFromMcp(client: ThirdPartyMcpClient): Promise<AgentTool[]> {
   const remoteTools = await client.listTools();
 
   return remoteTools.map((tool) => ({
-    definition: {
-      name: tool.name,
-      description: tool.description ?? '',
-      inputSchema: tool.inputSchema,
-    },
+    name: tool.name,
+    description: tool.description ?? '',
+    input: tool.inputSchema,
     execute: (input) => client.callTool(tool.name, input),
   }));
 }

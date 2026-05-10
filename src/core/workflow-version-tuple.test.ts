@@ -11,6 +11,14 @@ import {
 // ---------------------------------------------------------------------------
 
 describe('collectToolVersions', () => {
+  it('returns sorted name@version strings for flat tools', () => {
+    const tools = [
+      { name: 'beta', version: '2.0.0' },
+      { name: 'alpha', version: '1.0.0' },
+    ];
+    expect(collectToolVersions(tools)).toEqual(['alpha@1.0.0', 'beta@2.0.0']);
+  });
+
   it('returns sorted name@version strings', () => {
     const tools = [
       { definition: { name: 'beta' }, version: '2.0.0' },

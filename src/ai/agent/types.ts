@@ -2,6 +2,32 @@
 import type { ToolIdentityResult } from '../declaration.ts';
 import type { ToolEffectLogLike } from '../tool-effect-log.ts';
 
+/**
+ * JSON primitive values that can safely cross provider, tool, and checkpoint
+ * boundaries.
+ *
+ * @example
+ * ```ts
+ * import type { JSONPrimitive } from 'weft';
+ *
+ * const value: JSONPrimitive = 'ready';
+ * ```
+ */
+export type JSONPrimitive = string | number | boolean | null;
+
+/**
+ * Recursive JSON-safe value used for Agent Bureau-compatible tool calls,
+ * tool results, tool actions, and conversation metadata.
+ *
+ * @example
+ * ```ts
+ * import type { JSONValue } from 'weft';
+ *
+ * const value: JSONValue = { count: 1, tags: ['agent'] };
+ * ```
+ */
+export type JSONValue = JSONPrimitive | ReadonlyArray<JSONValue> | { [key: string]: JSONValue };
+
 // ---------------------------------------------------------------------------
 // Structural types - canonical home post-shrinkage.
 // Phase 0 seam: these were previously in src/ai/providers/types.ts and
@@ -46,54 +72,247 @@ export interface Message {
 }
 
 /**
- * A model-requested tool invocation. Pairs a stable `id` with the tool
- * `name` and the model-supplied `input` payload.
+ * Minimal shape of a Conversationalist-style message in an Agent Bureau
+ * conversation history. Weft does not interpret this object at runtime; the
+ * shape exists so Agent Bureau conversation histories can satisfy Weft's
+ * public result contract structurally.
+ *
+ * @example
+ * ```ts
+ * import type { ConversationHistoryMessage } from 'weft';
+ *
+ * const message: ConversationHistoryMessage = {
+ *   id: 'message-1',
+ *   role: 'assistant',
+ *   content: 'Done',
+ *   position: 0,
+ *   createdAt: '2026-05-08T12:00:00.000Z',
+ *   metadata: {},
+ *   hidden: false,
+ * };
+ * ```
+ */
+export interface ConversationHistoryMessage {
+  id: string;
+  role: string;
+  content: unknown;
+  position: number;
+  createdAt: string;
+  metadata: Readonly<Record<string, JSONValue>>;
+  hidden: boolean;
+  toolCall?: Readonly<ToolCall> | undefined;
+  toolResult?: Readonly<ToolResult> | undefined;
+  tokenUsage?:
+    | Readonly<{
+        prompt: number;
+        completion: number;
+        total: number;
+      }>
+    | undefined;
+  goalCompleted?: boolean | undefined;
+}
+
+/**
+ * Agent Bureau-style conversation history object. Weft's built-in loop still
+ * stores its provider transcript as `Message[]`, but wrappers can return this
+ * richer history object without translation.
+ *
+ * @example
+ * ```ts
+ * import type { AgentBureauConversationHistory } from 'weft';
+ *
+ * const history: AgentBureauConversationHistory = {
+ *   schemaVersion: 4,
+ *   id: 'conversation-1',
+ *   status: 'active',
+ *   metadata: {},
+ *   ids: [],
+ *   messages: {},
+ *   createdAt: '2026-05-08T12:00:00.000Z',
+ *   updatedAt: '2026-05-08T12:00:00.000Z',
+ * };
+ * ```
+ */
+export interface AgentBureauConversationHistory {
+  schemaVersion: number;
+  id: string;
+  title?: string | undefined;
+  status: string;
+  metadata: Readonly<Record<string, JSONValue>>;
+  ids: ReadonlyArray<string>;
+  messages: Readonly<Record<string, ConversationHistoryMessage>>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Public conversation result contract. The built-in Weft loop returns a
+ * provider transcript, while Agent Bureau can supply its richer conversation
+ * history object structurally.
+ *
+ * @example
+ * ```ts
+ * import type { ConversationHistory } from 'weft';
+ *
+ * const history: ConversationHistory = [{ role: 'user', content: 'Hi' }];
+ * ```
+ */
+export type ConversationHistory = Message[] | AgentBureauConversationHistory;
+
+/**
+ * Public input shape accepted from providers before Weft materializes a stable
+ * call identifier and JSON-safe arguments.
+ *
+ * @example
+ * ```ts
+ * import type { ToolCallInput } from 'weft';
+ *
+ * const call: ToolCallInput = { name: 'web_search', arguments: { query: 'weft' } };
+ * ```
+ */
+export interface ToolCallInput {
+  id?: string | undefined;
+  name: string;
+  arguments?: unknown;
+}
+
+/**
+ * A model-requested tool invocation. Pairs a stable `id` with the tool `name`
+ * and JSON-safe model-supplied `arguments`.
  *
  * @example
  * ```ts
  * import type { ToolCall } from 'weft';
  *
- * const call: ToolCall = { id: 'call-1', name: 'get_time', input: {} };
+ * const call: ToolCall = { id: 'call-1', name: 'get_time', arguments: {} };
  * ```
  */
 export interface ToolCall {
   id: string;
   name: string;
-  input: unknown;
+  arguments: JSONValue;
 }
 
 /**
- * A normalized tool result sent back into the conversation. `toolCallId`
- * matches the originating {@link ToolCall.id}; `isError` flags an error
- * outcome the model should see.
+ * Agent Bureau-compatible tool error category.
+ *
+ * @example
+ * ```ts
+ * import type { ToolErrorCategory } from 'weft';
+ *
+ * const category: ToolErrorCategory = 'validation';
+ * ```
+ */
+export type ToolErrorCategory =
+  | 'validation'
+  | 'permission'
+  | 'not_found'
+  | 'conflict'
+  | 'transient'
+  | 'timeout'
+  | 'cancelled'
+  | 'internal';
+
+/**
+ * JSON-safe tool error payload.
+ *
+ * @example
+ * ```ts
+ * import type { ToolErrorShape } from 'weft';
+ *
+ * const error: ToolErrorShape = {
+ *   code: 'invalid_query',
+ *   category: 'validation',
+ *   retryable: false,
+ *   message: 'Expected a query string.',
+ * };
+ * ```
+ */
+export interface ToolErrorShape {
+  code: string;
+  category: ToolErrorCategory;
+  retryable: boolean;
+  message: string;
+  details?: JSONValue | undefined;
+}
+
+/**
+ * Tool action payload for approval or extra input requests.
+ *
+ * @example
+ * ```ts
+ * import type { ToolActionShape } from 'weft';
+ *
+ * const action: ToolActionShape = { type: 'approval', message: 'Approve sending email?' };
+ * ```
+ */
+export interface ToolActionShape {
+  type: 'approval' | 'input';
+  message?: string | undefined;
+  schema?: JSONValue | undefined;
+}
+
+/**
+ * Public tool-result input shape before Weft normalizes `content`, `error`,
+ * and `action` to JSON-safe values.
+ *
+ * @example
+ * ```ts
+ * import type { ToolResultInput } from 'weft';
+ *
+ * const result: ToolResultInput = {
+ *   callId: 'call-1',
+ *   outcome: 'success',
+ *   content: { ok: true },
+ * };
+ * ```
+ */
+export interface ToolResultInput {
+  callId: string;
+  outcome: 'success' | 'error' | 'action_required';
+  content: unknown;
+  error?: (Omit<ToolErrorShape, 'details'> & { details?: unknown }) | undefined;
+  action?: (Omit<ToolActionShape, 'schema'> & { schema?: unknown }) | undefined;
+  inputDigest?: string | undefined;
+  outputDigest?: string | undefined;
+}
+
+/**
+ * A normalized tool result sent back into the conversation. `callId` matches
+ * the originating {@link ToolCall.id}; `outcome` records success, error, or
+ * action-required state.
  *
  * @example
  * ```ts
  * import type { ToolResult } from 'weft';
  *
- * const result: ToolResult = { toolCallId: 'call-1', output: '12:34Z' };
+ * const result: ToolResult = { callId: 'call-1', outcome: 'success', content: '12:34Z' };
  * ```
  */
 export interface ToolResult {
-  toolCallId: string;
-  output: string;
-  isError?: boolean;
+  callId: string;
+  outcome: 'success' | 'error' | 'action_required';
+  content: JSONValue;
+  error?: ToolErrorShape | undefined;
+  action?: ToolActionShape | undefined;
+  inputDigest?: string | undefined;
+  outputDigest?: string | undefined;
 }
 
 /**
  * Schema descriptor for a callable tool. Consumed by {@link LLMProvider}
- * implementations to advertise tools to the model. `inputSchema` follows
- * JSON Schema Draft 7 conventions; tools with no parameters use
+ * implementations to advertise tools to the model. `input` follows JSON
+ * Schema conventions for Weft-local tools; tools with no parameters use
  * `{ type: 'object' }`.
  *
  * @example
  * ```ts
- * import type { ToolDefinition } from 'weft';
+ * import type { ToolDescriptor } from 'weft';
  *
- * const search: ToolDefinition = {
+ * const search: ToolDescriptor = {
  *   name: 'web_search',
  *   description: 'Search the web for recent information.',
- *   inputSchema: {
+ *   input: {
  *     type: 'object',
  *     required: ['query'],
  *     properties: { query: { type: 'string' } },
@@ -101,10 +320,45 @@ export interface ToolResult {
  * };
  * ```
  */
-export interface ToolDefinition {
+export interface ToolDescriptor<InputSchema = unknown> {
   name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
+  description?: string | undefined;
+  input: InputSchema;
+}
+
+/**
+ * Flat executable tool definition used by the agent loop. The `input` field is
+ * intentionally generic so richer Agent Bureau tool configurations can satisfy
+ * the shape structurally while Weft still normalizes model arguments and tool
+ * results at runtime.
+ *
+ * @example
+ * ```ts
+ * import type { ToolDefinition } from 'weft';
+ *
+ * const tool: ToolDefinition = {
+ *   name: 'get_time',
+ *   description: 'Returns the current UTC time.',
+ *   input: { type: 'object' },
+ *   execute: async () => new Date().toISOString(),
+ * };
+ * ```
+ */
+export interface ToolDefinition<InputSchema = unknown> extends ToolDescriptor<InputSchema> {
+  execute:
+    | ((input: unknown, context?: unknown) => Promise<unknown>)
+    | Promise<(input: unknown, context?: unknown) => Promise<unknown>>;
+  verify?: (result: unknown) => Promise<boolean> | boolean;
+  /**
+   * Optional tool identity. Weft-local tools can provide a function for
+   * idempotent tool-call deduplication; Armorer tools expose a static
+   * identity object and remain structurally assignable.
+   */
+  identity?:
+    | ((input: unknown) => ToolIdentityResult)
+    | Readonly<{ namespace: string; name: string; version?: string | undefined }>;
+  /** Semantic version of this tool. Defaults to `"0.0.0"` at declaration sites that need one. */
+  version?: string | undefined;
 }
 
 /**
@@ -185,7 +439,7 @@ export interface TokenUsage {
  */
 export interface ChatOptions {
   model: string;
-  tools?: ToolDefinition[];
+  tools?: ToolDescriptor[];
   maxTokens?: number;
   temperature?: number;
   signal?: AbortSignal;
@@ -215,11 +469,31 @@ export interface ChatOptions {
  */
 export interface ChatResponse {
   content: string;
-  toolCalls: ToolCall[];
+  toolCalls: ToolCallInput[];
   usage: TokenUsage;
   model: string;
   stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence';
   reasoningTrace?: string | undefined;
+}
+
+/**
+ * Provider response after Weft has materialized tool calls.
+ *
+ * @example
+ * ```ts
+ * import type { NormalizedChatResponse } from 'weft';
+ *
+ * const response: NormalizedChatResponse = {
+ *   content: '',
+ *   toolCalls: [{ id: 'call-1', name: 'get_time', arguments: {} }],
+ *   usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+ *   model: 'test-model',
+ *   stopReason: 'tool_use',
+ * };
+ * ```
+ */
+export interface NormalizedChatResponse extends Omit<ChatResponse, 'toolCalls'> {
+  toolCalls: ToolCall[];
 }
 
 /**
@@ -269,21 +543,21 @@ export interface LLMProvider {
  * import type { AgentTool } from 'weft';
  *
  * const timeTool: AgentTool = {
- *   definition: {
- *     name: 'get_current_time',
- *     description: 'Returns current UTC time.',
- *     inputSchema: { type: 'object', properties: {} },
- *   },
+ *   name: 'get_current_time',
+ *   description: 'Returns current UTC time.',
+ *   input: { type: 'object', properties: {} },
  *   execute: async () => new Date().toISOString(),
  * };
  * ```
  */
 export interface AgentTool {
-  definition: ToolDefinition;
-  execute: (input: unknown) => Promise<unknown>;
-  verify?: (result: unknown) => Promise<boolean> | boolean;
-  /** Optional semantic identity for idempotent tool-call deduplication. */
-  identity?: (input: unknown) => ToolIdentityResult;
+  name: ToolDefinition['name'];
+  description?: ToolDefinition['description'];
+  input: ToolDefinition['input'];
+  execute: ToolDefinition['execute'];
+  verify?: ToolDefinition['verify'];
+  identity?: ToolDefinition['identity'];
+  version?: ToolDefinition['version'];
 }
 
 /**
@@ -367,7 +641,7 @@ export interface AgentOptions {
   model: string;
   provider: LLMProvider;
   systemPrompt?: string | undefined;
-  /** Plain AgentTool array. */
+  /** Plain flat AgentTool array. */
   tools?: AgentTool[] | undefined;
   /** Maximum number of LLM turns before returning. Defaults to 10. */
   maxTurns?: number | undefined;
@@ -497,7 +771,9 @@ export class AgentLoopSuspendedError extends Error {
 }
 
 /**
- * Return value of executeAgentLoop.
+ * Return value of executeAgentLoop. The built-in Weft loop returns a
+ * `Message[]` transcript by default; wrappers can widen the conversation
+ * generic to return an Agent Bureau conversation history object.
  *
  * @example
  * ```ts
@@ -511,12 +787,12 @@ export class AgentLoopSuspendedError extends Error {
  *   'Explain recursion.',
  * );
  * console.log(result.content);
- * console.log('Turns:', result.turnCount);
+ * console.log('Messages:', result.conversation.length);
  * ```
  */
-export interface AgentResult {
+export interface AgentResult<TConversation extends ConversationHistory = Message[]> {
   content: string;
-  conversation: Message[];
+  conversation: TConversation;
   totalTokens: TokenUsage;
   turnCount: number;
   reasoningTraces: string[];
@@ -527,14 +803,14 @@ export interface AgentResult {
 export interface AgentRuntime {
   options: ResolvedAgentOptions;
   toolMap: Map<string, import('./tool-initialization.ts').RegistryToolEntry>;
-  toolDefinitions: ToolDefinition[];
+  toolDefinitions: ToolDescriptor[];
   state: AgentLoopState;
   dispose: () => void;
 }
 
 /** Metadata returned after one provider chat turn. */
 export interface ChatTurnResult {
-  response: ChatResponse;
+  response: NormalizedChatResponse;
   /** The model the loop requested (always equal to options.model post-shrinkage; kept for caller event payloads). */
   originalModel: string;
   turnDuration: number;
@@ -542,6 +818,7 @@ export interface ChatTurnResult {
 
 /** Normalized result of executing one tool call. */
 export interface ToolExecutionOutcome {
-  output: string;
+  content: JSONValue;
   success: boolean;
+  error?: ToolErrorShape | undefined;
 }

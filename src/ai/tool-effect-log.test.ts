@@ -18,6 +18,7 @@ import { MemoryStorage } from '../storage/memory';
 import type { AgentTool } from './agent';
 import { executeAgentLoop } from './agent';
 import type { ChatResponse, LLMProvider } from './agent/types.ts';
+import type { ToolEffectLogLike } from './tool-effect-log';
 import { computeSemanticHash, ToolCallReplayConflictError, ToolEffectLog } from './tool-effect-log';
 
 // ---------------------------------------------------------------------------
@@ -189,14 +190,14 @@ describe('ToolEffectLog', () => {
 
   it('committed result is replayed from storage after a new log instance is created (simulates restore)', async () => {
     await log.record('hash-1', 'charge');
-    await log.commit('hash-1', 'charge', '{"status":"ok"}');
+    await log.commit('hash-1', 'charge', { status: 'ok' });
 
     // New ToolEffectLog instance — same storage, same scope
     const restoredLog = makeLog(storage);
     const entry = await restoredLog.lookup('hash-1');
     expect(entry?.status).toBe('committed');
     if (entry?.status === 'committed') {
-      expect(entry.output).toBe('{"status":"ok"}');
+      expect(entry.output).toEqual({ status: 'ok' });
     }
   });
 
@@ -357,7 +358,7 @@ function createSingleToolProvider(toolName: string, toolInput: unknown): LLMProv
         called = true;
         return {
           content: '',
-          toolCalls: [{ id: 'call-1', name: toolName, input: toolInput }],
+          toolCalls: [{ id: 'call-1', name: toolName, arguments: toolInput }],
           usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
           model: 'test-model',
           stopReason: 'tool_use',
@@ -376,13 +377,69 @@ function createSingleToolProvider(toolName: string, toolInput: unknown): LLMProv
 
 function createSimpleTool(name: string, onExecute?: () => void): AgentTool {
   return {
-    definition: { name, description: 'test tool', inputSchema: { type: 'object' } },
+    name,
+    description: 'test tool',
+    input: { type: 'object' },
     execute: async (_input: unknown) => {
       onExecute?.();
       return { result: 'ok' };
     },
   };
 }
+
+describe('effect log: replay materialization', () => {
+  it('normalizes committed replay output before adding it to the conversation', async () => {
+    let replayCount = 0;
+    let executeCount = 0;
+    const effectLog: ToolEffectLogLike = {
+      get duplicatesPrevented() {
+        return replayCount;
+      },
+      lookup: async () => ({
+        status: 'committed',
+        toolName: 'cached',
+        output: Number.NaN,
+        completedAt: Date.now(),
+      }),
+      recordReplay: () => {
+        replayCount++;
+      },
+      record: async () => {
+        throw new Error('record should not run during committed replay');
+      },
+      commit: async () => {
+        throw new Error('commit should not run during committed replay');
+      },
+      abort: async () => {
+        throw new Error('abort should not run during committed replay');
+      },
+    };
+
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider: createSingleToolProvider('cached', {}),
+        tools: [
+          {
+            ...createSimpleTool('cached'),
+            execute: async () => {
+              executeCount++;
+              return 'fresh result';
+            },
+          },
+        ],
+        toolEffectLog: effectLog,
+      },
+      'Go',
+    );
+
+    expect(executeCount).toBe(0);
+    expect(replayCount).toBe(1);
+    expect(result.conversation.find((message) => message.role === 'tool')?.toolResults).toEqual([
+      { callId: 'call-1', outcome: 'success', content: null },
+    ]);
+  });
+});
 
 describe('effect log: identity() edge cases', () => {
   it('falls back to default hash when identity() throws', async () => {
@@ -406,7 +463,7 @@ describe('effect log: identity() edge cases', () => {
     // Tool should have executed once despite identity() throwing
     expect(executeCount).toBe(1);
     // A record should have been written using the default hash
-    const defaultHash = computeSemanticHash({ name: 'charge', input: { amount: 50 } });
+    const defaultHash = computeSemanticHash({ name: 'charge', arguments: { amount: 50 } });
     const entry = await effectLog.lookup(defaultHash);
     expect(entry?.status).toBe('committed');
   });
@@ -433,7 +490,7 @@ describe('effect log: identity() edge cases', () => {
     // Tool should have executed once despite invalid identity hash
     expect(executeCount).toBe(1);
     // Record written under the default hash
-    const defaultHash = computeSemanticHash({ name: 'charge', input: { amount: 50 } });
+    const defaultHash = computeSemanticHash({ name: 'charge', arguments: { amount: 50 } });
     const entry = await effectLog.lookup(defaultHash);
     expect(entry?.status).toBe('committed');
   });
@@ -523,7 +580,7 @@ describe('effect log: dangling in-flight guard', () => {
     const storage = new MemoryStorage();
     const effectLog = new ToolEffectLog(storage, 'wf-conflict', 'agent-conflict');
     const provider = createSingleToolProvider('charge', { amount: 50 });
-    const hash = computeSemanticHash({ name: 'charge', input: { amount: 50 } });
+    const hash = computeSemanticHash({ name: 'charge', arguments: { amount: 50 } });
 
     await effectLog.record(hash, 'charge');
 
@@ -544,7 +601,7 @@ describe('effect log: dangling in-flight guard', () => {
     const storage = new MemoryStorage();
     const effectLog = new ToolEffectLog(storage, 'wf-fail', 'agent-fail');
     const provider = createSingleToolProvider('boom', {});
-    const hash = computeSemanticHash({ name: 'boom', input: {} });
+    const hash = computeSemanticHash({ name: 'boom', arguments: {} });
 
     await executeAgentLoop(
       {
@@ -552,7 +609,9 @@ describe('effect log: dangling in-flight guard', () => {
         provider,
         tools: [
           {
-            definition: { name: 'boom', description: 'boom', inputSchema: { type: 'object' } },
+            name: 'boom',
+            description: 'boom',
+            input: { type: 'object' },
             execute: async () => {
               throw new Error('boom');
             },

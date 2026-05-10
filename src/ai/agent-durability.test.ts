@@ -72,7 +72,7 @@ describe('agent loop durability', () => {
       async chat() {
         calls++;
         return createResponse('', {
-          toolCalls: [{ id: `tc-${calls}`, name: 'unknown_tool', input: {} }],
+          toolCalls: [{ id: `tc-${calls}`, name: 'unknown_tool', arguments: {} }],
           stopReason: 'tool_use',
         });
       },

@@ -1,4 +1,4 @@
-import type { AgentResult } from '../../ai/agent/index.ts';
+import type { AgentResult, ConversationHistory } from '../../ai/agent/index.ts';
 import type { Context } from '../context.ts';
 import { createAgentInterceptorExecute } from '../engine-helpers.ts';
 import type { AgentInterception, ComposedWorkflowInterceptor } from '../interceptor.ts';
@@ -45,10 +45,21 @@ export function closeAgentInterceptor(
   }
 }
 
+function conversationEntries(conversation: ConversationHistory): readonly unknown[] {
+  if (Array.isArray(conversation)) {
+    return conversation;
+  }
+
+  return conversation.ids.flatMap((id) => {
+    const message = conversation.messages[id];
+    return message === undefined ? [] : [message];
+  });
+}
+
 /** Expose agent conversation and per-turn token usage through the context. */
 export function exposeAgentObservability(
   context: Context | undefined,
-  agentResult: AgentResult,
+  agentResult: AgentResult<ConversationHistory>,
   _agentMaxTurns: number,
 ): void {
   if (!context) {
@@ -57,7 +68,7 @@ export function exposeAgentObservability(
 
   const previousConversationAccessor = context.exposedAccessors.get('agentConversation');
   const previousTurnUsageAccessor = context.exposedAccessors.get('agentTurnUsage');
-  const currentConversation = agentResult.conversation;
+  const currentConversation = conversationEntries(agentResult.conversation);
   const currentTurnUsage = agentResult.turnUsage;
 
   context.expose({

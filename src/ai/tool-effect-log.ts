@@ -32,6 +32,8 @@ import { hashString } from '../runtime/portable.ts';
 import { decode, encode } from '../core/codec';
 import type { Storage } from '../storage/interface';
 import { KEYS } from '../storage/interface';
+import { isJSONValue } from './agent/json-value.ts';
+import type { JSONValue } from './agent/types.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -48,7 +50,7 @@ import { KEYS } from '../storage/interface';
  * function describeRecord(record: EffectRecord): string {
  *   switch (record.status) {
  *     case 'in-flight': return `${record.toolName} started at ${record.recordedAt}`;
- *     case 'committed': return `${record.toolName} → ${record.output}`;
+ *     case 'committed': return `${record.toolName} -> ${JSON.stringify(record.output)}`;
  *     case 'aborted':   return `${record.toolName} failed: ${record.reason}`;
  *   }
  * }
@@ -56,7 +58,7 @@ import { KEYS } from '../storage/interface';
  */
 export type EffectRecord =
   | { status: 'in-flight'; toolName: string; recordedAt: number }
-  | { status: 'committed'; toolName: string; output: string; completedAt: number }
+  | { status: 'committed'; toolName: string; output: JSONValue; completedAt: number }
   | { status: 'aborted'; toolName: string; reason: string; completedAt: number };
 
 /**
@@ -197,7 +199,7 @@ function isEffectRecord(value: unknown): value is EffectRecord {
   const status = obj['status'];
   if (status === 'in-flight') return typeof obj['recordedAt'] === 'number';
   if (status === 'committed')
-    return typeof obj['output'] === 'string' && typeof obj['completedAt'] === 'number';
+    return isJSONValue(obj['output']) && typeof obj['completedAt'] === 'number';
   if (status === 'aborted')
     return typeof obj['reason'] === 'string' && typeof obj['completedAt'] === 'number';
   return false;
@@ -227,7 +229,7 @@ function isEffectRecord(value: unknown): value is EffectRecord {
  *
  * const hash = computeSemanticHash({ recipient: 'alice', amount: 100 });
  * await log.record(hash, 'charge');
- * await log.commit(hash, 'charge', JSON.stringify({ success: true }));
+ * await log.commit(hash, 'charge', { success: true });
  *
  * const record = await log.lookup(hash);
  * console.log(record?.status); // 'committed'
@@ -294,7 +296,7 @@ export class ToolEffectLog {
    * Call this after the tool has returned successfully so that a subsequent
    * restore will replay this output instead of re-executing.
    */
-  async commit(semanticHash: string, toolName: string, output: string): Promise<void> {
+  async commit(semanticHash: string, toolName: string, output: JSONValue): Promise<void> {
     const record: EffectRecord = {
       status: 'committed',
       toolName,

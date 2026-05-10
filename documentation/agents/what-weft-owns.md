@@ -48,11 +48,9 @@ async function loadMcpTools(client: ThirdPartyMcpClient): Promise<AgentTool[]> {
   const tools = await client.listTools();
 
   return tools.map((tool) => ({
-    definition: {
-      name: tool.name,
-      description: tool.description ?? '',
-      inputSchema: tool.inputSchema,
-    },
+    name: tool.name,
+    description: tool.description ?? '',
+    input: tool.inputSchema,
     execute: (input) => client.callTool(tool.name, input),
   }));
 }

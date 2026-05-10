@@ -5,11 +5,9 @@ import type { AgentToolDefinition } from './declaration.ts';
 import { agent as createAgentDefinition, isAgentDefinition } from './declaration.ts';
 
 const sampleTool: AgentToolDefinition = {
-  definition: {
-    name: 'lookup',
-    description: 'Looks up a value.',
-    inputSchema: { type: 'object', properties: { id: { type: 'string' } } },
-  },
+  name: 'lookup',
+  description: 'Looks up a value.',
+  input: { type: 'object', properties: { id: { type: 'string' } } },
   execute: async () => 'value',
 };
 

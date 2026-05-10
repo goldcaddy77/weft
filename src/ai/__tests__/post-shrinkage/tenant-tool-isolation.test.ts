@@ -5,11 +5,15 @@ import { executeAgentLoop } from '../../agent/index.ts';
 
 function pickToolsForTenant(tenant: string): AgentTool[] {
   const toolA: AgentTool = {
-    definition: { name: 'tool_a', description: 'Tool for tenant A', inputSchema: {} },
+    name: 'tool_a',
+    description: 'Tool for tenant A',
+    input: {},
     execute: async () => 'result-a',
   };
   const toolB: AgentTool = {
-    definition: { name: 'tool_b', description: 'Tool for tenant B', inputSchema: {} },
+    name: 'tool_b',
+    description: 'Tool for tenant B',
+    input: {},
     execute: async () => 'result-b',
   };
   if (tenant === 'alice') return [toolA];
