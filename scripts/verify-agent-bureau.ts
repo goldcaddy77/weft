@@ -58,7 +58,8 @@ function commonAncestor(paths: readonly string[]): string {
     }
   }
 
-  return prefix.length === 0 ? sep : prefix.join(sep);
+  const ancestor = prefix.join(sep);
+  return ancestor === '' ? sep : ancestor;
 }
 
 async function packageDeclaration(agentBureauPath: string, packageName: string): Promise<string> {

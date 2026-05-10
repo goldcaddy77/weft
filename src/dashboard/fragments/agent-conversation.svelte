@@ -54,8 +54,8 @@
                   <pre>{message.content}</pre>
                 {/if}
                 {#if message.toolResults && message.toolResults.length > 0}
-                  {#each message.toolResults as result (result.toolCallId)}
-                    <JsonViewer data={result} label={result.toolCallId} collapsed />
+                  {#each message.toolResults as result (result.callId)}
+                    <JsonViewer data={result} label={result.callId} collapsed />
                   {/each}
                 {/if}
                 {#if isTruncated(message.content)}
