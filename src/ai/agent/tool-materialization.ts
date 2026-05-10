@@ -13,7 +13,7 @@ export function materializeToolCall(toolCall: ToolCallInput): ToolCall {
   return {
     id: toolCall.id ?? crypto.randomUUID(),
     name: toolCall.name,
-    arguments: normalizeJSONValue(toolCall.arguments ?? {}),
+    arguments: normalizeJSONValue(toolCall.arguments === undefined ? {} : toolCall.arguments),
   };
 }
 
@@ -30,8 +30,8 @@ export function materializeToolResult(toolResult: ToolResultInput): ToolResult {
     content: normalizeJSONValue(toolResult.content),
     ...(toolResult.error ? { error: normalizeToolError(toolResult.error) } : {}),
     ...(toolResult.action ? { action: normalizeToolAction(toolResult.action) } : {}),
-    ...(toolResult.inputDigest ? { inputDigest: toolResult.inputDigest } : {}),
-    ...(toolResult.outputDigest ? { outputDigest: toolResult.outputDigest } : {}),
+    ...(toolResult.inputDigest !== undefined ? { inputDigest: toolResult.inputDigest } : {}),
+    ...(toolResult.outputDigest !== undefined ? { outputDigest: toolResult.outputDigest } : {}),
   };
 }
 
@@ -71,7 +71,7 @@ function normalizeToolError(error: NonNullable<ToolResultInput['error']>): ToolE
 function normalizeToolAction(action: NonNullable<ToolResultInput['action']>): ToolActionShape {
   return {
     type: action.type,
-    ...(action.message ? { message: action.message } : {}),
+    ...(action.message !== undefined ? { message: action.message } : {}),
     ...(action.schema !== undefined ? { schema: normalizeJSONValue(action.schema) } : {}),
   };
 }

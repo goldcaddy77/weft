@@ -1,4 +1,5 @@
 import type { ToolIdentityResult } from '../declaration.ts';
+import { computeSemanticHash } from '../tool-effect-log.ts';
 import type { AgentTool, ToolDescriptor } from './types.ts';
 
 /**
@@ -45,6 +46,12 @@ interface LegacyAgentTool {
   identity?: (input: unknown) => ToolIdentityResult;
 }
 
+type StaticToolIdentity = Readonly<{
+  namespace: string;
+  name: string;
+  version?: string | undefined;
+}>;
+
 function disposeNoop(): void {
   return;
 }
@@ -86,6 +93,8 @@ async function normalizeTool(tool: unknown): Promise<RegistryToolEntry> {
     }
     if (typeof tool.identity === 'function') {
       entry.identity = tool.identity;
+    } else if (tool.identity !== undefined) {
+      entry.identity = staticToolIdentity(tool.identity);
     }
     return entry;
   }
@@ -145,4 +154,11 @@ function isPromiseLikeFunction(
     value !== null &&
     typeof (value as Promise<unknown>).then === 'function'
   );
+}
+
+function staticToolIdentity(identity: StaticToolIdentity): (input: unknown) => ToolIdentityResult {
+  return (input) => ({
+    semanticHash: computeSemanticHash({ identity, arguments: input }),
+    intentCriticalFields: ['identity', 'arguments'],
+  });
 }

@@ -880,9 +880,9 @@ interface AgentOptions {
 ### `AgentResult`
 
 ```ts partial
-interface AgentResult {
+interface AgentResult<TConversation extends ConversationHistory = Message[]> {
   content: string;
-  conversation: ConversationHistory;
+  conversation: TConversation;
   totalTokens: TokenUsage;
   turnCount: number;
   reasoningTraces: string[];
@@ -913,7 +913,9 @@ interface AgentTool {
   input: unknown;
   execute: (input: unknown) => Promise<unknown>;
   verify?: (result: unknown) => boolean | Promise<boolean>;
-  identity?: (input: unknown) => ToolIdentityResult;
+  identity?:
+    | ((input: unknown) => ToolIdentityResult)
+    | { namespace: string; name: string; version?: string };
 }
 ```
 
@@ -941,7 +943,9 @@ interface AgentToolDefinition {
   execute: (input: unknown) => Promise<unknown>;
   verify?: (result: unknown) => boolean | Promise<boolean>;
   version?: string;
-  identity?: (input: unknown) => ToolIdentityResult;
+  identity?:
+    | ((input: unknown) => ToolIdentityResult)
+    | { namespace: string; name: string; version?: string };
 }
 ```
 

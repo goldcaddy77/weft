@@ -1,8 +1,8 @@
 # Agent Bureau Integration
 
-Agent Bureau owns the agent framework. Weft owns durable execution.
+[Agent Bureau](https://github.com/stevekinney/agent-bureau) owns the agent framework. Weft owns durable execution.
 
-That boundary is intentional: Agent Bureau can compose richer tool policy, conversation management, and framework behavior on top of Weft without making Weft import `armorer`, `conversationalist`, or `interoperability` at runtime.
+That boundary is intentional: Agent Bureau can compose richer tool policy, conversation management, and framework behavior on top of Weft without making Weft import [`armorer`](https://github.com/stevekinney/agent-bureau/tree/main/packages/armorer), [`conversationalist`](https://github.com/stevekinney/agent-bureau/tree/main/packages/conversationalist), or [`interoperability`](https://github.com/stevekinney/agent-bureau/tree/main/packages/interoperability) at runtime.
 
 ## Runtime dependency direction
 
@@ -10,13 +10,15 @@ Weft runtime source must not import Agent Bureau packages. Compatibility is stru
 
 - Weft exports `JSONValue`, `ToolCall`, `ToolResult`, `ToolDescriptor`, `ToolDefinition`, and `ConversationHistory` shapes that match the local Agent Bureau checkout.
 - Agent Bureau can satisfy those contracts by shape.
-- Development-only type fixtures verify compatibility against `/Users/stevekinney/Developer/agent-bureau`.
+- Development-only type fixtures verify compatibility against a local Agent Bureau checkout.
 
 The compatibility gate is:
 
 ```bash
-WEFT_AGENT_BUREAU_PATH=/Users/stevekinney/Developer/agent-bureau bun run verify:agent-bureau
+WEFT_AGENT_BUREAU_PATH=/path/to/agent-bureau bun run verify:agent-bureau
 ```
+
+If `WEFT_AGENT_BUREAU_PATH` is omitted, the verifier looks for a sibling `../agent-bureau` checkout.
 
 ## Tool calls
 
@@ -104,7 +106,15 @@ That shape is compatible with Armorer executable tool configurations by structur
 
 Weft's built-in agent loop persists provider transcripts as `Message[]`. That persisted state stays narrow because it is the durable replay surface.
 
-`AgentResult.conversation` is wider:
+The built-in `AgentResult` keeps that transcript type by default:
+
+```ts partial
+interface AgentResult<TConversation extends ConversationHistory = Message[]> {
+  conversation: TConversation;
+}
+```
+
+Wrappers can widen the generic when returning an Agent Bureau history:
 
 ```ts partial
 type ConversationHistory = Message[] | AgentBureauConversationHistory;

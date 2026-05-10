@@ -771,7 +771,9 @@ export class AgentLoopSuspendedError extends Error {
 }
 
 /**
- * Return value of executeAgentLoop.
+ * Return value of executeAgentLoop. The built-in Weft loop returns a
+ * `Message[]` transcript by default; wrappers can widen the conversation
+ * generic to return an Agent Bureau conversation history object.
  *
  * @example
  * ```ts
@@ -785,12 +787,12 @@ export class AgentLoopSuspendedError extends Error {
  *   'Explain recursion.',
  * );
  * console.log(result.content);
- * console.log('Turns:', result.turnCount);
+ * console.log('Messages:', result.conversation.length);
  * ```
  */
-export interface AgentResult {
+export interface AgentResult<TConversation extends ConversationHistory = Message[]> {
   content: string;
-  conversation: ConversationHistory;
+  conversation: TConversation;
   totalTokens: TokenUsage;
   turnCount: number;
   reasoningTraces: string[];

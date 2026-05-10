@@ -61,9 +61,9 @@ interface AgentOptions {
 ## Agent Result
 
 ```ts partial
-interface AgentResult {
+interface AgentResult<TConversation extends ConversationHistory = Message[]> {
   content: string;
-  conversation: ConversationHistory;
+  conversation: TConversation;
   totalTokens: TokenUsage;
   turnCount: number;
   reasoningTraces: string[];

@@ -130,7 +130,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP client. Weft's 
 
 ## 4. Agent Bureau Compatibility
 
-**Architectural commitment:** Agent Bureau consumes Weft, never the reverse. Weft cannot import from `armorer`, `conversationalist`, or `interoperability` in runtime source.
+**Architectural commitment:** [Agent Bureau](https://github.com/stevekinney/agent-bureau) consumes Weft, never the reverse. Weft cannot import from [`armorer`](https://github.com/stevekinney/agent-bureau/tree/main/packages/armorer), [`conversationalist`](https://github.com/stevekinney/agent-bureau/tree/main/packages/conversationalist), or [`interoperability`](https://github.com/stevekinney/agent-bureau/tree/main/packages/interoperability) in runtime source.
 
 - [x] **Design Weft's tool-and-conversation surface as a minimal durable-execution contract Agent Bureau can compose on top of.**
 

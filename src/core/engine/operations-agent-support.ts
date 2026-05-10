@@ -59,7 +59,7 @@ function conversationEntries(conversation: ConversationHistory): readonly unknow
 /** Expose agent conversation and per-turn token usage through the context. */
 export function exposeAgentObservability(
   context: Context | undefined,
-  agentResult: AgentResult,
+  agentResult: AgentResult<ConversationHistory>,
   _agentMaxTurns: number,
 ): void {
   if (!context) {

@@ -58,13 +58,6 @@ function makeTool(name = 'echo', output: unknown = 'tool-result'): AgentTool {
   };
 }
 
-function requireTranscript(conversation: unknown): Message[] {
-  if (!Array.isArray(conversation)) {
-    throw new Error('Expected the built-in agent loop to return a Message[] transcript.');
-  }
-  return conversation as Message[];
-}
-
 describe('executeAgentLoop', () => {
   let storage: MemoryStorage;
 
@@ -135,7 +128,7 @@ describe('executeAgentLoop', () => {
 
     expect(result.content).toBe('finished');
     expect(executedTools).toEqual(['tool_a', 'tool_b']);
-    const conversation = requireTranscript(result.conversation);
+    const conversation = result.conversation;
     expect(conversation.find((message) => message.role === 'tool')?.toolResults).toEqual([
       { callId: 'tc-1', outcome: 'success', content: 'a' },
       { callId: 'tc-2', outcome: 'success', content: 'b' },
@@ -369,7 +362,7 @@ describe('executeAgentLoop', () => {
       'look up value',
     );
 
-    const conversation = requireTranscript(result.conversation);
+    const conversation = result.conversation;
     expect(conversation.map((message) => message.role)).toEqual([
       'user',
       'assistant',
