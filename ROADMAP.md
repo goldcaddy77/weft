@@ -6,42 +6,6 @@ This file tracks remaining work only. Completed roadmap items belong in git hist
 
 ## 1. Cross-Process Type Generation
 
-- [ ] **Expose JSON Schema registries from the server.**
-
-  **Where:** new endpoint `GET /v1/registry` or a JSON-RPC method. Reuse the existing definition-schema conversion path in `src/core/types/definition-schema-to-json.ts` and the server schema extraction patterns in `src/server/openapi-schemas.ts`, `src/server/openrpc.ts`, and `src/server/asyncapi.ts`.
-
-  Return a snapshot shaped like:
-
-  ```ts
-  {
-    workflows: {
-      [name: string]: {
-        inputSchema?: Record<string, unknown>;
-        outputSchema?: Record<string, unknown>;
-        description?: string;
-        tags?: string[];
-      };
-    };
-    activities: {
-      [name: string]: {
-        inputSchema?: Record<string, unknown>;
-        outputSchema?: Record<string, unknown>;
-        queue?: string;
-        description?: string;
-      };
-    };
-  }
-  ```
-
-  Gate the endpoint behind authentication and a dedicated authorization scope because schemas can leak internal data shapes. Extend remote-worker activity registration so worker-supplied activity schemas can be unioned into the registry document. Keep the response a snapshot, not a stream.
-
-  **Acceptance criteria:**
-  - The registry endpoint returns registered workflow and activity metadata with JSON Schema objects when schemas are present.
-  - The endpoint rejects unauthenticated or unauthorized callers.
-  - Remote-worker-registered activities can contribute schema metadata without replacing local activity metadata.
-  - Snapshot tests cover deterministic ordering and missing-schema behavior.
-  - Verification passes with `bun run lint`, `bun run typecheck`, targeted registry tests, and `bun run verify:documentation`.
-
 - [ ] **Add `weft codegen` CLI.**
 
   **Where:** new `src/cli/codegen.ts` and `src/cli/codegen-emit.ts`. Add `codegen` to the CLI command union and dispatch path in `src/cli.ts` / `src/cli-main.ts`.
@@ -50,7 +14,7 @@ This file tracks remaining work only. Completed roadmap items belong in git hist
   bunx weft codegen --server https://weft.internal:7233 --token "$WEFT_TOKEN" --out src/weft.generated.d.ts
   ```
 
-  The command fetches the registry, validates it against a Zod schema, and emits a single `.d.ts` with module augmentation for `WorkflowRegistry` and `ActivityTypes`. Output must be deterministic: alphabetically sorted keys, stable formatting, byte-identical output for unchanged registry responses, and idempotent writes.
+  The command fetches the existing `GET /v1/registry` snapshot, validates `registryVersion: 1` and the workflow/activity dictionaries against a Zod schema, and emits a single `.d.ts` with module augmentation for `WorkflowRegistry` and `ActivityTypes`. Output must be deterministic: alphabetically sorted keys, stable formatting, byte-identical output for unchanged registry responses, and idempotent writes.
 
   Support authentication via `--token`, `WEFT_TOKEN`, or `~/.weft/credentials`. Include `--from <path>` for offline or vendored registry JSON. Leave non-TypeScript targets out of v1, but keep the emitter structured so future targets can be added without changing the registry contract.
 
@@ -61,7 +25,63 @@ This file tracks remaining work only. Completed roadmap items belong in git hist
   - Generated declarations typecheck in a package-root fixture.
   - Verification passes with `bun run lint`, `bun run typecheck`, `bun run typecheck:tests`, targeted CLI tests, and `bun run verify:documentation`.
 
-## 2. MCP Server Support
+## 2. Architecture Gap Closure
+
+These items are still present in `reference/architecture.md` and are not completed in the current implementation.
+
+- [ ] **Release workflow workers during agent LLM suspension.**
+
+  **Where:** `src/core/worker-execution-strategy.ts`, `src/workers/workflow-runner.ts`, `src/core/engine/operations-agent-suspension.ts`, and worker-execution tests.
+
+  Inline agent turns can already park on provider resume hints when `suspendOnLlmWait` is enabled. Worker-execution mode still falls back to in-memory waiting because `WorkerExecutionStrategy` keeps the per-workflow worker in `#workersByWorkflowId` until the workflow completes. Close that architecture caveat without adding a second suspension system: persist the same pending agent execution state, release the workflow worker while parked, and resume through the existing signal path.
+
+  **Acceptance criteria:**
+  - A worker-execution workflow that parks on an LLM resume hint releases its worker back to the pool before the provider resumes.
+  - With worker concurrency `1`, a second workflow can start and complete while the first workflow is parked on an LLM resume signal.
+  - Delivering the matching resume signal reacquires a worker, restores the pending agent loop state, and completes the original workflow exactly once.
+  - Cancellation and engine disposal clean up parked worker-mode agent state without leaking workers, signal waiters, or pending agent-execution keys.
+  - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/core/engine/operations-agent-suspension.test.ts src/core/worker-execution-strategy.test.ts`, and `bun run verify:documentation`.
+
+- [ ] **Close the activity-completion throughput gap to the architecture target.**
+
+  **Where:** `src/benchmarks/activity-completions.test.ts`, `src/benchmarks/activity-completions-runner.ts`, terminal workflow cleanup in `src/core/engine/termination.ts`, and hot-path storage writes around activity completion.
+
+  The architecture target is `>30K/sec` activity completions on a single node with SQLite. The current isolated subprocess benchmark is still below that target, with the latest architecture notes and `reference/IMPORTANT.md` reporting roughly `22.3K/sec`. The remaining suspected gap is terminal scratch cleanup on the completion hot path plus SQLite synchronization cost; prefer batching, coalescing, or deferring cleanup over weakening the target.
+
+  **Acceptance criteria:**
+  - The non-coverage architecture benchmark enforces at least `30_000` activity completions per second outside constrained Codex runners.
+  - The benchmark runs in a fresh subprocess and reports sample values, median throughput, target, coverage mode, and spec target.
+  - The implementation keeps terminal cleanup correct for workflow state, checkpoints, review keys, signal/update/review waiters, stream chunks, and search-attribute indexes.
+  - Regression tests cover any cleanup queue, batch coalescing, or storage-write changes introduced to move cleanup off the hot path.
+  - Verification passes with `bun run lint`, `bun run typecheck`, `WEFT_ACTIVITY_COMPLETION_ARCHITECTURE_BENCHMARK=1 bun test src/benchmarks/activity-completions.test.ts`, and `bun run verify:documentation`.
+
+- [ ] **Add a head-to-head Temporal workflow-start benchmark.**
+
+  **Where:** new benchmark harness under `src/benchmarks/`, new `benchmark:temporal-workflow-starts` package script, `reference/IMPORTANT.md`, and `documentation/architecture/performance.md`.
+
+  `reference/architecture.md` still carries the unchecked claim that Weft is `10x faster than Temporal on workflow start` when benchmarked head-to-head. Weft's own workflow-start admission benchmark now exceeds its internal target, but the Temporal comparison is not currently backed by an executable harness in this repository.
+
+  **Acceptance criteria:**
+  - A dedicated benchmark documents its prerequisites and can run Weft and Temporal workflow-start measurements from one command.
+  - The benchmark reports enough environment metadata to make the comparison reproducible: runtime versions, storage mode, database location, workflow count, concurrency, warmup count, and median throughput.
+  - The default test suite does not require a Temporal server, but the comparison command fails clearly when the required Temporal dependency is missing or not running.
+  - `reference/IMPORTANT.md` and `documentation/architecture/performance.md` record the latest measured ratio and link to the benchmark command.
+  - Verification passes with `bun run lint`, `bun run typecheck`, `bun run benchmark:temporal-workflow-starts` in an environment with Temporal available, and `bun run verify:documentation`.
+
+- [ ] **Add filterable human-review listing.**
+
+  **Where:** `src/core/engine/reviews.ts`, `src/core/engine/index.ts`, `src/server/operations/list-reviews.ts`, `src/server/handler.test.ts`, and `documentation/reference/api-server.md`.
+
+  The architecture route sketch notes that `listReviews()` does not yet accept a filter argument and that status filtering is planned. The current engine method and `GET /v1/reviews` operation list pending review entries only and accept no filters.
+
+  **Acceptance criteria:**
+  - `engine.listReviews(filter?)` accepts a typed filter with at least `status`, `workflowId`, and `reviewType` fields.
+  - `GET /v1/reviews` and the JSON-RPC `weft.reviews.list` operation accept the same filter shape through validated transport inputs.
+  - Pending and completed review entries are distinguishable by status without changing existing pending-review behavior.
+  - Tests cover empty results, pending status filtering, completed status filtering, workflow-id filtering, review-type filtering, and invalid filter diagnostics.
+  - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/server/operations/list-reviews.test.ts src/server/handler.test.ts src/core/engine.test.ts`, and `bun run verify:documentation`.
+
+## 3. MCP Server Support
 
 Per the AI Surface Shrinkage decision, Weft does not ship an MCP client. Weft's workflow surface is a separate concern: registered workflows can be exposed as durable MCP tools and resources to external MCP clients.
 
@@ -105,7 +125,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP client. Weft's 
   - Static metadata tests fail if MCP-enabled workflows are omitted.
   - Verification passes with `bun run lint`, `bun run typecheck`, targeted catalog tests, and `bun run verify:documentation`.
 
-## 3. Agent Bureau Compatibility
+## 4. Agent Bureau Compatibility
 
 **Architectural commitment:** Agent Bureau consumes Weft, never the reverse. Weft cannot import from `armorer`, `conversationalist`, or `interoperability` in runtime source.
 
