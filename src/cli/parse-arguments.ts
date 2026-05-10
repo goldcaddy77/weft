@@ -11,7 +11,14 @@ import type {
   StorageBackend,
 } from './types.ts';
 
-const KNOWN_SUBCOMMANDS = new Set(['doctor', 'version:check', 'validate', 'timeline', 'schedule']);
+const KNOWN_SUBCOMMANDS = new Set([
+  'doctor',
+  'version:check',
+  'validate',
+  'conformance',
+  'timeline',
+  'schedule',
+]);
 const FLAG_VALUE_OPTIONS = new Set([
   '-p',
   '-d',
@@ -21,6 +28,7 @@ const FLAG_VALUE_OPTIONS = new Set([
   '--database',
   '--storage',
   '--workflows',
+  '--timeout',
 ]);
 const VALID_STORAGE_BACKENDS = new Set(['sqlite', 'lmdb', 'memory']);
 const SCHEDULE_ACTIONS = new Set(['list', 'create', 'pause', 'resume', 'cancel']);
@@ -30,6 +38,7 @@ const SUBCOMMAND_PARSERS: Record<string, (args: string[]) => CliCommand> = {
   doctor: parseDoctorArguments,
   'version:check': parseVersionCheckArguments,
   validate: parseValidateArguments,
+  conformance: parseConformanceArguments,
   timeline: parseTimelineArguments,
   schedule: parseScheduleArguments,
 };
@@ -184,6 +193,40 @@ function parseValidateArguments(args: string[]): CliCommand {
     entryPaths: positionals,
     help: values.help ?? false,
     json: values.json ?? false,
+  };
+}
+
+function parseConformanceTimeout(value: string | undefined): number {
+  const timeoutText = value ?? '15000';
+  const timeoutMs = Number(timeoutText);
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error('--timeout must be a positive integer number of milliseconds');
+  }
+  return timeoutMs;
+}
+
+function parseConformanceArguments(args: string[]): CliCommand {
+  const separatorIndex = args.indexOf('--');
+  const optionArgs = separatorIndex === -1 ? args : args.slice(0, separatorIndex);
+  const workerCommand = separatorIndex === -1 ? [] : args.slice(separatorIndex + 1);
+
+  const { values } = parseArgs({
+    args: optionArgs,
+    options: {
+      timeout: { type: 'string', default: '15000' },
+      help: { type: 'boolean', short: 'h', default: false },
+      json: { type: 'boolean', short: 'j', default: false },
+    },
+    strict: true,
+    allowPositionals: false,
+  });
+
+  return {
+    command: 'conformance',
+    timeoutMs: parseConformanceTimeout(values.timeout),
+    help: values.help ?? false,
+    json: values.json ?? false,
+    workerCommand,
   };
 }
 

@@ -1,8 +1,10 @@
 #!/usr/bin/env bun
 
 import {
+  CONFORMANCE_HELP_TEXT,
   createStorage,
   DOCTOR_HELP_TEXT,
+  executeConformance,
   executeDoctor,
   executeSchedule,
   executeTimeline,
@@ -112,6 +114,16 @@ if (parsedArguments.command === 'serve') {
   }
 
   const result = await executeValidate(parsedArguments);
+  if (result.stderr) console.error(result.stderr);
+  if (result.stdout) console.log(result.stdout);
+  process.exit(result.exitCode);
+} else if (parsedArguments.command === 'conformance') {
+  if (parsedArguments.help) {
+    console.log(CONFORMANCE_HELP_TEXT);
+    process.exit(0);
+  }
+
+  const result = await executeConformance(parsedArguments);
   if (result.stderr) console.error(result.stderr);
   if (result.stdout) console.log(result.stdout);
   process.exit(result.exitCode);

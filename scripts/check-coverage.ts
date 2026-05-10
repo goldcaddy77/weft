@@ -710,28 +710,26 @@ const COVERAGE_ALLOWANCE_OVERRIDES = new Map<string, CoverageAllowance>([
     'src/core/engine/callback-creators.ts',
     {
       functions: 20,
-      lines: new Set([
-        214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 228, 229, 230, 231, 244, 338, 374, 414,
-        662, 663, 664, 665, 672, 675, 676, 677, 678, 682, 684, 685, 686, 687, 688, 734, 743, 780,
-        781, 782, 783, 784, 985,
-      ]),
+      lines: createMergedLineSet(
+        createLineSet(220, 229),
+        createLineSet(234, 237),
+        new Set([250, 356, 394]),
+        createLineSet(434, 436),
+        createLineSet(705, 708),
+        new Set([715]),
+        createLineSet(718, 721),
+        new Set([725]),
+        createLineSet(727, 731),
+        new Set([789, 800]),
+        createLineSet(837, 841),
+        new Set([1060]),
+      ),
     },
   ],
   [
     'src/core/engine/child-workflow.ts',
     {
       lines: new Set([104, 128, 139]),
-    },
-  ],
-  [
-    'src/core/engine/index.ts',
-    {
-      functions: 3,
-      lines: new Set([
-        819, 820, 821, 822, 823, 824, 825, 826, 827, 828, 829, 830, 831, 832, 833, 836, 1156, 1157,
-        1158, 1159, 1160, 1161, 1162, 1163, 1164, 1165, 1166, 1167, 1168, 1169, 1170, 1171, 1172,
-        1173, 1174, 1175, 1176, 1177, 1178, 1179,
-      ]),
     },
   ],
   [
@@ -745,13 +743,24 @@ const COVERAGE_ALLOWANCE_OVERRIDES = new Map<string, CoverageAllowance>([
     'src/core/engine/lifecycle.ts',
     {
       functions: 3,
-      lines: new Set([
-        85, 86, 87, 88, 89, 90, 91, 142, 162, 163, 164, 179, 180, 247, 248, 249, 250, 251, 297, 447,
-        448, 449, 450, 791, 792, 793, 942, 943, 944, 1171, 1196, 1207, 1208, 1209, 1210, 1211, 1212,
-        1213, 1214, 1215, 1216, 1217, 1218, 1219, 1220, 1221, 1222, 1223, 1224, 1260, 1289, 1297,
-        1298, 1299, 1330, 1334, 1387, 1388, 1389, 1390, 1391, 1392, 1393, 1394, 1395, 1396, 1397,
-        1398, 1399, 1400, 1401, 1402, 1403, 1433, 1434, 1435, 1436, 1437, 1438, 1439, 1440,
-      ]),
+      lines: createMergedLineSet(
+        createLineSet(201, 207),
+        new Set([262]),
+        createLineSet(282, 284),
+        new Set([299, 300]),
+        createLineSet(367, 371),
+        new Set([417]),
+        createLineSet(567, 570),
+        createLineSet(911, 913),
+        createLineSet(1062, 1064),
+        new Set([1291, 1316]),
+        createLineSet(1327, 1344),
+        new Set([1380, 1409]),
+        createLineSet(1417, 1419),
+        new Set([1450, 1454]),
+        createLineSet(1507, 1523),
+        createLineSet(1553, 1560),
+      ),
     },
   ],
   [
@@ -809,12 +818,6 @@ const COVERAGE_ALLOWANCE_OVERRIDES = new Map<string, CoverageAllowance>([
     'src/core/engine/queries.ts',
     {
       lines: new Set([17]),
-    },
-  ],
-  [
-    'src/core/engine/registration.ts',
-    {
-      lines: new Set([109, 110, 111, 112, 211]),
     },
   ],
   [

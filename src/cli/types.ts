@@ -26,6 +26,13 @@ export type CliCommand =
     }
   | { command: 'validate'; entryPaths: string[]; help: boolean; json: boolean }
   | {
+      command: 'conformance';
+      timeoutMs: number;
+      help: boolean;
+      json: boolean;
+      workerCommand: string[];
+    }
+  | {
       command: 'timeline';
       database: string;
       workflowId: string;

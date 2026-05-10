@@ -111,10 +111,7 @@ export interface ActivityCallOptions {
  * ```ts
  * import { activity, type ActivityDefinition } from 'weft';
  *
- * const sendEmail: ActivityDefinition<{ to: string; body: string }, void> = activity<
- *   { to: string; body: string },
- *   void
- * >({
+ * const sendEmail: ActivityDefinition<{ to: string; body: string }, void> = activity({
  *   name: 'sendEmail',
  *   timeout: '30s',
  *   retry: { maxAttempts: 3, initialBackoff: '1s', backoffMultiplier: 2, maxBackoff: '10s' },
@@ -126,9 +123,13 @@ export interface ActivityCallOptions {
  * void sendEmail;
  * ```
  */
-export interface ActivityDefinition<TInput = unknown, TOutput = unknown> {
+export interface ActivityDefinition<
+  TInput = unknown,
+  TOutput = unknown,
+  TName extends string = string,
+> {
   /** Stable activity name used for registration, dispatch, and introspection. */
-  name: string;
+  name: TName;
   /** User-facing description for catalog, code generation, and tool surfaces. */
   description?: string;
   /** User-facing grouping tags for catalog and documentation surfaces. */
@@ -197,7 +198,11 @@ export interface ActivityDefinition<TInput = unknown, TOutput = unknown> {
  * void normalized;
  * ```
  */
-export type ActivityCallable<TInput, TOutput> = ActivityDefinition<TInput, TOutput> & {
+export type ActivityCallable<TInput, TOutput, TName extends string = string> = ActivityDefinition<
+  TInput,
+  TOutput,
+  TName
+> & {
   readonly _types?: {
     readonly input: TInput;
     readonly output: TOutput;
@@ -233,34 +238,42 @@ export function activity<TOutput>(
 export function activity<TInput, TOutput>(
   execute: ActivityFunction<TInput, TOutput>,
 ): ActivityCallable<TInput, TOutput>;
-export function activity<TOutput>(
-  options: Omit<ActivityDefinition<void, TOutput>, 'execute'> & {
+export function activity<const TName extends string, TOutput>(
+  options: Omit<ActivityDefinition<void, TOutput, TName>, 'execute'> & {
     execute: () => Promise<TOutput> | TOutput;
   },
-): ActivityCallable<void, TOutput>;
+): ActivityCallable<void, TOutput, TName>;
 export function activity<
+  const TName extends string,
   TInputSchema extends DefinitionSchema<unknown, unknown>,
   TOutputSchema extends DefinitionSchema<unknown, unknown>,
 >(
   options: Omit<
-    ActivityDefinition<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>>,
+    ActivityDefinition<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>, TName>,
     'inputSchema' | 'outputSchema'
   > & {
     inputSchema: TInputSchema;
     outputSchema: TOutputSchema;
   },
-): ActivityCallable<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>>;
-export function activity<TInputSchema extends DefinitionSchema<unknown, unknown>, TOutput>(
-  options: Omit<ActivityDefinition<InferSchemaOutput<TInputSchema>, TOutput>, 'inputSchema'> & {
+): ActivityCallable<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>, TName>;
+export function activity<
+  const TName extends string,
+  TInputSchema extends DefinitionSchema<unknown, unknown>,
+  TOutput,
+>(
+  options: Omit<
+    ActivityDefinition<InferSchemaOutput<TInputSchema>, TOutput, TName>,
+    'inputSchema'
+  > & {
     inputSchema: TInputSchema;
   },
-): ActivityCallable<InferSchemaOutput<TInputSchema>, TOutput>;
-export function activity<TInput, TOutput>(
-  options: ActivityDefinition<TInput, TOutput>,
-): ActivityCallable<TInput, TOutput>;
-export function activity<TInput, TOutput>(
-  input: ActivityDefinition<TInput, TOutput> | ActivityFunction<TInput, TOutput>,
-): ActivityCallable<TInput, TOutput> {
+): ActivityCallable<InferSchemaOutput<TInputSchema>, TOutput, TName>;
+export function activity<const TName extends string, TInput, TOutput>(
+  options: ActivityDefinition<TInput, TOutput, TName>,
+): ActivityCallable<TInput, TOutput, TName>;
+export function activity<TInput, TOutput, TName extends string = string>(
+  input: ActivityDefinition<TInput, TOutput, TName> | ActivityFunction<TInput, TOutput>,
+): ActivityCallable<TInput, TOutput, TName> {
   const options =
     typeof input === 'function'
       ? ({
@@ -278,7 +291,7 @@ export function activity<TInput, TOutput>(
   // validation keeps the helper transport-neutral and avoids double validation.
 
   const fn = ((inputValue: TInput, activityContext?: ActivityContext) =>
-    options.execute(inputValue, activityContext)) as ActivityCallable<TInput, TOutput>;
+    options.execute(inputValue, activityContext)) as ActivityCallable<TInput, TOutput, TName>;
 
   // Assign non-function-builtin properties from options to the function
   const { name, execute, ...rest } = options;

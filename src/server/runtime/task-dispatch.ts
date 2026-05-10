@@ -93,7 +93,7 @@ export async function dispatchTaskImpl(
           type: 'task',
           operationId: task.operationId,
           activityName: task.activityName,
-          input: task.input,
+          input: task.input === undefined ? null : task.input,
           attempt: task.attempt ?? 1,
           ...(task.headers ? { headers: task.headers } : {}),
         }),

@@ -136,6 +136,12 @@
       "types": "./dist/client/local.d.ts",
       "import": "./dist/client/local.js",
       "default": "./dist/client/local.js"
+    },
+    "./worker-protocol": {
+      "types": "./dist/worker/protocol.d.ts",
+      "bun": "./dist/worker/protocol.js",
+      "import": "./dist/worker/protocol.js",
+      "default": "./dist/worker/protocol.js"
     }
   },
   "main": "./dist/index.js",

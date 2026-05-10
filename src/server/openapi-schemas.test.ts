@@ -3,7 +3,12 @@ import { z } from 'zod';
 
 import type { StandardJSONSchemaV1 } from '../core/types/definition-schema.ts';
 import { extractComponentsSchemas } from './openapi-schemas.ts';
-import { createOperationRegistry, type RegistrableOperation } from './operation-catalog.ts';
+import {
+  createOperationRegistry,
+  type ErasedOperation,
+  type OperationRegistry,
+  type RegistrableOperation,
+} from './operation-catalog.ts';
 import { defineOperation } from './operation-registry.ts';
 
 function makeOperation(options: {
@@ -47,6 +52,15 @@ function makeOperation(options: {
     unknownKeyPolicy: { http: 'reject', jsonRpc: 'reject' },
     invoke: async () => ({}),
   });
+}
+
+function eraseOperation(operation: RegistrableOperation): ErasedOperation {
+  const registry = createOperationRegistry([operation]);
+  const erasedOperation = registry.get(operation.name);
+  if (erasedOperation === undefined) {
+    throw new Error(`operation was not registered: ${operation.name}`);
+  }
+  return erasedOperation;
 }
 
 function isReference(value: unknown): value is { readonly $ref: string } {
@@ -192,5 +206,69 @@ describe('extractComponentsSchemas', () => {
 
     expect(helper.refFor('weft.directional.stream', 'Output')).toEqual({ type: 'string' });
     expect(helper.refFor('weft.directional.stream', 'Event')).toEqual({ type: 'integer' });
+  });
+
+  it('suffixes colliding component names when different duplicate groups share one base name', () => {
+    const alphaSchema = z.object({ alphaId: z.string() });
+    const betaSchema = z.object({ betaId: z.number() });
+    const operations = [
+      eraseOperation(
+        makeOperation({
+          name: 'weft.alpha.one',
+          inputSchema: alphaSchema,
+          outputSchema: z.object({ ok: z.boolean() }),
+        }),
+      ),
+      eraseOperation(
+        makeOperation({
+          name: 'weft.alpha.one',
+          inputSchema: z.object({ singleUse: z.boolean() }),
+          outputSchema: alphaSchema,
+        }),
+      ),
+      eraseOperation(
+        makeOperation({
+          name: 'weft.alpha.one',
+          inputSchema: betaSchema,
+          outputSchema: z.object({ other: z.boolean() }),
+        }),
+      ),
+      eraseOperation(
+        makeOperation({
+          name: 'weft.alpha.one',
+          inputSchema: z.object({ differentSingleUse: z.boolean() }),
+          outputSchema: betaSchema,
+        }),
+      ),
+    ];
+    // The helper accepts the registry interface directly, so keep this guard
+    // covered against custom registries that return colliding owner names.
+    const registry: OperationRegistry = {
+      get() {
+        return undefined;
+      },
+      list() {
+        return operations;
+      },
+    };
+
+    const helper = extractComponentsSchemas(registry);
+
+    expect(Object.keys(helper.components).toSorted()).toEqual([
+      'WeftAlphaOneInput',
+      'WeftAlphaOneInput_2',
+    ]);
+    expect(helper.components['WeftAlphaOneInput']).toEqual({
+      additionalProperties: false,
+      properties: { alphaId: { type: 'string' } },
+      required: ['alphaId'],
+      type: 'object',
+    });
+    expect(helper.components['WeftAlphaOneInput_2']).toEqual({
+      additionalProperties: false,
+      properties: { betaId: { type: 'number' } },
+      required: ['betaId'],
+      type: 'object',
+    });
   });
 });

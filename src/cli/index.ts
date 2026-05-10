@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 
+export { executeConformance } from './conformance.ts';
 export { executeDoctor } from './doctor.ts';
 export {
+  CONFORMANCE_HELP_TEXT,
   DOCTOR_HELP_TEXT,
   HELP_TEXT,
   SCHEDULE_HELP_TEXT,

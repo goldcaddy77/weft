@@ -45,14 +45,17 @@ import type {
   TrackedWaiterKeys,
   WorkflowResultWaiter,
 } from './engine-internal-types.ts';
-import type { Engine, WorkflowFeedListener, WorkflowHandle } from './index.ts';
+import type { ScheduleHandleEngine, WorkflowHandle, WorkflowHandleEngine } from './handles.ts';
+import type { WorkflowFeedListener } from './index.ts';
+
+type EngineRuntime = WorkflowHandleEngine & ScheduleHandleEngine;
 
 // ---------------------------------------------------------------------------
 // EngineInternals
 // ---------------------------------------------------------------------------
 
 export interface EngineInternals {
-  engine: Engine;
+  engine: EngineRuntime;
   storage: WeftStorage;
   registrations: Map<string, RegistrationEntry>;
   workflowTypesByHandler: WeakMap<Function, string>;
@@ -124,7 +127,7 @@ export interface EngineInternals {
   pendingTimelineEntries: Map<string, PendingTimelineEntry>;
 }
 
-const INTERNALS = new WeakMap<Engine, EngineInternals>();
+const INTERNALS = new WeakMap<object, EngineInternals>();
 
 /**
  * Set up an empty `EngineInternals` skeleton in the WeakMap. The Engine
@@ -136,7 +139,7 @@ const INTERNALS = new WeakMap<Engine, EngineInternals>();
  * the original `engine.ts` had — preserving the original ordering, which
  * is load-bearing for replay determinism.
  */
-export function initializeInternals(engine: Engine): void {
+export function initializeInternals(engine: EngineRuntime): void {
   const internals = { engine } as EngineInternals;
   INTERNALS.set(engine, internals);
 }
@@ -148,7 +151,7 @@ export function initializeInternals(engine: Engine): void {
  * fires from the EventTarget super class). All Engine methods rely on
  * internals existing.
  */
-export function getInternals(engine: Engine): EngineInternals {
+export function getInternals(engine: object): EngineInternals {
   const internals = INTERNALS.get(engine);
   if (!internals) {
     throw new Error(

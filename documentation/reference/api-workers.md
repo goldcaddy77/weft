@@ -105,7 +105,7 @@ If `signal` is already aborted when called, returns a failed result immediately 
 
 ### `RemoteWorker`
 
-WebSocket-based remote worker client. Connects to the Weft server, registers its available activities, and processes tasks dispatched by the server. Implements `Disposable`.
+WebSocket-based remote worker client. Connects to the Weft server, sends a v1 registration, waits for `registerAck`, and then processes tasks dispatched by the server. Implements `Disposable`.
 
 ```ts partial
 class RemoteWorker implements Disposable {
@@ -122,14 +122,14 @@ class RemoteWorker implements Disposable {
 }
 ```
 
-| Method / Property    | Returns         | Description                                                        |
-| -------------------- | --------------- | ------------------------------------------------------------------ |
-| `connect()`          | `Promise<void>` | Open the WebSocket, register with the server, and start processing |
-| `disconnect()`       | `Promise<void>` | Graceful shutdown -- finish in-flight tasks, then close            |
-| `inFlight`           | `number`        | Number of tasks currently being executed                           |
-| `connected`          | `boolean`       | Whether the WebSocket is open                                      |
-| `shuttingDown`       | `boolean`       | Whether a graceful shutdown is in progress                         |
-| `[Symbol.dispose]()` | `void`          | Immediate shutdown -- abort all listeners and close                |
+| Method / Property    | Returns         | Description                                                                                |
+| -------------------- | --------------- | ------------------------------------------------------------------------------------------ |
+| `connect()`          | `Promise<void>` | Open the WebSocket, register with the server, wait for `registerAck`, and start processing |
+| `disconnect()`       | `Promise<void>` | Graceful shutdown -- finish in-flight tasks, then close                                    |
+| `inFlight`           | `number`        | Number of tasks currently being executed                                                   |
+| `connected`          | `boolean`       | Whether the WebSocket is open                                                              |
+| `shuttingDown`       | `boolean`       | Whether a graceful shutdown is in progress                                                 |
+| `[Symbol.dispose]()` | `void`          | Immediate shutdown -- abort all listeners and close                                        |
 
 #### `RemoteWorkerOptions`
 
@@ -143,7 +143,7 @@ class RemoteWorker implements Disposable {
 | `disconnectTimeoutMs` | `number`                                                                                | `30_000`              | Time to wait for in-flight tasks before force-closing on disconnect                                              |
 | `interceptors`        | `ActivityInterceptor[]`                                                                 | `[]`                  | Activity interceptors applied to all tasks processed by this worker                                              |
 
-The worker sends heartbeats every 10 seconds and handles server-initiated `shutdown` messages gracefully.
+The worker sends heartbeats every 10 seconds after registration is acknowledged and handles server-initiated `shutdown` messages gracefully. `connect()` rejects if the server sends `registerError` or if the socket closes before acknowledgement.
 
 **Example:**
 

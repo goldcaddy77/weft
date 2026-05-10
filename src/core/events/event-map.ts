@@ -21,6 +21,7 @@ import type {
   WorkflowCancelledEvent,
   WorkflowCompletedEvent,
   WorkflowFailedEvent,
+  WorkflowRecoverySkippedEvent,
   WorkflowResumedEvent,
   WorkflowStartedEvent,
   WorkflowTimedOutEvent,
@@ -52,6 +53,7 @@ export type WeftEventMap = WeftAgentEventMap & {
   'workflow:cancelled': WorkflowCancelledEvent;
   'workflow:timed-out': WorkflowTimedOutEvent;
   'workflow:resumed': WorkflowResumedEvent;
+  'workflow:recovery-skipped': WorkflowRecoverySkippedEvent;
   'activity:started': ActivityStartedEvent;
   'activity:completed': ActivityCompletedEvent;
   'activity:failed': ActivityFailedEvent;

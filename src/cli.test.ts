@@ -7,6 +7,7 @@ import { join } from 'node:path';
 
 import {
   type CliCommand,
+  CONFORMANCE_HELP_TEXT,
   DOCTOR_HELP_TEXT,
   HELP_TEXT,
   SCHEDULE_HELP_TEXT,
@@ -15,6 +16,7 @@ import {
   VERSION_CHECK_HELP_TEXT,
   collectDiffLines,
   createStorage,
+  executeConformance,
   executeDoctor,
   executeSchedule,
   executeTimeline,
@@ -33,6 +35,7 @@ type ServeCommand = Extract<CliCommand, { command: 'serve' }>;
 type DoctorCommand = Extract<CliCommand, { command: 'doctor' }>;
 type VersionCheckCommand = Extract<CliCommand, { command: 'version:check' }>;
 type ValidateCommand = Extract<CliCommand, { command: 'validate' }>;
+type ConformanceCommand = Extract<CliCommand, { command: 'conformance' }>;
 type TimelineCommand = Extract<CliCommand, { command: 'timeline' }>;
 type ScheduleListCommand = Extract<CliCommand, { command: 'schedule'; action: 'list' }>;
 type ScheduleCreateCommand = Extract<CliCommand, { command: 'schedule'; action: 'create' }>;
@@ -441,6 +444,36 @@ describe('CLI argument parsing', () => {
     });
   });
 
+  describe('conformance subcommand', () => {
+    it('returns command conformance when conformance is the first positional', () => {
+      const result = parseCliArguments([
+        'conformance',
+        '--timeout',
+        '2500',
+        '--',
+        'bun',
+        'worker.ts',
+      ]) as ConformanceCommand;
+      expect(result.command).toBe('conformance');
+      expect(result.timeoutMs).toBe(2500);
+      expect(result.workerCommand).toEqual(['bun', 'worker.ts']);
+    });
+
+    it('parses conformance help and json flags', () => {
+      const result = parseCliArguments(['conformance', '--json', '--help']) as ConformanceCommand;
+      expect(result.command).toBe('conformance');
+      expect(result.json).toBe(true);
+      expect(result.help).toBe(true);
+      expect(result.timeoutMs).toBe(15_000);
+    });
+
+    it('rejects invalid conformance timeout values', () => {
+      expect(() => parseCliArguments(['conformance', '--timeout', '0'])).toThrow(
+        '--timeout must be a positive integer number of milliseconds',
+      );
+    });
+  });
+
   describe('timeline subcommand', () => {
     it('returns command timeline when timeline is the first positional', () => {
       const result = parseCliArguments(['timeline', 'wf-1']) as TimelineCommand;
@@ -673,6 +706,10 @@ describe('help text', () => {
     expect(HELP_TEXT).toContain('validate');
   });
 
+  it('HELP_TEXT contains conformance subcommand', () => {
+    expect(HELP_TEXT).toContain('conformance');
+  });
+
   it('HELP_TEXT contains serve subcommand', () => {
     expect(HELP_TEXT).toContain('serve');
   });
@@ -725,6 +762,12 @@ describe('help text', () => {
 
   it('VERSION_CHECK_HELP_TEXT contains --help flag', () => {
     expect(VERSION_CHECK_HELP_TEXT).toContain('--help');
+  });
+
+  it('CONFORMANCE_HELP_TEXT contains command, timeout, and worker environment details', () => {
+    expect(CONFORMANCE_HELP_TEXT).toContain('weft conformance');
+    expect(CONFORMANCE_HELP_TEXT).toContain('--timeout');
+    expect(CONFORMANCE_HELP_TEXT).toContain('WEFT_WORKER_PROTOCOL_VERSION');
   });
 
   it('TIMELINE_HELP_TEXT contains --step and --diff flags', () => {
@@ -922,6 +965,21 @@ describe('CLI direct execution', () => {
     expect(stdout).toContain('--json');
   });
 
+  it('runs conformance --help and exits 0', async () => {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', 'conformance', '--help'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const exitCode = await process.exited;
+    const stdout = await new Response(process.stdout).text();
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('conformance');
+    expect(stdout).toContain('--timeout');
+    expect(stdout).toContain('WEFT_WORKER_URL');
+  });
+
   it('runs timeline --help and exits 0', async () => {
     const process = Bun.spawn(['bun', './src/cli-main.ts', 'timeline', '--help'], {
       stdout: 'pipe',
@@ -1083,6 +1141,55 @@ describe('CLI direct execution', () => {
     expect(stdout).toContain('examples/hello-world.ts');
     expect(stdout).toContain('examples/customer-profile.ts');
     expect(stdout).toContain('No issues found.');
+  });
+});
+
+describe('executeConformance', () => {
+  it('returns exitCode 2 when the worker command is missing', async () => {
+    const result = await executeConformance({
+      timeoutMs: 500,
+      json: false,
+      workerCommand: [],
+    });
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('worker command is required');
+  });
+
+  it('passes a conforming worker fixture', async () => {
+    const result = await executeConformance({
+      timeoutMs: 3_000,
+      json: true,
+      workerCommand: ['bun', './src/cli/__fixtures__/conformance-worker.ts'],
+    });
+
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(result.stdout) as {
+      ok: boolean;
+      checks: Array<{ name: string; ok: boolean }>;
+    };
+    expect(report.ok).toBe(true);
+    expect(report.checks.map((check) => check.name)).toEqual([
+      'register',
+      'task completion',
+      'heartbeat',
+      'cancellation',
+      'reconnect',
+      'graceful shutdown',
+    ]);
+  });
+
+  it('fails a worker fixture that omits protocolVersion', async () => {
+    const result = await executeConformance({
+      timeoutMs: 500,
+      json: true,
+      workerCommand: ['bun', './src/cli/__fixtures__/conformance-broken-worker.ts'],
+    });
+
+    expect(result.exitCode).toBe(1);
+    const report = JSON.parse(result.stdout) as { ok: boolean; checks: Array<{ ok: boolean }> };
+    expect(report.ok).toBe(false);
+    expect(report.checks.some((check) => !check.ok)).toBe(true);
   });
 });
 
