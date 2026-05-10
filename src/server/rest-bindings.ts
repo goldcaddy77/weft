@@ -48,6 +48,7 @@ import {
   getCheckpointAtOperation,
   getCheckpointAtRestBinding,
 } from './operations/get-checkpoint-at.ts';
+import { getRegistryOperation, getRegistryRestBinding } from './operations/get-registry.ts';
 import {
   getRetentionOverviewOperation,
   getRetentionOverviewRestBinding,
@@ -214,6 +215,7 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
   updateWorkflowRestBinding,
   createScheduleRestBinding,
   updateScheduleRestBinding,
+  getRegistryRestBinding,
   getRetentionOverviewRestBinding,
   getUpdateResultRestBinding,
   listReviewsRestBinding,
@@ -290,6 +292,7 @@ export function createLiveOperationRegistry(options?: {
     updateWorkflowOperation,
     createScheduleOperation,
     updateScheduleOperation,
+    getRegistryOperation,
     getRetentionOverviewOperation,
     getUpdateResultOperation,
     listReviewsOperation,
