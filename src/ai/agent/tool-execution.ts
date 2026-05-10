@@ -1,5 +1,6 @@
 import { AgentToolCalledEvent, AgentToolReturnedEvent } from '../events/index.ts';
 import { computeSemanticHash, ToolCallReplayConflictError } from '../tool-effect-log.ts';
+import { normalizeJSONValue } from './json-value.ts';
 import type { RegistryToolEntry } from './tool-initialization.ts';
 import { createErrorToolResult, createSuccessfulToolResult } from './tool-materialization.ts';
 import type {
@@ -71,7 +72,7 @@ export async function resolveToolExecution(
 
     if (existing?.status === 'committed' && existing.toolName === toolCall.name) {
       effectLog.recordReplay();
-      return { content: existing.output, success: true };
+      return { content: normalizeJSONValue(existing.output), success: true };
     }
 
     if (existing?.status === 'in-flight' && existing.toolName === toolCall.name) {

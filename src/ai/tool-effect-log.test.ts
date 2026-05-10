@@ -18,6 +18,7 @@ import { MemoryStorage } from '../storage/memory';
 import type { AgentTool } from './agent';
 import { executeAgentLoop } from './agent';
 import type { ChatResponse, LLMProvider } from './agent/types.ts';
+import type { ToolEffectLogLike } from './tool-effect-log';
 import { computeSemanticHash, ToolCallReplayConflictError, ToolEffectLog } from './tool-effect-log';
 
 // ---------------------------------------------------------------------------
@@ -385,6 +386,60 @@ function createSimpleTool(name: string, onExecute?: () => void): AgentTool {
     },
   };
 }
+
+describe('effect log: replay materialization', () => {
+  it('normalizes committed replay output before adding it to the conversation', async () => {
+    let replayCount = 0;
+    let executeCount = 0;
+    const effectLog: ToolEffectLogLike = {
+      get duplicatesPrevented() {
+        return replayCount;
+      },
+      lookup: async () => ({
+        status: 'committed',
+        toolName: 'cached',
+        output: Number.NaN,
+        completedAt: Date.now(),
+      }),
+      recordReplay: () => {
+        replayCount++;
+      },
+      record: async () => {
+        throw new Error('record should not run during committed replay');
+      },
+      commit: async () => {
+        throw new Error('commit should not run during committed replay');
+      },
+      abort: async () => {
+        throw new Error('abort should not run during committed replay');
+      },
+    };
+
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider: createSingleToolProvider('cached', {}),
+        tools: [
+          {
+            ...createSimpleTool('cached'),
+            execute: async () => {
+              executeCount++;
+              return 'fresh result';
+            },
+          },
+        ],
+        toolEffectLog: effectLog,
+      },
+      'Go',
+    );
+
+    expect(executeCount).toBe(0);
+    expect(replayCount).toBe(1);
+    expect(result.conversation.find((message) => message.role === 'tool')?.toolResults).toEqual([
+      { callId: 'call-1', outcome: 'success', content: null },
+    ]);
+  });
+});
 
 describe('effect log: identity() edge cases', () => {
   it('falls back to default hash when identity() throws', async () => {
