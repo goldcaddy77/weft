@@ -34,6 +34,7 @@ import { tenantFromInputField } from './tenant.ts';
 import { WorkflowTimeoutError } from './timeouts.ts';
 import type {
   DefinitionSchema,
+  TimerEntry,
   WorkerOutboundMessage,
   WorkflowContext,
   WorkflowState,
@@ -47,6 +48,30 @@ import { activity, workflow as defineWorkflow } from './types.ts';
 /** Drain microtasks so fire-and-forget work completes. */
 async function flush(): Promise<void> {
   await sleepForTesting(10);
+}
+
+async function findStoredTimerEntry(
+  storage: MemoryStorage,
+  predicate: (entry: TimerEntry) => boolean,
+): Promise<TimerEntry> {
+  for await (const [, encodedDeadlineKey] of storage.scan('timer-idx:')) {
+    const deadlineKey = decode(encodedDeadlineKey);
+    if (typeof deadlineKey !== 'string') {
+      continue;
+    }
+
+    const encodedEntry = await storage.get(deadlineKey);
+    if (encodedEntry === null) {
+      continue;
+    }
+
+    const entry = decode(encodedEntry) as TimerEntry;
+    if (predicate(entry)) {
+      return entry;
+    }
+  }
+
+  throw new Error('Expected to find a matching stored timer entry');
 }
 
 function makeDefinitionSchema<TOutput>(): DefinitionSchema<unknown, TOutput> {
@@ -68,6 +93,29 @@ describe('Engine', () => {
     const engine = new Engine();
     expect(engine).toBeInstanceOf(Engine);
     expect(engine).toBeInstanceOf(EventTarget);
+    engine[Symbol.dispose]();
+  });
+
+  it('exposes the scheduler through the public getter', () => {
+    const engine = new Engine();
+
+    expect(engine.scheduler).toBeDefined();
+
+    engine[Symbol.dispose]();
+  });
+
+  it('fireTimer tolerates a sleep timer that has no registered resolver', async () => {
+    const engine = new Engine();
+
+    await expect(
+      engine.fireTimer({
+        id: 'sleep:missing-resolver',
+        workflowId: 'missing-workflow',
+        fireAt: 1_000,
+        kind: 'sleep',
+      }),
+    ).resolves.toBeUndefined();
+
     engine[Symbol.dispose]();
   });
 
@@ -1232,6 +1280,47 @@ describe('Engine', () => {
 
     const result = await handle.result();
     expect(result).toBe('awake');
+    engine[Symbol.dispose]();
+  });
+
+  it('fireTimer starts a pending delayed workflow when an external scheduler fires its timer', async () => {
+    let now = 1000;
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage: storage as WeftStorage, getNow: () => now });
+    const executions: string[] = [];
+
+    engine.register(
+      'external-delayed-start',
+      async function* (_ctx: WorkflowContext, input: { value: string }) {
+        executions.push(input.value);
+        return `ran:${input.value}`;
+      },
+    );
+
+    const handle = await engine.start(
+      'external-delayed-start',
+      { value: 'scheduled' },
+      {
+        id: 'wf-external-delayed-start',
+        startAt: 6000,
+        executionTimeout: 10_000,
+      },
+    );
+    await flush();
+
+    expect(await engine.get(handle.id)).toMatchObject({ status: 'pending' });
+
+    const timerEntry = await findStoredTimerEntry(
+      storage,
+      (entry) => entry.kind === 'delayed-start' && entry.workflowId === handle.id,
+    );
+    now = timerEntry.fireAt;
+
+    await engine.fireTimer(timerEntry);
+    await flush();
+
+    await expect(handle.result()).resolves.toBe('ran:scheduled');
+    expect(executions).toEqual(['scheduled']);
     engine[Symbol.dispose]();
   });
 
