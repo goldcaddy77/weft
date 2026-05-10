@@ -61,9 +61,9 @@ interface AgentOptions {
 ## Agent Result
 
 ```ts partial
-interface AgentResult {
+interface AgentResult<TConversation extends ConversationHistory = Message[]> {
   content: string;
-  conversation: Message[];
+  conversation: TConversation;
   totalTokens: TokenUsage;
   turnCount: number;
   reasoningTraces: string[];
@@ -119,11 +119,15 @@ The runtime value also carries internal brand and phantom type fields.
 
 ```ts partial
 interface AgentToolDefinition {
-  definition: ToolDefinition;
+  name: string;
+  description?: string;
+  input: unknown;
   execute: (input: unknown) => Promise<unknown>;
   verify?: (result: unknown) => Promise<boolean> | boolean;
   version?: string;
-  identity?: (input: unknown) => ToolIdentityResult;
+  identity?:
+    | ((input: unknown) => ToolIdentityResult)
+    | { namespace: string; name: string; version?: string };
 }
 ```
 
@@ -133,10 +137,14 @@ interface AgentToolDefinition {
 
 ```ts partial
 interface AgentTool {
-  definition: ToolDefinition;
+  name: string;
+  description?: string;
+  input: unknown;
   execute: (input: unknown) => Promise<unknown>;
   verify?: (result: unknown) => Promise<boolean> | boolean;
-  identity?: (input: unknown) => ToolIdentityResult;
+  identity?:
+    | ((input: unknown) => ToolIdentityResult)
+    | { namespace: string; name: string; version?: string };
 }
 ```
 
@@ -149,12 +157,12 @@ interface ToolIdentityResult {
 }
 ```
 
-### `computeSemanticHash(input, fields)`
+### `computeSemanticHash(input)`
 
 Computes a stable semantic hash for the input fields that determine a tool call's observable effect.
 
 ```ts partial
-function computeSemanticHash(input: unknown, fields: string[]): ToolIdentityResult;
+function computeSemanticHash(input: unknown): string;
 ```
 
 ### `ToolEffectLog`
@@ -190,7 +198,7 @@ Only `chat()` is required.
 ```ts partial
 interface ChatOptions {
   model: string;
-  tools?: ToolDefinition[];
+  tools?: ToolDescriptor[];
   maxTokens?: number;
   temperature?: number;
   signal?: AbortSignal;
@@ -205,7 +213,7 @@ interface ChatOptions {
 ```ts partial
 interface ChatResponse {
   content: string;
-  toolCalls: ToolCall[];
+  toolCalls: ToolCallInput[];
   usage: TokenUsage;
   model: string;
   stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence';
@@ -222,6 +230,40 @@ interface Message {
   toolCalls?: ToolCall[];
   toolResults?: ToolResult[];
   name?: string;
+}
+```
+
+### `ToolCall`
+
+```ts partial
+interface ToolCall {
+  id: string;
+  name: string;
+  arguments: JSONValue;
+}
+```
+
+### `ToolResult`
+
+```ts partial
+interface ToolResult {
+  callId: string;
+  outcome: 'success' | 'error' | 'action_required';
+  content: JSONValue;
+  error?: ToolErrorShape;
+  action?: ToolActionShape;
+  inputDigest?: string;
+  outputDigest?: string;
+}
+```
+
+### `ToolDescriptor`
+
+```ts partial
+interface ToolDescriptor<InputSchema = unknown> {
+  name: string;
+  description?: string;
+  input: InputSchema;
 }
 ```
 

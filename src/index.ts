@@ -210,7 +210,6 @@ export type {
 // Codec
 export { decode, encode, validateCloneable } from './core/codec';
 
-// Checkpoint
 export {
   advanceCheckpoint,
   checkpointSizeBytes,
@@ -222,7 +221,6 @@ export {
 export { Scheduler, calculateBackoff, parseDuration } from './core/scheduler';
 export type { TimerEntry } from './core/types/checkpoint';
 
-// Constraint
 export { constraint } from './core/constraint';
 export type {
   ConstraintCheckState,
@@ -230,12 +228,10 @@ export type {
   ConstraintViolation,
 } from './core/constraint';
 
-// Activity
 export { ActivityRegistry } from './core/activity-registry';
 export type { ActivityMetadata, ActivityRegistrationOptions } from './core/activity-registry';
 export { activity } from './core/types';
 
-// Context
 export { Context } from './core/context';
 export type {
   ContextOperationRequest,
@@ -257,16 +253,13 @@ export type {
   WorkflowReduceOptions,
 } from './core/types';
 
-// Multi-tenant primitives
 export { tenantFromInputField } from './core/tenant';
 export type { TenantContext, TenantResolver } from './core/tenant';
 export { QuotaExceededError } from './core/tenant-quotas';
 
-// Step Context
 export { StepContext, compileStepWorkflow, isAsyncGeneratorFunction } from './core/step-context';
 export type { StepWorkflowContext, StepWorkflowFunction } from './core/types';
 
-// Interceptors
 export {
   composeActivityInterceptors,
   composeWorkflowInterceptors,
@@ -289,7 +282,6 @@ export type {
   WorkflowStartInterception,
 } from './core/interceptor';
 
-// Search Attributes
 export {
   buildIndexOperations,
   decodeAttributeValue,
@@ -297,10 +289,8 @@ export {
   searchAttribute,
 } from './core/search-attributes';
 
-// Updates
 export { UpdateCoordinator, UpdateTimeoutError, WorkflowTerminalError } from './core/updates';
 
-// Versioning
 export {
   VersionMismatchError,
   checkVersionCompatibility,
@@ -310,7 +300,6 @@ export {
 } from './core/versioning';
 export type { FieldDiff, ShapeDescriptor, ShapeDiffOptions } from './core/versioning';
 
-// Timeouts
 export {
   WorkflowTimeoutError,
   checkExpiredDeadlines,
@@ -318,7 +307,6 @@ export {
   timeRemaining,
 } from './core/timeouts';
 
-// Atomic State
 export {
   AtomicState,
   AtomicStateChangeEvent,
@@ -338,13 +326,11 @@ export type {
   SleepFunction,
 } from './core/atomic-state';
 
-// Server
 export type { PrometheusExporter } from './observability/metrics';
 export { handleRequest } from './server/handler';
 export type { SchedulingPolicy } from './server/task-queue';
 export type { RoutingPolicy } from './worker/registry';
 
-// Server Authentication
 export { createAuthenticator, validateAuthConfig } from './server/authentication';
 export type {
   AuthConfig,
@@ -357,7 +343,6 @@ export type {
   MTLSConfig,
 } from './server/authentication';
 
-// AI / Agent
 export { AgentLoopSuspendedError, executeAgentLoop } from './ai/agent/index.ts';
 export type {
   AgentOptions,
@@ -369,33 +354,40 @@ export type {
   VerificationRecorder,
 } from './ai/agent/index.ts';
 
-// Structural provider types (Weft owns the shapes; users supply implementations)
 export type {
+  AgentBureauConversationHistory,
   ChatOptions,
   ChatResponse,
   ChatResumeContext,
   ChatResumeHint,
+  ConversationHistory,
+  ConversationHistoryMessage,
+  JSONPrimitive,
+  JSONValue,
   LLMProvider,
   Message,
   MessageRole,
+  NormalizedChatResponse,
   TokenUsage,
+  ToolActionShape,
   ToolCall,
+  ToolCallInput,
   ToolDefinition,
+  ToolDescriptor,
+  ToolErrorCategory,
+  ToolErrorShape,
   ToolResult,
+  ToolResultInput,
 } from './ai/agent/index.ts';
 
-// Coordination
 export { createChildHeaders, debate, handoff, supervise } from './ai/coordination/index.ts';
 
-// Declaration
 export { agent, isAgentDefinition } from './ai/declaration';
 export type { AgentDefinition, AgentToolDefinition, ToolIdentityResult } from './ai/declaration';
 
-// Human Review
 export { ReviewCoordinator, ReviewTimeoutError } from './ai/human-review';
 export type { ReviewCoordinatorOptions } from './ai/human-review';
 
-// Tool Effect Log
 export {
   ToolCallReplayConflictError,
   ToolEffectLog,
@@ -403,7 +395,6 @@ export {
 } from './ai/tool-effect-log';
 export type { EffectRecord } from './ai/tool-effect-log';
 
-// AI Events (durability-shaped only)
 export {
   AgentCheckpointResumedEvent,
   AgentCheckpointSizeWarningEvent,
@@ -415,10 +406,8 @@ export {
   HumanReviewRequestedEvent,
 } from './ai/events/index.ts';
 
-// Engine agent registration (re-exported from core/engine)
 export type { AgentRegistrationOptions } from './core/engine';
 
-// Observability
 export { createObservabilityInterceptors } from './observability/index';
 export type { InterceptionContext, ObservabilityOptions } from './observability/index';
 export {
@@ -441,7 +430,6 @@ export {
   parseTraceParent,
 } from './observability/propagation';
 
-// Workers
 export { executeActivity } from './workers/activity-runner';
 export type { ActivityExecutionRequest, ActivityExecutionResult } from './workers/activity-runner';
 export { ActivityWorkerDispatcher } from './workers/activity-worker-dispatcher';
@@ -455,19 +443,16 @@ export type { ActivityHandlerLookup } from './workers/activity-worker-entry';
 export { WorkerPool } from './workers/pool';
 export type { WorkerPoolOptions } from './workers/pool';
 
-// Remote Worker
 export { HeartbeatManager } from './worker/heartbeat';
 export { RemoteWorker } from './worker/index';
 export { LongPollWorker } from './worker/long-poll';
 export { WorkerRegistry } from './worker/registry';
 
-// Client
 export { HttpClient, HttpClientError } from './client/index';
 export type { HttpClientOptions } from './client/index';
 export type { ClientHandle, UpdateResult, WeftClient } from './client/interface';
 export { LocalClient } from './client/local';
 
-// Diagnostics
 export { collectDiagnostics } from './diagnostics/doctor';
 export {
   formatBytes,

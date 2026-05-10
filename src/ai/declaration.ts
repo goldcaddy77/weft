@@ -63,25 +63,23 @@ export interface ToolIdentityResult {
 }
 
 /**
- * A tool declaration for use inside an {@link AgentDefinition}. Extends the
- * base {@link ToolDefinition} schema with an async `execute` function, an
- * optional post-execution `verify` callback, semantic versioning, and an
- * optional `identity` function for effect-log deduplication across checkpoint
- * restores.
+ * A flat tool declaration for use inside an {@link AgentDefinition}. It
+ * includes the provider-facing descriptor (`name`, optional `description`,
+ * and `input`) plus an async `execute` function, optional post-execution
+ * `verify` callback, semantic versioning, and optional `identity` function
+ * for effect-log deduplication across checkpoint restores.
  *
  * @example
  * ```ts
  * import { computeSemanticHash, type AgentToolDefinition } from 'weft';
  *
  * const sendEmail: AgentToolDefinition = {
- *   definition: {
- *     name: 'send_email',
- *     description: 'Send a transactional email.',
- *     inputSchema: {
- *       type: 'object',
- *       required: ['to', 'subject'],
- *       properties: { to: { type: 'string' }, subject: { type: 'string' } },
- *     },
+ *   name: 'send_email',
+ *   description: 'Send a transactional email.',
+ *   input: {
+ *     type: 'object',
+ *     required: ['to', 'subject'],
+ *     properties: { to: { type: 'string' }, subject: { type: 'string' } },
  *   },
  *   execute: async (input) => {
  *     const { to, subject } = input as { to: string; subject: string };
@@ -97,27 +95,7 @@ export interface ToolIdentityResult {
  * };
  * ```
  */
-export interface AgentToolDefinition {
-  definition: ToolDefinition;
-  execute: (input: unknown) => Promise<unknown>;
-  /**
-   * Optional post-execution verifier for the raw tool result.
-   *
-   * Return `true` to accept the tool output, or `false` to reject it.
-   * Throwing is treated the same as a failed verification.
-   */
-  verify?: (result: unknown) => Promise<boolean> | boolean;
-  /** Semantic version of this tool. Used for workflow resume compatibility checks. Defaults to `"0.0.0"` when not provided. */
-  version?: string;
-  /**
-   * Compute a stable semantic identity for a tool invocation.
-   *
-   * When provided, the engine uses the returned `semanticHash` as the key in
-   * the tool effect log. This lets you exclude non-critical fields while still
-   * deduplicating on the fields that determine the tool's observable effect.
-   */
-  identity?: (input: unknown) => ToolIdentityResult;
-}
+export type AgentToolDefinition = ToolDefinition;
 
 /**
  * Input options accepted by {@link agent}.

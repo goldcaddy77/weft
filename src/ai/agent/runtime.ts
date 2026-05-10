@@ -7,7 +7,7 @@ import type {
   Message,
   PersistedAgentLoopState,
   ResolvedAgentOptions,
-  ToolDefinition,
+  ToolDescriptor,
 } from './types.ts';
 
 /** Fill defaults in an agent options object. */
@@ -30,10 +30,10 @@ export function resolveAgentOptions(options: AgentOptions): ResolvedAgentOptions
 /** Build lookup structures for resolved local tools. */
 export function createToolLookups(registryTools: RegistryToolEntry[]): {
   toolMap: Map<string, RegistryToolEntry>;
-  toolDefinitions: ToolDefinition[];
+  toolDefinitions: ToolDescriptor[];
 } {
   const toolMap = new Map<string, RegistryToolEntry>();
-  const toolDefinitions: ToolDefinition[] = [];
+  const toolDefinitions: ToolDescriptor[] = [];
 
   for (const tool of registryTools) {
     toolMap.set(tool.definition.name, tool);

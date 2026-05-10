@@ -20,14 +20,16 @@ describe('events fire at correct boundaries', () => {
     eventTarget.addEventListener(AgentTurnCompletedEvent.type, () => fired.push('turn:completed'));
 
     const tool: AgentTool = {
-      definition: { name: 'noop', description: 'does nothing', inputSchema: {} },
+      name: 'noop',
+      description: 'does nothing',
+      input: {},
       execute: async () => 'done',
     };
 
     const responses: ChatResponse[] = [
       {
         content: '',
-        toolCalls: [{ id: 'tc-1', name: 'noop', input: {} }],
+        toolCalls: [{ id: 'tc-1', name: 'noop', arguments: {} }],
         usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
         model: 'test',
         stopReason: 'tool_use',

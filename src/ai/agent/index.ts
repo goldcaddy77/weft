@@ -26,6 +26,7 @@ import { AgentLoopSuspendedError } from './types.ts';
 export { initializeTools } from './tool-initialization.ts';
 export { AgentLoopSuspendedError } from './types.ts';
 export type {
+  AgentBureauConversationHistory,
   AgentOptions,
   AgentResult,
   AgentRuntime,
@@ -34,17 +35,28 @@ export type {
   ChatResponse,
   ChatResumeContext,
   ChatResumeHint,
+  ConversationHistory,
+  ConversationHistoryMessage,
+  JSONPrimitive,
+  JSONValue,
   LLMProvider,
   Message,
   MessageRole,
+  NormalizedChatResponse,
   PendingProviderResumeState,
   PersistedAgentLoopState,
   ResolvedAgentOptions,
   TokenUsage,
+  ToolActionShape,
   ToolCall,
+  ToolCallInput,
   ToolDefinition,
+  ToolDescriptor,
+  ToolErrorCategory,
+  ToolErrorShape,
   ToolExecutionOutcome,
   ToolResult,
+  ToolResultInput,
   TurnUsageEntry,
   VerificationRecorder,
 } from './types.ts';
@@ -91,7 +103,9 @@ async function executeAgentTurn(runtime: AgentRuntime, turnIndex: number): Promi
  * declare const provider: LLMProvider;
  *
  * const echoCurrent: AgentTool = {
- *   definition: { name: 'get_time', description: 'Returns current ISO time', inputSchema: { type: 'object' } },
+ *   name: 'get_time',
+ *   description: 'Returns current ISO time',
+ *   input: { type: 'object' },
  *   execute: async () => new Date().toISOString(),
  * };
  *

@@ -11,7 +11,7 @@ import { sleepForTesting } from '../../testing/fake-timers.ts';
 import { describe, expect, it } from 'bun:test';
 
 import type { ChatResponse, LLMProvider } from '../../ai/agent/index.ts';
-import { agent as createAgentDefinition } from '../../ai/declaration.ts';
+import { agent as createAgentDefinition, type AgentToolDefinition } from '../../ai/declaration.ts';
 import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { decode, encode } from '../codec.ts';
@@ -55,6 +55,16 @@ async function flush(): Promise<void> {
   await sleepForTesting(20);
 }
 
+function createVersionedTool(name: string, version: string, output: string): AgentToolDefinition {
+  return {
+    name,
+    description: 'A test tool',
+    input: { type: 'object' as const, properties: {} },
+    execute: async (_input: unknown) => output,
+    version,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -63,15 +73,7 @@ describe('workflow version resume checks', () => {
   it('throws VersionMismatchError with versionDiff when agent and tool versions change without a migration hook', async () => {
     const storage = new MemoryStorage();
 
-    const toolV1 = {
-      definition: {
-        name: 'my-tool',
-        description: 'A test tool',
-        inputSchema: { type: 'object' as const, properties: {} },
-      },
-      execute: async (_input: unknown) => 'tool-result',
-      version: '1.0.0',
-    };
+    const toolV1 = createVersionedTool('my-tool', '1.0.0', 'tool-result');
 
     const agentV1 = createAgentDefinition({
       name: 'versioned-agent',
@@ -93,15 +95,7 @@ describe('workflow version resume checks', () => {
     engine1[Symbol.dispose]();
 
     // Engine 2: same workflow name but bumped versions, no migration hook
-    const toolV2 = {
-      definition: {
-        name: 'my-tool',
-        description: 'A test tool',
-        inputSchema: { type: 'object' as const, properties: {} },
-      },
-      execute: async (_input: unknown) => 'tool-result-v2',
-      version: '2.0.0',
-    };
+    const toolV2 = createVersionedTool('my-tool', '2.0.0', 'tool-result-v2');
 
     const agentV2 = createAgentDefinition({
       name: 'versioned-agent',
@@ -140,15 +134,7 @@ describe('workflow version resume checks', () => {
   it('throws VersionMismatchError when only the tool version drifts', async () => {
     const storage = new MemoryStorage();
 
-    const toolV1 = {
-      definition: {
-        name: 'same-workflow-tool',
-        description: 'A test tool',
-        inputSchema: { type: 'object' as const, properties: {} },
-      },
-      execute: async (_input: unknown) => 'tool-result',
-      version: '1.0.0',
-    };
+    const toolV1 = createVersionedTool('same-workflow-tool', '1.0.0', 'tool-result');
 
     const agentV1 = createAgentDefinition({
       name: 'tool-drift-agent',
@@ -166,15 +152,7 @@ describe('workflow version resume checks', () => {
 
     engine1[Symbol.dispose]();
 
-    const toolV2 = {
-      definition: {
-        name: 'same-workflow-tool',
-        description: 'A test tool',
-        inputSchema: { type: 'object' as const, properties: {} },
-      },
-      execute: async (_input: unknown) => 'tool-result-v2',
-      version: '2.0.0',
-    };
+    const toolV2 = createVersionedTool('same-workflow-tool', '2.0.0', 'tool-result-v2');
 
     const agentV2 = createAgentDefinition({
       name: 'tool-drift-agent',
@@ -208,15 +186,7 @@ describe('workflow version resume checks', () => {
   it('captures static agent tool versions in workflow state at start', async () => {
     const storage = new MemoryStorage();
 
-    const proTool = {
-      definition: {
-        name: 'pro-tool',
-        description: 'Tool for pro tenants',
-        inputSchema: { type: 'object' as const, properties: {} },
-      },
-      execute: async (_input: unknown) => 'pro',
-      version: '2.0.0',
-    };
+    const proTool = createVersionedTool('pro-tool', '2.0.0', 'pro');
 
     const agent = createAgentDefinition({
       name: 'tenant-aware-agent',
@@ -246,15 +216,7 @@ describe('workflow version resume checks', () => {
   it('resumes a legacy agent workflow and backfills version metadata', async () => {
     const storage = new MemoryStorage();
 
-    const legacyTool = {
-      definition: {
-        name: 'legacy-tool',
-        description: 'A legacy test tool',
-        inputSchema: { type: 'object' as const, properties: {} },
-      },
-      execute: async (_input: unknown) => 'legacy-result',
-      version: '1.0.0',
-    };
+    const legacyTool = createVersionedTool('legacy-tool', '1.0.0', 'legacy-result');
 
     const agent = createAgentDefinition({
       name: 'legacy-agent',
@@ -298,15 +260,7 @@ describe('workflow version resume checks', () => {
   it('resumes successfully when a migration hook is provided', async () => {
     const storage = new MemoryStorage();
 
-    const toolV1 = {
-      definition: {
-        name: 'my-tool',
-        description: 'A test tool',
-        inputSchema: { type: 'object' as const, properties: {} },
-      },
-      execute: async (_input: unknown) => 'tool-result',
-      version: '1.0.0',
-    };
+    const toolV1 = createVersionedTool('my-tool', '1.0.0', 'tool-result');
 
     const agentV1 = createAgentDefinition({
       name: 'migration-agent',

@@ -1,7 +1,16 @@
 import { AgentToolCalledEvent, AgentToolReturnedEvent } from '../events/index.ts';
 import { computeSemanticHash, ToolCallReplayConflictError } from '../tool-effect-log.ts';
+import { normalizeJSONValue } from './json-value.ts';
 import type { RegistryToolEntry } from './tool-initialization.ts';
-import type { AgentRuntime, Message, ToolCall, ToolExecutionOutcome, ToolResult } from './types.ts';
+import { createErrorToolResult, createSuccessfulToolResult } from './tool-materialization.ts';
+import type {
+  AgentRuntime,
+  Message,
+  ToolCall,
+  ToolErrorShape,
+  ToolExecutionOutcome,
+  ToolResult,
+} from './types.ts';
 
 /**
  * Estimate the serialized size of a conversation in bytes.
@@ -26,7 +35,7 @@ export function dispatchToolCalled(
         runtime.options.agentId,
         turnIndex,
         toolCall.name,
-        toolCall.input,
+        toolCall.arguments,
         toolSource,
         toolOperationId,
       ),
@@ -48,7 +57,7 @@ export async function resolveToolExecution(
     const semanticHash = (() => {
       if (tool?.identity) {
         try {
-          const result = tool.identity(toolCall.input);
+          const result = tool.identity(toolCall.arguments);
           if (/^[0-9a-f]{16}$/.test(result.semanticHash)) {
             return result.semanticHash;
           }
@@ -56,14 +65,14 @@ export async function resolveToolExecution(
           // Fall through to the default semantic hash.
         }
       }
-      return computeSemanticHash({ name: toolCall.name, input: toolCall.input });
+      return computeSemanticHash({ name: toolCall.name, arguments: toolCall.arguments });
     })();
 
     const existing = await effectLog.lookup(semanticHash);
 
     if (existing?.status === 'committed' && existing.toolName === toolCall.name) {
       effectLog.recordReplay();
-      return { output: existing.output, success: true };
+      return { content: normalizeJSONValue(existing.output), success: true };
     }
 
     if (existing?.status === 'in-flight' && existing.toolName === toolCall.name) {
@@ -88,9 +97,9 @@ export async function resolveToolExecution(
 
     if (shouldRecord) {
       if (outcome.success) {
-        await effectLog.commit(semanticHash, toolCall.name, outcome.output);
+        await effectLog.commit(semanticHash, toolCall.name, outcome.content);
       } else {
-        await effectLog.abort(semanticHash, toolCall.name, outcome.output);
+        await effectLog.abort(semanticHash, toolCall.name, outcome.error?.message ?? 'Tool failed');
       }
     }
     return outcome;
@@ -106,15 +115,22 @@ export async function resolveToolExecutionInner(
   toolCall: ToolCall,
   tool: RegistryToolEntry | undefined,
 ): Promise<ToolExecutionOutcome> {
-  let output: string;
+  let content: unknown;
   let success = true;
+  let toolError: ToolErrorShape | undefined;
 
   if (!tool) {
-    output = JSON.stringify({ error: `Unknown tool: ${toolCall.name}` });
+    toolError = {
+      code: 'tool_not_found',
+      category: 'not_found',
+      retryable: false,
+      message: `Unknown tool: ${toolCall.name}`,
+    };
+    content = { error: toolError.message };
     success = false;
   } else {
     try {
-      const rawOutput = await tool.execute(toolCall.input);
+      const rawOutput = await tool.execute(toolCall.arguments);
       if (tool.verify) {
         const verification = (async () => {
           const verified = await tool.verify?.(rawOutput);
@@ -130,14 +146,33 @@ export async function resolveToolExecutionInner(
           await verification;
         }
       }
-      output = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
+      content = rawOutput;
     } catch (error: unknown) {
-      output = JSON.stringify({ error: error instanceof Error ? error.message : String(error) });
+      const message = error instanceof Error ? error.message : String(error);
+      toolError = {
+        code: 'tool_execution_failed',
+        category: 'internal',
+        retryable: false,
+        message,
+      };
+      content = { error: message };
       success = false;
     }
   }
 
-  return { output, success };
+  if (success) {
+    const result = createSuccessfulToolResult(toolCall.id, content);
+    return { content: result.content, success: true };
+  }
+
+  const error = toolError ?? {
+    code: 'tool_execution_failed',
+    category: 'internal',
+    retryable: false,
+    message: `Tool "${toolCall.name}" failed without an error payload.`,
+  };
+  const result = createErrorToolResult(toolCall.id, error, content);
+  return { content: result.content, success: false, error };
 }
 
 /** Dispatch the tool-returned event for a local tool invocation. */
@@ -187,9 +222,10 @@ export async function executeToolCall(
   );
 
   return {
-    toolCallId: toolCall.id,
-    output: outcome.output,
-    isError: !outcome.success,
+    callId: toolCall.id,
+    outcome: outcome.success ? 'success' : 'error',
+    content: outcome.content,
+    ...(outcome.error ? { error: outcome.error } : {}),
   };
 }
 

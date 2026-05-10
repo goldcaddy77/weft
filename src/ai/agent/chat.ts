@@ -1,4 +1,12 @@
-import type { AgentRuntime, ChatOptions, ChatResponse, ChatTurnResult, Message } from './types.ts';
+import { materializeToolCalls } from './tool-materialization.ts';
+import type {
+  AgentRuntime,
+  ChatOptions,
+  ChatResponse,
+  ChatTurnResult,
+  Message,
+  NormalizedChatResponse,
+} from './types.ts';
 
 /** Build provider chat options for a single turn. */
 export function createChatOptions(
@@ -22,7 +30,7 @@ export function isAbortError(signal: AbortSignal | undefined, error: unknown): b
 }
 
 /** Convert a provider response into an assistant message. */
-export function createAssistantMessage(response: ChatResponse): Message {
+export function createAssistantMessage(response: NormalizedChatResponse): Message {
   const assistantMessage: Message = {
     role: 'assistant',
     content: response.content,
@@ -34,7 +42,7 @@ export function createAssistantMessage(response: ChatResponse): Message {
 }
 
 /** Record token usage, content, conversation, and reasoning for a completed turn. */
-export function recordTurnResponse(runtime: AgentRuntime, response: ChatResponse): void {
+export function recordTurnResponse(runtime: AgentRuntime, response: NormalizedChatResponse): void {
   runtime.state.totalTokens.inputTokens += response.usage.inputTokens;
   runtime.state.totalTokens.outputTokens += response.usage.outputTokens;
   runtime.state.totalTokens.totalTokens += response.usage.totalTokens;
@@ -47,6 +55,13 @@ export function recordTurnResponse(runtime: AgentRuntime, response: ChatResponse
   }
 }
 
+function normalizeChatResponse(response: ChatResponse): NormalizedChatResponse {
+  return {
+    ...response,
+    toolCalls: materializeToolCalls(response.toolCalls),
+  };
+}
+
 /** Execute one provider chat call with the configured model. */
 export async function executeChatWithFallbacks(
   runtime: AgentRuntime,
@@ -56,9 +71,11 @@ export async function executeChatWithFallbacks(
   const model = runtime.options.defaultModel;
   const turnStart = Date.now();
 
-  const response = await runtime.options.provider.chat(
-    messagesToSend,
-    createChatOptions(runtime, model, turnIndex),
+  const response = normalizeChatResponse(
+    await runtime.options.provider.chat(
+      messagesToSend,
+      createChatOptions(runtime, model, turnIndex),
+    ),
   );
 
   const turnDuration = Date.now() - turnStart;
