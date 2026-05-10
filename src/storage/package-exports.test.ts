@@ -35,4 +35,13 @@ describe('storage package exports', () => {
     expect(Object.hasOwn(packageJson.exports, './storage/http')).toBe(true);
     expect(Object.hasOwn(packageJson.exports, './storage/resolve')).toBe(true);
   });
+
+  it('exposes the RemoteWorker protocol contract as a package subpath', () => {
+    expect(packageJson.exports['./worker-protocol']).toEqual({
+      types: './dist/worker/protocol.d.ts',
+      bun: './dist/worker/protocol.js',
+      import: './dist/worker/protocol.js',
+      default: './dist/worker/protocol.js',
+    });
+  });
 });

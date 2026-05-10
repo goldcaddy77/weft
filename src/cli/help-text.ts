@@ -6,6 +6,7 @@ Usage: weft [command] [options]
 Commands:
   serve           Start the Weft server (default)
   doctor          Run diagnostics on the Weft database
+  conformance     Run RemoteWorker protocol conformance checks
   schedule        Manage recurring schedules
   timeline        Inspect workflow timeline and replay history
   version:check   Check workflow version compatibility
@@ -17,6 +18,23 @@ Serve Options:
   -s, --storage <backend>     Storage backend: sqlite, lmdb, memory (default: sqlite)
       --no-ui                 Disable the dashboard UI
   -h, --help                  Show this help message
+`;
+
+export const CONFORMANCE_HELP_TEXT = `
+weft conformance - Run RemoteWorker protocol conformance checks
+
+Usage: weft conformance [options] -- <worker-command> [args...]
+
+The worker command receives:
+  WEFT_WORKER_URL
+  WEFT_WORKER_QUEUE
+  WEFT_WORKER_ACTIVITIES
+  WEFT_WORKER_PROTOCOL_VERSION
+
+Options:
+      --timeout <ms>       Per-check timeout in milliseconds (default: 15000)
+  -j, --json               Output results as JSON
+  -h, --help               Show this help message
 `;
 
 export const DOCTOR_HELP_TEXT = `

@@ -907,6 +907,34 @@ naming the alternative that was rejected.
 - **Symbol**: `runN`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
+## `worker-protocol-contract-file-length`
+
+- **File**: `src/worker/protocol.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Canonical RemoteWorker protocol module owns the public v1 constants, message unions, deterministic JSON Schema exports, and parser guards that must stay together for SDK authors importing `weft/worker-protocol`. Splitting the contract would make schema drift harder to audit.
+
+## `worker-protocol-parse-register-message-complexity`
+
+- **File**: `src/worker/protocol.ts`
+- **Rule**: `complexity`
+- **Symbol**: `parseRegisterMessage`
+- **Reason**: Registration parsing is the protocol trust boundary for version, worker identity, activity list, concurrency, and queue validation. Keeping the checks linear makes the rejection reason deterministic and mirrors the schema fields.
+
+## `worker-protocol-parse-task-message-complexity`
+
+- **File**: `src/worker/protocol.ts`
+- **Rule**: `complexity`
+- **Symbol**: `parseTaskMessage`
+- **Reason**: Task parsing validates every server-to-worker field before a worker SDK acts on it. The field checks intentionally mirror the exported task schema rather than hiding validation in smaller helpers.
+
+## `worker-protocol-parse-task-result-message-complexity`
+
+- **File**: `src/worker/protocol.ts`
+- **Rule**: `complexity`
+- **Symbol**: `parseTaskResultMessage`
+- **Reason**: `taskResult` is a discriminated union with completed, failed, and cancelled variants. Keeping the variant checks together makes malformed result handling deterministic at the server trust boundary.
+
 ## `worker-registry-find-worker-complexity`
 
 - **File**: `src/worker/registry.ts`
