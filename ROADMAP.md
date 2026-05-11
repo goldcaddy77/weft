@@ -81,7 +81,78 @@ These items are still present in `reference/architecture.md` and are not complet
   - Tests cover empty results, pending status filtering, completed status filtering, workflow-id filtering, review-type filtering, and invalid filter diagnostics.
   - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/server/operations/list-reviews.test.ts src/server/handler.test.ts src/core/engine.test.ts`, and `bun run verify:documentation`.
 
-## 3. MCP Server Support
+## 3. Production Visibility and Fleet Tooling
+
+Weft already has the production primitives operators need to build on: events, metrics, workflow timelines, search attributes, worker registries, task queues, bulk operations, schedules, retention controls, and a built-in dashboard. The remaining gap is turning those primitives into a robust operator control plane for live workflow fleets and remote workers.
+
+The shape should stay Weft-native rather than copying Temporal feature names. Useful reference points include [Temporal Visibility](https://docs.temporal.io/visibility), [Temporal Worker performance](https://docs.temporal.io/develop/worker-performance), [Temporal Worker Versioning](https://docs.temporal.io/worker-versioning), and [Temporal task queue priority and fairness](https://docs.temporal.io/develop/task-queue-priority-fairness), but the implementation should fit Weft's checkpoint model, operation catalog, dashboard, and RemoteWorker protocol.
+
+- [ ] **Add production workflow visibility queries and aggregates.**
+
+  **Where:** `src/core/bulk-workflow-filter.ts`, `src/core/engine/query.ts`, `src/server/operations/list-workflows.ts`, new workflow-visibility aggregate operations, dashboard workflow-list utilities, and `documentation/reference/api-server.md`.
+
+  Extend workflow listing beyond the current status/type/tag filters with a typed visibility filter for workflow status, type, id prefix, tags, search attributes, created and updated time ranges, execution deadlines, tenant id, and failure category. Add count and group aggregates for status, workflow type, tenant, and selected search attributes so operators can answer fleet questions without exporting raw workflow rows.
+
+  **Acceptance criteria:**
+  - `engine.list()` and the transport operation behind `GET /v1/workflows` share one typed visibility filter instead of drifting between in-process, REST, and JSON-RPC inputs.
+  - A new aggregate operation returns counts grouped by status, workflow type, tenant id, and selected search attributes with the same visibility filter semantics as workflow listing.
+  - The dashboard exposes the richer filters and aggregate summary panels without requiring dashboard-only endpoints.
+  - Invalid filter fields and unsupported aggregate dimensions fail with clear diagnostics before scanning workflow storage.
+  - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/server/operations/list-workflows.test.ts src/server/attribute-filters.test.ts src/dashboard/utilities/workflow-list-data.test.ts`, and `bun run verify:documentation`.
+
+- [ ] **Expose worker fleet and task queue health.**
+
+  **Where:** `src/worker/registry.ts`, `src/server/task-queue.ts`, new `src/server/operations/list-workers.ts` and `src/server/operations/list-task-queues.ts`, dashboard API/client files, and `documentation/reference/api-workers.md`.
+
+  Add operation-catalog-backed APIs for connected workers and queues: worker id, queue, advertised activities, concurrency, in-flight count, available capacity, connected time, heartbeat age, routing policy, queue backlog, oldest queued age, waiting pollers, and in-flight task counts. Use the same operations for REST, JSON-RPC, and the dashboard so operator views do not become a private side channel.
+
+  **Acceptance criteria:**
+  - Worker fleet listing reports each connected worker's queue, activities, capacity, in-flight count, heartbeat age, and routing metadata.
+  - Queue health listing reports per-queue backlog, oldest queued task age, waiting pollers, in-flight task count, and scheduling policy.
+  - The dashboard adds a "Workers & Queues" view backed by those public operations.
+  - Authorization requires a system-level read scope and preserves tenant isolation where tenant-scoped queue data is exposed.
+  - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/worker/registry.test.ts src/server/task-queue.test.ts src/server/operations/list-workers.test.ts src/server/operations/list-task-queues.test.ts src/dashboard/api-client.test.ts`, and `bun run verify:documentation`.
+
+- [ ] **Add task latency, retry, and stuck-work diagnostics.**
+
+  **Where:** `src/server/task-state.ts`, `src/server/runtime/task-dispatch.ts`, `src/server/runtime/task-polling.ts`, `src/server/runtime/task-reconciliation.ts`, `src/observability/metrics.ts`, new task-diagnostics operations, and dashboard diagnostics utilities.
+
+  Record and expose activity task lifecycle timings: enqueue-to-dispatch latency, dispatch-to-start latency when knowable, start-to-complete latency, heartbeat age, retry attempt count, visibility-timeout requeues, and final resolution reason. Add diagnostics for stuck queued tasks, stale heartbeats, retry storms, and workers at capacity so operators can tell whether a workflow is slow because of code, retries, queue pressure, or missing workers.
+
+  **Acceptance criteria:**
+  - Durable task records preserve enough timestamps and counters to reconstruct queue latency, execution latency, retry count, requeue count, and resolution reason after server restart.
+  - Metrics expose task backlog, queue latency, execution latency, retry/requeue counts, stale heartbeat counts, and capacity saturation without high-cardinality labels.
+  - A diagnostic operation identifies stuck queued tasks, stale in-flight tasks, retry storms, and all-workers-at-capacity conditions with bounded result sizes.
+  - Dashboard diagnostics link from a workflow/activity to the relevant queue, worker, retry, and heartbeat evidence.
+  - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/server/task-state.test.ts src/server/index.test.ts src/server/operations/get-system-metrics.test.ts src/dashboard/utilities/workflow-detail-timeline.test.ts`, and `bun run verify:documentation`.
+
+- [ ] **Add safe operator bulk actions with dry-run previews.**
+
+  **Where:** `src/core/engine/bulk-operations.ts`, `src/server/operations/bulk-*.ts`, workflow event/audit plumbing, dashboard bulk-action flows, and `documentation/reference/api-server.md`.
+
+  Upgrade bulk workflow operations into an operator-grade surface: dry-run counts, sampled affected workflow ids, scope summaries, required confirmation tokens for destructive actions, and durable audit events for cancel, signal, delete, tag mutation, retry, and recover where applicable. Keep all actions filter-driven and tenant-aware so operators can preview exactly what will be affected before committing.
+
+  **Acceptance criteria:**
+  - Bulk cancel, signal, delete, tag mutation, retry, and recover operations support a `dryRun` mode that returns counts, scope summaries, and sampled workflow ids without mutating state.
+  - Destructive bulk actions require a confirmation token derived from the dry-run scope and reject stale or mismatched confirmations.
+  - Every committed bulk action emits durable audit events containing the caller principal, filter summary, action type, affected count, sampled ids, and request id.
+  - Dashboard bulk-action flows force preview before commit and make tenant scope, filters, and affected counts visible before confirmation.
+  - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/core/bulk-operations.test.ts src/server/operations/bulk-cancel-workflows.test.ts src/server/operations/bulk-delete-workflows.test.ts src/server/operations/bulk-signal-workflows.test.ts src/server/operations/bulk-mutate-workflow-tags.test.ts`, and `bun run verify:documentation`.
+
+- [ ] **Track worker deployments, build identities, and draining health.**
+
+  **Where:** `src/worker/protocol.ts`, `src/worker/index.ts`, `src/worker/registry.ts`, `src/server/runtime/websocket-worker.ts`, task routing, new deployment drain operations, and `documentation/reference/remote-worker-protocol.md`.
+
+  Extend `RemoteWorker` registration to include optional deployment name, build id, runtime version, git SHA, started-at timestamp, and declared worker capabilities. Surface deployment versions in worker fleet APIs and dashboard views, including active, draining, and drained-style health derived from connected workers and in-flight tasks. Add graceful drain tooling so operators can stop assigning new tasks to a worker or deployment while existing tasks finish or requeue safely.
+
+  **Acceptance criteria:**
+  - RemoteWorker protocol v1 accepts optional deployment identity fields without breaking existing worker registrations.
+  - Worker registry records deployment identity, worker capabilities, start time, drain state, and per-deployment aggregate health.
+  - Routing excludes draining workers from new assignments while allowing in-flight tasks to finish or requeue according to existing visibility and shutdown semantics.
+  - Public operations can mark a worker or deployment as draining, clear drain state, and report active/draining/drained health for dashboard consumption.
+  - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/worker/protocol.test.ts src/worker/registry.test.ts src/server/runtime/websocket-worker.test.ts src/server/task-queue-scheduling.test.ts`, and `bun run verify:documentation`.
+
+## 4. MCP Server Support
 
 Per the AI Surface Shrinkage decision, Weft does not ship an MCP client. Weft's workflow surface is a separate concern: registered workflows can be exposed as durable MCP tools and resources to external MCP clients.
 
@@ -125,7 +196,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP client. Weft's 
   - Static metadata tests fail if MCP-enabled workflows are omitted.
   - Verification passes with `bun run lint`, `bun run typecheck`, targeted catalog tests, and `bun run verify:documentation`.
 
-## 4. Agent Bureau Compatibility
+## 5. Agent Bureau Compatibility
 
 **Architectural commitment:** [Agent Bureau](https://github.com/stevekinney/agent-bureau) consumes Weft, never the reverse. Weft cannot import from [`armorer`](https://github.com/stevekinney/agent-bureau/tree/main/packages/armorer), [`conversationalist`](https://github.com/stevekinney/agent-bureau/tree/main/packages/conversationalist), or [`interoperability`](https://github.com/stevekinney/agent-bureau/tree/main/packages/interoperability) in runtime source.
 
