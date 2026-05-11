@@ -7,6 +7,7 @@ import {
   REMOTE_WORKER_PROTOCOL_JSON_SCHEMA,
   REMOTE_WORKER_PROTOCOL_VERSION,
   REMOTE_WORKER_SUPPORTED_PROTOCOL_VERSIONS,
+  isRemoteWorkerJsonValue,
   parseServerToWorkerMessage,
   parseWorkerToServerMessage,
 } from './protocol.ts';
@@ -85,6 +86,71 @@ describe('RemoteWorker protocol contract', () => {
     });
   });
 
+  it('validates JSON values accepted by the wire protocol', () => {
+    expect(isRemoteWorkerJsonValue(null)).toBe(true);
+    expect(isRemoteWorkerJsonValue(['ok', 1, false, { nested: true }])).toBe(true);
+    expect(isRemoteWorkerJsonValue([Number.POSITIVE_INFINITY])).toBe(false);
+    expect(isRemoteWorkerJsonValue({ value: Symbol('bad') })).toBe(false);
+    expect(isRemoteWorkerJsonValue(undefined)).toBe(false);
+  });
+
+  it('rejects malformed registration and heartbeat messages', () => {
+    expect(
+      parseWorkerToServerMessage({
+        type: 'register',
+        protocolVersion: 1,
+        workerId: '',
+        activities: ['charge'],
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'register.workerId must be a non-empty string' },
+    });
+
+    expect(
+      parseWorkerToServerMessage({
+        type: 'register',
+        protocolVersion: 1,
+        workerId: 'worker-1',
+        activities: [''],
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'register.activities must be an array of non-empty strings' },
+    });
+
+    expect(
+      parseWorkerToServerMessage({
+        type: 'register',
+        protocolVersion: 1,
+        workerId: 'worker-1',
+        activities: ['charge'],
+        concurrency: Number.NaN,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'register.concurrency must be a finite number' },
+    });
+
+    expect(
+      parseWorkerToServerMessage({
+        type: 'register',
+        protocolVersion: 1,
+        workerId: 'worker-1',
+        activities: ['charge'],
+        queue: '',
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'register.queue must be a non-empty string' },
+    });
+
+    expect(parseWorkerToServerMessage({ type: 'heartbeat', workerId: '' })).toMatchObject({
+      ok: false,
+      error: { message: 'heartbeat.workerId must be a non-empty string' },
+    });
+  });
+
   it('rejects malformed task results and unknown worker message types', () => {
     expect(
       parseWorkerToServerMessage({
@@ -100,6 +166,87 @@ describe('RemoteWorker protocol contract', () => {
     expect(parseWorkerToServerMessage({ type: 'typo' })).toMatchObject({
       ok: false,
       error: { code: 'unknown_message_type' },
+    });
+  });
+
+  it('parses failed and cancelled task results with strict error metadata', () => {
+    expect(
+      parseWorkerToServerMessage({
+        type: 'taskResult',
+        operationId: 'op-1',
+        status: 'failed',
+        error: 'failed',
+      }),
+    ).toEqual({
+      ok: true,
+      message: { type: 'taskResult', operationId: 'op-1', status: 'failed', error: 'failed' },
+    });
+
+    expect(
+      parseWorkerToServerMessage({
+        type: 'taskResult',
+        operationId: 'op-1',
+        status: 'cancelled',
+        error: 'cancelled',
+        cancelled: true,
+      }),
+    ).toEqual({
+      ok: true,
+      message: {
+        type: 'taskResult',
+        operationId: 'op-1',
+        status: 'cancelled',
+        error: 'cancelled',
+        cancelled: true,
+      },
+    });
+
+    expect(
+      parseWorkerToServerMessage({
+        type: 'taskResult',
+        operationId: '',
+        status: 'completed',
+        value: null,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'taskResult.operationId must be a non-empty string' },
+    });
+
+    expect(
+      parseWorkerToServerMessage({
+        type: 'taskResult',
+        operationId: 'op-1',
+        status: 'failed',
+        error: null,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'failed taskResult.error must be a string' },
+    });
+
+    expect(
+      parseWorkerToServerMessage({
+        type: 'taskResult',
+        operationId: 'op-1',
+        status: 'cancelled',
+        error: 'cancelled',
+        cancelled: false,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'taskResult.cancelled must be true when present' },
+    });
+
+    expect(
+      parseWorkerToServerMessage({
+        type: 'taskResult',
+        operationId: 'op-1',
+        status: 'pending',
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'taskResult.status must be completed, failed, or cancelled' },
     });
   });
 
@@ -120,7 +267,7 @@ describe('RemoteWorker protocol contract', () => {
         type: 'task',
         operationId: 'op-1',
         activityName: 'charge',
-        input: { amount: 42 },
+        input: [{ amount: 42 }, null, ['ok']],
         headers: { traceparent: 'trace' },
       }),
     ).toMatchObject({ ok: true, message: { type: 'task' } });
@@ -148,6 +295,256 @@ describe('RemoteWorker protocol contract', () => {
         message: 'nope',
       }),
     ).toMatchObject({ ok: true, message: { type: 'protocolError' } });
+  });
+
+  it('rejects malformed worker protocol envelopes before message-specific validation', () => {
+    expect(parseWorkerToServerMessage(null)).toMatchObject({
+      ok: false,
+      error: { message: 'Worker protocol message must be a JSON object' },
+    });
+    expect(parseWorkerToServerMessage({ type: null })).toMatchObject({
+      ok: false,
+      error: { message: 'Worker protocol message.type must be a string' },
+    });
+  });
+
+  it('rejects malformed server task, cancel, acknowledgement, and error messages', () => {
+    expect(parseServerToWorkerMessage(null)).toMatchObject({
+      ok: false,
+      error: { message: 'Server protocol message must be a JSON object' },
+    });
+    expect(parseServerToWorkerMessage({ type: null })).toMatchObject({
+      ok: false,
+      error: { message: 'Server protocol message.type must be a string' },
+    });
+    expect(parseServerToWorkerMessage({ type: 'missing' })).toMatchObject({
+      ok: false,
+      error: { code: 'unknown_message_type' },
+    });
+
+    expect(parseWorkerToServerMessage(null)).toMatchObject({
+      ok: false,
+      error: { message: 'Worker protocol message must be a JSON object' },
+    });
+    expect(parseWorkerToServerMessage({ type: null })).toMatchObject({
+      ok: false,
+      error: { message: 'Worker protocol message.type must be a string' },
+    });
+
+    expect(parseServerToWorkerMessage({ type: 'task', operationId: '' })).toMatchObject({
+      ok: false,
+      error: { message: 'task.operationId must be a non-empty string' },
+    });
+    expect(
+      parseServerToWorkerMessage({
+        type: 'task',
+        operationId: 'op-1',
+        activityName: '',
+        input: null,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'task.activityName must be a non-empty string' },
+    });
+    expect(
+      parseServerToWorkerMessage({
+        type: 'task',
+        operationId: 'op-1',
+        activityName: 'charge',
+        input: Symbol('bad'),
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'task.input must be valid JSON' },
+    });
+    expect(
+      parseServerToWorkerMessage({
+        type: 'task',
+        operationId: 'op-1',
+        activityName: 'charge',
+        input: null,
+        attempt: Number.NaN,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'task.attempt must be a finite number' },
+    });
+    expect(
+      parseServerToWorkerMessage({
+        type: 'task',
+        operationId: 'op-1',
+        activityName: 'charge',
+        input: null,
+        headers: { traceparent: 123 },
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'task.headers must be a string map' },
+    });
+
+    expect(parseServerToWorkerMessage({ type: 'cancel', operationId: '' })).toMatchObject({
+      ok: false,
+      error: { message: 'cancel.operationId must be a non-empty string' },
+    });
+
+    expect(
+      parseServerToWorkerMessage({
+        type: 'registerAck',
+        protocolVersion: 2,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'registerAck.protocolVersion must be 1' },
+    });
+    expect(
+      parseServerToWorkerMessage({
+        type: 'registerAck',
+        protocolVersion: 1,
+        workerId: '',
+        queue: 'default',
+        activities: [],
+        concurrency: 1,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'registerAck.workerId must be a non-empty string' },
+    });
+    expect(
+      parseServerToWorkerMessage({
+        type: 'registerAck',
+        protocolVersion: 1,
+        workerId: 'worker-1',
+        queue: '',
+        activities: [],
+        concurrency: 1,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'registerAck.queue must be a non-empty string' },
+    });
+    expect(
+      parseServerToWorkerMessage({
+        type: 'registerAck',
+        protocolVersion: 1,
+        workerId: 'worker-1',
+        queue: 'default',
+        activities: [''],
+        concurrency: 1,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'registerAck.activities must be a string array' },
+    });
+    expect(
+      parseServerToWorkerMessage({
+        type: 'registerAck',
+        protocolVersion: 1,
+        workerId: 'worker-1',
+        queue: 'default',
+        activities: [],
+        concurrency: Number.NaN,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'registerAck.concurrency must be a finite number' },
+    });
+
+    expect(
+      parseServerToWorkerMessage({
+        type: 'registerError',
+        code: 'nope',
+        message: 'nope',
+        supportedProtocolVersions: [1],
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'registerError.code is not recognized' },
+    });
+    expect(
+      parseServerToWorkerMessage({
+        type: 'registerError',
+        code: 'invalid_registration',
+        message: null,
+        supportedProtocolVersions: [1],
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'registerError.message must be a string' },
+    });
+    expect(
+      parseServerToWorkerMessage({
+        type: 'registerError',
+        code: 'invalid_registration',
+        message: 'nope',
+        supportedProtocolVersions: [2],
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'registerError.supportedProtocolVersions is invalid' },
+    });
+    expect(
+      parseServerToWorkerMessage({
+        type: 'registerError',
+        code: 'invalid_registration',
+        message: 'nope',
+        supportedProtocolVersions: [1],
+        requestedProtocolVersion: Number.NaN,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'registerError.requestedProtocolVersion must be a finite number' },
+    });
+    expect(
+      parseServerToWorkerMessage({
+        type: 'registerError',
+        code: 'invalid_registration',
+        message: 'nope',
+        supportedProtocolVersions: [1],
+        requestedProtocolVersion: 2,
+      }),
+    ).toMatchObject({
+      ok: true,
+      message: { requestedProtocolVersion: 2 },
+    });
+
+    expect(
+      parseServerToWorkerMessage({
+        type: 'protocolError',
+        code: 'nope',
+        message: 'bad',
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'protocolError.code is not recognized' },
+    });
+    expect(
+      parseServerToWorkerMessage({
+        type: 'protocolError',
+        code: 'invalid_message',
+        message: null,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'protocolError.message must be a string' },
+    });
+  });
+
+  it('keeps the defensive server parser default reachable under a widened type set', () => {
+    const originalSetHas = Set.prototype.has;
+    // oxlint-disable-next-line no-extend-native -- Test-only branch forcing for the defensive default.
+    Set.prototype.has = function has(this: Set<unknown>, value: unknown): boolean {
+      return value === 'acceptedByPatchedSet' || originalSetHas.call(this, value);
+    } as typeof Set.prototype.has;
+
+    try {
+      expect(parseServerToWorkerMessage({ type: 'acceptedByPatchedSet' })).toMatchObject({
+        ok: false,
+        error: { code: 'unknown_message_type' },
+      });
+    } finally {
+      // oxlint-disable-next-line no-extend-native -- Restoring the patched prototype after the test.
+      Set.prototype.has = originalSetHas;
+    }
   });
 
   it('keeps the documented message catalog aligned with exported schemas', async () => {
