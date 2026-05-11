@@ -38,7 +38,6 @@ declare module '../index.ts' {
 }
 
 type RequiredWorkflowContextKeys =
-  | 'agent'
   | 'all'
   | 'archive'
   | 'expose'

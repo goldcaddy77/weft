@@ -1,12 +1,4 @@
 /* oxlint-disable max-lines -- ID:core-context-public-workflow-surface */
-import type {
-  DebateOptions,
-  DebateResult,
-  HandoffOptions,
-  HandoffResult,
-  SuperviseOptions,
-  SuperviseResult,
-} from '../../ai/coordination/index.ts';
 import type { HumanReviewOptions, HumanReviewResult } from '../review/index.ts';
 import { cloneSessionStateStore, normalizeSessionStateLocals } from '../session-state.ts';
 import type {
@@ -34,7 +26,6 @@ import type {
   WorkflowStateNamespace,
 } from '../types.ts';
 import { messageName, searchAttributeName } from '../types.ts';
-import * as aiOperations from './ai-operations.ts';
 import * as contextAttributes from './attributes.ts';
 import * as childWorkflowPipe from './child-workflow-pipe.ts';
 import * as durableOperations from './durable-operations.ts';
@@ -43,9 +34,9 @@ import type { ContextOperationRequest } from './operation-request.ts';
 import * as parallelOperations from './parallel-operations.ts';
 import * as sagaHelpers from './saga.ts';
 import * as stateSessionHelpers from './session-state.ts';
+import * as speculateOperations from './speculate-operations.ts';
 import * as stateNamespaceHelpers from './state-namespace.ts';
 import type {
-  AgentContextOptions,
   ContextOptions,
   ErasedSagaStep,
   OffloadReference,
@@ -56,7 +47,6 @@ import * as contextUpdates from './updates.ts';
 import * as contextValidation from './validation.ts';
 export type { ContextOperationRequest } from './operation-request.ts';
 export type {
-  AgentContextOptions,
   ContextOptions,
   OffloadReference,
   SagaStep,
@@ -75,7 +65,7 @@ function acceptsNoActivityInput(fn: unknown): boolean {
 /**
  * Concrete workflow execution context injected as the first argument of every
  * registered workflow generator. Implements durable operations such as `run`,
- * `sleep`, `waitForSignal`, `offload`, `stream`, `agent`, and `saga`.
+ * `sleep`, `waitForSignal`, `review`, `offload`, `stream`, and `saga`.
  *
  * @example
  * ```ts
@@ -498,9 +488,6 @@ export class Context implements WorkflowContext {
   explain(enabled: boolean = true): void {
     getInternals(this).explainMode = enabled;
   }
-  *agent(options: AgentContextOptions): Generator<ContextOperationRequest, unknown, unknown> {
-    return yield* aiOperations.agent(this, getInternals(this), options);
-  }
   *speculate<TResult>(
     execute: (
       context: Context,
@@ -508,18 +495,7 @@ export class Context implements WorkflowContext {
       | Generator<ContextOperationRequest, TResult, unknown>
       | AsyncGenerator<unknown, TResult, unknown>,
   ): Generator<ContextOperationRequest, TResult, unknown> {
-    return yield* aiOperations.speculate<TResult>(this, getInternals(this), execute);
-  }
-  *handoff(options: HandoffOptions): Generator<ContextOperationRequest, HandoffResult, unknown> {
-    return yield* aiOperations.handoff(this, getInternals(this), options);
-  }
-  *debate(options: DebateOptions): Generator<ContextOperationRequest, DebateResult, unknown> {
-    return yield* aiOperations.debate(this, getInternals(this), options);
-  }
-  *supervise(
-    options: SuperviseOptions,
-  ): Generator<ContextOperationRequest, SuperviseResult, unknown> {
-    return yield* aiOperations.supervise(this, getInternals(this), options);
+    return yield* speculateOperations.speculate<TResult>(this, getInternals(this), execute);
   }
   setAttribute<TValue extends SearchAttributeValue>(
     key: SearchAttributeHandle<TValue>,

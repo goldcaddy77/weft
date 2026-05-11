@@ -42,11 +42,10 @@ export function scheduleDelayedDispatch(
 
 export function resolveTaskPriority(
   _context: ServerContext,
-  options: ServeOptions,
+  _options: ServeOptions,
   task: TaskDispatch,
 ): number | undefined {
   if (task.priority !== undefined) return task.priority;
-  if (task.workflowId && options.engine.isAgentWorkflow(task.workflowId)) return 10;
   return undefined;
 }
 

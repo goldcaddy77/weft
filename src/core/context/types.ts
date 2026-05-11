@@ -1,4 +1,3 @@
-import type { AgentTool, LLMProvider } from '../../ai/agent/index.ts';
 import type { ActivityDefinition, SearchAttributeSchema, SearchAttributeValue } from '../types.ts';
 
 /**
@@ -131,15 +130,6 @@ export interface StoredStreamChunk<T = unknown> {
  */
 export interface StreamSink {
   heartbeat(details?: unknown): void;
-}
-
-export interface AgentContextOptions {
-  model: string;
-  prompt: string;
-  provider: LLMProvider;
-  tools?: AgentTool[];
-  maxTurns?: number;
-  systemPrompt?: string;
 }
 
 /**

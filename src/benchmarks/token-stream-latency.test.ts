@@ -1,13 +1,24 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../core/engine.ts';
-import { TokenEvent } from '../core/events.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import type { WeftServer } from '../server/index.ts';
 import { serve } from '../server/index.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { waitForRealTimersForTesting } from '../testing/fake-timers.ts';
 import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
+
+class TokenEvent extends Event {
+  static readonly type = 'agent:token';
+
+  constructor(
+    public readonly workflowId: string,
+    public readonly token: string,
+    public readonly model: string,
+  ) {
+    super(TokenEvent.type);
+  }
+}
 
 /**
  * K2g: token stream latency benchmark.

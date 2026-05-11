@@ -1,6 +1,4 @@
 /* oxlint-disable max-lines -- ID:core-engine-index-file-length */
-import type { LLMProvider } from '../../ai/agent/index.ts';
-import type { AgentDefinition } from '../../ai/declaration.ts';
 import { AlertManager } from '../../alerting/alert-manager.ts';
 import { CompressedStorage } from '../../storage/compressed-storage.ts';
 import { KEYS, type Storage as WeftStorage } from '../../storage/interface.ts';
@@ -224,28 +222,11 @@ export {
 } from './errors.ts';
 export { HANDLE_RESULT_PROMISE, ScheduleHandle, WorkflowHandle } from './handles.ts';
 export type { RecoverAllOptions } from './lifecycle.ts';
-export { withPendingChatResumeTurnIndex } from './operations-agent.ts';
 export type {
   WorkflowFeedListener,
   WorkflowFeedRecord,
   WorkflowFeedSelector,
 } from './workflow-feed.ts';
-
-/**
- * Options accepted by `Engine.register` when registering an agent definition.
- * Configures the LLM provider for the agent's runtime calls.
- *
- * @example
- * ```ts
- * import { type AgentRegistrationOptions, type LLMProvider } from 'weft';
- * declare const provider: LLMProvider;
- * const options: AgentRegistrationOptions = { provider };
- * void options;
- * ```
- */
-export interface AgentRegistrationOptions {
-  provider: LLMProvider;
-}
 
 /**
  * Admin-facing factories for storage-backed {@link AtomicState} handles.
@@ -361,24 +342,10 @@ function typedEngineView<TViewWorkflows extends object, TViewActivities extends 
   return engine as never;
 }
 
-function resolveEngineStorage(
-  options?: EngineConstructorOptions,
-  getAgentWorkflowIds?: () => ReadonlySet<string>,
-): WeftStorage {
+function resolveEngineStorage(options?: EngineConstructorOptions): WeftStorage {
   const baseStorage = options?.storage ?? new MemoryStorage();
   if (!options?.compression) return baseStorage;
-  return new CompressedStorage(baseStorage, {
-    ...options.compression,
-    ...(getAgentWorkflowIds
-      ? {
-          agentWorkflowIds: getAgentWorkflowIds,
-          agentAlgorithm: options.compression.agentAlgorithm ?? 'brotli',
-          ...(options.compression.agentThreshold !== undefined
-            ? { agentThreshold: options.compression.agentThreshold }
-            : {}),
-        }
-      : {}),
-  });
+  return new CompressedStorage(baseStorage, options.compression);
 }
 
 function resolveEngineInterceptors(options?: EngineConstructorOptions): Interceptor[] {
@@ -641,7 +608,7 @@ export class Engine<
     initializeInternals(this);
     getInternals(this).registrations = new Map();
     getInternals(this).workflowTypesByHandler = new WeakMap();
-    const storage = resolveEngineStorage(options, this.#getAgentWorkflowIds.bind(this));
+    const storage = resolveEngineStorage(options);
     const getNow = options?.getNow ?? Date.now;
     const resolvedOptions = resolveEngineOptions(storage, options, getNow);
     const strategyBundle = createExecutionStrategyBundle({
@@ -740,7 +707,6 @@ export class Engine<
     getInternals(this).retentionSweepInterval = null;
     getInternals(this).retentionSweepInFlight = null;
     getInternals(this).nextRetentionSweepAt = null;
-    getInternals(this).agentWorkflowIds = new Set<string>();
     getInternals(this).eventLogHeads = new Map();
     getInternals(this).workflowFeedListeners = new Map();
     getInternals(this).workflowVersionTuples = new Map();
@@ -776,9 +742,6 @@ export class Engine<
           this.#createTerminationCallbacks(),
         ),
     );
-  }
-  #getAgentWorkflowIds(): ReadonlySet<string> {
-    return getInternals(this).agentWorkflowIds;
   }
   #createLifecycleCallbacks(): LifecycleCallbacks {
     return createLifecycleCallbacksForEngine(this);
@@ -865,6 +828,19 @@ export class Engine<
     return typedEngineView<TWorkflows, TActivities & InferActivityEntry<TDefinition>>(this);
   }
 
+  /**
+   * Register a workflow by name, registration object, or workflow definition.
+   *
+   * @example
+   * ```ts
+   * import { Engine, type WorkflowContext } from 'weft';
+   *
+   * const engine = new Engine();
+   * engine.register('hello', async function* (_ctx: WorkflowContext, name: string) {
+   *   return `Hello, ${name}`;
+   * });
+   * ```
+   */
   register<TName extends KnownWorkflowNames<TWorkflows>>(
     name: TName,
     handler:
@@ -887,11 +863,10 @@ export class Engine<
     registration: WorkflowRegistration<TInput, TOutput>,
   ): void;
   register<TDefinition extends AnyWorkflowDefinition>(definition: TDefinition): void;
-  register(agentDef: AgentDefinition, options: AgentRegistrationOptions): void;
-  register(nameOrAgent: unknown, handlerOrRegistrationOrOptions?: unknown): void {
+  register(nameOrDefinition: unknown, handlerOrRegistrationOrOptions?: unknown): void {
     return registerWorkflow(
       getInternals(this),
-      nameOrAgent,
+      nameOrDefinition,
       handlerOrRegistrationOrOptions,
       this.#createRegistrationCallbacks(),
     );
@@ -1226,12 +1201,6 @@ export class Engine<
       this.#createTerminationCallbacks(),
     );
   }
-  isAgentWorkflow(workflowId: string): boolean {
-    return getInternals(this).agentWorkflowIds.has(workflowId);
-  }
-  get agentWorkflowIds(): ReadonlySet<string> {
-    return getInternals(this).agentWorkflowIds;
-  }
   async get(workflowId: string): Promise<WorkflowState | null> {
     const state = await loadWorkflowState(getInternals(this), workflowId);
     if (
@@ -1364,7 +1333,6 @@ export class Engine<
     internals.workflowHeaders.clear();
     internals.pendingStarts.clear();
     internals.pendingScheduleCreations.clear();
-    internals.agentWorkflowIds.clear();
     internals.eventLogHeads.clear();
     internals.pendingTimelineEntries.clear();
     internals.workflowVersionTuples.clear();

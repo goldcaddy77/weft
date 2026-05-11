@@ -130,15 +130,6 @@ const BASE_COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
     },
   ],
   [
-    'src/core/context/ai-operations.ts',
-    {
-      // These branches are the remaining AI-operation fallbacks after the
-      // context split. The visible behavior is covered through engine and agent
-      // tests, but Bun still leaves the internal helper branches unmapped.
-      lines: new Set([89, 93, 94, 95, 96, 97, 121, 125, 126, 127, 151, 155, 156, 157, 158, 159]),
-    },
-  ],
-  [
     'src/core/context/child-workflow-pipe.ts',
     {
       lines: new Set([44, 46, 47, 64, 65, 101, 114]),
@@ -272,27 +263,6 @@ const BASE_COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
     'src/core/engine/operations-activity.ts',
     {
       lines: new Set([31, 33, 34, 35, 36, 53, 54, 97, 172, 173, 174, 205, 240]),
-    },
-  ],
-  [
-    'src/core/engine/operations-agent-support.ts',
-    {
-      lines: new Set([81, 83, 84, 85, 87, 147, 149, 208, 287]),
-    },
-  ],
-  [
-    'src/core/engine/operations-agent-suspension.ts',
-    {
-      lines: new Set([
-        54, 116, 117, 158, 159, 160, 165, 166, 167, 175, 213, 217, 237, 238, 296, 352, 375, 387,
-        388, 406, 474,
-      ]),
-    },
-  ],
-  [
-    'src/core/engine/operations-agent.ts',
-    {
-      lines: new Set([333, 338, 401, 404]),
     },
   ],
   [
@@ -774,18 +744,6 @@ const COVERAGE_ALLOWANCE_OVERRIDES = new Map<string, CoverageAllowance>([
         createLineSet(1507, 1523),
         createLineSet(1553, 1560),
       ),
-    },
-  ],
-  [
-    'src/core/engine/operations-agent-support.ts',
-    {
-      lines: new Set([55]),
-    },
-  ],
-  [
-    'src/core/engine/operations-agent.ts',
-    {
-      lines: new Set([286, 291, 354, 357]),
     },
   ],
   [

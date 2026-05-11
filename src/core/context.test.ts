@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
-import type { LLMProvider } from '../ai/agent/index.ts';
 import {
   Context,
-  type AgentContextOptions,
   type ContextOperationRequest,
   type OffloadReference,
   type StreamReference,
@@ -971,76 +969,6 @@ describe('Context', () => {
     });
   });
 
-  describe('ctx.agent', () => {
-    const mockProvider: LLMProvider = {
-      name: 'mock',
-      async chat() {
-        return {
-          content: 'mock response',
-          toolCalls: [],
-          usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
-          model: 'test-model',
-          stopReason: 'end_turn' as const,
-        };
-      },
-    };
-
-    function createAgentOptions(overrides?: Partial<AgentContextOptions>): AgentContextOptions {
-      return {
-        model: 'test-model',
-        prompt: 'Hello agent',
-        provider: mockProvider,
-        ...overrides,
-      };
-    }
-
-    it('yields an agent operation request', () => {
-      const context = createContext();
-      const agentOptions = createAgentOptions();
-
-      const generator = context.agent(agentOptions);
-      const request = expectRequest(generator.next(), 'agent');
-
-      expect(request.operationId).toMatch(UUID_PATTERN);
-      expect(request.options).toBe(agentOptions);
-      expect(request.options.model).toBe('test-model');
-      expect(request.options.prompt).toBe('Hello agent');
-    });
-
-    it('on recovery returns cached result without yielding', () => {
-      const accumulatedResults = new Map<number, unknown>();
-      accumulatedResults.set(0, 'cached-agent-result');
-      const context = createContext({ accumulatedResults });
-
-      const generator = context.agent(createAgentOptions());
-      const result = generator.next();
-
-      expect(result.done).toBe(true);
-      expect(result.value).toBe('cached-agent-result');
-    });
-
-    it('returns the fed-back result', () => {
-      const context = createContext();
-
-      const generator = context.agent(createAgentOptions());
-      generator.next(); // yield
-
-      const result = generator.next('agent-response-content');
-      expect(result.done).toBe(true);
-      expect(result.value).toBe('agent-response-content');
-    });
-
-    it('increments step index', () => {
-      const context = createContext();
-
-      const generator = context.agent(createAgentOptions());
-      generator.next();
-      generator.next('result');
-
-      expect(context.stepIndex).toBe(1);
-    });
-  });
-
   describe('ctx.speculate', () => {
     it('yields a speculative operation request', () => {
       const context = createContext();
@@ -1289,78 +1217,6 @@ describe('Context', () => {
       generator.next();
 
       expect(consoleSpy).not.toHaveBeenCalled();
-    });
-
-    it('logs agent operation details when explain mode is enabled', () => {
-      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
-      const context = createContext();
-      context.explain(true);
-
-      const mockProvider: LLMProvider = {
-        name: 'mock',
-        chat: async () => ({
-          content: '',
-          toolCalls: [],
-          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-          model: 'test',
-          stopReason: 'end_turn',
-        }),
-      };
-
-      const generator = context.agent({
-        model: 'gpt-4',
-        prompt: 'test prompt',
-        provider: mockProvider,
-        tools: [
-          {
-            name: 'tool_a',
-            description: 'A',
-            input: { type: 'object' },
-            execute: async () => 'ok',
-          },
-        ],
-        maxTurns: 5,
-      });
-      generator.next();
-
-      expect(consoleSpy).toHaveBeenCalled();
-      const calls = consoleSpy.mock.calls.flat().join(' ');
-      expect(calls).toContain('ctx.agent');
-      expect(calls).toContain('gpt-4');
-      expect(calls).toContain('1 tool(s)');
-      expect(calls).toContain('maxTurns=5');
-    });
-
-    it('logs cached result for agent when explain mode is enabled', () => {
-      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
-      const context = createContext({
-        accumulatedResults: new Map([[0, 'cached-agent-result']]),
-      });
-      context.explain(true);
-
-      const mockProvider: LLMProvider = {
-        name: 'mock',
-        chat: async () => ({
-          content: '',
-          toolCalls: [],
-          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-          model: 'test',
-          stopReason: 'end_turn',
-        }),
-      };
-
-      const generator = context.agent({
-        model: 'gpt-4',
-        prompt: 'test prompt',
-        provider: mockProvider,
-      });
-      const result = generator.next();
-
-      expect(result.done).toBe(true);
-      expect(result.value).toBe('cached-agent-result');
-      expect(consoleSpy).toHaveBeenCalled();
-      const calls = consoleSpy.mock.calls.flat().join(' ');
-      expect(calls).toContain('Returning cached result');
     });
 
     it('logs offload details when explain mode is enabled', () => {

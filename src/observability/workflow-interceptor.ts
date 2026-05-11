@@ -1,6 +1,5 @@
 import type {
   ActivityInterception,
-  AgentInterception,
   ChildWorkflowInterception,
   SignalInterception,
   SignalReceivedInterception,
@@ -8,7 +7,6 @@ import type {
   WorkflowInterceptor,
   WorkflowStartInterception,
 } from '../core/interceptor';
-import { AgentEventSpanListener } from './agent-event-span-listener';
 import type { SpanLink } from './no-op-telemetry';
 import { extractTraceParent } from './propagation';
 import {
@@ -156,67 +154,6 @@ export function buildWorkflowInterceptor(state: ObservabilityState): WorkflowInt
         span.recordException(toError(error));
         span.end();
         throw error;
-      }
-    },
-
-    *agent(
-      interception: AgentInterception,
-      next: (interception: AgentInterception) => Generator<unknown, unknown, unknown>,
-    ): Generator<unknown, unknown, unknown> {
-      const span = state.tracer.startSpan(
-        'agent',
-        {
-          attributes: {
-            'weft.agent.model': interception.model,
-          },
-        },
-        parentContextForWorkflow(state, interception.workflowId),
-      );
-
-      injectSpanContext(span, interception.headers);
-
-      if (state.recordPayloads && interception.prompt) {
-        span.setAttribute(
-          'weft.agent.prompt',
-          serializePayload(interception.prompt, state.maxPayloadSize),
-        );
-      }
-
-      applyCustomAttributes(state, span, interception);
-
-      const agentContext = state.trace.setSpan(state.api.context.ROOT_CONTEXT, span);
-      const agentEventSpanListener = new AgentEventSpanListener(
-        interception.workflowId,
-        state,
-        agentContext,
-      );
-
-      if (state.eventTarget) {
-        state.eventTarget.addEventListener('agent:turn:started', agentEventSpanListener);
-        state.eventTarget.addEventListener('agent:turn:completed', agentEventSpanListener);
-        state.eventTarget.addEventListener('agent:tool:called', agentEventSpanListener);
-        state.eventTarget.addEventListener('agent:tool:returned', agentEventSpanListener);
-      }
-
-      try {
-        const result = yield* next(interception);
-        span.setStatus({ code: state.SpanStatusCode.OK });
-        span.end();
-        return result;
-      } catch (error) {
-        span.setStatus({ code: state.SpanStatusCode.ERROR, message: errorMessage(error) });
-        span.recordException(toError(error));
-        span.end();
-        throw error;
-      } finally {
-        if (state.eventTarget) {
-          state.eventTarget.removeEventListener('agent:turn:started', agentEventSpanListener);
-          state.eventTarget.removeEventListener('agent:turn:completed', agentEventSpanListener);
-          state.eventTarget.removeEventListener('agent:tool:called', agentEventSpanListener);
-          state.eventTarget.removeEventListener('agent:tool:returned', agentEventSpanListener);
-        }
-
-        agentEventSpanListener.endOrphanedSpans();
       }
     },
 

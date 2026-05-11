@@ -34,11 +34,11 @@ export type OperationId = string;
  * failure so operators can query e.g. "all planning failures in the last hour"
  * via `engine.list({ attributes: [{ key: 'failureCategory', value: 'planning' }] })`.
  *
- * - `'memory'`    — context window exceeded (LLM / agent)
+ * - `'memory'`    — execution context exceeded its memory budget
  * - `'reflection'` — never assigned by the engine today; reserved as a typed slot for future categorisation
- * - `'planning'`  — LLM produced an invalid tool call or schema violation
- * - `'action'`    — an agent tool execution threw
- * - `'system'`    — any other failure (default for non-agent errors, storage errors, etc.)
+ * - `'planning'`  — invalid planned operation or schema violation
+ * - `'action'`    — external effect execution threw
+ * - `'system'`    — any other failure (default for storage errors, runtime errors, etc.)
  *
  * @example
  * ```ts

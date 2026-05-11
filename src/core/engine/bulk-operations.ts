@@ -464,7 +464,6 @@ async function purgeWorkflow(
   await internals.storage.batch(deleteOperations);
   internals.checkpoints.delete(workflowId);
   internals.heartbeatDetails.delete(workflowId);
-  internals.agentWorkflowIds.delete(workflowId);
   internals.eventLogHeads.delete(workflowId);
   internals.workflowVersionTuples.delete(workflowId);
   internals.handleCache.delete(workflowId);

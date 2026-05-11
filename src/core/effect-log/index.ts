@@ -1,32 +1,31 @@
 import { hashString } from '../../runtime/portable.ts';
 
 /**
- * Durable tool effect log for agent tool-call deduplication.
+ * Durable effect log for replay deduplication.
  *
- * When an agent is restored from a checkpoint mid-turn, the LLM will
- * re-synthesize tool calls that may differ semantically from the ones that
- * were in flight before the crash. Without a durability fence at the
- * tool-call boundary, non-idempotent tools (payments, state mutations,
- * single-use token presentations) can execute twice.
+ * When workflow code is restored from a checkpoint, a non-idempotent external
+ * effect can be requested again while the outcome of the original request is
+ * still unknown. Without a durability fence at the effect boundary, payments,
+ * state mutations, or single-use token presentations can execute twice.
  *
- * This module solves the problem with an effect log keyed by a *semantic
- * hash* of each tool call's intent-critical fields. Before executing a
- * tool the agent loop consults the log:
+ * This module solves the problem with an effect log keyed by a *semantic hash*
+ * of each effect call's intent-critical fields. Before executing an effect,
+ * callers consult the log:
  *
- * - **committed** → replay the stored result; skip the tool entirely.
+ * - **committed** → replay the stored result; skip the effect entirely.
  * - **in-flight** → the previous run crashed mid-execution; throw
  *   {@link EffectReplayConflictError} so the caller can escalate.
- * - **absent** → record as `in-flight`, execute the tool, then
+ * - **absent** → record as `in-flight`, execute the effect, then
  *   {@link EffectLog.commit} or {@link EffectLog.abort}.
  *
  * The log is backed by the {@link Storage} interface (any KV adapter).
- * Records are scoped to `(workflowId, operationId)` so parallel `ctx.all`
- * agent branches do not collide.
+ * Records are scoped to `(workflowId, operationId)` so parallel branches do not
+ * collide.
  *
  * @see arXiv 2603.20625 ("ACRFence") for the threat model and experimental
  *   evidence that motivated this design.
  *
- * @module ai/tool-effect-log
+ * @module core/effect-log
  */
 
 import type { Storage } from '../../storage/interface.ts';
@@ -39,8 +38,7 @@ import { isJSONValue, type JSONValue } from '../json.ts';
 // ---------------------------------------------------------------------------
 
 /**
- * A tool-call effect record stored in the log. The `status` field drives the
- * deduplication logic in the agent loop.
+ * An effect record stored in the log. The `status` field drives deduplication.
  *
  * @example Inspect the record returned by EffectLog.lookup
  * ```ts
@@ -61,7 +59,7 @@ export type EffectRecord =
   | { status: 'aborted'; effectName: string; reason: string; completedAt: number };
 
 /**
- * Public contract the agent loop relies on when deduplicating tool calls.
+ * Public contract callers rely on when deduplicating effect calls.
  *
  * This narrower type keeps tests honest without forcing them to construct a
  * full {@link EffectLog} instance when they only need the runtime-facing
@@ -77,9 +75,9 @@ export type EffectLogLike = Pick<
 // ---------------------------------------------------------------------------
 
 /**
- * Thrown when the agent loop detects a lingering `in-flight` record for a
- * tool call during a checkpoint-restore cycle. This indicates the process
- * crashed between recording the in-flight intent and receiving the tool
+ * Thrown when a caller detects a lingering `in-flight` record during a
+ * checkpoint-restore cycle. This indicates the process crashed between
+ * recording the in-flight intent and receiving the effect
  * result — the outcome of the original call is unknown.
  *
  * Callers should escalate (e.g. human review) rather than silently
@@ -90,7 +88,7 @@ export type EffectLogLike = Pick<
  * import { EffectReplayConflictError } from 'weft';
  *
  * try {
- *   // ... agent loop execution
+ *   // ... effect execution
  * } catch (error) {
  *   if (error instanceof EffectReplayConflictError) {
  *     console.error(
@@ -107,9 +105,9 @@ export class EffectReplayConflictError extends Error {
 
   constructor(semanticHash: string, effectName: string) {
     super(
-      `Tool call replay conflict: "${effectName}" (semantic hash ${semanticHash}) ` +
+      `Effect replay conflict: "${effectName}" (semantic hash ${semanticHash}) ` +
         `was in-flight when the process crashed. The outcome of the original call ` +
-        `is unknown — re-executing a non-idempotent tool may cause duplicate effects. ` +
+        `is unknown — re-executing a non-idempotent effect may cause duplicate effects. ` +
         `Inspect the effect log or route to human review before retrying.`,
     );
     this.name = 'EffectReplayConflictError';
@@ -127,11 +125,9 @@ export class EffectReplayConflictError extends Error {
  * value. Keys within objects are sorted recursively so that
  * `{a:1,b:2}` and `{b:2,a:1}` produce the same hash.
  *
- * Tool authors may override this default by supplying an `identity` function
- * on their {@link AgentToolDefinition} that extracts only the intent-critical
- * fields (e.g. payment recipient + amount) before hashing, ignoring fields
- * whose variance does not affect the tool's observable effect (retry counters,
- * timestamps, nonces).
+ * Callers may override this default by hashing only the intent-critical fields
+ * before recording an effect, ignoring fields whose variance does not affect
+ * the observable effect (retry counters, timestamps, nonces).
  *
  * @example Hash only the fields that determine a payment's observable effect
  * ```ts
@@ -209,14 +205,13 @@ function isEffectRecord(value: unknown): value is EffectRecord {
 // ---------------------------------------------------------------------------
 
 /**
- * Per-agent-invocation effect log.
+ * Per-operation effect log.
  *
- * Scoped to a `(workflowId, operationId)` pair so that concurrent agent branches
- * (e.g. from `ctx.all([agent(), agent()])`) do not share hash space.
+ * Scoped to a `(workflowId, operationId)` pair so that concurrent branches do
+ * not share hash space.
  *
- * `operationId` is assigned at `ctx.agent()` call-time and is
- * stable across checkpoint-restore cycles because the engine derives it from
- * the workflow step index, not from a random source.
+ * `operationId` should be stable across checkpoint-restore cycles for any
+ * operation that wants deterministic effect replay.
  *
  * @example Create and use an EffectLog for durable deduplication
  * ```ts
@@ -224,7 +219,7 @@ function isEffectRecord(value: unknown): value is EffectRecord {
  * import { MemoryStorage } from 'weft/storage/memory';
  *
  * const storage = new MemoryStorage();
- * const log = new EffectLog(storage, 'workflow-abc', 'agent-1');
+ * const log = new EffectLog(storage, 'workflow-abc', 'operation-1');
  *
  * const hash = computeSemanticHash({ recipient: 'alice', amount: 100 });
  * await log.record(hash, 'charge');
@@ -253,9 +248,8 @@ export class EffectLog {
 
   /**
    * Increment the duplicate-prevention counter.
-   * Called by the agent loop each time a committed replay short-circuits a
-   * tool invocation. Separated from {@link lookup} so callers control when
-   * they count a replay.
+   * Called each time a committed replay short-circuits an effect invocation.
+   * Separated from {@link lookup} so callers control when they count a replay.
    */
   recordReplay(): void {
     this.#duplicatesPrevented++;
@@ -263,7 +257,7 @@ export class EffectLog {
 
   /**
    * Look up the effect record for a given semantic hash.
-   * Returns `null` when no record exists (tool has not been seen before).
+   * Returns `null` when no record exists.
    */
   async lookup(semanticHash: string): Promise<EffectRecord | null> {
     const key = KEYS.toolEffect(this.#workflowId, this.#operationId, semanticHash);
@@ -275,10 +269,10 @@ export class EffectLog {
   }
 
   /**
-   * Record a tool call as `in-flight`.
+   * Record an effect call as `in-flight`.
    *
-   * Call this **before** invoking the tool so that a crash between this
-   * write and the tool's response is detectable on restore.
+   * Call this **before** invoking the effect so that a crash between this
+   * write and the effect response is detectable on restore.
    */
   async record(semanticHash: string, effectName: string): Promise<void> {
     const record: EffectRecord = {
@@ -290,9 +284,9 @@ export class EffectLog {
   }
 
   /**
-   * Mark the call as `committed` and store the tool output.
+   * Mark the call as `committed` and store the effect output.
    *
-   * Call this after the tool has returned successfully so that a subsequent
+   * Call this after the effect has returned successfully so that a subsequent
    * restore will replay this output instead of re-executing.
    */
   async commit(semanticHash: string, effectName: string, output: JSONValue): Promise<void> {
@@ -308,10 +302,10 @@ export class EffectLog {
   /**
    * Mark the call as `aborted` with a reason string.
    *
-   * Call this when the tool fails and that failure should not be replayed
-   * from the effect log. On restore the agent loop will re-execute the tool
-   * rather than replaying the error, so only use this for failures where a
-   * future retry is safe and desired.
+   * Call this when an effect fails and that failure should not be replayed
+   * from the effect log. On restore the caller can re-execute the effect rather
+   * than replaying the error, so only use this for failures where a future retry
+   * is safe and desired.
    */
   async abort(semanticHash: string, effectName: string, reason: string): Promise<void> {
     const record: EffectRecord = {

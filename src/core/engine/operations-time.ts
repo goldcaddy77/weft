@@ -221,10 +221,6 @@ export async function startDelayedWorkflow(
     entry.workflowId,
     await callbacks.loadWorkflowStartHeaders(entry.workflowId),
   );
-  if (registration.isAgent) {
-    internals.agentWorkflowIds.add(entry.workflowId);
-  }
-
   callbacks.beginWorkflowExecution(
     entry.workflowId,
     runningState.type,

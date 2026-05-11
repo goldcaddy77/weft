@@ -125,7 +125,6 @@ describe('engine lifecycle coverage helpers', () => {
     const startWorkflow = mock(() => {});
     const dispatchEvent = mock(() => {});
     const internals = {
-      agentWorkflowIds: new Set<string>(),
       checkpoints: new Map<string, Checkpoint>(),
       inlineStrategy: null,
       registrations: new Map(),
@@ -249,7 +248,6 @@ describe('engine lifecycle coverage helpers', () => {
 
     const handle = { id: workflowId };
     const internals = {
-      agentWorkflowIds: new Set<string>(),
       checkpoints: new Map<string, Checkpoint>(),
       eventLogHeads: new Map(),
       inlineStrategy: null,

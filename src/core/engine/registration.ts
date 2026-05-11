@@ -1,4 +1,3 @@
-import type { AgentContextOptions } from '../context.ts';
 import { compileStepWorkflow, isAsyncGeneratorFunction } from '../step-context.ts';
 import type {
   StepWorkflowFunction,
@@ -7,32 +6,14 @@ import type {
   WorkflowRegistration,
 } from '../types.ts';
 import { validateDefinitionSchemaMetadata } from '../types.ts';
-import { collectToolVersions, type WorkflowVersionTuple } from '../workflow-version-tuple.ts';
 import type { EngineInternals } from './internals.ts';
 import { normalizeRetentionPolicy } from './validation.ts';
 
 type RegistrationEntry =
   EngineInternals['registrations'] extends Map<string, infer Entry> ? Entry : never;
 
-type AgentToolCollection = NonNullable<AgentContextOptions['tools']>;
-
-type AgentDefinitionLike = {
-  name: string;
-  model: string;
-  version?: string;
-  description?: string;
-  systemPrompt?: string;
-  tools?: AgentToolCollection;
-  maxTurns?: number;
-};
-
-type AgentRegistrationOptionsLike = {
-  provider: AgentContextOptions['provider'];
-};
-
 export type RegistrationCallbacks = {
   ensureRetentionSweepInterval: () => void;
-  isAgentDefinition: (value: unknown) => value is AgentDefinitionLike;
 };
 
 function copiedTags(tags: ReadonlyArray<string> | undefined): string[] | undefined {
@@ -42,72 +23,23 @@ function copiedTags(tags: ReadonlyArray<string> | undefined): string[] | undefin
 // oxlint-disable-next-line complexity -- ID:core-engine-register-complexity
 export function register(
   internals: EngineInternals,
-  nameOrAgent: unknown,
+  nameOrDefinition: unknown,
   handlerOrRegistrationOrOptions: unknown,
   callbacks: RegistrationCallbacks,
 ): void {
-  // --- AgentDefinition overload ---
-  if (callbacks.isAgentDefinition(nameOrAgent)) {
-    const agentDef = nameOrAgent;
-    const agentOptions = handlerOrRegistrationOrOptions as AgentRegistrationOptionsLike;
-    const agentVersion = agentDef.version ?? '0.0.0';
-    const workflowVersion = '1';
-    const resolveVersionTuple = (): WorkflowVersionTuple => {
-      return {
-        workflowVersion,
-        agentVersion,
-        ...(agentDef.tools &&
-          agentDef.tools.length > 0 && {
-            toolVersions: collectToolVersions(agentDef.tools),
-          }),
-      };
-    };
-
-    // Build a workflow function that delegates to ctx.agent(), ensuring the
-    // agent execution flows through the engine's operation handler for
-    // observability and durable checkpointing.
-    const handler: WorkflowFunction = async function* (ctx, input) {
-      const prompt = typeof input === 'string' ? input : JSON.stringify(input);
-      const agentOpts: AgentContextOptions = {
-        model: agentDef.model,
-        prompt,
-        provider: agentOptions.provider,
-      };
-      if (agentDef.systemPrompt) agentOpts.systemPrompt = agentDef.systemPrompt;
-      if (agentDef.tools) agentOpts.tools = agentDef.tools;
-      if (agentDef.maxTurns !== undefined) agentOpts.maxTurns = agentDef.maxTurns;
-
-      return yield* ctx.agent(agentOpts);
-    };
-
-    const agentRegistrationEntry: RegistrationEntry = {
-      handler,
-      version: workflowVersion,
-      ...(agentDef.description === undefined ? {} : { description: agentDef.description }),
-      isAgent: true,
-      provider: agentOptions.provider,
-      versionTupleForTenant: resolveVersionTuple,
-    };
-
-    internals.registrations.set(agentDef.name, agentRegistrationEntry);
-    callbacks.ensureRetentionSweepInterval();
-    internals.workflowTypesByHandler.set(handler, agentDef.name);
-    return;
-  }
-
   if (
-    typeof nameOrAgent === 'object' &&
-    nameOrAgent !== null &&
-    'name' in nameOrAgent &&
-    'handler' in nameOrAgent
+    typeof nameOrDefinition === 'object' &&
+    nameOrDefinition !== null &&
+    'name' in nameOrDefinition &&
+    'handler' in nameOrDefinition
   ) {
-    const definition = nameOrAgent as WorkflowDefinition;
+    const definition = nameOrDefinition as WorkflowDefinition;
     register(internals, definition.name, definition, callbacks);
     return;
   }
 
   // --- Existing overloads (name + handler/registration) ---
-  const name = nameOrAgent as string;
+  const name = nameOrDefinition as string;
   const handlerOrRegistration = handlerOrRegistrationOrOptions as
     | WorkflowFunction
     | StepWorkflowFunction

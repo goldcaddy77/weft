@@ -7,7 +7,6 @@ import {
   AttributesChangedEvent,
   SignalDeliveredEvent,
   SignalReceivedEvent,
-  TokenEvent,
   UpdateCompletedEvent,
   UpdateReceivedEvent,
   WorkflowCancelledEvent,
@@ -21,6 +20,8 @@ import { claimNextSequence } from '../runtime-helpers.ts';
 import type { ServerContext } from './context.ts';
 import { cancelTask } from './task-dispatch.ts';
 import { withRetry } from './websocket-worker.ts';
+
+const TOKEN_EVENT_TYPE = 'agent:token';
 
 function workflowChannelPath(workflowId: string, connectionType: 'watch' | 'stream'): string {
   return `/v1/workflows/${encodeURIComponent(workflowId)}/${connectionType}`;
@@ -162,7 +163,7 @@ export function registerWorkflowEventLifecycle(
  * @param server - The Bun server used to `server.publish()` WebSocket messages.
  * @param options.publishTokenMessage - Optional override for token-event delivery.
  *   When provided, this callback is called instead of `server.publish()` for
- *   `TokenEvent` messages, enabling per-workflow stream sockets to be used in
+ *   token messages, enabling per-workflow stream sockets to be used in
  *   place of the default pub/sub channel. Leave unset unless you manage stream
  *   sockets separately (as `serve()` does internally).
  *
@@ -303,7 +304,7 @@ export function wireEventBroadcasting(
     server.publish(watchChannel, message);
 
     // For token events, also publish to the stream channel
-    if (eventType === TokenEvent.type) {
+    if (eventType === TOKEN_EVENT_TYPE) {
       const tokenPayload = {
         workflowId:
           typeof parsed.data['workflowId'] === 'string' ? parsed.data['workflowId'] : workflowId,
@@ -344,7 +345,7 @@ export function wireEventBroadcasting(
     ActivityStartedEvent.type,
     ActivityCompletedEvent.type,
     ActivityFailedEvent.type,
-    TokenEvent.type,
+    TOKEN_EVENT_TYPE,
     SignalReceivedEvent.type,
     SignalDeliveredEvent.type,
     AttributesChangedEvent.type,

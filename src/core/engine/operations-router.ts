@@ -64,10 +64,6 @@ export type OperationRouterCallbacks = {
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'run-all' }>,
   ) => Promise<void>;
-  processAgentContextOperation: (
-    workflowId: string,
-    operation: Extract<ContextOperationRequest, { type: 'agent' }>,
-  ) => Promise<void>;
   processSpeculateOperation: (
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'speculate' }>,
@@ -79,18 +75,6 @@ export type OperationRouterCallbacks = {
   processWaitReviewOperation: (
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'wait-review' }>,
-  ) => Promise<void>;
-  processHandoffOperation: (
-    workflowId: string,
-    operation: Extract<ContextOperationRequest, { type: 'handoff' }>,
-  ) => Promise<void>;
-  processDebateOperation: (
-    workflowId: string,
-    operation: Extract<ContextOperationRequest, { type: 'debate' }>,
-  ) => Promise<void>;
-  processSuperviseOperation: (
-    workflowId: string,
-    operation: Extract<ContextOperationRequest, { type: 'supervise' }>,
   ) => Promise<void>;
   finalizePendingTimelineEntry: (
     workflowId: string,
@@ -190,20 +174,12 @@ export async function processOperation(
       return callbacks.processStateCommitOperation(workflowId, operation);
     case 'run-all':
       return callbacks.processRunAllOperation(workflowId, operation);
-    case 'agent':
-      return callbacks.processAgentContextOperation(workflowId, operation);
     case 'speculate':
       return callbacks.processSpeculateOperation(workflowId, operation);
     case 'stream':
       return callbacks.processStreamOperation(workflowId, operation);
     case 'wait-review':
       return callbacks.processWaitReviewOperation(workflowId, operation);
-    case 'handoff':
-      return callbacks.processHandoffOperation(workflowId, operation);
-    case 'debate':
-      return callbacks.processDebateOperation(workflowId, operation);
-    case 'supervise':
-      return callbacks.processSuperviseOperation(workflowId, operation);
     default:
       const unsupportedType = String((operation as Record<string, unknown>)['type']);
       failOperation(

@@ -1,13 +1,4 @@
 import type {
-  DebateOptions,
-  DebateResult,
-  HandoffOptions,
-  HandoffResult,
-  SuperviseOptions,
-  SuperviseResult,
-} from '../../ai/coordination/index.ts';
-import type {
-  AgentContextOptions,
   ErasedSagaStep,
   OffloadReference,
   StreamReference,
@@ -42,7 +33,7 @@ import type {
  * The durable workflow authoring surface passed to every
  * {@link WorkflowFunction}. Workflow handlers can call `ctx.run`,
  * `ctx.sleep`, `ctx.waitForSignal`, `ctx.startChild`, composition helpers,
- * search-attribute helpers, update registration, and AI helpers directly.
+ * search-attribute helpers, update registration, and review helpers directly.
  *
  * @example
  * ```ts
@@ -189,15 +180,11 @@ export interface WorkflowContext {
     options?: WorkflowReduceOptions,
   ): WorkflowOperation<TAccumulator>;
   explain(enabled?: boolean): void;
-  agent(options: AgentContextOptions): WorkflowOperation<unknown>;
   speculate<TResult>(
     execute: (
       context: WorkflowContext,
     ) => WorkflowOperation<TResult> | AsyncGenerator<unknown, TResult, unknown>,
   ): WorkflowOperation<TResult>;
-  handoff(options: HandoffOptions): WorkflowOperation<HandoffResult>;
-  debate(options: DebateOptions): WorkflowOperation<DebateResult>;
-  supervise(options: SuperviseOptions): WorkflowOperation<SuperviseResult>;
   setAttribute<TValue extends SearchAttributeValue>(
     key: SearchAttributeHandle<TValue>,
     value: TValue,

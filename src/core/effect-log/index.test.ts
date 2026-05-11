@@ -1,24 +1,20 @@
 /**
- * Tests for EffectLog — durable deduplication of agent tool calls across
+ * Tests for EffectLog — durable deduplication of effect calls across
  * checkpoint-restore cycles.
  *
  * Verifies that:
- * 1. Crashing mid-tool-call and restoring causes the tool to run exactly once.
+ * 1. Crashing mid-effect and restoring prevents blind re-execution.
  * 2. A committed result is replayed without re-invocation after restore.
  * 3. A lingering in-flight record throws EffectReplayConflictError.
  * 4. The default semantic hash is stable under key-ordering variance.
  * 5. A custom identity function restricts hashing to intent-critical fields.
  *
- * @module ai/tool-effect-log.test
+ * @module core/effect-log.test
  */
 
 import { beforeEach, describe, expect, it } from 'bun:test';
 
-import type { AgentTool } from '../../ai/agent';
-import { executeAgentLoop } from '../../ai/agent';
-import type { ChatResponse, LLMProvider } from '../../ai/agent/types.ts';
 import { MemoryStorage } from '../../storage/memory';
-import type { EffectLogLike } from './index.ts';
 import { computeSemanticHash, EffectLog, EffectReplayConflictError } from './index.ts';
 
 // ---------------------------------------------------------------------------
@@ -28,7 +24,7 @@ import { computeSemanticHash, EffectLog, EffectReplayConflictError } from './ind
 function makeLog(
   storage = new MemoryStorage(),
   workflowId = 'wf-1',
-  operationId = 'agent-1',
+  operationId = 'operation-1',
 ): EffectLog {
   return new EffectLog(storage, workflowId, operationId);
 }
@@ -86,7 +82,7 @@ describe('computeSemanticHash', () => {
   it('does not collide undefined with the literal string "undefined"', () => {
     // Regression: canonicalize previously encoded `undefined` as the JSON
     // string '"undefined"', colliding with the literal string "undefined"
-    // and allowing one tool call to shadow another in the effect log.
+    // and allowing one effect call to shadow another in the effect log.
     expect(computeSemanticHash(undefined)).not.toBe(computeSemanticHash('undefined'));
     expect(computeSemanticHash({ a: undefined })).not.toBe(computeSemanticHash({ a: 'undefined' }));
     expect(computeSemanticHash([undefined])).not.toBe(computeSemanticHash(['undefined']));
@@ -152,19 +148,19 @@ describe('EffectLog', () => {
   });
 
   it('record marks the call as in-flight', async () => {
-    await log.record('hash-1', 'my-tool');
+    await log.record('hash-1', 'my-effect');
     const entry = await log.lookup('hash-1');
     expect(entry).not.toBeNull();
     expect(entry?.status).toBe('in-flight');
   });
 
   it('commit stores output and marks the call as committed', async () => {
-    await log.record('hash-1', 'my-tool');
-    await log.commit('hash-1', 'my-tool', 'tool output');
+    await log.record('hash-1', 'my-effect');
+    await log.commit('hash-1', 'my-effect', 'effect output');
     const entry = await log.lookup('hash-1');
     expect(entry?.status).toBe('committed');
     if (entry?.status === 'committed') {
-      expect(entry.output).toBe('tool output');
+      expect(entry.output).toBe('effect output');
     }
   });
 
@@ -182,8 +178,8 @@ describe('EffectLog', () => {
   });
 
   it('abort marks the call as aborted', async () => {
-    await log.record('hash-1', 'my-tool');
-    await log.abort('hash-1', 'my-tool', 'something went wrong');
+    await log.record('hash-1', 'my-effect');
+    await log.abort('hash-1', 'my-effect', 'something went wrong');
     const entry = await log.lookup('hash-1');
     expect(entry?.status).toBe('aborted');
   });
@@ -215,21 +211,21 @@ describe('EffectLog', () => {
 // ---------------------------------------------------------------------------
 
 describe('EffectLog crash-and-restore scenarios', () => {
-  it('tool runs exactly once: crash after record, before commit', async () => {
+  it('detects crash after record before commit without re-executing blindly', async () => {
     const storage = new MemoryStorage();
     const log1 = makeLog(storage);
 
     let callCount = 0;
-    const mockTool = async () => {
+    const mockEffect = async () => {
       callCount++;
       return 'result';
     };
 
     const hash = computeSemanticHash({ recipient: 'alice', amount: 100 });
 
-    // Simulate first run: record in-flight, execute tool, then crash before commit
+    // Simulate first run: record in-flight, execute effect, then crash before commit
     await log1.record(hash, 'charge');
-    await mockTool(); // tool runs exactly once before the crash
+    await mockEffect(); // effect runs exactly once before the crash
     expect(callCount).toBe(1);
     // Crash happens here — commit never called on log1
 
@@ -238,24 +234,24 @@ describe('EffectLog crash-and-restore scenarios', () => {
     const entry = await log2.lookup(hash);
     expect(entry?.status).toBe('in-flight');
 
-    // The restored agent loop should NOT re-invoke the tool when in-flight is detected.
-    // Instead it should throw EffectReplayConflictError.
+    // Restored callers should not re-invoke the effect when in-flight is detected.
+    // They should escalate with EffectReplayConflictError.
     expect(() => {
       if (entry?.status === 'in-flight') {
         throw new EffectReplayConflictError(hash, 'charge');
       }
     }).toThrow(EffectReplayConflictError);
 
-    // Tool ran once before the crash and was not re-invoked during restore
+    // Effect ran once before the crash and was not re-invoked during restore
     expect(callCount).toBe(1);
   });
 
-  it('tool runs exactly once: crash after commit (committed replay prevents re-execution)', async () => {
+  it('replays committed output after restore without re-executing the effect', async () => {
     const storage = new MemoryStorage();
     const log1 = makeLog(storage);
 
     let callCount = 0;
-    const mockTool = async () => {
+    const mockEffect = async () => {
       callCount++;
       return 'committed-result';
     };
@@ -264,11 +260,11 @@ describe('EffectLog crash-and-restore scenarios', () => {
 
     // First run: record, execute, commit
     await log1.record(hash, 'debit');
-    const output = await mockTool();
+    const output = await mockEffect();
     await log1.commit(hash, 'debit', output);
     expect(callCount).toBe(1);
 
-    // Restore: new log sees committed entry — tool should NOT run again
+    // Restore: new log sees committed entry — effect should NOT run again
     const log2 = makeLog(storage);
     const entry = await log2.lookup(hash);
     expect(entry?.status).toBe('committed');
@@ -276,9 +272,9 @@ describe('EffectLog crash-and-restore scenarios', () => {
       expect(entry.output).toBe('committed-result');
     }
 
-    // Simulate agent loop replay logic: skip tool if committed
+    // Simulate replay logic: skip effect if committed
     if (entry?.status !== 'committed') {
-      await mockTool(); // would increment callCount
+      await mockEffect(); // would increment callCount
     }
 
     expect(callCount).toBe(1); // still only 1
@@ -315,8 +311,8 @@ describe('EffectLog crash-and-restore scenarios', () => {
     const entry = await log2.lookup(hash);
     expect(entry?.status).toBe('aborted');
 
-    // The agent loop treats aborted as retriable — it falls through to re-record
-    // and re-execute rather than replaying the failure or throwing a conflict error.
+    // Callers can treat aborted records as retriable — re-recording and
+    // re-executing rather than replaying the failure or throwing a conflict error.
     // Verify the aborted status is not 'committed' or 'in-flight' so callers can
     // choose their handling (re-execute in the default path).
     expect(entry?.status).not.toBe('committed');
@@ -330,7 +326,7 @@ describe('EffectLog crash-and-restore scenarios', () => {
 
 describe('EffectReplayConflictError', () => {
   it('is an instance of Error', () => {
-    const err = new EffectReplayConflictError('some-hash', 'my-tool');
+    const err = new EffectReplayConflictError('some-hash', 'my-effect');
     expect(err).toBeInstanceOf(Error);
     expect(err).toBeInstanceOf(EffectReplayConflictError);
   });
@@ -345,298 +341,15 @@ describe('EffectReplayConflictError', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Agent-level integration: identity() edge cases and cross-tool collision guard
-// ---------------------------------------------------------------------------
-
-/** Minimal one-tool-call-then-done provider. */
-function createSingleToolProvider(toolName: string, toolInput: unknown): LLMProvider {
-  let called = false;
-  return {
-    name: 'single-tool-mock',
-    async chat(): Promise<ChatResponse> {
-      if (!called) {
-        called = true;
-        return {
-          content: '',
-          toolCalls: [{ id: 'call-1', name: toolName, arguments: toolInput }],
-          usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
-          model: 'test-model',
-          stopReason: 'tool_use',
-        };
-      }
-      return {
-        content: 'done',
-        toolCalls: [],
-        usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
-        model: 'test-model',
-        stopReason: 'end_turn',
-      };
-    },
-  };
-}
-
-function createSimpleTool(name: string, onExecute?: () => void): AgentTool {
-  return {
-    name,
-    description: 'test tool',
-    input: { type: 'object' },
-    execute: async (_input: unknown) => {
-      onExecute?.();
-      return { result: 'ok' };
-    },
-  };
-}
-
-describe('effect log: replay materialization', () => {
-  it('normalizes committed replay output before adding it to the conversation', async () => {
-    let replayCount = 0;
-    let executeCount = 0;
-    const effectLog: EffectLogLike = {
-      get duplicatesPrevented() {
-        return replayCount;
-      },
-      lookup: async () => ({
-        status: 'committed',
-        effectName: 'cached',
-        output: Number.NaN,
-        completedAt: Date.now(),
-      }),
-      recordReplay: () => {
-        replayCount++;
-      },
-      record: async () => {
-        throw new Error('record should not run during committed replay');
-      },
-      commit: async () => {
-        throw new Error('commit should not run during committed replay');
-      },
-      abort: async () => {
-        throw new Error('abort should not run during committed replay');
-      },
-    };
-
-    const result = await executeAgentLoop(
-      {
-        model: 'test-model',
-        provider: createSingleToolProvider('cached', {}),
-        tools: [
-          {
-            ...createSimpleTool('cached'),
-            execute: async () => {
-              executeCount++;
-              return 'fresh result';
-            },
-          },
-        ],
-        toolEffectLog: effectLog,
-      },
-      'Go',
-    );
-
-    expect(executeCount).toBe(0);
-    expect(replayCount).toBe(1);
-    expect(result.conversation.find((message) => message.role === 'tool')?.toolResults).toEqual([
-      { callId: 'call-1', outcome: 'success', content: null },
-    ]);
-  });
-});
-
-describe('effect log: identity() edge cases', () => {
-  it('falls back to default hash when identity() throws', async () => {
-    const storage = new MemoryStorage();
-    const effectLog = new EffectLog(storage, 'wf-id', 'agent-id');
-    let executeCount = 0;
-
-    const tool: AgentTool = {
-      ...createSimpleTool('charge', () => executeCount++),
-      identity: (_input: unknown) => {
-        throw new Error('identity exploded');
-      },
-    };
-
-    const provider = createSingleToolProvider('charge', { amount: 50 });
-    await executeAgentLoop(
-      { model: 'test-model', provider, tools: [tool], toolEffectLog: effectLog },
-      'Go',
-    );
-
-    // Tool should have executed once despite identity() throwing
-    expect(executeCount).toBe(1);
-    // A record should have been written using the default hash
-    const defaultHash = computeSemanticHash({ name: 'charge', arguments: { amount: 50 } });
-    const entry = await effectLog.lookup(defaultHash);
-    expect(entry?.status).toBe('committed');
-  });
-
-  it('falls back to default hash when identity() returns an invalid hash format', async () => {
-    const storage = new MemoryStorage();
-    const effectLog = new EffectLog(storage, 'wf-id', 'agent-id');
-    let executeCount = 0;
-
-    const tool: AgentTool = {
-      ...createSimpleTool('charge', () => executeCount++),
-      identity: (_input: unknown) => ({
-        semanticHash: 'not-a-valid-hex-hash!!!!',
-        intentCriticalFields: ['amount'],
-      }),
-    };
-
-    const provider = createSingleToolProvider('charge', { amount: 50 });
-    await executeAgentLoop(
-      { model: 'test-model', provider, tools: [tool], toolEffectLog: effectLog },
-      'Go',
-    );
-
-    // Tool should have executed once despite invalid identity hash
-    expect(executeCount).toBe(1);
-    // Record written under the default hash
-    const defaultHash = computeSemanticHash({ name: 'charge', arguments: { amount: 50 } });
-    const entry = await effectLog.lookup(defaultHash);
-    expect(entry?.status).toBe('committed');
-  });
-});
-
-describe('effect log: cross-tool hash collision guard', () => {
-  it('does not replay committed result when stored effectName does not match', async () => {
-    const storage = new MemoryStorage();
-
-    // Pre-seed a committed record for 'tool-a' under a known hash
-    const collisionHash = 'aaaa1111bbbb2222'; // fake 16-char hex
-    const log1 = new EffectLog(storage, 'wf-1', 'agent-1');
-    await log1.record(collisionHash, 'tool-a');
-    await log1.commit(collisionHash, 'tool-a', '"tool-a-result"');
-
-    // A second tool ('tool-b') has a custom identity() that returns the same hash
-    let toolBExecuteCount = 0;
-    const toolB: AgentTool = {
-      ...createSimpleTool('tool-b', () => toolBExecuteCount++),
-      identity: (_input: unknown) => ({
-        semanticHash: collisionHash,
-        intentCriticalFields: [],
-      }),
-    };
-
-    const log2 = new EffectLog(storage, 'wf-1', 'agent-1');
-    const provider = createSingleToolProvider('tool-b', { x: 1 });
-    await executeAgentLoop(
-      { model: 'test-model', provider, tools: [toolB], toolEffectLog: log2 },
-      'Go',
-    );
-
-    // tool-b must execute — it must NOT replay tool-a's committed result
-    expect(toolBExecuteCount).toBe(1);
-
-    // The original tool-a committed record must be preserved (not overwritten)
-    const entry = await log2.lookup(collisionHash);
-    expect(entry?.effectName).toBe('tool-a');
-    expect(entry?.status).toBe('committed');
-  });
-
-  it('does not throw EffectReplayConflictError when in-flight record belongs to a different tool', async () => {
-    const storage = new MemoryStorage();
-
-    // Pre-seed an in-flight record for 'tool-a' under a known hash
-    const collisionHash = 'cccc3333dddd4444'; // fake 16-char hex
-    const log1 = new EffectLog(storage, 'wf-2', 'agent-2');
-    await log1.record(collisionHash, 'tool-a');
-
-    // tool-b returns the same hash via custom identity()
-    let toolBExecuteCount = 0;
-    const toolB: AgentTool = {
-      ...createSimpleTool('tool-b', () => toolBExecuteCount++),
-      identity: (_input: unknown) => ({
-        semanticHash: collisionHash,
-        intentCriticalFields: [],
-      }),
-    };
-
-    const log2 = new EffectLog(storage, 'wf-2', 'agent-2');
-    const provider = createSingleToolProvider('tool-b', { y: 2 });
-
-    // Must NOT throw EffectReplayConflictError — the in-flight record is for a different tool
-    await expect(
-      executeAgentLoop(
-        { model: 'test-model', provider, tools: [toolB], toolEffectLog: log2 },
-        'Go',
-      ),
-    ).resolves.toBeDefined();
-
-    // tool-b should have executed
-    expect(toolBExecuteCount).toBe(1);
-
-    // The original in-flight record for tool-a must be preserved
-    const entry = await log2.lookup(collisionHash);
-    expect(entry?.effectName).toBe('tool-a');
-    expect(entry?.status).toBe('in-flight');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Agent-level: in-flight record is aborted when inner execution throws
-// ---------------------------------------------------------------------------
-
-describe('effect log: dangling in-flight guard', () => {
-  it('throws EffectReplayConflictError when the same tool sees a lingering in-flight record', async () => {
-    const storage = new MemoryStorage();
-    const effectLog = new EffectLog(storage, 'wf-conflict', 'agent-conflict');
-    const provider = createSingleToolProvider('charge', { amount: 50 });
-    const hash = computeSemanticHash({ name: 'charge', arguments: { amount: 50 } });
-
-    await effectLog.record(hash, 'charge');
-
-    await expect(
-      executeAgentLoop(
-        {
-          model: 'test-model',
-          provider,
-          tools: [createSimpleTool('charge')],
-          toolEffectLog: effectLog,
-        },
-        'Go',
-      ),
-    ).rejects.toThrow(EffectReplayConflictError);
-  });
-
-  it('aborts the effect-log record when a tool returns an execution failure', async () => {
-    const storage = new MemoryStorage();
-    const effectLog = new EffectLog(storage, 'wf-fail', 'agent-fail');
-    const provider = createSingleToolProvider('boom', {});
-    const hash = computeSemanticHash({ name: 'boom', arguments: {} });
-
-    await executeAgentLoop(
-      {
-        model: 'test-model',
-        provider,
-        tools: [
-          {
-            name: 'boom',
-            description: 'boom',
-            input: { type: 'object' },
-            execute: async () => {
-              throw new Error('boom');
-            },
-          },
-        ],
-        toolEffectLog: effectLog,
-      },
-      'Go',
-    );
-
-    const entry = await effectLog.lookup(hash);
-    expect(entry?.status).toBe('aborted');
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Storage key naming: tool-effect: prefix
 // ---------------------------------------------------------------------------
 
 describe('effect log: storage key prefix', () => {
   it('uses the tool-effect: prefix in storage keys', async () => {
     const storage = new MemoryStorage();
-    const effectLog = new EffectLog(storage, 'wf-key', 'agent-key');
+    const effectLog = new EffectLog(storage, 'wf-key', 'operation-key');
     const hash = computeSemanticHash({ op: 'test' });
-    await effectLog.record(hash, 'my-tool');
+    await effectLog.record(hash, 'my-effect');
 
     // Verify the key written to storage uses the full descriptive prefix
     const keys: string[] = [];
@@ -644,6 +357,6 @@ describe('effect log: storage key prefix', () => {
       keys.push(key);
     }
     expect(keys.length).toBe(1);
-    expect(keys[0]).toContain('tool-effect:wf-key:agent-key:');
+    expect(keys[0]).toContain('tool-effect:wf-key:operation-key:');
   });
 });

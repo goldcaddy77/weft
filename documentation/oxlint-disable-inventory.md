@@ -221,13 +221,6 @@ naming the alternative that was rejected.
 - **Symbol**: `decodeScheduleRuntimeFields`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
-## `core-engine-derive-prepared-execution-state-complexity`
-
-- **File**: `src/core/engine/index.ts`
-- **Rule**: `complexity`
-- **Symbol**: `derivePreparedExecutionState`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
 ## `core-engine-callback-creators-file-length`
 
 - **File**: `src/core/engine/callback-creators.ts`
@@ -948,17 +941,3 @@ naming the alternative that was rejected.
 - **Rule**: `complexity`
 - **Symbol**: `pickFairShare`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `core-engine-operations-agent-suspension-file-length`
-
-- **File**: `src/core/engine/operations-agent-suspension.ts`
-- **Rule**: `max-lines`
-- **Symbol**: `(whole file)`
-- **Reason**: Agent suspension module grew during the AI Surface Shrinkage refactor to accommodate the new PersistedAgentLoopState v2 validator, signal-waiter tracking, and crash-window repair logic. The functions are tightly coupled around the suspension lifecycle and splitting would fragment the durability contract.
-
-## `core-engine-operations-agent-suspension-is-persisted-state-complexity`
-
-- **File**: `src/core/engine/operations-agent-suspension.ts`
-- **Rule**: `complexity`
-- **Symbol**: `isPersistedAgentLoopStateValue`
-- **Reason**: Runtime type guard for PersistedAgentLoopState v2 — checks seven required fields plus schema version. Splitting into sub-validators adds indirection without clarity gain; the linear field checks are the complexity.

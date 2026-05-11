@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { sleepForTesting } from '../../testing/fake-timers.ts';
 
-import type { ChatResponse, LLMProvider } from '../../ai/agent/index.ts';
-import { agent as createAgentDefinition } from '../../ai/declaration.ts';
 import { KEYS } from '../../storage/interface.ts';
 import { TestEngine } from '../../testing/test-engine.ts';
 import { deserializeCheckpoint } from '../checkpoint.ts';
@@ -24,16 +22,6 @@ async function waitForCheckpointStep(
   }
 
   throw new Error(`Checkpoint step ${step} was not recorded for workflow "${workflowId}"`);
-}
-
-function createChatResponse(content: string): ChatResponse {
-  return {
-    content,
-    toolCalls: [],
-    usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
-    model: 'test-model',
-    stopReason: 'end_turn',
-  };
 }
 
 describe('workflow forking', () => {
@@ -388,34 +376,6 @@ describe('workflow forking', () => {
 
     await engine.cancel(original.id);
     await expect(originalResult).rejects.toThrow('Workflow cancelled');
-    engine[Symbol.dispose]();
-  });
-
-  it('warms agent providers when forking agent workflows', async () => {
-    const engine = new TestEngine();
-    const warmupCalls: string[] = [];
-    const provider: LLMProvider = {
-      name: 'fork-warmup-provider',
-      async chat(): Promise<ChatResponse> {
-        return createChatResponse('done');
-      },
-      async warmup() {
-        warmupCalls.push('warmed');
-      },
-    };
-
-    const agent = createAgentDefinition({ name: 'fork-warmup-agent', model: 'test-model' });
-    engine.register(agent, { provider });
-
-    const original = await engine.start('fork-warmup-agent', 'test', { id: 'wf-agent-fork-root' });
-    await expect(original.result()).resolves.toBe('done');
-    warmupCalls.length = 0;
-
-    const forked = await engine.fork(original.id);
-    await expect(forked.result()).resolves.toBe('done');
-
-    expect(warmupCalls).toEqual(['warmed']);
-
     engine[Symbol.dispose]();
   });
 });

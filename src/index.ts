@@ -167,7 +167,6 @@ export {
   SignalDeliveredEvent,
   SignalReceivedEvent,
   StorageSizeReportedEvent,
-  TokenEvent,
   UpdateCompletedEvent,
   UpdateReceivedEvent,
   WorkflowCancelledEvent,
@@ -269,7 +268,6 @@ export type {
   ActivityExecutionInterception,
   ActivityInterception,
   ActivityInterceptor,
-  AgentInterception,
   ChildWorkflowInterception,
   ComposedActivityInterceptor,
   ComposedWorkflowInterceptor,
@@ -405,8 +403,6 @@ export {
   ReviewCompletedEvent,
   ReviewRequestedEvent,
 } from './ai/events/index.ts';
-
-export type { AgentRegistrationOptions } from './core/engine';
 
 export { createObservabilityInterceptors } from './observability/index';
 export type { InterceptionContext, ObservabilityOptions } from './observability/index';

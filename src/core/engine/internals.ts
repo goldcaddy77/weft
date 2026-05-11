@@ -120,7 +120,6 @@ export interface EngineInternals {
   reviewTimerIds: Map<string, string[]>;
   pendingWebhooks: Set<AbortController>;
   alertManager: AlertManager | null;
-  agentWorkflowIds: Set<string>;
   eventLogHeads: Map<string, Readonly<EventHeadRecord>>;
   workflowFeedListeners: Map<string, Set<WorkflowFeedListener>>;
   workflowVersionTuples: Map<string, WorkflowVersionTuple>;

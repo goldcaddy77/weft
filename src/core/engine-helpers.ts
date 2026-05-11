@@ -1,18 +1,6 @@
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { captureFirstRejection, createFirstRejectionCapture } from './engine/parallel-dispatch.ts';
-import type { AgentInterception } from './interceptor.ts';
-
-/** Apply callback handlers provided by an agent interceptor to the active interception. */
-export function applyAgentInterceptorCallbacks(
-  target: AgentInterception,
-  source: AgentInterception,
-): void {
-  if (source.onTurnStarted) target.onTurnStarted = source.onTurnStarted;
-  if (source.onTurnCompleted) target.onTurnCompleted = source.onTurnCompleted;
-  if (source.onToolCalled) target.onToolCalled = source.onToolCalled;
-  if (source.onToolReturned) target.onToolReturned = source.onToolReturned;
-}
 
 /** Build a cleanup reporter that preserves the workflow identifier for downstream error handling. */
 export function createCleanupErrorReporter(
@@ -144,15 +132,4 @@ export async function executeRunAllBranches(
     }),
   );
   return results;
-}
-
-/** Create the generator function passed through the agent interceptor chain. */
-export function createAgentInterceptorExecute(
-  activeInterception: AgentInterception,
-): (ctx: AgentInterception) => Generator<unknown, undefined, unknown> {
-  return function* execute(ctx: AgentInterception): Generator<unknown, undefined, unknown> {
-    applyAgentInterceptorCallbacks(activeInterception, ctx);
-    yield;
-    return undefined;
-  };
 }

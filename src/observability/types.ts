@@ -1,6 +1,5 @@
 import type {
   ActivityInterception,
-  AgentInterception,
   ChildWorkflowInterception,
   SignalInterception,
   SignalReceivedInterception,
@@ -31,7 +30,6 @@ export type InterceptionContext =
   | ActivityInterception
   | SleepInterception
   | SignalInterception
-  | AgentInterception
   | ChildWorkflowInterception
   | SignalReceivedInterception;
 

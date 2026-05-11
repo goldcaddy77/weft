@@ -96,9 +96,9 @@ function createInlineContextOptions(
  * for class-based discrimination and falls back to `'system'`.
  *
  * Error names that map to specific categories:
- * - `'ToolSchemaValidationError'` → `'planning'` (LLM produced an invalid tool call)
- * - `'EffectReplayConflictError'` → `'action'` (tool replay conflict; execution-phase)
- * - `'MCPServerUnavailableError'`, `'MCPToolTimeoutError'` → `'action'` (tool execution)
+ * - `'ToolSchemaValidationError'` → `'planning'` (invalid effect input)
+ * - `'EffectReplayConflictError'` → `'action'` (effect replay conflict)
+ * - `'MCPServerUnavailableError'`, `'MCPToolTimeoutError'` → `'action'` (external effect execution)
  * - everything else → `'system'`
  */
 function classifyErrorAsFailureCategory(error: unknown): FailureCategory {
