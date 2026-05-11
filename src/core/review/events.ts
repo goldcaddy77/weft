@@ -74,3 +74,23 @@ export class ReviewCompletedEvent extends Event {
     this.duration = duration;
   }
 }
+
+/**
+ * Record mapping each review-related event name to its typed Event subclass.
+ * Use as the type parameter for `TypedEventTarget` to get type-safe listeners
+ * on engine-level review events.
+ *
+ * @example
+ * ```ts
+ * import type { TypedEventTarget, WeftReviewEventMap } from 'weft';
+ *
+ * declare const target: TypedEventTarget<WeftReviewEventMap>;
+ * target.addEventListener('human-review:requested', (event) => {
+ *   console.log(event.reviewId, event.reviewers);
+ * });
+ * ```
+ */
+export type WeftReviewEventMap = {
+  'human-review:requested': ReviewRequestedEvent;
+  'human-review:completed': ReviewCompletedEvent;
+};

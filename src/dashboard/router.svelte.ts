@@ -11,12 +11,7 @@
 // Types
 // ---------------------------------------------------------------------------
 
-export type ViewName =
-  | 'workflow-list'
-  | 'workflow-detail'
-  | 'workflow-detail-agent'
-  | 'human-review-queue'
-  | 'not-found';
+export type ViewName = 'workflow-list' | 'workflow-detail' | 'human-review-queue' | 'not-found';
 
 export interface RouteState {
   path: string;
@@ -42,11 +37,6 @@ interface RouteDefinition {
 const ROUTE_TABLE: RouteDefinition[] = [
   { pattern: /^\/?$/, paramNames: [], view: 'workflow-list' },
   { pattern: /^\/workflows\/?$/, paramNames: [], view: 'workflow-list' },
-  {
-    pattern: /^\/workflows\/([^/]+)\/agent\/?$/,
-    paramNames: ['id'],
-    view: 'workflow-detail-agent',
-  },
   { pattern: /^\/workflows\/([^/]+)\/?$/, paramNames: ['id'], view: 'workflow-detail' },
   { pattern: /^\/reviews\/?$/, paramNames: [], view: 'human-review-queue' },
 ];

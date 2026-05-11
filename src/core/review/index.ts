@@ -16,6 +16,25 @@ import { ReviewRequestedEvent } from './events.ts';
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * A persisted human review request. Created by {@link ReviewCoordinator.createReview}
+ * and returned to the workflow once a reviewer submits a decision.
+ *
+ * @example
+ * ```ts
+ * import type { ReviewRequest } from 'weft';
+ *
+ * const request: ReviewRequest = {
+ *   reviewId: 'r-1',
+ *   workflowId: 'wf-1',
+ *   artifact: { text: 'draft' },
+ *   reviewType: 'content',
+ *   reviewers: ['alice@example.com'],
+ *   allowPartial: false,
+ *   createdAt: Date.now(),
+ * };
+ * ```
+ */
 export interface ReviewRequest {
   reviewId: string;
   workflowId: string;
@@ -28,6 +47,11 @@ export interface ReviewRequest {
   createdAt: number;
 }
 
+/**
+ * A reviewer's decision payload returned to the workflow from `ctx.review()`.
+ * The `decision` field is the binary outcome; `sectionDecisions` carries
+ * per-section verdicts when `allowPartial` is enabled on the request.
+ */
 export interface ReviewDecision {
   reviewId: string;
   decision: 'approved' | 'rejected' | 'needs-changes';
@@ -37,6 +61,19 @@ export interface ReviewDecision {
   timestamp: number;
 }
 
+/**
+ * One step in a {@link ReviewOptions.escalation} chain. Either reassigns the
+ * pending review to a new owner (`to`) or auto-decides it (`action`) after
+ * `after` milliseconds have elapsed.
+ *
+ * @example
+ * ```ts
+ * import type { EscalationStep } from 'weft';
+ *
+ * const step: EscalationStep = { after: 60_000, to: 'manager@example.com' };
+ * void step;
+ * ```
+ */
 export interface EscalationStep {
   after: number;
   to?: string;
@@ -44,6 +81,23 @@ export interface EscalationStep {
   auditReason?: string;
 }
 
+/**
+ * Base options for creating a review via {@link ReviewCoordinator.createReview}.
+ * The `artifact` carries the payload the reviewer evaluates; the other fields
+ * configure routing, partial approval, escalation chains, and webhook delivery.
+ *
+ * @example
+ * ```ts
+ * import type { ReviewOptions } from 'weft';
+ *
+ * const options: ReviewOptions = {
+ *   artifact: { summary: 'release plan' },
+ *   reviewers: ['alice@example.com'],
+ *   timeout: 60_000,
+ * };
+ * void options;
+ * ```
+ */
 export interface ReviewOptions {
   artifact: unknown;
   reviewType?: string;
@@ -55,8 +109,21 @@ export interface ReviewOptions {
 }
 
 /**
- * Options passed to `ctx.review()` inside a workflow generator.
- * Extends the base ReviewOptions with context-level callbacks.
+ * Options passed to `ctx.review()` inside a workflow generator. Extends
+ * {@link ReviewOptions} with context-level callbacks the runtime invokes
+ * when reviewer messages arrive or an escalation step fires.
+ *
+ * @example
+ * ```ts
+ * import type { HumanReviewOptions } from 'weft';
+ *
+ * const options: HumanReviewOptions = {
+ *   artifact: 'release plan',
+ *   reviewers: ['alice@example.com'],
+ *   onEscalation: (action) => console.log('escalation:', action),
+ * };
+ * void options;
+ * ```
  */
 export interface HumanReviewOptions extends ReviewOptions {
   /** Handler for incoming reviewer messages during conversation. */
@@ -65,9 +132,38 @@ export interface HumanReviewOptions extends ReviewOptions {
   onEscalation?: (action: EscalationAction) => void;
 }
 
-/** The decision payload returned to the workflow from `ctx.review()`. */
+/**
+ * The decision payload returned to the workflow from `ctx.review()`.
+ * Alias for {@link ReviewDecision}.
+ *
+ * @example
+ * ```ts
+ * import type { HumanReviewResult } from 'weft';
+ *
+ * const result: HumanReviewResult = {
+ *   reviewId: 'r-1',
+ *   decision: 'approved',
+ *   reviewer: 'alice@example.com',
+ *   timestamp: Date.now(),
+ * };
+ * void result;
+ * ```
+ */
 export type HumanReviewResult = ReviewDecision;
 
+/**
+ * The action returned by {@link ReviewCoordinator.checkEscalations} when an
+ * escalation step has fired. Either reassigns the review to a new owner or
+ * auto-decides it with an audit reason.
+ *
+ * @example
+ * ```ts
+ * import type { EscalationAction } from 'weft';
+ *
+ * const action: EscalationAction = { type: 'escalate', to: 'manager@example.com' };
+ * void action;
+ * ```
+ */
 export type EscalationAction =
   | { type: 'escalate'; to: string }
   | { type: 'auto-decide'; decision: 'approved' | 'rejected'; auditReason: string };

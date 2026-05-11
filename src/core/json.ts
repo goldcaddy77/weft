@@ -24,7 +24,19 @@ export type JSONPrimitive = string | number | boolean | null;
  */
 export type JSONValue = JSONPrimitive | ReadonlyArray<JSONValue> | { [key: string]: JSONValue };
 
-/** Return true when a value is a JSON-safe value. */
+/**
+ * Return true when a value is JSON-safe — i.e. composed entirely of strings,
+ * finite numbers, booleans, `null`, arrays of those, and plain objects whose
+ * values are JSON-safe. Detects and rejects cyclic structures.
+ *
+ * @example
+ * ```ts
+ * import { isJSONValue } from 'weft';
+ *
+ * isJSONValue({ count: 1, tags: ['ready'] }); // true
+ * isJSONValue(new Date());                    // false
+ * ```
+ */
 export function isJSONValue(value: unknown): value is JSONValue {
   const seen = new WeakSet<object>();
 
@@ -42,7 +54,21 @@ export function isJSONValue(value: unknown): value is JSONValue {
   return walk(value);
 }
 
-/** Normalize an unknown value into a JSON-safe value. */
+/**
+ * Coerce an unknown value into a JSON-safe value. Already-safe values pass
+ * through unchanged. `undefined`, `bigint`, `symbol`, and `Error` instances
+ * fall back to safe representations; anything else that fails `JSON.stringify`
+ * is replaced with `null`.
+ *
+ * @example
+ * ```ts
+ * import { normalizeJSONValue } from 'weft';
+ *
+ * normalizeJSONValue({ count: 1 });        // { count: 1 }
+ * normalizeJSONValue(new Error('boom'));    // { name: 'Error', message: 'boom' }
+ * normalizeJSONValue(undefined);            // null
+ * ```
+ */
 export function normalizeJSONValue(value: unknown): JSONValue {
   if (value === undefined) {
     return null;

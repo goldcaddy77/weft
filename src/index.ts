@@ -84,7 +84,6 @@ export type {
   RetentionOverview,
   RetentionPolicy,
   RetryPolicy,
-  ReviewDecision,
   ScheduleAccessOptions,
   ScheduleDefinition,
   ScheduleFilter,
@@ -341,50 +340,19 @@ export type {
   MTLSConfig,
 } from './server/authentication';
 
-export { AgentLoopSuspendedError, executeAgentLoop } from './ai/agent/index.ts';
-export type {
-  AgentOptions,
-  AgentResult,
-  AgentTool,
-  PendingProviderResumeState,
-  PersistedAgentLoopState,
-  TurnUsageEntry,
-  VerificationRecorder,
-} from './ai/agent/index.ts';
-
-export type {
-  AgentBureauConversationHistory,
-  ChatOptions,
-  ChatResponse,
-  ChatResumeContext,
-  ChatResumeHint,
-  ConversationHistory,
-  ConversationHistoryMessage,
-  JSONPrimitive,
-  JSONValue,
-  LLMProvider,
-  Message,
-  MessageRole,
-  NormalizedChatResponse,
-  TokenUsage,
-  ToolActionShape,
-  ToolCall,
-  ToolCallInput,
-  ToolDefinition,
-  ToolDescriptor,
-  ToolErrorCategory,
-  ToolErrorShape,
-  ToolResult,
-  ToolResultInput,
-} from './ai/agent/index.ts';
-
-export { createChildHeaders, debate, handoff, supervise } from './ai/coordination/index.ts';
-
-export { agent, isAgentDefinition } from './ai/declaration';
-export type { AgentDefinition, AgentToolDefinition, ToolIdentityResult } from './ai/declaration';
-
+export { ReviewCompletedEvent, ReviewRequestedEvent } from './core/review/events.ts';
+export type { WeftReviewEventMap } from './core/review/events.ts';
 export { ReviewCoordinator, ReviewTimeoutError } from './core/review/index.ts';
-export type { ReviewCoordinatorOptions } from './core/review/index.ts';
+export type {
+  EscalationAction,
+  EscalationStep,
+  HumanReviewOptions,
+  HumanReviewResult,
+  ReviewCoordinatorOptions,
+  ReviewDecision,
+  ReviewOptions,
+  ReviewRequest,
+} from './core/review/index.ts';
 
 export {
   EffectLog,
@@ -392,17 +360,8 @@ export {
   computeSemanticHash,
 } from './core/effect-log/index.ts';
 export type { EffectRecord } from './core/effect-log/index.ts';
-
-export {
-  AgentCheckpointResumedEvent,
-  AgentCheckpointSizeWarningEvent,
-  AgentToolCalledEvent,
-  AgentToolReturnedEvent,
-  AgentTurnCompletedEvent,
-  AgentTurnStartedEvent,
-  ReviewCompletedEvent,
-  ReviewRequestedEvent,
-} from './ai/events/index.ts';
+export { isJSONValue, normalizeJSONValue } from './core/json.ts';
+export type { JSONPrimitive, JSONValue } from './core/json.ts';
 
 export { createObservabilityInterceptors } from './observability/index';
 export type { InterceptionContext, ObservabilityOptions } from './observability/index';
