@@ -658,12 +658,12 @@ const COVERAGE_ALLOWANCE_OVERRIDES = new Map<string, CoverageAllowance>([
     {
       // These are private conformance-harness race exits: predicates throwing
       // inside the bounded wait loop, or a worker disconnecting between a
-      // successful poll and the follow-up dispatch, cancel, or shutdown action.
+      // successful poll and the follow-up dispatch or cancel action.
       // The real success path and invalid-worker path are covered end-to-end;
       // deterministic coverage here would require replacing the server runtime
       // with a fake and would no longer validate the protocol contract.
       functions: 1,
-      lines: new Set([55, 106, 161, 232, 271]),
+      lines: new Set([55, 106, 161, 232]),
     },
   ],
   [
