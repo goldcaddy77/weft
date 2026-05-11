@@ -163,6 +163,25 @@ async function dispatchAndWait(
   await waitForResolvedStatus(storage, operationId, expectedStatus, timeoutMs);
 }
 
+async function selectStableWorkerForShutdown(
+  server: WeftServer,
+  timeoutMs: number,
+): Promise<string> {
+  const workerId = server.registry.getAll()[0]?.id;
+  if (workerId === undefined) {
+    throw new Error('No worker available for graceful shutdown check');
+  }
+
+  const observationMs = Math.min(100, Math.max(25, Math.floor(timeoutMs / 10)));
+  await Bun.sleep(observationMs);
+
+  if (server.registry.getWorker(workerId) === undefined) {
+    throw new Error('No worker available for graceful shutdown check');
+  }
+
+  return workerId;
+}
+
 async function runConformanceChecks(
   command: string[],
   timeoutMs: number,
@@ -266,10 +285,7 @@ async function runConformanceChecks(
     await waitForResolvedStatus(storage, reconnectOperationId, 'completed', timeoutMs);
     checks.push(createCheck('reconnect', true, 'in-flight task completed after reconnect'));
 
-    const shutdownWorkerId = server.registry.getAll()[0]?.id;
-    if (shutdownWorkerId === undefined) {
-      throw new Error('No worker available for graceful shutdown check');
-    }
+    const shutdownWorkerId = await selectStableWorkerForShutdown(server, timeoutMs);
     await server.shutdownWorker(shutdownWorkerId, { timeoutMs });
     await waitForCondition(
       () => server.registry.getWorker(shutdownWorkerId) === undefined,
