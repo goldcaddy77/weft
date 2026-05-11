@@ -1,13 +1,16 @@
 import type {
+  HumanReviewCompletedEvent,
+  HumanReviewRequestedEvent,
+} from '../../core/review/events.ts';
+import type {
   AgentCheckpointResumedEvent,
   AgentCheckpointSizeWarningEvent,
 } from './checkpoint-events.ts';
-import type { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from './review-events.ts';
 import type { AgentToolCalledEvent, AgentToolReturnedEvent } from './tool-events.ts';
 import type { AgentTurnCompletedEvent, AgentTurnStartedEvent } from './turn-events.ts';
 
+export * from '../../core/review/events.ts';
 export * from './checkpoint-events.ts';
-export * from './review-events.ts';
 export * from './tool-events.ts';
 export * from './turn-events.ts';
 

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import type { ReviewRequest } from '../../ai/human-review.ts';
 import { encode } from '../../core/codec.ts';
 import { Engine } from '../../core/engine.ts';
+import type { ReviewRequest } from '../../core/review/index.ts';
 import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';

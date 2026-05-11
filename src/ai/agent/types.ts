@@ -1,32 +1,9 @@
 /* oxlint-disable max-lines -- ID:ai-agent-types-file-length */
+import type { ToolEffectLogLike } from '../../core/effect-log/index.ts';
+import type { JSONValue } from '../../core/json.ts';
 import type { ToolIdentityResult } from '../declaration.ts';
-import type { ToolEffectLogLike } from '../tool-effect-log.ts';
 
-/**
- * JSON primitive values that can safely cross provider, tool, and checkpoint
- * boundaries.
- *
- * @example
- * ```ts
- * import type { JSONPrimitive } from 'weft';
- *
- * const value: JSONPrimitive = 'ready';
- * ```
- */
-export type JSONPrimitive = string | number | boolean | null;
-
-/**
- * Recursive JSON-safe value used for Agent Bureau-compatible tool calls,
- * tool results, tool actions, and conversation metadata.
- *
- * @example
- * ```ts
- * import type { JSONValue } from 'weft';
- *
- * const value: JSONValue = { count: 1, tags: ['agent'] };
- * ```
- */
-export type JSONValue = JSONPrimitive | ReadonlyArray<JSONValue> | { [key: string]: JSONValue };
+export type { JSONPrimitive, JSONValue } from '../../core/json.ts';
 
 // ---------------------------------------------------------------------------
 // Structural types - canonical home post-shrinkage.

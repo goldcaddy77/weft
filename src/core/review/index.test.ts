@@ -1,20 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { sleepForTesting } from '../testing/fake-timers.ts';
+import { sleepForTesting } from '../../testing/fake-timers.ts';
 
-import { decode, encode } from '../core/codec.ts';
-import { Engine } from '../core/engine.ts';
-import type { WorkflowContext } from '../core/types.ts';
-import { KEYS } from '../storage/interface.ts';
-import { MemoryStorage } from '../storage/memory.ts';
-import { TestEngine } from '../testing/test-engine.ts';
-import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from './events/index.ts';
+import { KEYS } from '../../storage/interface.ts';
+import { MemoryStorage } from '../../storage/memory.ts';
+import { TestEngine } from '../../testing/test-engine.ts';
+import { decode, encode } from '../codec.ts';
+import { Engine } from '../engine.ts';
+import type { WorkflowContext } from '../types.ts';
+import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from './events.ts';
 import {
   ReviewCoordinator,
   ReviewTimeoutError,
   type EscalationAction,
   type EscalationStep,
   type ReviewRequest,
-} from './human-review.ts';
+} from './index.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers

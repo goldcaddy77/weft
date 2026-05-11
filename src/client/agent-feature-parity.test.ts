@@ -8,9 +8,9 @@ import { sleepForTesting } from '../testing/fake-timers.ts';
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { ReviewCoordinator } from '../ai/human-review.ts';
 import type { StreamReference } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
+import { ReviewCoordinator } from '../core/review/index.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { handleRequest } from '../server/handler.ts';
 import { MemoryStorage } from '../storage/memory.ts';

@@ -1,5 +1,5 @@
+import { computeSemanticHash } from '../../core/effect-log/index.ts';
 import type { ToolIdentityResult } from '../declaration.ts';
-import { computeSemanticHash } from '../tool-effect-log.ts';
 import type { AgentTool, ToolDescriptor } from './types.ts';
 
 /**

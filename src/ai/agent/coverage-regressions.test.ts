@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from 'bun:test';
 
-import type { ToolEffectLogLike } from '../tool-effect-log.ts';
-import { ToolCallReplayConflictError } from '../tool-effect-log.ts';
+import type { ToolEffectLogLike } from '../../core/effect-log/index.ts';
+import { ToolCallReplayConflictError } from '../../core/effect-log/index.ts';
 import { createChatOptions, isAbortError } from './chat.ts';
 import { isJSONValue, normalizeJSONValue } from './json-value.ts';
 import {

@@ -3,8 +3,8 @@ import type {
   HandoffOptions,
   SuperviseOptions,
 } from '../../ai/coordination/index.ts';
-import type { HumanReviewOptions } from '../../ai/human-review.ts';
 import type { AtomicStateScope } from '../atomic-state.ts';
+import type { HumanReviewOptions } from '../review/index.ts';
 import type { ChildWorkflowOptions } from '../types.ts';
 import type { Context } from './index.ts';
 import type { AgentContextOptions, OffloadReference, StreamSink } from './types.ts';

@@ -6,7 +6,6 @@ import type {
   SuperviseOptions,
   SuperviseResult,
 } from '../../ai/coordination/index.ts';
-import type { HumanReviewOptions, HumanReviewResult } from '../../ai/human-review.ts';
 import type {
   AgentContextOptions,
   ErasedSagaStep,
@@ -14,6 +13,7 @@ import type {
   StreamReference,
   StreamSink,
 } from '../context/types.ts';
+import type { HumanReviewOptions, HumanReviewResult } from '../review/index.ts';
 import type { TenantContext } from '../tenant.ts';
 import type { ActivityCallable, ActivityCallOptions } from './activity.ts';
 import type { WorkflowId } from './identity.ts';

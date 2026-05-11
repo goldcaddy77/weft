@@ -385,15 +385,15 @@ export { createChildHeaders, debate, handoff, supervise } from './ai/coordinatio
 export { agent, isAgentDefinition } from './ai/declaration';
 export type { AgentDefinition, AgentToolDefinition, ToolIdentityResult } from './ai/declaration';
 
-export { ReviewCoordinator, ReviewTimeoutError } from './ai/human-review';
-export type { ReviewCoordinatorOptions } from './ai/human-review';
+export { ReviewCoordinator, ReviewTimeoutError } from './core/review/index.ts';
+export type { ReviewCoordinatorOptions } from './core/review/index.ts';
 
 export {
   ToolCallReplayConflictError,
   ToolEffectLog,
   computeSemanticHash,
-} from './ai/tool-effect-log';
-export type { EffectRecord } from './ai/tool-effect-log';
+} from './core/effect-log/index.ts';
+export type { EffectRecord } from './core/effect-log/index.ts';
 
 export {
   AgentCheckpointResumedEvent,

@@ -1,4 +1,4 @@
-import type { HumanReviewOptions, HumanReviewResult } from '../../ai/human-review.ts';
+import type { HumanReviewOptions, HumanReviewResult } from '../review/index.ts';
 import { parseDuration } from '../scheduler.ts';
 import type { Duration } from '../types.ts';
 import type { Context } from './index.ts';

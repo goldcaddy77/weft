@@ -1,4 +1,4 @@
-import { hashString } from '../runtime/portable.ts';
+import { hashString } from '../../runtime/portable.ts';
 
 /**
  * Durable tool effect log for agent tool-call deduplication.
@@ -29,11 +29,10 @@ import { hashString } from '../runtime/portable.ts';
  * @module ai/tool-effect-log
  */
 
-import { decode, encode } from '../core/codec';
-import type { Storage } from '../storage/interface';
-import { KEYS } from '../storage/interface';
-import { isJSONValue } from './agent/json-value.ts';
-import type { JSONValue } from './agent/types.ts';
+import type { Storage } from '../../storage/interface.ts';
+import { KEYS } from '../../storage/interface.ts';
+import { decode, encode } from '../codec.ts';
+import { isJSONValue, type JSONValue } from '../json.ts';
 
 // ---------------------------------------------------------------------------
 // Types

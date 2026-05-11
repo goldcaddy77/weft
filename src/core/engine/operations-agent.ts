@@ -138,7 +138,7 @@ export async function executeAgentContextOperationResult(
   const agentInterception = createAgentInterception(workflowId, rest.model, prompt);
   const agentInterceptorGenerator = openAgentInterceptor(agentInterception, callbacks);
   let agentInterceptorClosed = false;
-  const { ToolEffectLog } = await import('../../ai/tool-effect-log.ts');
+  const { ToolEffectLog } = await import('../effect-log/index.ts');
   const toolEffectLog = new ToolEffectLog(internals.storage, workflowId, operation.operationId);
   const provider = createAgentProvider(
     internals,

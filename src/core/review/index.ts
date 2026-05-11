@@ -7,10 +7,10 @@
  * @module human-review
  */
 
-import { decode, encode } from '../core/codec.ts';
-import type { BatchOperation, Storage } from '../storage/interface.ts';
-import { KEYS } from '../storage/interface.ts';
-import { HumanReviewRequestedEvent } from './events/index.ts';
+import type { BatchOperation, Storage } from '../../storage/interface.ts';
+import { KEYS } from '../../storage/interface.ts';
+import { decode, encode } from '../codec.ts';
+import { HumanReviewRequestedEvent } from './events.ts';
 
 // ---------------------------------------------------------------------------
 // Types

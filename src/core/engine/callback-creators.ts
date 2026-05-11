@@ -1,9 +1,9 @@
 /* oxlint-disable max-lines -- ID:core-engine-callback-creators-file-length */
 import { isAgentDefinition } from '../../ai/declaration.ts';
-import type { HumanReviewOptions } from '../../ai/human-review.ts';
 import { KEYS } from '../../storage/interface.ts';
 import type { ContextOperationRequest } from '../context.ts';
 import { UpdateCompletedEvent } from '../events.ts';
+import type { HumanReviewOptions } from '../review/index.ts';
 import type { ScheduleState, TimerEntry } from '../types.ts';
 import { validateAttributeValueSizes } from './attributes-tags.ts';
 import {

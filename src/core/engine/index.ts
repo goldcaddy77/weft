@@ -1,7 +1,6 @@
 /* oxlint-disable max-lines -- ID:core-engine-index-file-length */
 import type { LLMProvider } from '../../ai/agent/index.ts';
 import type { AgentDefinition } from '../../ai/declaration.ts';
-import { ReviewCoordinator, type ReviewRequest } from '../../ai/human-review.ts';
 import { AlertManager } from '../../alerting/alert-manager.ts';
 import { CompressedStorage } from '../../storage/compressed-storage.ts';
 import { KEYS, type Storage as WeftStorage } from '../../storage/interface.ts';
@@ -18,6 +17,7 @@ import type { StoredStreamChunk } from '../context.ts';
 import { createExpiredResponseCleanupTick, createHandleCacheFinalizer } from '../engine-helpers.ts';
 import { InlineExecutionStrategy } from '../inline-execution-strategy.ts';
 import type { Interceptor } from '../interceptor.ts';
+import { ReviewCoordinator, type ReviewRequest } from '../review/index.ts';
 import { Scheduler } from '../scheduler.ts';
 import { TenantQuotaManager } from '../tenant-quotas.ts';
 import {

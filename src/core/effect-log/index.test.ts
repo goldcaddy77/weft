@@ -14,12 +14,12 @@
 
 import { beforeEach, describe, expect, it } from 'bun:test';
 
-import { MemoryStorage } from '../storage/memory';
-import type { AgentTool } from './agent';
-import { executeAgentLoop } from './agent';
-import type { ChatResponse, LLMProvider } from './agent/types.ts';
-import type { ToolEffectLogLike } from './tool-effect-log';
-import { computeSemanticHash, ToolCallReplayConflictError, ToolEffectLog } from './tool-effect-log';
+import type { AgentTool } from '../../ai/agent';
+import { executeAgentLoop } from '../../ai/agent';
+import type { ChatResponse, LLMProvider } from '../../ai/agent/types.ts';
+import { MemoryStorage } from '../../storage/memory';
+import type { ToolEffectLogLike } from './index.ts';
+import { computeSemanticHash, ToolCallReplayConflictError, ToolEffectLog } from './index.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers

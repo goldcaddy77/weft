@@ -4419,7 +4419,7 @@ describe('Engine', () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
     const { encode: encodeValue } = await import('./codec.ts');
-    const { HumanReviewCompletedEvent } = await import('../ai/events/index.ts');
+    const { HumanReviewCompletedEvent } = await import('./review/events.ts');
 
     const createdAt = Date.now() - 5000;
     const review = {
@@ -4456,7 +4456,7 @@ describe('Engine', () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
     const { encode: encodeValue } = await import('./codec.ts');
-    const { HumanReviewCompletedEvent } = await import('../ai/events/index.ts');
+    const { HumanReviewCompletedEvent } = await import('./review/events.ts');
 
     const createdAt = Date.now() - 3000;
     const review = {
@@ -5259,7 +5259,7 @@ describe('Engine', () => {
       await flush();
 
       // Seed a review directly in storage so we can verify cleanup runs.
-      const { ReviewCoordinator } = await import('../ai/human-review.ts');
+      const { ReviewCoordinator } = await import('./review/index.ts');
       const coordinator = new ReviewCoordinator(engine.storage);
       const review = await coordinator.createReview(handle.id, {
         artifact: 'pending-artifact',
@@ -5292,7 +5292,7 @@ describe('Engine', () => {
       const handle = await engine.start('review-wait-timeout', null);
       await flush();
 
-      const { ReviewCoordinator } = await import('../ai/human-review.ts');
+      const { ReviewCoordinator } = await import('./review/index.ts');
       const coordinator = new ReviewCoordinator(engine.storage);
       const review = await coordinator.createReview(handle.id, {
         artifact: 'pending-artifact',

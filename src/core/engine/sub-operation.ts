@@ -1,4 +1,3 @@
-import type { HumanReviewOptions } from '../../ai/human-review.ts';
 import {
   atomicStateDataKey,
   commitAtomicStateDelete,
@@ -6,6 +5,7 @@ import {
   readAtomicStateSnapshot,
 } from '../atomic-state.ts';
 import type { ContextOperationRequest } from '../context.ts';
+import type { HumanReviewOptions } from '../review/index.ts';
 import {
   assertChildWorkflowNestingDepth,
   executeChildWorkflow,
@@ -194,7 +194,7 @@ export async function executeSubOperation(
       const { prompt, ...rest } = operation.options;
       await agentOperationCallbacks.ensureTerminalCleanupTracked(workflowId);
 
-      const { ToolEffectLog } = await import('../../ai/tool-effect-log.ts');
+      const { ToolEffectLog } = await import('../effect-log/index.ts');
       const toolEffectLog = new ToolEffectLog(internals.storage, workflowId, operation.operationId);
       const agentResult = await executeAgentLoop(
         {

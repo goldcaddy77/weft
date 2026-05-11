@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 
+import { ToolEffectLog } from '../core/effect-log/index.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import {
   AgentLoopSuspendedError,
@@ -15,7 +16,6 @@ import {
   createSuspendingProvider,
   type PendingChatResumeState,
 } from './agent/suspending-provider.ts';
-import { ToolEffectLog } from './tool-effect-log.ts';
 
 function makeProvider(responses: ChatResponse[]): LLMProvider {
   let index = 0;

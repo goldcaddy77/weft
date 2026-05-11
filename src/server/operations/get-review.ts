@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import type { ReviewRequest } from '../../ai/human-review.ts';
 import type { Engine } from '../../core/engine.ts';
+import type { ReviewRequest } from '../../core/review/index.ts';
 import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';

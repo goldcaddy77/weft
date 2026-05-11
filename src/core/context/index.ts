@@ -7,7 +7,7 @@ import type {
   SuperviseOptions,
   SuperviseResult,
 } from '../../ai/coordination/index.ts';
-import type { HumanReviewOptions, HumanReviewResult } from '../../ai/human-review.ts';
+import type { HumanReviewOptions, HumanReviewResult } from '../review/index.ts';
 import { cloneSessionStateStore, normalizeSessionStateLocals } from '../session-state.ts';
 import type {
   ActivityArguments,
