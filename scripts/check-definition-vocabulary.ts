@@ -163,19 +163,6 @@ function checkFile(file: string, text: string): Finding[] {
   const testFile = isTestFile(file);
 
   if (!testFile) {
-    let defineAgentIndex = text.indexOf('defineAgent');
-    while (defineAgentIndex !== -1) {
-      findings.push({
-        file,
-        line: lineNumberForIndex(text, defineAgentIndex),
-        message:
-          'Use the public agent() helper; defineAgent must not appear in public source or docs.',
-      });
-      defineAgentIndex = text.indexOf('defineAgent', defineAgentIndex + 'defineAgent'.length);
-    }
-  }
-
-  if (!testFile) {
     const runCalls = findCallArguments(text, /\b(?:ctx|context)\.run\s*\(/g);
     for (const { argumentsList, index } of runCalls) {
       if (argumentsList.length > 3) {

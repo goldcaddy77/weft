@@ -1,9 +1,9 @@
-export interface VerificationRecorder {
+export interface SpeculativeRecorder {
   recordVerification(verification: Promise<void>): void;
   recordCompensation(compensation: () => Promise<void>): void;
 }
 
-export class SpeculativeExecutionState implements VerificationRecorder {
+export class SpeculativeExecutionState implements SpeculativeRecorder {
   readonly #verifications: Array<Promise<{ failed: false } | { failed: true; error: unknown }>>;
   readonly #compensations: Array<() => Promise<void>>;
 
