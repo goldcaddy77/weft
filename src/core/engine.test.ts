@@ -4415,11 +4415,11 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
-  it('engine.submitReview() dispatches HumanReviewCompletedEvent', async () => {
+  it('engine.submitReview() dispatches ReviewCompletedEvent', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
     const { encode: encodeValue } = await import('./codec.ts');
-    const { HumanReviewCompletedEvent } = await import('./review/events.ts');
+    const { ReviewCompletedEvent } = await import('./review/events.ts');
 
     const createdAt = Date.now() - 5000;
     const review = {
@@ -4432,9 +4432,9 @@ describe('Engine', () => {
     };
     await storage.put(KEYS.review('wf-event-1', 'rev-event-1'), encodeValue(review));
 
-    const receivedEvents: InstanceType<typeof HumanReviewCompletedEvent>[] = [];
-    engine.addEventListener(HumanReviewCompletedEvent.type, (event) => {
-      receivedEvents.push(event as InstanceType<typeof HumanReviewCompletedEvent>);
+    const receivedEvents: InstanceType<typeof ReviewCompletedEvent>[] = [];
+    engine.addEventListener(ReviewCompletedEvent.type, (event) => {
+      receivedEvents.push(event as InstanceType<typeof ReviewCompletedEvent>);
     });
 
     await engine.submitReview('rev-event-1', {
@@ -4452,11 +4452,11 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
-  it('engine.submitReview() dispatches HumanReviewCompletedEvent when workflowId found by scan', async () => {
+  it('engine.submitReview() dispatches ReviewCompletedEvent when workflowId found by scan', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
     const { encode: encodeValue } = await import('./codec.ts');
-    const { HumanReviewCompletedEvent } = await import('./review/events.ts');
+    const { ReviewCompletedEvent } = await import('./review/events.ts');
 
     const createdAt = Date.now() - 3000;
     const review = {
@@ -4469,9 +4469,9 @@ describe('Engine', () => {
     };
     await storage.put(KEYS.review('wf-scan-event-1', 'rev-scan-event-1'), encodeValue(review));
 
-    const receivedEvents: InstanceType<typeof HumanReviewCompletedEvent>[] = [];
-    engine.addEventListener(HumanReviewCompletedEvent.type, (event) => {
-      receivedEvents.push(event as InstanceType<typeof HumanReviewCompletedEvent>);
+    const receivedEvents: InstanceType<typeof ReviewCompletedEvent>[] = [];
+    engine.addEventListener(ReviewCompletedEvent.type, (event) => {
+      receivedEvents.push(event as InstanceType<typeof ReviewCompletedEvent>);
     });
 
     // Submit without workflowId — triggers the scan path

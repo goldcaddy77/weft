@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 
-import { ToolEffectLog } from '../core/effect-log/index.ts';
+import { EffectLog } from '../core/effect-log/index.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import {
   AgentLoopSuspendedError,
@@ -211,7 +211,7 @@ describe('executeAgentLoop', () => {
       },
     };
 
-    const firstLog = new ToolEffectLog(storage, 'workflow-1', 'agent-1');
+    const firstLog = new EffectLog(storage, 'workflow-1', 'agent-1');
     const firstRun = await executeAgentLoop(
       {
         model: 'test-1.0',
@@ -225,7 +225,7 @@ describe('executeAgentLoop', () => {
       'charge',
     );
 
-    const secondLog = new ToolEffectLog(storage, 'workflow-1', 'agent-1');
+    const secondLog = new EffectLog(storage, 'workflow-1', 'agent-1');
     const secondRun = await executeAgentLoop(
       {
         model: 'test-1.0',

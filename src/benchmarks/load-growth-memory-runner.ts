@@ -5,10 +5,11 @@ import { MemoryProfiler, linearRegression } from '../diagnostics/memory-profiler
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 
 const DEFAULT_DURATION_MILLISECONDS = 12_000;
+const DEFAULT_TARGET_WORKFLOWS_PER_SECOND = 10_000;
 const DEFAULT_SAMPLE_INTERVAL_MILLISECONDS = 500;
 const DEFAULT_WARMUP_SAMPLES = 4;
 const DEFAULT_BATCH_SIZE = 500;
-const DEFAULT_WARMUP_WORKFLOWS = 2_500;
+const DEFAULT_WARMUP_WORKFLOWS = 10_000;
 const DEFAULT_RETENTION_DURATION_MILLISECONDS = 0;
 const DEFAULT_RETENTION_SWEEP_INTERVAL = '25ms';
 const DEFAULT_RETENTION_SWEEP_BATCH_SIZE = 10_000;
@@ -16,6 +17,7 @@ const DEFAULT_RETENTION_SWEEP_BATCH_SIZE = 10_000;
 export type LoadGrowthMemoryMeasurement = {
   configuredDurationMilliseconds: number;
   measuredDurationMilliseconds: number;
+  targetWorkflowsPerSecond: number;
   sampleIntervalMilliseconds: number;
   workflowBatchSize: number;
   warmupSamples: number;
@@ -32,6 +34,7 @@ export type LoadGrowthMemoryMeasurement = {
 
 type BenchmarkConfiguration = {
   durationMilliseconds: number;
+  targetWorkflowsPerSecond: number;
 };
 
 function parsePositiveInteger(
@@ -57,6 +60,11 @@ function loadConfiguration(argv: string[]): BenchmarkConfiguration {
       argv[2],
       DEFAULT_DURATION_MILLISECONDS,
       'durationMilliseconds',
+    ),
+    targetWorkflowsPerSecond: parsePositiveInteger(
+      argv[3],
+      DEFAULT_TARGET_WORKFLOWS_PER_SECOND,
+      'targetWorkflowsPerSecond',
     ),
   };
 }
@@ -88,6 +96,8 @@ async function runWarmup(engine: Engine): Promise<void> {
     );
     await completeWorkflowBatch(engine, workflowStartIndex, workflowBatchSize);
   }
+
+  await Bun.sleep(100);
 
   if (typeof Bun.gc === 'function') {
     Bun.gc(true);
@@ -154,6 +164,7 @@ async function runSustainedLoad(
   engine: Engine,
   profiler: MemoryProfiler,
   durationMilliseconds: number,
+  targetWorkflowsPerSecond: number,
   sampleIntervalMilliseconds: number,
 ): Promise<{ elapsedMilliseconds: number; samples: MemorySample[]; totalWorkflows: number }> {
   const startedAt = performance.now();
@@ -172,7 +183,19 @@ async function runSustainedLoad(
       lastSampleTimestamp = sample.timestamp;
     }
 
-    await Bun.sleep(0);
+    const pacingTargetWorkflowsPerSecond = targetWorkflowsPerSecond * 1.02;
+    const targetElapsedMilliseconds = (totalWorkflows / pacingTargetWorkflowsPerSecond) * 1000;
+    const sleepMilliseconds = Math.max(
+      0,
+      startedAt + targetElapsedMilliseconds - performance.now(),
+    );
+    await Bun.sleep(sleepMilliseconds);
+
+    if (Date.now() - lastSampleTimestamp >= sampleIntervalMilliseconds) {
+      const sample = snapshotRetainedMemory(profiler);
+      samples.push(sample);
+      lastSampleTimestamp = sample.timestamp;
+    }
   }
 
   samples.push(snapshotRetainedMemory(profiler));
@@ -210,6 +233,7 @@ export async function measureLoadGrowthMemory(
       engine,
       profiler,
       configuration.durationMilliseconds,
+      configuration.targetWorkflowsPerSecond,
       DEFAULT_SAMPLE_INTERVAL_MILLISECONDS,
     );
     const summary = summarizeSamples(samples);
@@ -221,6 +245,7 @@ export async function measureLoadGrowthMemory(
         configuration.durationMilliseconds,
         Math.round(elapsedMilliseconds),
       ),
+      targetWorkflowsPerSecond: configuration.targetWorkflowsPerSecond,
       sampleIntervalMilliseconds: DEFAULT_SAMPLE_INTERVAL_MILLISECONDS,
       workflowBatchSize: DEFAULT_BATCH_SIZE,
       warmupSamples: DEFAULT_WARMUP_SAMPLES,

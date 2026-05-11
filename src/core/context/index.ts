@@ -380,10 +380,10 @@ export class Context implements WorkflowContext {
       messageName(nameOrDefinition),
     );
   }
-  *humanReview(
+  *review(
     options: HumanReviewOptions,
   ): Generator<ContextOperationRequest, HumanReviewResult, unknown> {
-    return yield* durableOperations.humanReview(this, getInternals(this), options);
+    return yield* durableOperations.review(this, getInternals(this), options);
   }
   *all(
     operations: Generator<ContextOperationRequest, unknown, unknown>[],

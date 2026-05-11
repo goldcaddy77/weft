@@ -1,4 +1,4 @@
-import type { WeftAgentEventMap } from '../../ai/events/index.ts';
+import type { WeftReviewEventMap } from '../../ai/events/index.ts';
 import type {
   ActivityCompletedEvent,
   ActivityFailedEvent,
@@ -46,7 +46,7 @@ import type {
  * void listenAll;
  * ```
  */
-export type WeftEventMap = WeftAgentEventMap & {
+export type WeftEventMap = WeftReviewEventMap & {
   'workflow:started': WorkflowStartedEvent;
   'workflow:completed': WorkflowCompletedEvent;
   'workflow:failed': WorkflowFailedEvent;

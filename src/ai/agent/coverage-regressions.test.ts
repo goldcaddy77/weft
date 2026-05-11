@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from 'bun:test';
 
-import type { ToolEffectLogLike } from '../../core/effect-log/index.ts';
-import { ToolCallReplayConflictError } from '../../core/effect-log/index.ts';
+import type { EffectLogLike } from '../../core/effect-log/index.ts';
+import { EffectReplayConflictError } from '../../core/effect-log/index.ts';
 import { createChatOptions, isAbortError } from './chat.ts';
 import { isJSONValue, normalizeJSONValue } from './json-value.ts';
 import {
@@ -235,8 +235,8 @@ describe('agent coverage regressions', () => {
   });
 
   it('aborts durable effect-log records when tool execution fails', async () => {
-    const abort = mock(async (_hash: string, _toolName: string, _reason: string) => {});
-    const effectLog: ToolEffectLogLike = {
+    const abort = mock(async (_hash: string, _effectName: string, _reason: string) => {});
+    const effectLog: EffectLogLike = {
       duplicatesPrevented: 0,
       async lookup() {
         return null;
@@ -264,8 +264,8 @@ describe('agent coverage regressions', () => {
   });
 
   it('aborts durable effect-log records when result materialization throws', async () => {
-    const abort = mock(async (_hash: string, _toolName: string, _reason: string) => {});
-    const effectLog: ToolEffectLogLike = {
+    const abort = mock(async (_hash: string, _effectName: string, _reason: string) => {});
+    const effectLog: EffectLogLike = {
       duplicatesPrevented: 0,
       async lookup() {
         return null;
@@ -294,10 +294,10 @@ describe('agent coverage regressions', () => {
   });
 
   it('surfaces in-flight durable tool replay conflicts', async () => {
-    const effectLog: ToolEffectLogLike = {
+    const effectLog: EffectLogLike = {
       duplicatesPrevented: 0,
       async lookup() {
-        return { status: 'in-flight', toolName: 'tool', recordedAt: Date.now() };
+        return { status: 'in-flight', effectName: 'tool', recordedAt: Date.now() };
       },
       recordReplay() {},
       async record() {},
@@ -308,7 +308,7 @@ describe('agent coverage regressions', () => {
 
     await expect(
       resolveToolExecution(runtime, 0, createToolCall(), createRegistryToolEntry()),
-    ).rejects.toThrow(ToolCallReplayConflictError);
+    ).rejects.toThrow(EffectReplayConflictError);
   });
 
   it('executes tool calls through the runtime registry', async () => {

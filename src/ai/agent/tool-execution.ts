@@ -1,4 +1,4 @@
-import { computeSemanticHash, ToolCallReplayConflictError } from '../../core/effect-log/index.ts';
+import { computeSemanticHash, EffectReplayConflictError } from '../../core/effect-log/index.ts';
 import { AgentToolCalledEvent, AgentToolReturnedEvent } from '../events/index.ts';
 import { normalizeJSONValue } from './json-value.ts';
 import type { RegistryToolEntry } from './tool-initialization.ts';
@@ -70,16 +70,16 @@ export async function resolveToolExecution(
 
     const existing = await effectLog.lookup(semanticHash);
 
-    if (existing?.status === 'committed' && existing.toolName === toolCall.name) {
+    if (existing?.status === 'committed' && existing.effectName === toolCall.name) {
       effectLog.recordReplay();
       return { content: normalizeJSONValue(existing.output), success: true };
     }
 
-    if (existing?.status === 'in-flight' && existing.toolName === toolCall.name) {
-      throw new ToolCallReplayConflictError(semanticHash, toolCall.name);
+    if (existing?.status === 'in-flight' && existing.effectName === toolCall.name) {
+      throw new EffectReplayConflictError(semanticHash, toolCall.name);
     }
 
-    const shouldRecord = !existing || existing.toolName === toolCall.name;
+    const shouldRecord = !existing || existing.effectName === toolCall.name;
     if (shouldRecord) {
       await effectLog.record(semanticHash, toolCall.name);
     }

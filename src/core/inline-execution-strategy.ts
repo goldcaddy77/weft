@@ -97,7 +97,7 @@ function createInlineContextOptions(
  *
  * Error names that map to specific categories:
  * - `'ToolSchemaValidationError'` → `'planning'` (LLM produced an invalid tool call)
- * - `'ToolCallReplayConflictError'` → `'action'` (tool replay conflict; execution-phase)
+ * - `'EffectReplayConflictError'` → `'action'` (tool replay conflict; execution-phase)
  * - `'MCPServerUnavailableError'`, `'MCPToolTimeoutError'` → `'action'` (tool execution)
  * - everything else → `'system'`
  */
@@ -109,7 +109,7 @@ function classifyErrorAsFailureCategory(error: unknown): FailureCategory {
   switch (error.name) {
     case 'ToolSchemaValidationError':
       return 'planning';
-    case 'ToolCallReplayConflictError':
+    case 'EffectReplayConflictError':
     case 'MCPServerUnavailableError':
     case 'MCPToolTimeoutError':
       return 'action';

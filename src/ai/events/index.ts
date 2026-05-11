@@ -1,7 +1,4 @@
-import type {
-  HumanReviewCompletedEvent,
-  HumanReviewRequestedEvent,
-} from '../../core/review/events.ts';
+import type { ReviewCompletedEvent, ReviewRequestedEvent } from '../../core/review/events.ts';
 import type {
   AgentCheckpointResumedEvent,
   AgentCheckpointSizeWarningEvent,
@@ -14,13 +11,13 @@ export * from './checkpoint-events.ts';
 export * from './tool-events.ts';
 export * from './turn-events.ts';
 
-export type WeftAgentEventMap = {
+export type WeftReviewEventMap = {
   'agent:turn:started': AgentTurnStartedEvent;
   'agent:turn:completed': AgentTurnCompletedEvent;
   'agent:tool:called': AgentToolCalledEvent;
   'agent:tool:returned': AgentToolReturnedEvent;
   'agent:checkpoint-size-warning': AgentCheckpointSizeWarningEvent;
-  'human-review:requested': HumanReviewRequestedEvent;
-  'human-review:completed': HumanReviewCompletedEvent;
+  'human-review:requested': ReviewRequestedEvent;
+  'human-review:completed': ReviewCompletedEvent;
   'agent:checkpoint:resumed': AgentCheckpointResumedEvent;
 };

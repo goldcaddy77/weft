@@ -7,8 +7,8 @@ import {
   AgentToolReturnedEvent,
   AgentTurnCompletedEvent,
   AgentTurnStartedEvent,
-  HumanReviewCompletedEvent,
-  HumanReviewRequestedEvent,
+  ReviewCompletedEvent,
+  ReviewRequestedEvent,
 } from './events/index.ts';
 
 describe('AgentTurnStartedEvent', () => {
@@ -90,9 +90,9 @@ describe('AgentToolReturnedEvent', () => {
   });
 });
 
-describe('HumanReviewRequestedEvent', () => {
+describe('ReviewRequestedEvent', () => {
   it('sets all properties from constructor arguments', () => {
-    const event = new HumanReviewRequestedEvent('wf-5', 'review-1', 'approval', ['alice', 'bob']);
+    const event = new ReviewRequestedEvent('wf-5', 'review-1', 'approval', ['alice', 'bob']);
 
     expect(event.type).toBe('human-review:requested');
     expect(event.workflowId).toBe('wf-5');
@@ -102,9 +102,9 @@ describe('HumanReviewRequestedEvent', () => {
   });
 });
 
-describe('HumanReviewCompletedEvent', () => {
+describe('ReviewCompletedEvent', () => {
   it('sets all properties from constructor arguments', () => {
-    const event = new HumanReviewCompletedEvent('wf-6', 'review-2', 'approved', 'alice', 250);
+    const event = new ReviewCompletedEvent('wf-6', 'review-2', 'approved', 'alice', 250);
 
     expect(event.type).toBe('human-review:completed');
     expect(event.workflowId).toBe('wf-6');

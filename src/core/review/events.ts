@@ -6,18 +6,18 @@
  *
  * @example Route review notifications to a webhook
  * ```ts
- * import { HumanReviewRequestedEvent } from 'weft';
+ * import { ReviewRequestedEvent } from 'weft';
  *
  * const target = new EventTarget();
  *
- * target.addEventListener(HumanReviewRequestedEvent.type, (e) => {
- *   const event = e as HumanReviewRequestedEvent;
+ * target.addEventListener(ReviewRequestedEvent.type, (e) => {
+ *   const event = e as ReviewRequestedEvent;
  *   console.log(`Review ${event.reviewId} requested for workflow ${event.workflowId}`);
  *   console.log('Reviewers:', event.reviewers);
  * });
  * ```
  */
-export class HumanReviewRequestedEvent extends Event {
+export class ReviewRequestedEvent extends Event {
   static readonly type = 'human-review:requested' as const;
   readonly workflowId: string;
   readonly reviewId: string;
@@ -25,7 +25,7 @@ export class HumanReviewRequestedEvent extends Event {
   readonly reviewers: string[];
 
   constructor(workflowId: string, reviewId: string, reviewType: string, reviewers: string[]) {
-    super(HumanReviewRequestedEvent.type);
+    super(ReviewRequestedEvent.type);
     this.workflowId = workflowId;
     this.reviewId = reviewId;
     this.reviewType = reviewType;
@@ -41,17 +41,17 @@ export class HumanReviewRequestedEvent extends Event {
  *
  * @example Record review decisions in an audit log
  * ```ts
- * import { HumanReviewCompletedEvent } from 'weft';
+ * import { ReviewCompletedEvent } from 'weft';
  *
  * const target = new EventTarget();
  *
- * target.addEventListener(HumanReviewCompletedEvent.type, (e) => {
- *   const event = e as HumanReviewCompletedEvent;
+ * target.addEventListener(ReviewCompletedEvent.type, (e) => {
+ *   const event = e as ReviewCompletedEvent;
  *   console.log(`Review ${event.reviewId}: '${event.decision}' by ${event.reviewer} in ${event.duration}ms`);
  * });
  * ```
  */
-export class HumanReviewCompletedEvent extends Event {
+export class ReviewCompletedEvent extends Event {
   static readonly type = 'human-review:completed' as const;
   readonly workflowId: string;
   readonly reviewId: string;
@@ -66,7 +66,7 @@ export class HumanReviewCompletedEvent extends Event {
     reviewer: string,
     duration: number,
   ) {
-    super(HumanReviewCompletedEvent.type);
+    super(ReviewCompletedEvent.type);
     this.workflowId = workflowId;
     this.reviewId = reviewId;
     this.decision = decision;

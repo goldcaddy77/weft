@@ -389,8 +389,8 @@ export { ReviewCoordinator, ReviewTimeoutError } from './core/review/index.ts';
 export type { ReviewCoordinatorOptions } from './core/review/index.ts';
 
 export {
-  ToolCallReplayConflictError,
-  ToolEffectLog,
+  EffectLog,
+  EffectReplayConflictError,
   computeSemanticHash,
 } from './core/effect-log/index.ts';
 export type { EffectRecord } from './core/effect-log/index.ts';
@@ -402,8 +402,8 @@ export {
   AgentToolReturnedEvent,
   AgentTurnCompletedEvent,
   AgentTurnStartedEvent,
-  HumanReviewCompletedEvent,
-  HumanReviewRequestedEvent,
+  ReviewCompletedEvent,
+  ReviewRequestedEvent,
 } from './ai/events/index.ts';
 
 export type { AgentRegistrationOptions } from './core/engine';

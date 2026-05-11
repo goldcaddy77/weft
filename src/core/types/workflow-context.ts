@@ -125,7 +125,7 @@ export interface WorkflowContext {
   waitForUpdate<T = unknown>(
     name: string,
   ): WorkflowOperation<{ payload: T; respond: (result: unknown) => void }>;
-  humanReview(options: HumanReviewOptions): WorkflowOperation<HumanReviewResult>;
+  review(options: HumanReviewOptions): WorkflowOperation<HumanReviewResult>;
   all(operations: WorkflowOperation<unknown>[]): WorkflowOperation<unknown[]>;
   race(operations: WorkflowOperation<unknown>[]): WorkflowOperation<unknown>;
   memo<T>(key: string, fn: () => T | Promise<T>): WorkflowOperation<T>;

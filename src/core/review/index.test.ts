@@ -7,7 +7,7 @@ import { TestEngine } from '../../testing/test-engine.ts';
 import { decode, encode } from '../codec.ts';
 import { Engine } from '../engine.ts';
 import type { WorkflowContext } from '../types.ts';
-import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from './events.ts';
+import { ReviewCompletedEvent, ReviewRequestedEvent } from './events.ts';
 import {
   ReviewCoordinator,
   ReviewTimeoutError,
@@ -71,13 +71,13 @@ describe('ReviewCoordinator', () => {
       expect(request.createdAt).toBeGreaterThan(0);
     });
 
-    it('dispatches HumanReviewRequestedEvent when eventTarget is provided', async () => {
+    it('dispatches ReviewRequestedEvent when eventTarget is provided', async () => {
       const eventTarget = new EventTarget();
       const coordinatorWithEvents = new ReviewCoordinator(storage, { eventTarget });
-      const receivedEvents: HumanReviewRequestedEvent[] = [];
+      const receivedEvents: ReviewRequestedEvent[] = [];
 
-      eventTarget.addEventListener(HumanReviewRequestedEvent.type, (event) => {
-        receivedEvents.push(event as HumanReviewRequestedEvent);
+      eventTarget.addEventListener(ReviewRequestedEvent.type, (event) => {
+        receivedEvents.push(event as ReviewRequestedEvent);
       });
 
       const request = await coordinatorWithEvents.createReview('wf-event-1', {
@@ -93,7 +93,7 @@ describe('ReviewCoordinator', () => {
       expect(receivedEvents[0]!.reviewers).toEqual(['alice', 'bob']);
     });
 
-    it('does not dispatch HumanReviewRequestedEvent when no eventTarget is provided', async () => {
+    it('does not dispatch ReviewRequestedEvent when no eventTarget is provided', async () => {
       // This test verifies that the coordinator works fine without an eventTarget.
       // If it throws, the test will fail.
       const request = await coordinator.createReview('wf-no-events', {
@@ -272,22 +272,22 @@ describe('ReviewCoordinator', () => {
 });
 
 // ---------------------------------------------------------------------------
-// G1: ctx.humanReview() pauses workflow with durable storage
+// G1: ctx.review() pauses workflow with durable storage
 // ---------------------------------------------------------------------------
 
-describe('G1: ctx.humanReview() pauses workflow with durable storage', () => {
+describe('G1: ctx.review() pauses workflow with durable storage', () => {
   let engine: TestEngine;
 
   afterEach(() => {
     engine[Symbol.dispose]();
   });
 
-  it('pauses the workflow when humanReview is called', async () => {
+  it('pauses the workflow when review is called', async () => {
     engine = new TestEngine();
 
     engine.register('review-workflow', async function* (ctx: WorkflowContext) {
       const c = ctx;
-      const decision = yield* c.humanReview({
+      const decision = yield* c.review({
         artifact: 'draft report',
         reviewers: ['alice'],
       });
@@ -307,7 +307,7 @@ describe('G1: ctx.humanReview() pauses workflow with durable storage', () => {
 
     engine.register('review-workflow', async function* (ctx: WorkflowContext) {
       const c = ctx;
-      const decision = yield* c.humanReview({
+      const decision = yield* c.review({
         artifact: 'draft report',
         reviewers: ['alice'],
       });
@@ -336,7 +336,7 @@ describe('G1: ctx.humanReview() pauses workflow with durable storage', () => {
 
     engine.register('review-workflow', async function* (ctx: WorkflowContext) {
       const c = ctx;
-      const decision = yield* c.humanReview({
+      const decision = yield* c.review({
         artifact: 'draft report',
         reviewers: ['alice'],
       });
@@ -350,7 +350,7 @@ describe('G1: ctx.humanReview() pauses workflow with durable storage', () => {
     const recovered = engine.recover();
     recovered.register('review-workflow', async function* (ctx: WorkflowContext) {
       const c = ctx;
-      const decision = yield* c.humanReview({
+      const decision = yield* c.review({
         artifact: 'draft report',
         reviewers: ['alice'],
       });
@@ -387,7 +387,7 @@ describe('G2: Review submission resumes workflow', () => {
 
     engine.register('review-workflow', async function* (ctx: WorkflowContext) {
       const c = ctx;
-      const decision = yield* c.humanReview({
+      const decision = yield* c.review({
         artifact: 'draft report',
         reviewers: ['alice'],
       });
@@ -426,7 +426,7 @@ describe('G2: Review submission resumes workflow', () => {
       const c = ctx;
 
       // Step 1: human review
-      const decision = yield* c.humanReview({
+      const decision = yield* c.review({
         artifact: 'draft',
         reviewers: ['bob'],
       });
@@ -475,7 +475,7 @@ describe('G4: Escalation with timeout chains', () => {
 
     engine.register('auto-approve-workflow', async function* (ctx: WorkflowContext) {
       const c = ctx;
-      const decision = yield* c.humanReview({
+      const decision = yield* c.review({
         artifact: 'urgent report',
         reviewers: ['alice'],
         escalation: [
@@ -523,7 +523,7 @@ describe('G5: Partial approval', () => {
 
     engine.register('partial-review-workflow', async function* (ctx: WorkflowContext) {
       const c = ctx;
-      const decision = yield* c.humanReview({
+      const decision = yield* c.review({
         artifact: { sections: ['intro', 'methods', 'conclusion'] },
         reviewers: ['alice'],
         allowPartial: true,
@@ -602,7 +602,7 @@ describe('G6: Webhook notification', () => {
 
     engine.register('webhook-workflow', async function* (ctx: WorkflowContext) {
       const c = ctx;
-      const decision = yield* c.humanReview({
+      const decision = yield* c.review({
         artifact: 'draft report',
         reviewers: ['alice'],
         webhookUrl: 'https://example.com/hook',
@@ -647,7 +647,7 @@ describe('G6: Webhook notification', () => {
 
     engine.register('webhook-abort-workflow', async function* (ctx: WorkflowContext) {
       const context = ctx;
-      yield* context.humanReview({
+      yield* context.review({
         artifact: 'draft report',
         reviewers: ['alice'],
         webhookUrl: 'https://example.com/hook',
@@ -674,17 +674,17 @@ describe('G7: Events', () => {
     engine[Symbol.dispose]();
   });
 
-  it('dispatches HumanReviewRequestedEvent when review wait begins', async () => {
+  it('dispatches ReviewRequestedEvent when review wait begins', async () => {
     engine = new TestEngine();
 
-    const requestedEvents: HumanReviewRequestedEvent[] = [];
-    engine.addEventListener(HumanReviewRequestedEvent.type, ((event: HumanReviewRequestedEvent) => {
+    const requestedEvents: ReviewRequestedEvent[] = [];
+    engine.addEventListener(ReviewRequestedEvent.type, ((event: ReviewRequestedEvent) => {
       requestedEvents.push(event);
     }) as EventListener);
 
     engine.register('event-workflow', async function* (ctx: WorkflowContext) {
       const c = ctx;
-      const decision = yield* c.humanReview({
+      const decision = yield* c.review({
         artifact: 'draft',
         reviewType: 'code-review',
         reviewers: ['alice', 'bob'],
@@ -714,17 +714,17 @@ describe('G7: Events', () => {
     await flush();
   });
 
-  it('dispatches HumanReviewCompletedEvent when review submitted', async () => {
+  it('dispatches ReviewCompletedEvent when review submitted', async () => {
     engine = new TestEngine();
 
-    const completedEvents: HumanReviewCompletedEvent[] = [];
-    engine.addEventListener(HumanReviewCompletedEvent.type, ((event: HumanReviewCompletedEvent) => {
+    const completedEvents: ReviewCompletedEvent[] = [];
+    engine.addEventListener(ReviewCompletedEvent.type, ((event: ReviewCompletedEvent) => {
       completedEvents.push(event);
     }) as EventListener);
 
     engine.register('event-workflow', async function* (ctx: WorkflowContext) {
       const c = ctx;
-      const decision = yield* c.humanReview({
+      const decision = yield* c.review({
         artifact: 'draft',
         reviewers: ['alice'],
       });
@@ -772,7 +772,7 @@ describe('G8: Review cleanup + timeout error', () => {
 
     engine.register('cleanup-workflow', async function* (ctx: WorkflowContext) {
       const c = ctx;
-      const decision = yield* c.humanReview({
+      const decision = yield* c.review({
         artifact: 'draft',
         reviewers: ['alice'],
       });
@@ -816,7 +816,7 @@ describe('G8: Review cleanup + timeout error', () => {
 
     engine.register('timeout-workflow', async function* (ctx: WorkflowContext) {
       const c = ctx;
-      const decision = yield* c.humanReview({
+      const decision = yield* c.review({
         artifact: 'urgent report',
         reviewers: ['alice'],
         timeout: 5000,

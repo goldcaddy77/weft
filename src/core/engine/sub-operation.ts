@@ -194,8 +194,8 @@ export async function executeSubOperation(
       const { prompt, ...rest } = operation.options;
       await agentOperationCallbacks.ensureTerminalCleanupTracked(workflowId);
 
-      const { ToolEffectLog } = await import('../effect-log/index.ts');
-      const toolEffectLog = new ToolEffectLog(internals.storage, workflowId, operation.operationId);
+      const { EffectLog } = await import('../effect-log/index.ts');
+      const toolEffectLog = new EffectLog(internals.storage, workflowId, operation.operationId);
       const agentResult = await executeAgentLoop(
         {
           ...rest,

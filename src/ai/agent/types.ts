@@ -1,5 +1,5 @@
 /* oxlint-disable max-lines -- ID:ai-agent-types-file-length */
-import type { ToolEffectLogLike } from '../../core/effect-log/index.ts';
+import type { EffectLogLike } from '../../core/effect-log/index.ts';
 import type { JSONValue } from '../../core/json.ts';
 import type { ToolIdentityResult } from '../declaration.ts';
 
@@ -630,7 +630,7 @@ export interface AgentOptions {
    * Durable tool effect log for deduplicating tool calls across
    * checkpoint-restore cycles.
    */
-  toolEffectLog?: ToolEffectLogLike | undefined;
+  toolEffectLog?: EffectLogLike | undefined;
   /**
    * Internal hook used by speculative execution to defer tool-result
    * verification until the enclosing speculative branch drains.
@@ -653,7 +653,7 @@ export interface ResolvedAgentOptions {
   eventTarget?: EventTarget | undefined;
   workflowId: string;
   agentId: string;
-  toolEffectLog?: ToolEffectLogLike | undefined;
+  toolEffectLog?: EffectLogLike | undefined;
   verificationRecorder?: VerificationRecorder | undefined;
   checkpointSizeWarningThreshold: number;
 }

@@ -10,7 +10,7 @@
 import type { BatchOperation, Storage } from '../../storage/interface.ts';
 import { KEYS } from '../../storage/interface.ts';
 import { decode, encode } from '../codec.ts';
-import { HumanReviewRequestedEvent } from './events.ts';
+import { ReviewRequestedEvent } from './events.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -55,19 +55,17 @@ export interface ReviewOptions {
 }
 
 /**
- * Options passed to `ctx.humanReview()` inside a workflow generator.
+ * Options passed to `ctx.review()` inside a workflow generator.
  * Extends the base ReviewOptions with context-level callbacks.
  */
 export interface HumanReviewOptions extends ReviewOptions {
-  /** Enable conversation round-trips between reviewer and workflow. */
-  conversation?: boolean;
   /** Handler for incoming reviewer messages during conversation. */
   onMessage?: (message: string) => string;
   /** Handler called when an escalation step fires. */
   onEscalation?: (action: EscalationAction) => void;
 }
 
-/** The decision payload returned to the workflow from `ctx.humanReview()`. */
+/** The decision payload returned to the workflow from `ctx.review()`. */
 export type HumanReviewResult = ReviewDecision;
 
 export type EscalationAction =
@@ -91,7 +89,7 @@ export type EscalationAction =
  *
  * const engine = new TestEngine({ startTime: 0 });
  * engine.register('needs-review', async function* (ctx: WorkflowContext) {
- *   return yield* ctx.humanReview({
+ *   return yield* ctx.review({
  *     artifact: 'release plan',
  *     reviewers: ['alice@example.com'],
  *     timeout: 5_000,
@@ -128,7 +126,7 @@ export class ReviewTimeoutError extends Error {
 
 /**
  * Options for constructing a {@link ReviewCoordinator}. Accepts an optional
- * `EventTarget` to dispatch {@link HumanReviewRequestedEvent} on review
+ * `EventTarget` to dispatch {@link ReviewRequestedEvent} on review
  * creation, and a custom `getNow` clock function for deterministic testing.
  *
  * @example Attach an event target and a fixed clock for tests
@@ -154,8 +152,8 @@ export interface ReviewCoordinatorOptions {
 
 /**
  * Persists human review requests to storage, dispatches
- * {@link HumanReviewRequestedEvent} on creation, accepts reviewer decisions,
- * and checks escalation timeouts. Used by `ctx.humanReview()` inside workflow
+ * {@link ReviewRequestedEvent} on creation, accepts reviewer decisions,
+ * and checks escalation timeouts. Used by `ctx.review()` inside workflow
  * generators to pause execution pending a human decision.
  *
  * @example Create a review and later submit a decision
@@ -221,7 +219,7 @@ export class ReviewCoordinator {
 
     if (this.#eventTarget) {
       this.#eventTarget.dispatchEvent(
-        new HumanReviewRequestedEvent(workflowId, reviewId, request.reviewType, request.reviewers),
+        new ReviewRequestedEvent(workflowId, reviewId, request.reviewType, request.reviewers),
       );
     }
 

@@ -1580,9 +1580,9 @@ describe('Context', () => {
       expect(request.callerStack!.length).toBeGreaterThan(0);
     });
 
-    it('ctx.humanReview yields a request with callerStack', () => {
+    it('ctx.review yields a request with callerStack', () => {
       const context = createContext();
-      const generator = context.humanReview({ artifact: { data: 'test' }, reviewType: 'approval' });
+      const generator = context.review({ artifact: { data: 'test' }, reviewType: 'approval' });
       const request = expectRequest(generator.next(), 'wait-review');
 
       expect(request.callerStack).toBeDefined();

@@ -44,7 +44,7 @@ type RequiredWorkflowContextKeys =
   | 'expose'
   | 'getAttribute'
   | 'getAttributes'
-  | 'humanReview'
+  | 'review'
   | 'load'
   | 'map'
   | 'memo'

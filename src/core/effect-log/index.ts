@@ -15,12 +15,12 @@ import { hashString } from '../../runtime/portable.ts';
  *
  * - **committed** → replay the stored result; skip the tool entirely.
  * - **in-flight** → the previous run crashed mid-execution; throw
- *   {@link ToolCallReplayConflictError} so the caller can escalate.
+ *   {@link EffectReplayConflictError} so the caller can escalate.
  * - **absent** → record as `in-flight`, execute the tool, then
- *   {@link ToolEffectLog.commit} or {@link ToolEffectLog.abort}.
+ *   {@link EffectLog.commit} or {@link EffectLog.abort}.
  *
  * The log is backed by the {@link Storage} interface (any KV adapter).
- * Records are scoped to `(workflowId, agentId)` so parallel `ctx.all`
+ * Records are scoped to `(workflowId, operationId)` so parallel `ctx.all`
  * agent branches do not collide.
  *
  * @see arXiv 2603.20625 ("ACRFence") for the threat model and experimental
@@ -42,38 +42,38 @@ import { isJSONValue, type JSONValue } from '../json.ts';
  * A tool-call effect record stored in the log. The `status` field drives the
  * deduplication logic in the agent loop.
  *
- * @example Inspect the record returned by ToolEffectLog.lookup
+ * @example Inspect the record returned by EffectLog.lookup
  * ```ts
  * import type { EffectRecord } from 'weft';
  *
  * function describeRecord(record: EffectRecord): string {
  *   switch (record.status) {
- *     case 'in-flight': return `${record.toolName} started at ${record.recordedAt}`;
- *     case 'committed': return `${record.toolName} -> ${JSON.stringify(record.output)}`;
- *     case 'aborted':   return `${record.toolName} failed: ${record.reason}`;
+ *     case 'in-flight': return `${record.effectName} started at ${record.recordedAt}`;
+ *     case 'committed': return `${record.effectName} -> ${JSON.stringify(record.output)}`;
+ *     case 'aborted':   return `${record.effectName} failed: ${record.reason}`;
  *   }
  * }
  * ```
  */
 export type EffectRecord =
-  | { status: 'in-flight'; toolName: string; recordedAt: number }
-  | { status: 'committed'; toolName: string; output: JSONValue; completedAt: number }
-  | { status: 'aborted'; toolName: string; reason: string; completedAt: number };
+  | { status: 'in-flight'; effectName: string; recordedAt: number }
+  | { status: 'committed'; effectName: string; output: JSONValue; completedAt: number }
+  | { status: 'aborted'; effectName: string; reason: string; completedAt: number };
 
 /**
  * Public contract the agent loop relies on when deduplicating tool calls.
  *
  * This narrower type keeps tests honest without forcing them to construct a
- * full {@link ToolEffectLog} instance when they only need the runtime-facing
+ * full {@link EffectLog} instance when they only need the runtime-facing
  * methods and counter.
  */
-export type ToolEffectLogLike = Pick<
-  ToolEffectLog,
+export type EffectLogLike = Pick<
+  EffectLog,
   'lookup' | 'recordReplay' | 'record' | 'commit' | 'abort' | 'duplicatesPrevented'
 >;
 
 // ---------------------------------------------------------------------------
-// ToolCallReplayConflictError
+// EffectReplayConflictError
 // ---------------------------------------------------------------------------
 
 /**
@@ -87,33 +87,33 @@ export type ToolEffectLogLike = Pick<
  *
  * @example Catch a replay conflict and route to human review
  * ```ts
- * import { ToolCallReplayConflictError } from 'weft';
+ * import { EffectReplayConflictError } from 'weft';
  *
  * try {
  *   // ... agent loop execution
  * } catch (error) {
- *   if (error instanceof ToolCallReplayConflictError) {
+ *   if (error instanceof EffectReplayConflictError) {
  *     console.error(
- *       `Conflict for tool "${error.toolName}" (hash ${error.semanticHash}).`,
+ *       `Conflict for effect "${error.effectName}" (hash ${error.semanticHash}).`,
  *       'Route to human review before retrying.',
  *     );
  *   }
  * }
  * ```
  */
-export class ToolCallReplayConflictError extends Error {
-  readonly toolName: string;
+export class EffectReplayConflictError extends Error {
+  readonly effectName: string;
   readonly semanticHash: string;
 
-  constructor(semanticHash: string, toolName: string) {
+  constructor(semanticHash: string, effectName: string) {
     super(
-      `Tool call replay conflict: "${toolName}" (semantic hash ${semanticHash}) ` +
+      `Tool call replay conflict: "${effectName}" (semantic hash ${semanticHash}) ` +
         `was in-flight when the process crashed. The outcome of the original call ` +
         `is unknown — re-executing a non-idempotent tool may cause duplicate effects. ` +
         `Inspect the effect log or route to human review before retrying.`,
     );
-    this.name = 'ToolCallReplayConflictError';
-    this.toolName = toolName;
+    this.name = 'EffectReplayConflictError';
+    this.effectName = effectName;
     this.semanticHash = semanticHash;
   }
 }
@@ -190,11 +190,11 @@ function canonicalize(value: unknown): string {
 // Runtime type guard
 // ---------------------------------------------------------------------------
 
-/** Narrow an unknown decoded value to `EffectRecord`. Used in {@link ToolEffectLog.lookup}. */
+/** Narrow an unknown decoded value to `EffectRecord`. Used in {@link EffectLog.lookup}. */
 function isEffectRecord(value: unknown): value is EffectRecord {
   if (typeof value !== 'object' || value === null) return false;
   const obj = value as Record<string, unknown>;
-  if (typeof obj['status'] !== 'string' || typeof obj['toolName'] !== 'string') return false;
+  if (typeof obj['status'] !== 'string' || typeof obj['effectName'] !== 'string') return false;
   const status = obj['status'];
   if (status === 'in-flight') return typeof obj['recordedAt'] === 'number';
   if (status === 'committed')
@@ -205,26 +205,26 @@ function isEffectRecord(value: unknown): value is EffectRecord {
 }
 
 // ---------------------------------------------------------------------------
-// ToolEffectLog
+// EffectLog
 // ---------------------------------------------------------------------------
 
 /**
  * Per-agent-invocation effect log.
  *
- * Scoped to a `(workflowId, agentId)` pair so that concurrent agent branches
+ * Scoped to a `(workflowId, operationId)` pair so that concurrent agent branches
  * (e.g. from `ctx.all([agent(), agent()])`) do not share hash space.
  *
- * `agentId` is the `operationId` assigned at `ctx.agent()` call-time — it is
+ * `operationId` is assigned at `ctx.agent()` call-time and is
  * stable across checkpoint-restore cycles because the engine derives it from
  * the workflow step index, not from a random source.
  *
- * @example Create and use a ToolEffectLog for durable deduplication
+ * @example Create and use an EffectLog for durable deduplication
  * ```ts
- * import { ToolEffectLog, computeSemanticHash } from 'weft';
+ * import { EffectLog, computeSemanticHash } from 'weft';
  * import { MemoryStorage } from 'weft/storage/memory';
  *
  * const storage = new MemoryStorage();
- * const log = new ToolEffectLog(storage, 'workflow-abc', 'agent-1');
+ * const log = new EffectLog(storage, 'workflow-abc', 'agent-1');
  *
  * const hash = computeSemanticHash({ recipient: 'alice', amount: 100 });
  * await log.record(hash, 'charge');
@@ -234,16 +234,16 @@ function isEffectRecord(value: unknown): value is EffectRecord {
  * console.log(record?.status); // 'committed'
  * ```
  */
-export class ToolEffectLog {
+export class EffectLog {
   readonly #storage: Storage;
   readonly #workflowId: string;
-  readonly #agentId: string;
+  readonly #operationId: string;
   #duplicatesPrevented = 0;
 
-  constructor(storage: Storage, workflowId: string, agentId: string) {
+  constructor(storage: Storage, workflowId: string, operationId: string) {
     this.#storage = storage;
     this.#workflowId = workflowId;
-    this.#agentId = agentId;
+    this.#operationId = operationId;
   }
 
   /** Number of committed-replay short-circuits recorded during this instance's lifetime. */
@@ -266,7 +266,7 @@ export class ToolEffectLog {
    * Returns `null` when no record exists (tool has not been seen before).
    */
   async lookup(semanticHash: string): Promise<EffectRecord | null> {
-    const key = KEYS.toolEffect(this.#workflowId, this.#agentId, semanticHash);
+    const key = KEYS.toolEffect(this.#workflowId, this.#operationId, semanticHash);
     const bytes = await this.#storage.get(key);
     if (!bytes) return null;
     const decoded = decode(bytes);
@@ -280,10 +280,10 @@ export class ToolEffectLog {
    * Call this **before** invoking the tool so that a crash between this
    * write and the tool's response is detectable on restore.
    */
-  async record(semanticHash: string, toolName: string): Promise<void> {
+  async record(semanticHash: string, effectName: string): Promise<void> {
     const record: EffectRecord = {
       status: 'in-flight',
-      toolName,
+      effectName,
       recordedAt: Date.now(),
     };
     await this.#put(semanticHash, record);
@@ -295,10 +295,10 @@ export class ToolEffectLog {
    * Call this after the tool has returned successfully so that a subsequent
    * restore will replay this output instead of re-executing.
    */
-  async commit(semanticHash: string, toolName: string, output: JSONValue): Promise<void> {
+  async commit(semanticHash: string, effectName: string, output: JSONValue): Promise<void> {
     const record: EffectRecord = {
       status: 'committed',
-      toolName,
+      effectName,
       output,
       completedAt: Date.now(),
     };
@@ -313,10 +313,10 @@ export class ToolEffectLog {
    * rather than replaying the error, so only use this for failures where a
    * future retry is safe and desired.
    */
-  async abort(semanticHash: string, toolName: string, reason: string): Promise<void> {
+  async abort(semanticHash: string, effectName: string, reason: string): Promise<void> {
     const record: EffectRecord = {
       status: 'aborted',
-      toolName,
+      effectName,
       reason,
       completedAt: Date.now(),
     };
@@ -328,7 +328,7 @@ export class ToolEffectLog {
   // ---------------------------------------------------------------------------
 
   async #put(semanticHash: string, record: EffectRecord): Promise<void> {
-    const key = KEYS.toolEffect(this.#workflowId, this.#agentId, semanticHash);
+    const key = KEYS.toolEffect(this.#workflowId, this.#operationId, semanticHash);
     await this.#storage.put(key, encode(record));
   }
 }
