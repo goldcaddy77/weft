@@ -1,0 +1,36 @@
+---
+name: async-lifecycle-races
+description: >-
+  Use this skill when a Weft change touches ack-gated flows, pending promises,
+  WebSocket workers, shutdown, disposal, cancellation, retries, reconnects,
+  heartbeats, timers, or any lifecycle path where ordering can leave work hanging.
+---
+
+# Async Lifecycle Races
+
+## When to use
+
+- Changing `RemoteWorker.connect()`, registration acknowledgements, socket close handling, or worker disposal.
+- Adding or modifying shutdown, cancellation, retry, heartbeat, timeout, or reconnect behavior.
+- Introducing a promise that can outlive its owner or wait on an event from another process.
+- Fixing tests that rely on real sleeps, timing slack, or unbounded polling.
+
+## Do not use
+
+- Pure synchronous parsing or formatting changes.
+- Tests that can be expressed as deterministic pure-function assertions.
+- UI-only state changes that do not affect worker, server, engine, or storage lifecycle.
+
+## Workflow
+
+1. List each pending operation and the event that resolves or rejects it.
+2. For every owner transition, define what happens on success, error, abort, close, disposal, and shutdown.
+3. Reject or settle pending promises when the owner goes away; never leave callers waiting for an event that can no longer arrive.
+4. Prefer virtual time, explicit signals, and observable conditions over fixed `Bun.sleep()` delays.
+5. Cap polling and retry loops, then surface the final state when the cap is reached.
+
+## Verification
+
+- Add race regression tests for before-ack disposal, socket close, cancellation, and shutdown paths touched by the change.
+- Prove no test depends on unbounded waits or real-time sleeps.
+- Run the focused lifecycle or worker tests plus `bun run verify:no-test-sleeps` when relevant.
