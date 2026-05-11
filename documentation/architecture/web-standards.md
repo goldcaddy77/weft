@@ -60,7 +60,7 @@ A few of these deserve explanation.
 
 **`BroadcastChannel`** enables pub/sub coordination between workers without direct references. Create a named channel, and any worker subscribed to that name receives messages. It works identically in Bun and in browsers.
 
-**`ReadableStream` / `WritableStream`** power token streaming from LLM agents, context window management, and stream multiplexing. These are the same stream primitives that `fetch` responses use.
+**`ReadableStream` / `WritableStream`** power event streaming, context window management, and stream multiplexing. These are the same stream primitives that `fetch` responses use.
 
 ## What runs where
 

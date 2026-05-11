@@ -48,12 +48,11 @@ const engine = new Engine({
 ```ts partial
 register(name: string, handler: WorkflowFunction | StepWorkflowFunction): void
 register(name: string, registration: WorkflowRegistration): void
-register(agentDef: AgentDefinition, options?: AgentRegistrationOptions): void
 ```
 
 Register a workflow by name. The simple form accepts a generator or step-based workflow function directly. The registration form accepts a `WorkflowRegistration` object with execution metadata (`version`, `migrate`, retention) and catalog-neutral definition metadata (`description`, `tags`, `inputSchema`, `outputSchema`).
 
-The schema fields are introspection metadata. Core workflow registration validates their Standard Schema metadata shape, but workflow execution does not validate input or output from these fields unless an adapter explicitly opts into that validation. Agent definitions can also be registered directly with optional agent registration options.
+The schema fields are introspection metadata. Core workflow registration validates their Standard Schema metadata shape, but workflow execution does not validate input or output from these fields unless an adapter explicitly opts into that validation.
 
 ```ts partial
 engine.register('send-email', async function* (context, input) {

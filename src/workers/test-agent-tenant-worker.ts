@@ -5,8 +5,7 @@
  * `initializeWorkerMessageLoop` from `workflow-worker-entry.ts`. The
  * registered handler exercises the post-shrinkage tenant-tool pattern —
  * the workflow author scopes tools by `ctx.tenant` before invoking the
- * stub provider, matching the recommended pattern in
- * `documentation/agents/what-weft-owns.md`.
+ * stub provider.
  *
  * The handler bypasses `ctx.agent()` (which only exists on the engine-side
  * `Context` class) and calls the stub provider directly. This narrows the
@@ -33,8 +32,7 @@ interface FixtureTool {
 
 /**
  * Per-tenant tool resolver for the fixture agent. The workflow author
- * scopes tools by `ctx.tenant` before invoking the agent — this is the
- * post-shrinkage pattern described in `documentation/agents/what-weft-owns.md`.
+ * scopes tools by `ctx.tenant` before invoking the agent.
  */
 function pickToolsForTenant(tenant: TenantContext | undefined): FixtureTool[] {
   if (tenant?.id === 'tenant-a') return [{ name: 'toolA' }];

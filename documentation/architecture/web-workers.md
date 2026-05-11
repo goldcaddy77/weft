@@ -33,7 +33,7 @@ Four reasons, in order of importance.
 
 **Fault isolation.** If a workflow throws an unhandled error or enters an infinite loop, it crashes _its_ worker---not the HTTP server. The main thread detects the crash, marks the workflow as failed, and spins up a fresh worker. Your API stays responsive even when workflow code misbehaves.
 
-**True parallelism.** JavaScript is single-threaded per event loop. Web Workers give you actual OS threads. A workflow computing something CPU-heavy doesn't block other workflows or the API server. This matters a lot for agent workloads that do real computation between LLM calls.
+**True parallelism.** JavaScript is single-threaded per event loop. Web Workers give you actual OS threads. A workflow computing something CPU-heavy doesn't block other workflows or the API server.
 
 **Portability.** The `Worker` API is identical in Bun and in browsers. The same isolation model works in both environments with zero code changes. This is the core "web native" win---you're not locked into a server-only execution model.
 

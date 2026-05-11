@@ -66,4 +66,4 @@ The `timeoutType` distinguishes between `'execution'` (total wall-clock cap) and
 
 Deadline keys are deleted when a workflow reaches any terminal state---completed, failed, cancelled, or timed out. The engine deletes the deadline key as part of the terminal-state batch write.
 
-Activities and agent calls that already accept `{ signal }` automatically respect workflow timeouts with no code changes. The `ctx.signal` property exposes a combined timeout-plus-cancellation signal, so everything downstream just works.
+Activities that already accept `{ signal }` automatically respect workflow timeouts with no code changes. Review waits are also bounded by the workflow timeout. The `ctx.signal` property exposes a combined timeout-plus-cancellation signal, so everything downstream just works.

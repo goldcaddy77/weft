@@ -12,7 +12,6 @@ Here's the mental model comparison for someone writing their first workflow.
 | Signal                 | `setHandler` + `condition`        | `yield* ctx.waitForSignal(name)`       |
 | Versioning             | `patched()` / `deprecatePatch()`  | Deploy new code (migration optional)   |
 | Long-running workflows | `continueAsNew()`                 | Nothing (checkpoints are fixed-size)   |
-| Agent declaration      | N/A (build from primitives)       | `weft.agent()` or `ctx.agent()`        |
 | Dev environment        | Docker Compose + Temporal server  | `bun add weft`                         |
 | Bundling               | Webpack for workflow sandbox      | None                                   |
 
@@ -91,7 +90,7 @@ const handle = await engine.start(
 );
 ```
 
-Under the hood, `ctx.step()` compiles to the generator form. Developers who need the full power of generators, parallel branches, signals, and agents graduate to the `async function*` form. The simple API is a subset of the full API---not a separate abstraction.
+Under the hood, `ctx.step()` compiles to the generator form. Developers who need the full power of generators, parallel branches, signals, and reviews graduate to the `async function*` form. The simple API is a subset of the full API---not a separate abstraction.
 
 ## Heavy operational infrastructure
 
@@ -141,7 +140,7 @@ const result = yield * ctx.run(charge, order); // "Go to definition" → actual 
 
 ## continueAsNew for long-running workflows
 
-**The Temporal problem.** Temporal has a ~50K event history limit per workflow execution. Long-running workflows---subscription loops, monitoring agents, order lifecycle management---must periodically call `continueAsNew()` to reset their history. This requires manually serializing all state, re-registering all signal handlers, and reconstructing all local variables. Getting this wrong causes data loss.
+**The Temporal problem.** Temporal has a ~50K event history limit per workflow execution. Long-running workflows---subscription loops, monitoring workflows, order lifecycle management---must periodically call `continueAsNew()` to reset their history. This requires manually serializing all state, re-registering all signal handlers, and reconstructing all local variables. Getting this wrong causes data loss.
 
 **The Weft answer.** Checkpoints are fixed-size snapshots of the current state, not a growing event log. A workflow that has executed 1 million activities has the same checkpoint size as one that has executed 10.
 
@@ -192,50 +191,6 @@ async function* example(ctx: Context) {
   const payment = yield* ctx.run(charge, order, { timeout: '60s' });
 }
 ```
-
-## No AI/agent-native primitives
-
-**The Temporal problem.** Teams building AI agent orchestration on Temporal must model agent loops as activities, manually handle token streaming, build their own cost tracking, and figure out human-in-the-loop patterns from scratch. Temporal's primitives were designed for microservice RPC, not multi-turn LLM interactions.
-
-Temporal's determinism constraint forces agent loops into one of two bad choices. Run the entire ReAct loop as one activity---but then tool calls within it aren't individually checkpointed, and a crash restarts the entire conversation. Or make each LLM call a separate activity---but now every LLM response must be deterministically replayable, and LLM APIs are inherently non-deterministic.
-
-**The Weft answer.** `ctx.agent()` as a first-class primitive with durable tool execution, token streaming, budget enforcement, and human-in-the-loop built in. Each tool call is a separate `yield*` boundary, independently checkpointed. Token streaming flows through the standard `EventTarget` and `WebSocket` systems.
-
-```typescript partial
-async function* researchWorkflow(ctx: Weft.Context, topic: string) {
-  const research = yield* ctx.agent({
-    model: 'claude-sonnet-4-5',
-    provider: 'anthropic',
-    prompt: `Research: ${topic}`,
-    tools: [webSearch],
-  });
-
-  const critique = yield* ctx.agent({
-    model: 'claude-sonnet-4-5',
-    provider: 'anthropic',
-    prompt: `Review:\n${research}`,
-    tools: [factCheck],
-  });
-
-  // Parallel: run multiple agents simultaneously
-  const [legal, technical] = yield* ctx.all([
-    ctx.agent({
-      model: 'claude-sonnet-4-5',
-      provider: 'anthropic',
-      prompt: `Legal review: ${report}`,
-    }),
-    ctx.agent({
-      model: 'claude-sonnet-4-5',
-      provider: 'anthropic',
-      prompt: `Technical review: ${report}`,
-    }),
-  ]);
-
-  return { report, reviews: { legal, technical } };
-}
-```
-
-Agents compose with the same primitives as everything else---`ctx.run()`, `ctx.all()`, `ctx.race()`. Budget enforcement uses `AbortController`. Token streaming uses `ReadableStream`. No special infrastructure.
 
 ## Payload size sensitivity
 

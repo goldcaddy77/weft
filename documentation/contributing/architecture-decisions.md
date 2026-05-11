@@ -68,12 +68,6 @@ In server mode, remote workers connect over WebSocket and execute activities on 
 
 See [Remote Workers guide](../guides/remote-workers.md).
 
-## Agent-Native Engine
-
-Agent execution has a fundamentally different shape from traditional workflows: dynamic loops instead of static DAGs, streaming token output instead of structured returns, token-based cost instead of compute cost, and human conversation instead of fire-and-forget. Weft treats agents as first-class primitives. Each tool call in an agent loop is a separate `yield*` checkpoint boundary. Token streaming flows through `EventTarget` and WebSocket in real time. `weft.agent()` declares an agent-as-workflow, and `ctx.agent()` embeds an agent as a step inside a larger workflow.
-
-See [Agent Overview](../agents/agent-overview.md) and [Agent Declaration](../agents/agent-declaration.md).
-
 ## Additional Platform Patterns
 
 Weft leans on modern JavaScript primitives throughout: `Promise.withResolvers()` for cleaner deferred promises, `Transferable` objects for zero-copy `postMessage`, `AbortSignal.any()` for compound cancellation, `AbortSignal.timeout()` for deadline enforcement, and `#private` fields for true encapsulation. These are not incidental choices---each one has measurable impact on either performance or correctness.
@@ -114,7 +108,7 @@ See `src/core/session-state.ts` for the implementation.
 
 ## Interceptors and Middleware
 
-Interceptors are composable hooks that wrap context operations (`ctx.run()`, `ctx.sleep()`, `ctx.agent()`, etc.) for cross-cutting concerns. They compose via `next()` delegation (like Koa middleware) and are registered on the engine, not on individual workflows. The `headers` Map propagates metadata---trace context, tenant IDs, short-lived claims, and opaque credential references---across thread and network boundaries. Observability, validation, encryption, and auth propagation are all built on this foundation.
+Interceptors are composable hooks that wrap context operations (`ctx.run()`, `ctx.sleep()`, `ctx.review()`, etc.) for cross-cutting concerns. They compose via `next()` delegation (like Koa middleware) and are registered on the engine, not on individual workflows. The `headers` Map propagates metadata---trace context, tenant IDs, short-lived claims, and opaque credential references---across thread and network boundaries. Observability, validation, encryption, and auth propagation are all built on this foundation.
 
 See [Interceptors guide](../guides/interceptors.md).
 

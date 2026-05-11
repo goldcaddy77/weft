@@ -406,12 +406,11 @@ The interface-level guarantee: all conditions are checked before any operation i
 
 WebSocket upgrade is supported on the following paths:
 
-| Path                       | Description                                                       |
-| -------------------------- | ----------------------------------------------------------------- |
-| `/v1/workflows/:id/watch`  | Observe workflow lifecycle events                                 |
-| `/v1/workflows/:id/stream` | Stream agent token output                                         |
-| `/v1/tasks/:queue/stream`  | Worker task stream                                                |
-| `/jsonrpc`                 | JSON-RPC over WebSocket session for the unified operation catalog |
+| Path                      | Description                                                       |
+| ------------------------- | ----------------------------------------------------------------- |
+| `/v1/workflows/:id/watch` | Observe workflow lifecycle events                                 |
+| `/v1/tasks/:queue/stream` | Worker task stream                                                |
+| `/jsonrpc`                | JSON-RPC over WebSocket session for the unified operation catalog |
 
 ### Error Responses
 

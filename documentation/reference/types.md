@@ -73,6 +73,7 @@ interface WorkflowContext {
   waitForUpdate<T = unknown>(
     name: string,
   ): WorkflowOperation<{ payload: T; respond: (result: unknown) => void }>;
+  review(options: HumanReviewOptions): WorkflowOperation<HumanReviewResult>;
   startChild<TResult = unknown>(
     workflowType: string,
     input: unknown,
@@ -559,7 +560,6 @@ interface WeftEventMap {
   'activity:started': ActivityStartedEvent;
   'activity:completed': ActivityCompletedEvent;
   'activity:failed': ActivityFailedEvent;
-  'agent:token': TokenEvent;
   'signal:received': SignalReceivedEvent;
   'signal:delivered': SignalDeliveredEvent;
   'attributes:changed': AttributesChangedEvent;
@@ -633,7 +633,7 @@ type ContextOperationRequest =
       operationId: string;
       branches: Record<string, [Function] | [Function, unknown]>;
     }
-  | { type: 'agent'; operationId: string; options: AgentContextOptions };
+  | { type: 'wait-review'; operationId: string; options: HumanReviewOptions };
 ```
 
 ### `ContextOptions`
@@ -855,218 +855,3 @@ interface MockCall<TInput, TResult> {
 ```
 
 ---
-
-## AI Types
-
-### `AgentOptions`
-
-```ts partial
-interface AgentOptions {
-  model: string;
-  provider: LLMProvider;
-  systemPrompt?: string;
-  tools?: AgentTool[];
-  maxTurns?: number;
-  signal?: AbortSignal;
-  eventTarget?: EventTarget;
-  workflowId?: string;
-  agentId?: string;
-  toolEffectLog?: ToolEffectLogLike;
-  verificationRecorder?: VerificationRecorder;
-  checkpointSizeWarningThreshold?: number;
-}
-```
-
-### `AgentResult`
-
-```ts partial
-interface AgentResult<TConversation extends ConversationHistory = Message[]> {
-  content: string;
-  conversation: TConversation;
-  totalTokens: TokenUsage;
-  turnCount: number;
-  reasoningTraces: string[];
-  turnUsage: TurnUsageEntry[];
-}
-
-type TurnUsageEntry =
-  | {
-      turnNumber: number;
-      source: 'provider';
-      inputTokens: number;
-      outputTokens: number;
-    }
-  | {
-      turnNumber: number;
-      source: 'unavailable';
-      inputTokens: null;
-      outputTokens: null;
-    };
-```
-
-### `AgentTool`
-
-```ts partial
-interface AgentTool {
-  name: string;
-  description?: string;
-  input: unknown;
-  execute: (input: unknown) => Promise<unknown>;
-  verify?: (result: unknown) => boolean | Promise<boolean>;
-  identity?:
-    | ((input: unknown) => ToolIdentityResult)
-    | { namespace: string; name: string; version?: string };
-}
-```
-
-### `AgentDefinition`
-
-```ts partial
-interface AgentDefinition<TInput = unknown, TOutput = unknown> {
-  name: string;
-  model: string;
-  version?: string;
-  systemPrompt?: string;
-  tools?: AgentToolDefinition[];
-  maxTurns?: number;
-  description?: string;
-}
-```
-
-### `AgentToolDefinition`
-
-```ts partial
-interface AgentToolDefinition {
-  name: string;
-  description?: string;
-  input: unknown;
-  execute: (input: unknown) => Promise<unknown>;
-  verify?: (result: unknown) => boolean | Promise<boolean>;
-  version?: string;
-  identity?:
-    | ((input: unknown) => ToolIdentityResult)
-    | { namespace: string; name: string; version?: string };
-}
-```
-
-### `ToolIdentityResult`
-
-```ts partial
-interface ToolIdentityResult {
-  semanticHash: string;
-  intentCriticalFields: string[];
-}
-```
-
-### `LLMProvider`
-
-```ts partial
-interface LLMProvider {
-  readonly name: string;
-  chat(messages: Message[], options: ChatOptions): Promise<ChatResponse>;
-  createChatResumeHint?(
-    messages: Message[],
-    options: ChatOptions,
-  ): Promise<ChatResumeHint | undefined>;
-  warmup?(): Promise<void>;
-}
-```
-
-### `ChatOptions`
-
-```ts partial
-interface ChatOptions {
-  model: string;
-  tools?: ToolDescriptor[];
-  maxTokens?: number;
-  temperature?: number;
-  signal?: AbortSignal;
-  systemPrompt?: string;
-  turnIndex?: number;
-  resumeContext?: ChatResumeContext;
-}
-```
-
-### `ChatResponse`
-
-```ts partial
-interface ChatResponse {
-  content: string;
-  toolCalls: ToolCallInput[];
-  usage: TokenUsage;
-  model: string;
-  stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence';
-  reasoningTrace?: string;
-}
-```
-
-### `Message`
-
-```ts partial
-interface Message {
-  role: MessageRole;
-  content: string;
-  toolCalls?: ToolCall[];
-  toolResults?: ToolResult[];
-  name?: string;
-}
-
-type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
-```
-
-### `ToolCall`
-
-```ts partial
-interface ToolCall {
-  id: string;
-  name: string;
-  arguments: JSONValue;
-}
-```
-
-### `ToolResult`
-
-```ts partial
-interface ToolResult {
-  callId: string;
-  outcome: 'success' | 'error' | 'action_required';
-  content: JSONValue;
-  error?: ToolErrorShape;
-  action?: ToolActionShape;
-  inputDigest?: string;
-  outputDigest?: string;
-}
-```
-
-### `ToolDescriptor`
-
-```ts partial
-interface ToolDescriptor<InputSchema = unknown> {
-  name: string;
-  description?: string;
-  input: InputSchema;
-}
-```
-
-### `ToolDefinition`
-
-```ts partial
-interface ToolDefinition<InputSchema = unknown> extends ToolDescriptor<InputSchema> {
-  execute: (input: unknown, context?: unknown) => Promise<unknown>;
-  verify?: (result: unknown) => boolean | Promise<boolean>;
-  identity?:
-    | ((input: unknown) => ToolIdentityResult)
-    | { namespace: string; name: string; version?: string };
-  version?: string;
-}
-```
-
-### `TokenUsage`
-
-```ts partial
-interface TokenUsage {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-}
-```

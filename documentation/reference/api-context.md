@@ -316,13 +316,36 @@ async function* example(context: Context) {
 }
 ```
 
-### `agent()`
+### `review()`
 
 ```ts partial
-*agent(options: AgentContextOptions): Generator<ContextOperationRequest, unknown, unknown>
+*review(options: HumanReviewOptions): Generator<ContextOperationRequest, HumanReviewResult, unknown>
 ```
 
-Execute an AI agent loop as a durable operation. See the agent guides for details on `AgentContextOptions`.
+Pause the workflow and request a human decision. The review request is persisted, the workflow stays suspended at the checkpoint, and the workflow resumes when a reviewer submits a decision.
+
+| Parameter | Type                 | Description                                             |
+| --------- | -------------------- | ------------------------------------------------------- |
+| `options` | `HumanReviewOptions` | Review artifact, type, reviewers, timeout, and routing. |
+
+**Returns:** The submitted review decision.
+
+```ts partial
+async function* paymentWorkflow(ctx: WorkflowContext, payment: PaymentRequest) {
+  const decision = yield* ctx.review({
+    artifact: payment,
+    reviewType: 'payment-approval',
+    timeout: 72 * 60 * 60 * 1000,
+  });
+
+  if (decision.decision !== 'approved') {
+    return { status: 'rejected' };
+  }
+
+  const charge = yield* ctx.run(chargeCard, payment);
+  return { status: 'charged', charge };
+}
+```
 
 ### `startChild()`
 
@@ -434,22 +457,6 @@ explain(enabled?: boolean): void
 ```
 
 Enable or disable explain mode. When enabled, durable operations log detailed checkpoint and dispatch information to the console. Useful for debugging workflow replay behavior.
-
-### `setBudget()`
-
-```ts partial
-setBudget(options: BudgetOptions): void
-```
-
-Attach a budget tracker to this context for agent cost/token tracking.
-
-### `budgetRemaining()`
-
-```ts partial
-budgetRemaining(): BudgetState | undefined
-```
-
-Query the current budget state. Returns `undefined` if no budget is set.
 
 ### `state`
 
@@ -570,7 +577,7 @@ type ContextOperationRequest =
   | { type: 'load'; operationId: string; reference: OffloadReference }
   | { type: 'archive'; operationId: string; key: string; data: unknown }
   | { type: 'run-all'; operationId: string; branches: Record<string, [Function] | [Function, unknown]> }
-  | { type: 'agent'; operationId: string; options: AgentContextOptions }
+  | { type: 'wait-review'; operationId: string; options: HumanReviewOptions }
 ```
 
 ### `OffloadReference`

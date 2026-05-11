@@ -59,21 +59,16 @@ _Operational events:_
 - `CheckpointSizeWarningEvent` (`'checkpoint:size-warning'`) -- carries `workflowId`, `sizeBytes`, and `step`
 - `DevelopmentWarningEvent` (`'development:warning'`) -- carries `workflowId`, `message`, and `fieldPaths`
 
-## Agent events
+## Review events
 
-When running AI agent [workflows](workflows.md), a separate set of events tracks agent-specific behavior.
+When a workflow pauses for human review, review events track the request and the submitted decision.
 
-- `AgentTurnStartedEvent` (`'agent:turn:started'`) -- carries `workflowId`, `agentId`, `turnIndex`, `model`, `inputTokenEstimate`, and `conversationLength`
-- `AgentTurnCompletedEvent` (`'agent:turn:completed'`) -- carries `inputTokens`, `outputTokens`, `duration`, `toolCallCount`, and a size-bounded `messages` snapshot
-- `AgentToolCalledEvent` (`'agent:tool:called'`) -- carries `toolName`, `toolInput`, and `operationId`
-- `AgentToolReturnedEvent` (`'agent:tool:returned'`) -- carries `toolName`, `duration`, `success`, and `operationId`
-- `AgentCheckpointResumedEvent` (`'agent:checkpoint:resumed'`) -- carries `duplicatesPrevented` when committed tool results are replayed instead of re-executed
-- `HumanReviewRequestedEvent` (`'human-review:requested'`) -- carries `reviewId`, `reviewType`, and `reviewers`
-- `HumanReviewCompletedEvent` (`'human-review:completed'`) -- carries `reviewId`, `decision`, `reviewer`, and `duration`
+- `ReviewRequestedEvent` (`'human-review:requested'`) -- carries `reviewId`, `reviewType`, and `reviewers`
+- `ReviewCompletedEvent` (`'human-review:completed'`) -- carries `reviewId`, `decision`, `reviewer`, and `duration`
 
 ## The WeftEventMap
 
-All event types are collected into `WeftEventMap`, a TypeScript interface that maps event type strings to their concrete event classes. You can use it with the `TypedEventTarget` interface for full type safety.
+All event types are collected into `WeftEventMap`, a TypeScript interface that maps event type strings to their concrete event classes. Review-specific events are also available through `WeftReviewEventMap`. You can use either map with the `TypedEventTarget` interface for full type safety.
 
 ```typescript partial
 import type { WeftEventMap, TypedEventTarget } from 'weft';
