@@ -1179,6 +1179,18 @@ describe('executeConformance', () => {
     ]);
   });
 
+  it('formats conforming worker checks as plain text', async () => {
+    const result = await executeConformance({
+      timeoutMs: 3_000,
+      json: false,
+      workerCommand: ['bun', './src/cli/__fixtures__/conformance-worker.ts'],
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('PASS register:');
+    expect(result.stdout).toContain('PASS graceful shutdown:');
+  });
+
   it('fails a worker fixture that omits protocolVersion', async () => {
     const result = await executeConformance({
       timeoutMs: 500,
@@ -1190,6 +1202,53 @@ describe('executeConformance', () => {
     const report = JSON.parse(result.stdout) as { ok: boolean; checks: Array<{ ok: boolean }> };
     expect(report.ok).toBe(false);
     expect(report.checks.some((check) => !check.ok)).toBe(true);
+  });
+
+  it('formats failed checks as plain text when json output is disabled', async () => {
+    const result = await executeConformance({
+      timeoutMs: 500,
+      json: false,
+      workerCommand: ['bun', './src/cli/__fixtures__/conformance-broken-worker.ts'],
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain('FAIL conformance:');
+  });
+
+  it('fails when the registered worker does not advertise the required activities', async () => {
+    const result = await executeConformance({
+      timeoutMs: 750,
+      json: true,
+      workerCommand: ['bun', './src/cli/__fixtures__/conformance-wrong-activities-worker.ts'],
+    });
+
+    expect(result.exitCode).toBe(1);
+    const report = JSON.parse(result.stdout) as {
+      ok: boolean;
+      checks: Array<{ name: string; ok: boolean; message: string }>;
+    };
+    expect(report.ok).toBe(false);
+    expect(report.checks[0]).toEqual({
+      name: 'conformance',
+      ok: false,
+      message: 'Timed out after 750ms waiting for conformance-echo to resolve as completed',
+    });
+  });
+
+  it('surfaces a missing replacement worker during graceful shutdown checks', async () => {
+    const result = await executeConformance({
+      timeoutMs: 1_000,
+      json: true,
+      workerCommand: ['bun', './src/cli/__fixtures__/conformance-short-sleep-exit-worker.ts'],
+    });
+
+    expect(result.exitCode).toBe(1);
+    const report = JSON.parse(result.stdout) as {
+      ok: boolean;
+      checks: Array<{ name: string; ok: boolean; message: string }>;
+    };
+    expect(report.ok).toBe(false);
+    expect(report.checks[0]?.message).toBe('No worker available for graceful shutdown check');
   });
 });
 
