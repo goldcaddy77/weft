@@ -9,7 +9,9 @@ import {
 } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { BULK_WORKFLOW_FILTER_ERROR_MESSAGE } from './bulk-workflow-filter.ts';
+import { encode } from './codec.ts';
 import { BulkDeleteRequiresTerminalWorkflowsError, Engine } from './engine.ts';
+import { cancelAll } from './engine/bulk-operations.ts';
 import type { WorkflowContext, WorkflowState } from './types.ts';
 
 async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
@@ -273,6 +275,82 @@ class BulkTagDeletionDuringMutationStorage extends MemoryStorage {
 }
 
 describe('bulk workflow operations', () => {
+  it('reports workflows that remain active after bulk cancellation attempts', async () => {
+    const storage = new MemoryStorage();
+    const workflowId = 'bulk-cancel-remains-running';
+    await storage.put(
+      KEYS.workflow(workflowId),
+      encode({
+        createdAt: 1,
+        id: workflowId,
+        input: null,
+        startedAt: 1,
+        status: 'running',
+        tags: ['bulk-cancel-remaining'],
+        type: 'workflow',
+        updatedAt: 1,
+        version: '1',
+      } satisfies WorkflowState),
+    );
+
+    const result = await cancelAll(
+      {
+        engine: { cancel: async () => {} },
+        storage,
+      } as never,
+      { status: 'running' },
+    );
+
+    expect(result).toEqual({
+      cancelled: 0,
+      failed: 1,
+      errors: [{ id: workflowId, error: 'Workflow no longer cancellable' }],
+    });
+
+    const ignored = await cancelAll(
+      {
+        engine: { cancel: async () => {} },
+        storage,
+      } as never,
+      { status: 'completed' },
+    );
+
+    expect(ignored).toEqual({ cancelled: 0, failed: 0, errors: [] });
+  });
+
+  it('deletes deadline timer keys when bulk deleting terminal workflows', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    const workflowId = 'bulk-delete-deadline';
+    const state = {
+      createdAt: 1,
+      executionDeadline: 10_000,
+      id: workflowId,
+      input: null,
+      result: 'done',
+      startedAt: 1,
+      status: 'completed',
+      tags: ['bulk-delete-deadline'],
+      type: 'workflow',
+      updatedAt: 5_000,
+      version: '1',
+    } satisfies WorkflowState;
+
+    await storage.put(KEYS.workflow(workflowId), encode(state));
+    await storage.put(KEYS.terminalWorkflow(state.updatedAt, workflowId), new Uint8Array());
+    await storage.put(KEYS.deadline(state.executionDeadline, workflowId), new Uint8Array([1]));
+    await storage.put(`timer-idx:deadline:${workflowId}`, new Uint8Array([1]));
+
+    await expect(engine.deleteAll({ status: 'completed' })).resolves.toEqual({
+      deleted: 1,
+    });
+
+    expect(await storage.get(KEYS.deadline(state.executionDeadline, workflowId))).toBeNull();
+    expect(await storage.get(`timer-idx:deadline:${workflowId}`)).toBeNull();
+
+    engine[Symbol.dispose]();
+  });
+
   it('acceptance criterion: engine.cancelAll(filter) cancels matching workflows and reports per-workflow failures', async () => {
     const storage = new BulkCancelFailureStorage();
     const engine = new Engine({ storage });

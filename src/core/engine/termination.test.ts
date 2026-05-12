@@ -13,9 +13,12 @@ import {
   runSerializedWorkflowStateWrite,
 } from './storage-io.ts';
 import {
+  cancelWorkflow,
   cleanupWaiters,
+  cleanupWorkflowStorage,
   completeWorkflow,
   failWorkflow,
+  runDeferredTerminalCleanup,
   type TerminationCallbacks,
 } from './termination.ts';
 
@@ -82,6 +85,54 @@ describe('termination helpers', () => {
     expect(internals.reviewWaitersByWorkflow.has('wf-cleanup')).toBe(false);
     expect(internals.workflowNestingDepths.has('wf-cleanup')).toBe(false);
     expect(internals.workflowHeaders.has('wf-cleanup')).toBe(false);
+  });
+
+  it('cleanupWaiters removes multi-key signal, update, and review waiter buckets', () => {
+    const signalWaiters = new Map<string, () => void>([
+      ['wf:signal-a', () => {}],
+      ['wf:signal-b', () => {}],
+    ]);
+    const updateWaiters = new Map<string, (payload: unknown) => void>([
+      ['wf:update-a', () => {}],
+      ['wf:update-b', () => {}],
+    ]);
+    const reviewWaiters = new Map<string, (decision: unknown) => void>([
+      ['wf:review-a', () => {}],
+      ['wf:review-b', () => {}],
+    ]);
+    const internals = {
+      signalWaiters,
+      signalWaitersByWorkflow: new Map<string, Set<string>>([
+        ['wf-cleanup-many', new Set(['wf:signal-a', 'wf:signal-b'])],
+      ]),
+      updateWaiters,
+      updateWaitersByWorkflow: new Map<string, Set<string>>([
+        ['wf-cleanup-many', new Set(['wf:update-a', 'wf:update-b'])],
+      ]),
+      reviewWaiters,
+      reviewWaitersByWorkflow: new Map<string, Set<string>>([
+        ['wf-cleanup-many', new Set(['wf:review-a', 'wf:review-b'])],
+      ]),
+      sleepResolvers: new Map<string, () => void>(),
+      sleepResolversByWorkflow: new Map<string, Set<string>>(),
+      workflowReviewIds: new Map<string, Set<string>>(),
+      reviewEscalationHandlers: new Map<
+        string,
+        (entry: { id: string; workflowId: string }) => Promise<boolean>
+      >(),
+      reviewTimerIds: new Map<string, string[]>(),
+      workflowNestingDepths: new Map<string, number>(),
+      workflowHeaders: new Map<string, Map<string, string>>(),
+      scheduler: {
+        cancel: async () => {},
+      },
+    } as unknown as EngineInternals;
+
+    cleanupWaiters(internals, 'wf-cleanup-many', createTerminationCallbacks());
+
+    expect(signalWaiters.size).toBe(0);
+    expect(updateWaiters.size).toBe(0);
+    expect(reviewWaiters.size).toBe(0);
   });
 
   it('completeWorkflow falls back to stored search attributes when the checkpoint cache is missing', async () => {
@@ -186,5 +237,99 @@ describe('termination helpers', () => {
     expect(persistedState?.status).toBe('failed');
 
     engine[Symbol.dispose]();
+  });
+
+  it('cancelWorkflow rejects the pending result when synchronous cleanup throws', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    engine.register('cancel-cleanup-throw', async function* (ctx: WorkflowContext) {
+      yield* ctx.waitForSignal('finish');
+      return 'done';
+    });
+
+    const handle = await engine.start('cancel-cleanup-throw', null, {
+      id: 'cancel-cleanup-throw-id',
+    });
+    await flush();
+
+    const internals = getInternals(engine);
+    const cleanupError = new Error('cleanup failed');
+    const reject = mock((_reason: unknown) => {});
+
+    internals.resultResolvers.set(handle.id, {
+      promise: new Promise(() => {}),
+      resolve: () => {},
+      reject,
+    });
+
+    await expect(
+      cancelWorkflow(
+        internals,
+        handle.id,
+        createTerminationCallbacks({
+          cleanupReviews: async () => {
+            throw cleanupError;
+          },
+        }),
+      ),
+    ).rejects.toBe(cleanupError);
+
+    expect(reject).toHaveBeenCalledWith(expect.objectContaining({ message: 'Workflow cancelled' }));
+    expect(internals.resultResolvers.has(handle.id)).toBe(false);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('runDeferredTerminalCleanup ignores malformed and non-terminal cleanup timers', async () => {
+    const storage = new MemoryStorage();
+    const workflowId = 'deferred-cleanup-running';
+    const handleCleanupError = mock(() => {});
+    const cleanupReviews = mock(async () => {});
+
+    await runDeferredTerminalCleanup(
+      { storage } as never,
+      workflowId,
+      'not-a-cleanup-timer',
+      createTerminationCallbacks({ cleanupReviews, handleCleanupError }),
+    );
+
+    expect(handleCleanupError).toHaveBeenCalled();
+
+    await runDeferredTerminalCleanup(
+      { storage } as never,
+      workflowId,
+      'terminal-cleanup:full:token',
+      createTerminationCallbacks({
+        cleanupReviews,
+        loadWorkflowState: async () => ({
+          createdAt: 1,
+          id: workflowId,
+          input: null,
+          startedAt: 1,
+          status: 'running',
+          type: 'workflow',
+          updatedAt: 1,
+          version: '1',
+        }),
+      }),
+    );
+
+    expect(cleanupReviews).not.toHaveBeenCalled();
+  });
+
+  it('flushes durable cleanup deletes in batches', async () => {
+    const storage = new MemoryStorage();
+    Object.defineProperty(storage, 'deletePrefix', { value: undefined });
+    const workflowId = 'cleanup-batched';
+
+    for (let index = 0; index < 1_001; index++) {
+      await storage.put(KEYS.signal(workflowId, 'release', `signal-${index}`), new Uint8Array([1]));
+    }
+
+    await cleanupWorkflowStorage({ storage } as never, workflowId, false);
+
+    expect(await storage.get(KEYS.signal(workflowId, 'release', 'signal-0'))).toBeNull();
+    expect(await storage.get(KEYS.signal(workflowId, 'release', 'signal-1000'))).toBeNull();
   });
 });
