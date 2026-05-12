@@ -4,8 +4,12 @@ import { textValueStore, type TextValueStore } from './text-value-store.ts';
 /**
  * Vendored copy of Agent Bureau's `KeyValueStore` interface. Inlined so this
  * type-level test does not introduce a runtime or build-time dependency on
- * any downstream package. Update when Agent Bureau's published contract
- * changes.
+ * any downstream package.
+ *
+ * Synced from `agent-bureau/packages/storage/src/types.ts` on 2026-05-12.
+ * Update this comment and the interface together whenever the upstream
+ * shape changes; `documentation/integrations/agent-bureau.md` is the public
+ * record of the contract.
  */
 interface KeyValueStore {
   get(key: string): Promise<string | null>;

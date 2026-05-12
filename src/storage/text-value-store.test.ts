@@ -54,7 +54,7 @@ describe('textValueStore (MemoryStorage)', () => {
     // Lone continuation byte (0x80) — invalid UTF-8.
     await base.put('corrupt', new Uint8Array([0x80]));
 
-    expect(store.get('corrupt')).rejects.toThrow();
+    await expect(store.get('corrupt')).rejects.toThrow();
   });
 
   it('lists keys under a prefix as an array', async () => {
@@ -125,6 +125,13 @@ describe('textValueStore (MemoryStorage)', () => {
     expect(await store.has('other:1')).toBe(true);
   });
 
+  it('deletePrefix returns 0 when no keys match', async () => {
+    await using base = new MemoryStorage();
+    const store = textValueStore(base);
+
+    expect(await store.deletePrefix('nonexistent:')).toBe(0);
+  });
+
   it('close disposes the underlying storage', async () => {
     const base = new MemoryStorage();
     const store = textValueStore(base);
@@ -159,6 +166,13 @@ describe('textValueStore (minimal Storage without optional methods)', () => {
     expect(await store.has('jobs:1')).toBe(false);
     expect(await store.has('jobs:2')).toBe(false);
     expect(await store.has('keep:1')).toBe(true);
+  });
+
+  it('deletePrefix() fallback returns 0 when no keys match', async () => {
+    const base = createCoreStorageAdapter();
+    const store = textValueStore(base);
+
+    expect(await store.deletePrefix('nonexistent:')).toBe(0);
   });
 
   it('list() falls back to scan when adapter omits keys()', async () => {

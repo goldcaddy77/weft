@@ -57,6 +57,9 @@ export type TextValueStore = {
 };
 
 const textEncoder = new TextEncoder();
+// Module-level singleton is safe: every `decode()` call uses `stream: false` (the
+// default), so no internal buffer state persists between calls. If a caller ever
+// needs streaming decode, construct a fresh `TextDecoder` per stream.
 const textDecoder = new TextDecoder('utf-8', { fatal: true });
 
 /**
@@ -105,6 +108,10 @@ export function textValueStore(storage: Storage): TextValueStore {
       return storageDeletePrefix(storage, prefix);
     },
     async close(): Promise<void> {
+      // Weft `Storage extends Disposable`, so `Symbol.dispose` is synchronous by
+      // contract. The `async` wrapper exists only so the wrapped surface returns
+      // `Promise<void>` like the `KeyValueStore` shape expects. If a Weft backend
+      // is ever promoted to `AsyncDisposable`, switch to awaiting `Symbol.asyncDispose`.
       storage[Symbol.dispose]();
     },
   };
