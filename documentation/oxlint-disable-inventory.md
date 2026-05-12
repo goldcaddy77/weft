@@ -307,6 +307,13 @@ naming the alternative that was rejected.
 - **Symbol**: `list`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
+## `core-engine-aggregate-complexity`
+
+- **File**: `src/core/engine/aggregate.ts`
+- **Rule**: `complexity`
+- **Symbol**: `aggregate`
+- **Reason**: Single function orchestrates validation, watermark gating, candidate resolution, scan-cap enforcement, dimension key extraction, distinct-key cap enforcement, and sort/truncate finalization. Each branch maps to one step of the documented aggregate pipeline; splitting them would scatter the per-step contract.
+
 ## `core-engine-matches-list-filter-complexity`
 
 - **File**: `src/core/engine/state-utilities.ts`
@@ -824,6 +831,13 @@ naming the alternative that was rejected.
 - **Rule**: `complexity`
 - **Symbol**: `invoke`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-operations-aggregate-workflows-extract-input`
+
+- **File**: `src/server/operations/aggregate-workflows.ts`
+- **Rule**: `complexity`
+- **Symbol**: `extractAggregateWorkflowsInput`
+- **Reason**: REST query-string-to-AggregateWorkflowsInput extractor must branch over every supported ListFilter dimension (status, type, tags, idPrefix, tenantId) plus the aggregate-specific group_by parsing and limit coercion. Each branch maps to one query parameter — the same shape as the existing `extractListWorkflowsInput` entry below.
 
 ## `server-operations-list-workflows-extract-list-workflows-input-complexity`
 
