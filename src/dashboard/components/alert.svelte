@@ -54,10 +54,10 @@
   <div
     class={cn('alert', className)}
     data-variant={variant}
+    {...rest}
     {role}
     aria-live={ariaLive}
     aria-atomic="true"
-    {...rest}
   >
     <div class="alert-icon" aria-hidden="true">
       {#if variant === 'info'}
