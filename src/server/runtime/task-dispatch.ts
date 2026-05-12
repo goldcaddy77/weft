@@ -1,11 +1,20 @@
-import { encode } from '../../core/codec.ts';
-import { KEYS } from '../../storage/interface.ts';
 import type { RoutingOptions } from '../../worker/registry.ts';
 import type { ServeOptions, TaskDispatch } from '../index.ts';
 import { evictOldestAffinityEntries } from '../runtime-helpers.ts';
-import type { InflightRecord, QueuedRecord } from '../task-state.ts';
-import { markQueued } from '../task-state.ts';
+import type { QueuedRecord } from '../task-state.ts';
+import {
+  markQueued,
+  normalizeInflightRecordLifecycle,
+  normalizeQueuedRecordLifecycle,
+  readQueuedRecord,
+  transitionQueuedToInflight,
+} from '../task-state.ts';
 import type { ServerContext } from './context.ts';
+import {
+  recordTaskBacklogMetric,
+  recordTaskQueueLatencyMetric,
+  recordWorkerCapacitySaturationMetric,
+} from './task-metrics.ts';
 
 const MAX_AFFINITY_ENTRIES = 10_000;
 const DEFAULT_VISIBILITY_TIMEOUT = 30_000;
@@ -87,6 +96,8 @@ export async function dispatchTaskImpl(
   if (worker) {
     const ws = context.workerSockets.get(worker.id);
     if (ws) {
+      const now = Date.now();
+      const existingQueuedRecord = await readQueuedRecord(options.engine.storage, task.operationId);
       ws.send(
         JSON.stringify({
           type: 'task',
@@ -106,28 +117,31 @@ export async function dispatchTaskImpl(
 
       // Persist in-flight record to storage so it survives server restart.
       // Uses a batch to atomically remove any stale queued record and write the inflight record.
-      const deadline = Date.now() + visibilityTimeout;
+      const deadline = now + visibilityTimeout;
       context.deadlineTracker.add({ operationId: task.operationId, deadline });
-      const inflightRecord: InflightRecord = {
-        operationId: task.operationId,
-        workerId: worker.id,
-        deadline,
-        activityName: task.activityName,
-        queue,
-        input: task.input,
-        attempt: task.attempt ?? 1,
-        visibilityTimeout,
-        retryPolicy: task.retryPolicy,
-        workflowId: task.workflowId,
-      };
-      await options.engine.storage.batch([
-        { type: 'delete', key: KEYS.operationQueued(task.operationId) },
+      const inflightRecord = normalizeInflightRecordLifecycle(
         {
-          type: 'put',
-          key: KEYS.operationInflight(task.operationId),
-          value: encode(inflightRecord),
+          operationId: task.operationId,
+          workerId: worker.id,
+          deadline,
+          activityName: task.activityName,
+          queue,
+          input: task.input,
+          attempt: task.attempt ?? 1,
+          visibilityTimeout,
+          retryPolicy: task.retryPolicy,
+          workflowId: task.workflowId,
+          firstQueuedAt: existingQueuedRecord?.firstQueuedAt ?? now,
+          lastQueuedAt: existingQueuedRecord?.lastQueuedAt ?? existingQueuedRecord?.queuedAt ?? now,
+          lastDispatchedAt: now,
+          startedAt: now,
         },
-      ]);
+        existingQueuedRecord,
+        now,
+      );
+      await transitionQueuedToInflight(options.engine.storage, task.operationId, inflightRecord);
+      recordTaskQueueLatencyMetric(options.metricsCollector, inflightRecord);
+      recordWorkerCapacitySaturationMetric(options.metricsCollector, context.registry);
 
       // Record affinity for future sticky routing (FIFO eviction when over limit).
       if (task.workflowId) {
@@ -163,22 +177,50 @@ export async function dispatchTaskImpl(
     retryPolicy: task.retryPolicy,
     queuedAt: Date.now(),
     workflowId: task.workflowId,
+    retryCount: Math.max(0, (task.attempt ?? 1) - 1),
+    requeueCount: 0,
   };
-  await markQueued(options.engine.storage, queuedRecord);
+  const existingQueuedRecord = await readQueuedRecord(options.engine.storage, task.operationId);
+  const normalizedQueuedRecord = normalizeQueuedRecordLifecycle(
+    {
+      ...queuedRecord,
+      firstQueuedAt: existingQueuedRecord?.firstQueuedAt ?? queuedRecord.queuedAt,
+      lastQueuedAt: existingQueuedRecord?.lastQueuedAt ?? queuedRecord.queuedAt,
+      lastDispatchedAt: existingQueuedRecord?.lastDispatchedAt,
+      startedAt: existingQueuedRecord?.startedAt,
+      lastHeartbeatAt: existingQueuedRecord?.lastHeartbeatAt,
+      retryCount: existingQueuedRecord?.retryCount ?? queuedRecord.retryCount,
+      requeueCount: existingQueuedRecord?.requeueCount ?? queuedRecord.requeueCount,
+      lastRequeueReason: existingQueuedRecord?.lastRequeueReason,
+    },
+    null,
+  );
+  await markQueued(options.engine.storage, normalizedQueuedRecord);
 
   // Now enqueue to the in-memory queue. The operationId is tracked immediately,
   // preventing TOCTOU races where a concurrent dispatch could pass the
   // duplicate check during an async gap.
-  return context.taskQueue.enqueue(queue, {
+  const enqueued = context.taskQueue.enqueue(queue, {
     operationId: task.operationId,
     activityName: task.activityName,
     input: task.input,
     attempt: task.attempt ?? 1,
     retryPolicy: task.retryPolicy,
     visibilityTimeout,
+    workflowId: task.workflowId,
+    firstQueuedAt: normalizedQueuedRecord.firstQueuedAt,
+    lastQueuedAt: normalizedQueuedRecord.lastQueuedAt,
+    lastDispatchedAt: normalizedQueuedRecord.lastDispatchedAt,
+    startedAt: normalizedQueuedRecord.startedAt,
+    lastHeartbeatAt: normalizedQueuedRecord.lastHeartbeatAt,
+    retryCount: normalizedQueuedRecord.retryCount,
+    requeueCount: normalizedQueuedRecord.requeueCount,
+    lastRequeueReason: normalizedQueuedRecord.lastRequeueReason,
     ...(task.headers ? { headers: task.headers } : {}),
     ...(resolvedPriority !== undefined ? { priority: resolvedPriority } : {}),
   });
+  recordTaskBacklogMetric(options.metricsCollector, context.taskQueue);
+  return enqueued;
 }
 
 /** Send a cancel message to the worker handling a specific operation. */

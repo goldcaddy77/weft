@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { sleepForTesting, waitForCondition } from '../testing/fake-timers.ts';
 
-import { encode } from '../core/codec.ts';
+import { decode, encode } from '../core/codec.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import type { WeftServer } from './index.ts';
 import { serve } from './index.ts';
-import type { InflightRecord, QueuedRecord } from './task-state.ts';
+import type { InflightRecord, QueuedRecord, ResolvedRecord } from './task-state.ts';
 import {
   getExclusiveTaskState,
   getTaskState,
@@ -240,6 +240,101 @@ describe('state transitions', () => {
 
     const state = await getTaskState(storage, 'op-1');
     expect(state).toBe('resolved');
+  });
+
+  it('preserves lifecycle timings and retry counters through requeue and resolution', async () => {
+    const storage = new MemoryStorage();
+    const firstQueuedAt = 1_000;
+
+    await markQueued(
+      storage,
+      makeQueuedRecord({
+        operationId: 'metadata-op',
+        queuedAt: firstQueuedAt,
+        firstQueuedAt,
+        lastQueuedAt: firstQueuedAt,
+        retryCount: 0,
+        requeueCount: 0,
+      }),
+    );
+
+    await transitionQueuedToInflight(
+      storage,
+      'metadata-op',
+      makeInflightRecord({
+        operationId: 'metadata-op',
+        firstQueuedAt,
+        lastQueuedAt: firstQueuedAt,
+        lastDispatchedAt: 1_100,
+        startedAt: 1_120,
+        retryCount: 0,
+        requeueCount: 0,
+      }),
+    );
+
+    await transitionInflightToQueued(
+      storage,
+      'metadata-op',
+      makeQueuedRecord({
+        operationId: 'metadata-op',
+        attempt: 2,
+        queuedAt: 1_300,
+        firstQueuedAt,
+        lastQueuedAt: 1_300,
+        lastDispatchedAt: 1_100,
+        startedAt: 1_120,
+        retryCount: 1,
+        requeueCount: 1,
+        lastRequeueReason: 'visibility-timeout',
+      }),
+    );
+
+    const queued = decode(
+      (await storage.get(KEYS.operationQueued('metadata-op')))!,
+    ) as QueuedRecord;
+    expect(queued.firstQueuedAt).toBe(firstQueuedAt);
+    expect(queued.lastQueuedAt).toBe(1_300);
+    expect(queued.lastDispatchedAt).toBe(1_100);
+    expect(queued.startedAt).toBe(1_120);
+    expect(queued.retryCount).toBe(1);
+    expect(queued.requeueCount).toBe(1);
+    expect(queued.lastRequeueReason).toBe('visibility-timeout');
+
+    await transitionQueuedToInflight(
+      storage,
+      'metadata-op',
+      makeInflightRecord({
+        operationId: 'metadata-op',
+        workerId: 'worker-2',
+        attempt: 2,
+        firstQueuedAt,
+        lastQueuedAt: 1_300,
+        lastDispatchedAt: 1_500,
+        startedAt: 1_520,
+        retryCount: 1,
+        requeueCount: 1,
+        lastRequeueReason: 'visibility-timeout',
+      }),
+    );
+
+    await transitionInflightToResolved(storage, 'metadata-op', 'completed', {
+      resolutionReason: 'completed',
+      resolvedAt: 1_900,
+    });
+
+    const resolved = decode(
+      (await storage.get(KEYS.operationResolved('metadata-op')))!,
+    ) as ResolvedRecord;
+    expect(resolved.firstQueuedAt).toBe(firstQueuedAt);
+    expect(resolved.lastQueuedAt).toBe(1_300);
+    expect(resolved.lastDispatchedAt).toBe(1_500);
+    expect(resolved.startedAt).toBe(1_520);
+    expect(resolved.completedAt).toBe(1_900);
+    expect(resolved.retryCount).toBe(1);
+    expect(resolved.requeueCount).toBe(1);
+    expect(resolved.resolutionReason).toBe('completed');
+    expect(resolved.queueLatencyMs).toBe(200);
+    expect(resolved.executionLatencyMs).toBe(380);
   });
 });
 

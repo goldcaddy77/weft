@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import type { WorkflowState, WorkflowTimelineEntry } from '../api-client.ts';
 import {
+  buildWorkflowTaskDiagnosticEvidence,
   clearWorkflowTimelineInspectionState,
   loadTerminalWorkflowDetailRefresh,
   synchronizeWorkflowTimelineInspectionState,
@@ -146,5 +147,55 @@ describe('workflow detail timeline utilities', () => {
       error: expect.any(Error),
       message: 'workflow unavailable',
     });
+  });
+
+  it('links workflow task diagnostics to queue, worker, retry, and heartbeat evidence', () => {
+    const links = buildWorkflowTaskDiagnosticEvidence('workflow-a', {
+      items: [
+        {
+          kind: 'stale-inflight',
+          operationId: 'operation-1',
+          workflowId: 'workflow-a',
+          activityName: 'charge',
+          queue: 'payments',
+          state: 'inflight',
+          workerId: 'worker-1',
+          retryCount: 2,
+          requeueCount: 1,
+          heartbeatAgeMs: 5_000,
+          evidence: ['heartbeat is 5s old'],
+        },
+        {
+          kind: 'stuck-queued',
+          operationId: 'operation-2',
+          workflowId: 'workflow-b',
+          activityName: 'ship',
+          queue: 'default',
+          state: 'queued',
+          retryCount: 0,
+          requeueCount: 0,
+          evidence: ['queued for 10s'],
+        },
+      ],
+      summary: {
+        stuckQueued: 1,
+        staleInflight: 1,
+        retryStorms: 0,
+        allWorkersAtCapacity: 0,
+      },
+      limit: 50,
+    });
+
+    expect(links).toEqual([
+      {
+        operationId: 'operation-1',
+        activityName: 'charge',
+        queueEvidence: 'payments',
+        workerEvidence: 'worker-1',
+        retryEvidence: '2 retries, 1 requeue',
+        heartbeatEvidence: '5s since last heartbeat',
+        evidence: ['heartbeat is 5s old'],
+      },
+    ]);
   });
 });

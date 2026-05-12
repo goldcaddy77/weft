@@ -13,7 +13,7 @@
  * @module task-state
  */
 
-import { encode } from '../core/codec.ts';
+import { decode, encode } from '../core/codec.ts';
 import type { RetryPolicy } from '../core/types.ts';
 import type { Storage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
@@ -25,12 +25,40 @@ import { KEYS } from '../storage/interface.ts';
 /** The three exclusive states a dispatched task can occupy. */
 export type TaskState = 'queued' | 'inflight' | 'resolved';
 
+/** Why a task was requeued before another dispatch attempt. */
+export type TaskRequeueReason = 'visibility-timeout' | 'worker-disconnect';
+
+/** Final reason captured when a task reaches the resolved state. */
+export type TaskResolutionReason = 'completed' | 'failed' | 'cancelled' | 'max-attempts-exceeded';
+
+/** Lifecycle evidence persisted with task records for diagnostics. */
+export interface TaskLifecycleFields {
+  /** First time this operation entered a task queue. */
+  firstQueuedAt?: number | undefined;
+  /** Most recent time this operation entered a task queue. */
+  lastQueuedAt?: number | undefined;
+  /** Most recent time this operation was dispatched to a worker. */
+  lastDispatchedAt?: number | undefined;
+  /** Time this operation started executing on a worker when knowable. */
+  startedAt?: number | undefined;
+  /** Time this operation reached a terminal task state. */
+  completedAt?: number | undefined;
+  /** Most recent worker heartbeat observed for this operation. */
+  lastHeartbeatAt?: number | undefined;
+  /** Number of retry attempts after the original attempt. */
+  retryCount?: number | undefined;
+  /** Number of times visibility/disconnect handling moved this task back to queued. */
+  requeueCount?: number | undefined;
+  /** Most recent reason this task moved back to queued. */
+  lastRequeueReason?: TaskRequeueReason | undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Record types stored at each key
 // ---------------------------------------------------------------------------
 
 /** Persisted record for a task in the queued state. */
-export interface QueuedRecord {
+export interface QueuedRecord extends TaskLifecycleFields {
   operationId: string;
   activityName: string;
   input: unknown;
@@ -44,7 +72,7 @@ export interface QueuedRecord {
 }
 
 /** Persisted record for a task in the inflight state. */
-export interface InflightRecord {
+export interface InflightRecord extends TaskLifecycleFields {
   operationId: string;
   workerId: string;
   deadline: number;
@@ -63,6 +91,31 @@ export interface ResolvedRecord {
   operationId: string;
   status: 'completed' | 'failed';
   resolvedAt: number;
+  activityName?: string | undefined;
+  queue?: string | undefined;
+  workerId?: string | undefined;
+  attempt?: number | undefined;
+  visibilityTimeout?: number | undefined;
+  /** Workflow that dispatched this activity. Present when the dispatch included a workflowId. */
+  workflowId?: string | undefined;
+  firstQueuedAt?: number | undefined;
+  lastQueuedAt?: number | undefined;
+  lastDispatchedAt?: number | undefined;
+  startedAt?: number | undefined;
+  completedAt?: number | undefined;
+  lastHeartbeatAt?: number | undefined;
+  retryCount?: number | undefined;
+  requeueCount?: number | undefined;
+  lastRequeueReason?: TaskRequeueReason | undefined;
+  resolutionReason?: TaskResolutionReason | undefined;
+  queueLatencyMs?: number | undefined;
+  executionLatencyMs?: number | undefined;
+}
+
+export interface TransitionInflightToResolvedOptions {
+  resolutionReason?: TaskResolutionReason;
+  resolvedAt?: number;
+  record?: InflightRecord;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,12 +176,179 @@ export async function getExclusiveTaskState(
 }
 
 // ---------------------------------------------------------------------------
+// Record guards and lifecycle helpers
+// ---------------------------------------------------------------------------
+
+/** Type guard for decoded storage records in the queued state. */
+export function isQueuedRecord(value: unknown): value is QueuedRecord {
+  if (value === null || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record['operationId'] === 'string' &&
+    typeof record['activityName'] === 'string' &&
+    typeof record['queue'] === 'string' &&
+    typeof record['attempt'] === 'number' &&
+    typeof record['visibilityTimeout'] === 'number' &&
+    typeof record['queuedAt'] === 'number'
+  );
+}
+
+/** Type guard for decoded storage records in the inflight state. */
+export function isInflightRecord(value: unknown): value is InflightRecord {
+  if (value === null || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record['operationId'] === 'string' &&
+    typeof record['activityName'] === 'string' &&
+    typeof record['queue'] === 'string' &&
+    typeof record['attempt'] === 'number' &&
+    typeof record['visibilityTimeout'] === 'number' &&
+    typeof record['workerId'] === 'string' &&
+    typeof record['deadline'] === 'number'
+  );
+}
+
+/** Type guard for decoded storage records in the resolved state. */
+export function isResolvedRecord(value: unknown): value is ResolvedRecord {
+  if (value === null || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record['operationId'] === 'string' &&
+    (record['status'] === 'completed' || record['status'] === 'failed') &&
+    typeof record['resolvedAt'] === 'number'
+  );
+}
+
+/** Decode the queued record for an operation, returning null when absent or malformed. */
+export async function readQueuedRecord(
+  storage: Storage,
+  operationId: string,
+): Promise<QueuedRecord | null> {
+  const value = await storage.get(KEYS.operationQueued(operationId));
+  if (value === null) return null;
+  const decoded = decode(value);
+  return isQueuedRecord(decoded) ? decoded : null;
+}
+
+/** Decode the inflight record for an operation, returning null when absent or malformed. */
+export async function readInflightRecord(
+  storage: Storage,
+  operationId: string,
+): Promise<InflightRecord | null> {
+  const value = await storage.get(KEYS.operationInflight(operationId));
+  if (value === null) return null;
+  const decoded = decode(value);
+  return isInflightRecord(decoded) ? decoded : null;
+}
+
+export function normalizeQueuedRecordLifecycle(
+  record: QueuedRecord,
+  previous?: InflightRecord | null,
+): QueuedRecord {
+  const normalized: QueuedRecord = {
+    ...record,
+    firstQueuedAt: resolveQueuedFirstQueuedAt(record, previous),
+    lastQueuedAt: record.lastQueuedAt ?? record.queuedAt,
+    retryCount: resolveRetryCount(record, previous),
+    requeueCount: record.requeueCount ?? previous?.requeueCount ?? 0,
+  };
+  applyPreviousLifecycleFields(normalized, previous);
+  return normalized;
+}
+
+export function normalizeInflightRecordLifecycle(
+  record: InflightRecord,
+  previous?: QueuedRecord | null,
+  now: number = Date.now(),
+): InflightRecord {
+  const lastDispatchedAt = record.lastDispatchedAt ?? now;
+  const firstQueuedAt = resolveInflightFirstQueuedAt(record, previous, lastDispatchedAt);
+  const normalized: InflightRecord = {
+    ...record,
+    firstQueuedAt,
+    lastQueuedAt: resolveInflightLastQueuedAt(record, previous, firstQueuedAt),
+    lastDispatchedAt,
+    startedAt: record.startedAt ?? lastDispatchedAt,
+    retryCount: resolveRetryCount(record, previous),
+    requeueCount: record.requeueCount ?? previous?.requeueCount ?? 0,
+  };
+  applyPreviousLifecycleFields(normalized, previous);
+  return normalized;
+}
+
+function resolveQueuedFirstQueuedAt(
+  record: QueuedRecord,
+  previous?: InflightRecord | null,
+): number {
+  return (
+    record.firstQueuedAt ?? previous?.firstQueuedAt ?? previous?.lastQueuedAt ?? record.queuedAt
+  );
+}
+
+function resolveInflightFirstQueuedAt(
+  record: InflightRecord,
+  previous: QueuedRecord | null | undefined,
+  lastDispatchedAt: number,
+): number {
+  return (
+    record.firstQueuedAt ??
+    previous?.firstQueuedAt ??
+    previous?.lastQueuedAt ??
+    previous?.queuedAt ??
+    lastDispatchedAt
+  );
+}
+
+function resolveInflightLastQueuedAt(
+  record: InflightRecord,
+  previous: QueuedRecord | null | undefined,
+  firstQueuedAt: number,
+): number {
+  return record.lastQueuedAt ?? previous?.lastQueuedAt ?? previous?.queuedAt ?? firstQueuedAt;
+}
+
+function resolveRetryCount(
+  record: { attempt: number; retryCount?: number | undefined },
+  previous?: TaskLifecycleFields | null,
+): number {
+  return record.retryCount ?? previous?.retryCount ?? Math.max(0, record.attempt - 1);
+}
+
+function applyPreviousLifecycleFields(
+  record: TaskLifecycleFields,
+  previous?: TaskLifecycleFields | null,
+): void {
+  if (previous === undefined || previous === null) return;
+  record.lastDispatchedAt ??= previous.lastDispatchedAt;
+  record.startedAt ??= previous.startedAt;
+  record.lastHeartbeatAt ??= previous.lastHeartbeatAt;
+  record.lastRequeueReason ??= previous.lastRequeueReason;
+}
+
+export function calculateQueueLatencyMs(record: TaskLifecycleFields): number | undefined {
+  if (record.lastQueuedAt === undefined || record.lastDispatchedAt === undefined) return undefined;
+  return Math.max(0, record.lastDispatchedAt - record.lastQueuedAt);
+}
+
+export function calculateExecutionLatencyMs(
+  record: TaskLifecycleFields,
+  completedAt: number,
+): number | undefined {
+  const startedAt = record.startedAt ?? record.lastDispatchedAt;
+  if (startedAt === undefined) return undefined;
+  return Math.max(0, completedAt - startedAt);
+}
+
+// ---------------------------------------------------------------------------
 // State transitions (atomic batch operations)
 // ---------------------------------------------------------------------------
 
 /** Write the initial queued record for a newly dispatched task. */
 export async function markQueued(storage: Storage, record: QueuedRecord): Promise<void> {
-  await storage.put(KEYS.operationQueued(record.operationId), encode(record));
+  await storage.put(
+    KEYS.operationQueued(record.operationId),
+    encode(normalizeQueuedRecordLifecycle(record)),
+  );
 }
 
 /** Atomically transition a task from queued → inflight. */
@@ -137,15 +357,25 @@ export async function transitionQueuedToInflight(
   operationId: string,
   inflightRecord: InflightRecord,
 ): Promise<void> {
+  const queuedRecord = await readQueuedRecord(storage, operationId);
+  const normalizedInflightRecord = normalizeInflightRecordLifecycle(inflightRecord, queuedRecord);
+
   await storage.batch([
     { type: 'delete', key: KEYS.operationQueued(operationId) },
-    { type: 'put', key: KEYS.operationInflight(operationId), value: encode(inflightRecord) },
+    {
+      type: 'put',
+      key: KEYS.operationInflight(operationId),
+      value: encode(normalizedInflightRecord),
+    },
   ]);
 }
 
 /** Write the initial inflight record (for tasks dispatched directly to a WS worker). */
 export async function markInflight(storage: Storage, record: InflightRecord): Promise<void> {
-  await storage.put(KEYS.operationInflight(record.operationId), encode(record));
+  await storage.put(
+    KEYS.operationInflight(record.operationId),
+    encode(normalizeInflightRecordLifecycle(record)),
+  );
 }
 
 /** Atomically transition a task from inflight → resolved. */
@@ -153,11 +383,45 @@ export async function transitionInflightToResolved(
   storage: Storage,
   operationId: string,
   status: 'completed' | 'failed',
+  options: TransitionInflightToResolvedOptions = {},
 ): Promise<void> {
+  const existingRecord = options.record ?? (await readInflightRecord(storage, operationId));
+  const resolvedAt = options.resolvedAt ?? Date.now();
+  const normalizedRecord =
+    existingRecord === null
+      ? null
+      : normalizeInflightRecordLifecycle(existingRecord, null, resolvedAt);
+  const resolutionReason =
+    options.resolutionReason ?? (status === 'completed' ? 'completed' : 'failed');
+
   const resolvedRecord: ResolvedRecord = {
     operationId,
     status,
-    resolvedAt: Date.now(),
+    resolvedAt,
+    ...(normalizedRecord === null
+      ? {}
+      : {
+          activityName: normalizedRecord.activityName,
+          queue: normalizedRecord.queue,
+          workerId: normalizedRecord.workerId,
+          attempt: normalizedRecord.attempt,
+          visibilityTimeout: normalizedRecord.visibilityTimeout,
+          ...(normalizedRecord.workflowId === undefined
+            ? {}
+            : { workflowId: normalizedRecord.workflowId }),
+          firstQueuedAt: normalizedRecord.firstQueuedAt,
+          lastQueuedAt: normalizedRecord.lastQueuedAt,
+          lastDispatchedAt: normalizedRecord.lastDispatchedAt,
+          startedAt: normalizedRecord.startedAt,
+          completedAt: resolvedAt,
+          lastHeartbeatAt: normalizedRecord.lastHeartbeatAt,
+          retryCount: normalizedRecord.retryCount,
+          requeueCount: normalizedRecord.requeueCount,
+          lastRequeueReason: normalizedRecord.lastRequeueReason,
+          resolutionReason,
+          queueLatencyMs: calculateQueueLatencyMs(normalizedRecord),
+          executionLatencyMs: calculateExecutionLatencyMs(normalizedRecord, resolvedAt),
+        }),
   };
 
   await storage.batch([
@@ -172,8 +436,11 @@ export async function transitionInflightToQueued(
   operationId: string,
   queuedRecord: QueuedRecord,
 ): Promise<void> {
+  const inflightRecord = await readInflightRecord(storage, operationId);
+  const normalizedQueuedRecord = normalizeQueuedRecordLifecycle(queuedRecord, inflightRecord);
+
   await storage.batch([
     { type: 'delete', key: KEYS.operationInflight(operationId) },
-    { type: 'put', key: KEYS.operationQueued(operationId), value: encode(queuedRecord) },
+    { type: 'put', key: KEYS.operationQueued(operationId), value: encode(normalizedQueuedRecord) },
   ]);
 }

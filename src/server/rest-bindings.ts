@@ -10,6 +10,7 @@
  */
 
 import type { MetricsCollector } from '../observability/metrics.ts';
+import type { WorkerRegistry } from '../worker/registry.ts';
 import { createOperationRegistry, type OperationRegistry } from './operation-catalog.ts';
 import {
   addWorkflowTagsOperation,
@@ -64,6 +65,11 @@ import {
   createGetSystemMetricsRestBinding,
   getSystemMetricsOperation,
 } from './operations/get-system-metrics.ts';
+import {
+  createGetTaskDiagnosticsOperation,
+  getTaskDiagnosticsOperation,
+  getTaskDiagnosticsRestBinding,
+} from './operations/get-task-diagnostics.ts';
 import {
   getTenantQuotaOperation,
   getTenantQuotaRestBinding,
@@ -168,6 +174,7 @@ import {
 } from './operations/update-workflow.ts';
 import { workflowEventsSubscriptionOperation } from './operations/workflow-events-subscription.ts';
 import type { RestBinding } from './rest-binding.ts';
+import type { TaskQueue } from './task-queue.ts';
 
 /**
  * The router stores heterogeneous bindings whose `Input`/`Output` pairs
@@ -231,6 +238,7 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
   resumeScheduleRestBinding,
   getStreamChunksRestBinding,
   streamWorkflowSseRestBinding,
+  getTaskDiagnosticsRestBinding,
   // Wave 1 — previously legacy direct handlers
   listSchedulesRestBinding,
   getScheduleRestBinding,
@@ -268,6 +276,10 @@ export function createLiveRestBindings(): ReadonlyArray<UnknownRestBinding> {
  */
 export function createLiveOperationRegistry(options?: {
   metricsCollector?: MetricsCollector;
+  taskDiagnostics?: {
+    registry: WorkerRegistry;
+    taskQueue: TaskQueue;
+  };
 }): OperationRegistry {
   return createOperationRegistry([
     startWorkflowOperation,
@@ -309,6 +321,13 @@ export function createLiveOperationRegistry(options?: {
     getStreamChunksOperation,
     streamWorkflowSseOperation,
     workflowEventsSubscriptionOperation,
+    options?.taskDiagnostics === undefined
+      ? getTaskDiagnosticsOperation
+      : createGetTaskDiagnosticsOperation({
+          registry: options.taskDiagnostics.registry,
+          taskQueue: options.taskDiagnostics.taskQueue,
+          metricsCollector: options.metricsCollector,
+        }),
     // Wave 1 — previously legacy direct handlers
     listSchedulesOperation,
     getScheduleOperation,

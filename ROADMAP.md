@@ -100,7 +100,7 @@ The shape should stay Weft-native rather than copying Temporal feature names. Us
   - Authorization requires a system-level read scope and preserves tenant isolation where tenant-scoped queue data is exposed.
   - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/worker/registry.test.ts src/server/task-queue.test.ts src/server/operations/list-workers.test.ts src/server/operations/list-task-queues.test.ts src/dashboard/api-client.test.ts`, and `bun run verify:documentation`.
 
-- [ ] **Add task latency, retry, and stuck-work diagnostics.**
+- [x] **Add task latency, retry, and stuck-work diagnostics.**
 
   **Where:** `src/server/task-state.ts`, `src/server/runtime/task-dispatch.ts`, `src/server/runtime/task-polling.ts`, `src/server/runtime/task-reconciliation.ts`, `src/observability/metrics.ts`, new task-diagnostics operations, and dashboard diagnostics utilities.
 

@@ -322,6 +322,51 @@ describe('ApiClient', () => {
     await expect(client.replayWorkflowTo('workflow id', 3)).resolves.toBeNull();
   });
 
+  it('fetches task diagnostics with encoded filters for workflow detail evidence', async () => {
+    let requestedUrl = '';
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      requestedUrl = requestInputToUrl(input);
+      return Response.json({
+        items: [
+          {
+            kind: 'stale-inflight',
+            operationId: 'operation-1',
+            workflowId: 'workflow id',
+            activityName: 'charge',
+            queue: 'payments',
+            state: 'inflight',
+            workerId: 'worker-1',
+            retryCount: 2,
+            requeueCount: 1,
+            heartbeatAgeMs: 5_000,
+            evidence: ['worker worker-1 heartbeat is stale'],
+          },
+        ],
+        summary: {
+          stuckQueued: 0,
+          staleInflight: 1,
+          retryStorms: 0,
+          allWorkersAtCapacity: 0,
+        },
+        limit: 25,
+      });
+    }) as typeof fetch;
+
+    const client = new ApiClient();
+    const diagnostics = await client.getTaskDiagnostics({
+      workflowId: 'workflow id',
+      queue: 'payments',
+      limit: 25,
+    });
+
+    expect(requestedUrl).toBe(
+      '/v1/tasks/diagnostics?workflowId=workflow+id&queue=payments&limit=25',
+    );
+    expect(diagnostics.items[0]?.operationId).toBe('operation-1');
+    expect(diagnostics.items[0]?.queue).toBe('payments');
+  });
+
   it('prefers API error payloads and falls back to status text when parsing fails', async () => {
     let callCount = 0;
 

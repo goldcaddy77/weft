@@ -292,22 +292,22 @@ export function serve(options: ServeOptions): WeftServer {
   }
 
   const tlsOptions = buildTLSOptions(options.auth);
-
   // The dashboard HTML is passed in via options or loaded dynamically.
   // When available, Bun's static route handler bundles and serves it
   // with HMR in dev mode and cached assets in production mode.
   const dashboard = options.dashboard ?? null;
-
   const eventFeedBackend = createEngineEventFeedBackend(options.engine);
+  const registry = new WorkerRegistry(
+    options.routingPolicy !== undefined ? { policy: options.routingPolicy } : undefined,
+  );
+  const taskQueue = new TaskQueue(
+    options.schedulingPolicy !== undefined
+      ? { schedulingPolicy: options.schedulingPolicy }
+      : undefined,
+  );
   const context: ServerContext = {
-    registry: new WorkerRegistry(
-      options.routingPolicy !== undefined ? { policy: options.routingPolicy } : undefined,
-    ),
-    taskQueue: new TaskQueue(
-      options.schedulingPolicy !== undefined
-        ? { schedulingPolicy: options.schedulingPolicy }
-        : undefined,
-    ),
+    registry,
+    taskQueue,
     workerSockets: new Map(),
     streamSockets: new Map(),
     workerAffinity: new Map(),
@@ -316,7 +316,9 @@ export function serve(options: ServeOptions): WeftServer {
     pendingTimers: new Set(),
     deadlineTracker: new DeadlineTracker(),
     liveOperationRegistry: createLiveOperationRegistry(
-      options.metricsCollector !== undefined ? { metricsCollector: options.metricsCollector } : {},
+      options.metricsCollector !== undefined
+        ? { metricsCollector: options.metricsCollector, taskDiagnostics: { registry, taskQueue } }
+        : { taskDiagnostics: { registry, taskQueue } },
     ),
     liveRestBindings: createLiveRestBindings(),
     supportedAuthenticationSchemes: deriveSupportedOpenApiSecuritySchemes(options.auth),
@@ -331,7 +333,6 @@ export function serve(options: ServeOptions): WeftServer {
     processingOperations: new Set(),
     reconciliationRunning: false,
   };
-
   /** Remove an operationId from the workflow→operations reverse index. */
   function cleanupWorkflowIndex(operationId: string): void {
     const workflowId = context.operationToWorkflow.get(operationId);
@@ -344,7 +345,6 @@ export function serve(options: ServeOptions): WeftServer {
       context.operationToWorkflow.delete(operationId);
     }
   }
-
   const routes: Record<string, unknown> = {};
   if (dashboard !== null) {
     routes['/ui'] = dashboard;

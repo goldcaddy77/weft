@@ -9,6 +9,7 @@ import {
   WorkflowCompletedEvent,
 } from '../core/events.ts';
 import type { RetryPolicy, WorkflowContext } from '../core/types.ts';
+import { METRICS, MetricsCollector } from '../observability/metrics.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -844,6 +845,80 @@ describe('worker WebSocket protocol', () => {
 
     const after = server.registry.getAll()[0]?.lastHeartbeat ?? 0;
     expect(after).toBeGreaterThanOrEqual(before);
+
+    ws.close();
+    await waitForRealTimersForTesting(50);
+  });
+
+  it('records task lifecycle metadata and low-cardinality metrics for WebSocket dispatches', async () => {
+    engine = createEngine();
+    const metricsCollector = new MetricsCollector();
+    server = serve({ engine, port: 0, metricsCollector });
+
+    const ws = await connectWorker(server);
+    await registerWorker(ws, { workerId: 'w-diagnostics', activities: ['charge'], concurrency: 1 });
+
+    ws.addEventListener('message', (event) => {
+      const message = JSON.parse(String(event.data)) as { type: string; operationId?: string };
+      if (message.type === 'task') {
+        ws.send(
+          JSON.stringify({
+            type: 'taskResult',
+            operationId: message.operationId,
+            status: 'completed',
+            value: 42,
+          }),
+        );
+      }
+    });
+
+    await server.dispatchTask({
+      operationId: 'diagnostic-ws-op',
+      activityName: 'charge',
+      input: null,
+      workflowId: 'workflow-diagnostics',
+    });
+
+    await waitFor(
+      async () => (await engine.storage.get(KEYS.operationResolved('diagnostic-ws-op'))) !== null,
+      { label: 'diagnostic-ws-op to resolve' },
+    );
+
+    const resolved = decode(
+      (await engine.storage.get(KEYS.operationResolved('diagnostic-ws-op')))!,
+    ) as {
+      workflowId?: string;
+      activityName?: string;
+      queue?: string;
+      workerId?: string;
+      firstQueuedAt?: number;
+      lastDispatchedAt?: number;
+      startedAt?: number;
+      completedAt?: number;
+      retryCount?: number;
+      requeueCount?: number;
+      resolutionReason?: string;
+      queueLatencyMs?: number;
+      executionLatencyMs?: number;
+    };
+    expect(resolved.workflowId).toBe('workflow-diagnostics');
+    expect(resolved.activityName).toBe('charge');
+    expect(resolved.queue).toBe('default');
+    expect(resolved.workerId).toBe('w-diagnostics');
+    expect(typeof resolved.firstQueuedAt).toBe('number');
+    expect(typeof resolved.lastDispatchedAt).toBe('number');
+    expect(typeof resolved.startedAt).toBe('number');
+    expect(typeof resolved.completedAt).toBe('number');
+    expect(resolved.retryCount).toBe(0);
+    expect(resolved.requeueCount).toBe(0);
+    expect(resolved.resolutionReason).toBe('completed');
+    expect(typeof resolved.queueLatencyMs).toBe('number');
+    expect(typeof resolved.executionLatencyMs).toBe('number');
+
+    const snapshot = metricsCollector.snapshot();
+    expect(snapshot[METRICS.taskQueueLatency.name]?.type).toBe('histogram');
+    expect(snapshot[METRICS.taskExecutionLatency.name]?.type).toBe('histogram');
+    expect(snapshot[METRICS.workerCapacitySaturation.name]).toEqual({ type: 'gauge', value: 0 });
 
     ws.close();
     await waitForRealTimersForTesting(50);
