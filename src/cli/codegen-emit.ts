@@ -24,6 +24,15 @@ import type {
   RegistrySnapshot,
   RegistryWorkflowEntry,
 } from '../core/registry-snapshot.ts';
+import {
+  ARRAY_SUPPORTED_KEYS,
+  CodegenEmitError,
+  hasUnexpectedSibling,
+  OBJECT_SUPPORTED_KEYS,
+  PRIMITIVE_SUPPORTED_KEYS,
+} from './codegen-emit-keywords.ts';
+
+export { CodegenEmitError } from './codegen-emit-keywords.ts';
 
 /** Compare strings by codepoint order; no locale-sensitivity. */
 function codepointCompare(a: string, b: string): number {
@@ -64,66 +73,6 @@ function primitiveTypeFor(typeKeyword: string): string | undefined {
  * contract that the CLI never crashes on bad input is preserved.
  */
 const MAX_RECURSION_DEPTH = 64;
-
-// Annotation-only keywords: documentation, defaults, and validation
-// constraints (string length, numeric bounds, array/object size).
-// They do not constrain the TypeScript shape, so combinator and
-// enum/const handlers may safely ignore them when checking for
-// sibling assertions. Anything outside this set is treated as a real
-// sibling and forces a degrade to `unknown`.
-const ANNOTATION_ONLY_KEYWORDS: ReadonlySet<string> = new Set([
-  'description',
-  'title',
-  'default',
-  '$comment',
-  'examples',
-  'readOnly',
-  'writeOnly',
-  'deprecated',
-  '$schema',
-  '$id',
-  'minLength',
-  'maxLength',
-  'pattern',
-  'format',
-  'minimum',
-  'maximum',
-  'exclusiveMinimum',
-  'exclusiveMaximum',
-  'multipleOf',
-  'minItems',
-  'maxItems',
-  'uniqueItems',
-  'minProperties',
-  'maxProperties',
-]);
-
-/**
- * Thrown by the emitter when the converter cannot produce a type it
- * is willing to stand behind (e.g. recursion overflow). Callers must
- * translate this to a user-facing diagnostic.
- */
-export class CodegenEmitError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'CodegenEmitError';
-  }
-}
-
-/**
- * Returns true when `node` has any own key not in `expected` and not
- * in {@link ANNOTATION_ONLY_KEYWORDS}. Used by combinator and
- * enum/const handlers to detect sibling constraints they cannot
- * compose with.
- */
-function hasUnexpectedSibling(node: Record<string, unknown>, expected: readonly string[]): boolean {
-  for (const key of Object.keys(node)) {
-    if (expected.includes(key)) continue;
-    if (ANNOTATION_ONLY_KEYWORDS.has(key)) continue;
-    return true;
-  }
-  return false;
-}
 
 function tryCombinator(node: Record<string, unknown>, depth: number): string | undefined {
   const hasOneOf = Array.isArray(node['oneOf']);
@@ -179,36 +128,59 @@ function tryEnumOrConst(node: Record<string, unknown>): string | undefined {
   return enumLiteralsToTypeScript(node['enum'] as unknown[]);
 }
 
+function expandTypeArray(
+  node: Record<string, unknown>,
+  typeKeyword: unknown[],
+  depth: number,
+): string {
+  // `type: ['string', 'null']` flattens to a union of the per-type
+  // results so callers get `(string | null)` rather than `unknown`.
+  if (typeKeyword.length === 0) return 'unknown';
+  const branches = typeKeyword.map((branchType) =>
+    jsonSchemaToTypeScriptAtDepth({ ...node, type: branchType }, depth + 1),
+  );
+  if (branches.length === 1) return branches[0]!;
+  return `(${branches.join(' | ')})`;
+}
+
+function dispatchTypeString(
+  node: Record<string, unknown>,
+  typeKeyword: string,
+  depth: number,
+): string | undefined {
+  if (typeKeyword === 'array') {
+    if (hasUnexpectedSibling(node, ARRAY_SUPPORTED_KEYS)) return 'unknown';
+    return arrayTypeScript(node, depth);
+  }
+  if (typeKeyword === 'object') {
+    if (hasUnexpectedSibling(node, OBJECT_SUPPORTED_KEYS)) return 'unknown';
+    return objectTypeScript(node, depth);
+  }
+  const primitive = primitiveTypeFor(typeKeyword);
+  if (primitive === undefined) return undefined;
+  if (hasUnexpectedSibling(node, PRIMITIVE_SUPPORTED_KEYS)) return 'unknown';
+  return primitive;
+}
+
 function dispatchByType(node: Record<string, unknown>, depth: number): string | undefined {
   const typeKeyword = node['type'];
-
-  if (Array.isArray(typeKeyword)) {
-    // `type: ['string', 'null']` flattens to a union of the per-type
-    // results so callers get `(string | null)` rather than `unknown`.
-    if (typeKeyword.length === 0) return 'unknown';
-    const branches = typeKeyword.map((branchType) =>
-      jsonSchemaToTypeScriptAtDepth({ ...node, type: branchType }, depth + 1),
-    );
-    if (branches.length === 1) return branches[0]!;
-    return `(${branches.join(' | ')})`;
-  }
-
-  if (typeof typeKeyword === 'string') {
-    const primitive = primitiveTypeFor(typeKeyword);
-    if (primitive !== undefined) return primitive;
-    if (typeKeyword === 'array') return arrayTypeScript(node, depth);
-    if (typeKeyword === 'object') return objectTypeScript(node, depth);
-  }
-
-  return undefined;
+  if (Array.isArray(typeKeyword)) return expandTypeArray(node, typeKeyword, depth);
+  if (typeof typeKeyword !== 'string') return undefined;
+  return dispatchTypeString(node, typeKeyword, depth);
 }
 
 function dispatchByShape(node: Record<string, unknown>, depth: number): string | undefined {
   // `properties` or `additionalProperties` without an explicit
   // `type: 'object'` is still object-shaped (some converters omit
   // `type`). Same for `items`/`prefixItems` → array.
-  if ('properties' in node || 'additionalProperties' in node) return objectTypeScript(node, depth);
-  if ('items' in node || 'prefixItems' in node) return arrayTypeScript(node, depth);
+  if ('properties' in node || 'additionalProperties' in node) {
+    if (hasUnexpectedSibling(node, OBJECT_SUPPORTED_KEYS)) return 'unknown';
+    return objectTypeScript(node, depth);
+  }
+  if ('items' in node || 'prefixItems' in node) {
+    if (hasUnexpectedSibling(node, ARRAY_SUPPORTED_KEYS)) return 'unknown';
+    return arrayTypeScript(node, depth);
+  }
   return undefined;
 }
 

@@ -205,6 +205,70 @@ describe('jsonSchemaToTypeScript combinators', () => {
     ).toBe('unknown');
   });
 
+  it('degrades type + unsupported sibling keyword (not, $ref, if/then) to unknown', () => {
+    // Unsupported assertion keywords alongside a supported `type`
+    // would otherwise silently emit the type-derived form, claiming
+    // a TypeScript shape narrower or broader than the schema
+    // actually accepts.
+    expect(jsonSchemaToTypeScript({ type: 'string', not: {} })).toBe('unknown');
+    expect(jsonSchemaToTypeScript({ type: 'string', $ref: '#/foo' })).toBe('unknown');
+    expect(jsonSchemaToTypeScript({ type: 'number', dependentRequired: { a: ['b'] } })).toBe(
+      'unknown',
+    );
+  });
+
+  it('degrades object + unsupported keyword (patternProperties, propertyNames) to unknown', () => {
+    expect(
+      jsonSchemaToTypeScript({
+        type: 'object',
+        patternProperties: { '^x': { type: 'string' } },
+        additionalProperties: false,
+      }),
+    ).toBe('unknown');
+    expect(
+      jsonSchemaToTypeScript({
+        type: 'object',
+        propertyNames: { pattern: '^[a-z]+$' },
+      }),
+    ).toBe('unknown');
+    expect(
+      jsonSchemaToTypeScript({
+        type: 'object',
+        unevaluatedProperties: false,
+      }),
+    ).toBe('unknown');
+  });
+
+  it('degrades array + unsupported keyword to unknown', () => {
+    expect(
+      jsonSchemaToTypeScript({
+        type: 'array',
+        items: { type: 'string' },
+        contains: { type: 'string' },
+      }),
+    ).toBe('unknown');
+  });
+
+  it('still accepts annotation-only siblings on type-dispatched schemas', () => {
+    expect(
+      jsonSchemaToTypeScript({
+        type: 'string',
+        description: 'a name',
+        minLength: 1,
+        maxLength: 200,
+      }),
+    ).toBe('string');
+    expect(
+      jsonSchemaToTypeScript({
+        type: 'object',
+        description: 'a record',
+        properties: { a: { type: 'string' } },
+        required: ['a'],
+        additionalProperties: false,
+      }),
+    ).toBe('{ "a": string; }');
+  });
+
   it('ignores annotation-only siblings (description/default/minLength/etc.) on combinators', () => {
     // `description`, `minLength`, etc. are documentation/validation
     // hints that do not constrain the TypeScript shape, so the
