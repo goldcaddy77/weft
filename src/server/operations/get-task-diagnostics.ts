@@ -13,6 +13,7 @@ import { z } from 'zod';
 
 import { decode } from '../../core/codec.ts';
 import type { Engine } from '../../core/engine.ts';
+import { KEYS } from '../../storage/interface.ts';
 import type { WorkerRegistry } from '../../worker/registry.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
@@ -181,7 +182,7 @@ async function collectTaskDiagnostics({
     addInflightDiagnostics(record, input, currentTime, addItem);
   }
 
-  for await (const record of scanResolvedRecords(engine)) {
+  for await (const record of scanResolvedRecords(engine, input)) {
     if (!matchesTaskRecordFilter(record, input)) continue;
     if (record.queue !== undefined) relevantQueues.add(record.queue);
     addRetryStormDiagnostic(record, 'resolved', input, addItem);
@@ -216,8 +217,27 @@ async function* scanInflightRecords(engine: Engine): AsyncIterable<InflightRecor
   }
 }
 
-async function* scanResolvedRecords(engine: Engine): AsyncIterable<ResolvedRecord> {
-  for await (const [, value] of engine.storage.scan('op:resolved:')) {
+async function* scanResolvedRecords(
+  engine: Engine,
+  input: GetTaskDiagnosticsInput,
+): AsyncIterable<ResolvedRecord> {
+  if (input.operationId !== undefined) {
+    const value = await engine.storage.get(KEYS.operationResolved(input.operationId));
+    if (value === null) return;
+    const decoded = decode(value);
+    if (isResolvedRecord(decoded)) {
+      yield decoded;
+    }
+    return;
+  }
+
+  // Resolved task records are historical and can grow without bound. Unlike
+  // queued and inflight records, they are not active work, so diagnostics only
+  // samples a caller-bounded window for historical retry-storm evidence.
+  for await (const [, value] of engine.storage.scan('op:resolved:', {
+    limit: input.limit,
+    reverse: true,
+  })) {
     const decoded = decode(value);
     if (isResolvedRecord(decoded)) {
       yield decoded;

@@ -66,8 +66,12 @@ export async function markTaskClaimedByLongPollWorker(
     operationId: task.operationId,
     deadline: inflightRecord.deadline,
   });
-  await transitionQueuedToInflight(options.engine.storage, task.operationId, inflightRecord);
-  recordTaskQueueLatencyMetric(options.metricsCollector, inflightRecord);
+  const normalizedInflightRecord = await transitionQueuedToInflight(
+    options.engine.storage,
+    task.operationId,
+    inflightRecord,
+  );
+  recordTaskQueueLatencyMetric(options.metricsCollector, normalizedInflightRecord);
   recordTaskBacklogMetric(options.metricsCollector, context.taskQueue);
 }
 

@@ -362,15 +362,15 @@ export function isHeartbeatStale(
 // ---------------------------------------------------------------------------
 
 /** Write the initial queued record for a newly dispatched task. */
-export async function markQueued(storage: Storage, record: QueuedRecord): Promise<void> {
-  await storage.put(
-    KEYS.operationQueued(record.operationId),
-    encode(normalizeQueuedRecordLifecycle(record)),
-  );
+export async function markQueued(storage: Storage, record: QueuedRecord): Promise<QueuedRecord> {
+  const normalizedRecord = normalizeQueuedRecordLifecycle(record);
+  await storage.put(KEYS.operationQueued(record.operationId), encode(normalizedRecord));
+  return normalizedRecord;
 }
 
 type TransitionQueuedToInflightOptions = {
   readonly queuedRecord?: QueuedRecord | null;
+  readonly now?: number | undefined;
 };
 
 /** Atomically transition a task from queued → inflight. */
@@ -379,12 +379,16 @@ export async function transitionQueuedToInflight(
   operationId: string,
   inflightRecord: InflightRecord,
   options: TransitionQueuedToInflightOptions = {},
-): Promise<void> {
+): Promise<InflightRecord> {
   const queuedRecord =
     options.queuedRecord === undefined
       ? await readQueuedRecord(storage, operationId)
       : options.queuedRecord;
-  const normalizedInflightRecord = normalizeInflightRecordLifecycle(inflightRecord, queuedRecord);
+  const normalizedInflightRecord = normalizeInflightRecordLifecycle(
+    inflightRecord,
+    queuedRecord,
+    options.now,
+  );
 
   await storage.batch([
     { type: 'delete', key: KEYS.operationQueued(operationId) },
@@ -394,6 +398,7 @@ export async function transitionQueuedToInflight(
       value: encode(normalizedInflightRecord),
     },
   ]);
+  return normalizedInflightRecord;
 }
 
 /** Write the initial inflight record (for tasks dispatched directly to a WS worker). */

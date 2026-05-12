@@ -3,7 +3,7 @@ import { describe, expect, it } from 'bun:test';
 import { encode } from '../../core/codec.ts';
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
-import { KEYS } from '../../storage/interface.ts';
+import { KEYS, type ScanOptions } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { WorkerRegistry } from '../../worker/registry.ts';
 import type { AuthorizationScope } from '../authorization-scope.ts';
@@ -22,6 +22,24 @@ function createEngine(storage: MemoryStorage): Engine {
     return input;
   });
   return engine;
+}
+
+class ScanCountingStorage extends MemoryStorage {
+  readonly scannedEntriesByPrefix = new Map<string, number>();
+
+  override async *scan(
+    prefix: string,
+    options: ScanOptions = {},
+  ): AsyncIterable<[string, Uint8Array]> {
+    for await (const entry of super.scan(prefix, options)) {
+      this.scannedEntriesByPrefix.set(prefix, (this.scannedEntriesByPrefix.get(prefix) ?? 0) + 1);
+      yield entry;
+    }
+  }
+
+  scannedEntryCount(prefix: string): number {
+    return this.scannedEntriesByPrefix.get(prefix) ?? 0;
+  }
 }
 
 async function runDiagnostics({
@@ -203,6 +221,45 @@ describe('weft.tasks.diagnostics', () => {
     expect(diagnostics.summary.stuckQueued).toBe(3);
     expect(diagnostics.items).toHaveLength(2);
     expect(diagnostics.limit).toBe(2);
+  });
+
+  it('bounds resolved history scans to the requested diagnostic limit', async () => {
+    const storage = new ScanCountingStorage();
+    const engine = createEngine(storage);
+    const registry = new WorkerRegistry();
+    const taskQueue = new TaskQueue();
+
+    for (let index = 0; index < 5; index += 1) {
+      const record: ResolvedRecord = {
+        operationId: `resolved-retry-${index}`,
+        workflowId: 'workflow-history',
+        activityName: 'charge',
+        queue: 'default',
+        status: 'failed',
+        resolvedAt: 9_000 + index,
+        retryCount: 3,
+        requeueCount: 3,
+        resolutionReason: 'max-attempts-exceeded',
+      };
+      await storage.put(KEYS.operationResolved(record.operationId), encode(record));
+    }
+
+    const result = await runDiagnostics({
+      engine,
+      registry,
+      taskQueue,
+      input: {
+        retryStormMinimumAttempts: 3,
+        limit: 2,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected diagnostics result');
+    const diagnostics = result.value as GetTaskDiagnosticsOutput;
+    expect(storage.scannedEntryCount('op:resolved:')).toBe(2);
+    expect(diagnostics.summary.retryStorms).toBe(2);
+    expect(diagnostics.items).toHaveLength(2);
   });
 
   it('requires system read scope', async () => {

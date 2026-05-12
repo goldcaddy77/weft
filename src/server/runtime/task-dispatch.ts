@@ -1,14 +1,8 @@
 import type { RoutingOptions } from '../../worker/registry.ts';
 import type { ServeOptions, TaskDispatch } from '../index.ts';
 import { evictOldestAffinityEntries } from '../runtime-helpers.ts';
-import type { QueuedRecord } from '../task-state.ts';
-import {
-  markQueued,
-  normalizeInflightRecordLifecycle,
-  normalizeQueuedRecordLifecycle,
-  readQueuedRecord,
-  transitionQueuedToInflight,
-} from '../task-state.ts';
+import type { InflightRecord, QueuedRecord } from '../task-state.ts';
+import { markQueued, readQueuedRecord, transitionQueuedToInflight } from '../task-state.ts';
 import type { ServerContext } from './context.ts';
 import {
   recordTaskBacklogMetric,
@@ -119,30 +113,28 @@ export async function dispatchTaskImpl(
       // Uses a batch to atomically remove any stale queued record and write the inflight record.
       const deadline = now + visibilityTimeout;
       context.deadlineTracker.add({ operationId: task.operationId, deadline });
-      const inflightRecord = normalizeInflightRecordLifecycle(
+      const inflightRecord: InflightRecord = {
+        operationId: task.operationId,
+        workerId: worker.id,
+        deadline,
+        activityName: task.activityName,
+        queue,
+        input: task.input,
+        attempt: task.attempt ?? 1,
+        visibilityTimeout,
+        retryPolicy: task.retryPolicy,
+        workflowId: task.workflowId,
+      };
+      const normalizedInflightRecord = await transitionQueuedToInflight(
+        options.engine.storage,
+        task.operationId,
+        inflightRecord,
         {
-          operationId: task.operationId,
-          workerId: worker.id,
-          deadline,
-          activityName: task.activityName,
-          queue,
-          input: task.input,
-          attempt: task.attempt ?? 1,
-          visibilityTimeout,
-          retryPolicy: task.retryPolicy,
-          workflowId: task.workflowId,
-          firstQueuedAt: existingQueuedRecord?.firstQueuedAt ?? now,
-          lastQueuedAt: existingQueuedRecord?.lastQueuedAt ?? existingQueuedRecord?.queuedAt ?? now,
-          lastDispatchedAt: now,
-          startedAt: now,
+          queuedRecord: existingQueuedRecord,
+          now,
         },
-        existingQueuedRecord,
-        now,
       );
-      await transitionQueuedToInflight(options.engine.storage, task.operationId, inflightRecord, {
-        queuedRecord: existingQueuedRecord,
-      });
-      recordTaskQueueLatencyMetric(options.metricsCollector, inflightRecord);
+      recordTaskQueueLatencyMetric(options.metricsCollector, normalizedInflightRecord);
       recordWorkerCapacitySaturationMetric(options.metricsCollector, context.registry);
 
       // Record affinity for future sticky routing (FIFO eviction when over limit).
@@ -183,20 +175,16 @@ export async function dispatchTaskImpl(
     requeueCount: 0,
   };
   const existingQueuedRecord = await readQueuedRecord(options.engine.storage, task.operationId);
-  const normalizedQueuedRecord = normalizeQueuedRecordLifecycle(
-    {
-      ...queuedRecord,
-      firstQueuedAt: existingQueuedRecord?.firstQueuedAt ?? queuedRecord.queuedAt,
-      lastQueuedAt: existingQueuedRecord?.lastQueuedAt ?? queuedRecord.queuedAt,
-      lastDispatchedAt: existingQueuedRecord?.lastDispatchedAt,
-      startedAt: existingQueuedRecord?.startedAt,
-      retryCount: existingQueuedRecord?.retryCount ?? queuedRecord.retryCount,
-      requeueCount: existingQueuedRecord?.requeueCount ?? queuedRecord.requeueCount,
-      lastRequeueReason: existingQueuedRecord?.lastRequeueReason,
-    },
-    null,
-  );
-  await markQueued(options.engine.storage, normalizedQueuedRecord);
+  const normalizedQueuedRecord = await markQueued(options.engine.storage, {
+    ...queuedRecord,
+    firstQueuedAt: existingQueuedRecord?.firstQueuedAt ?? queuedRecord.queuedAt,
+    lastQueuedAt: existingQueuedRecord?.lastQueuedAt ?? queuedRecord.queuedAt,
+    lastDispatchedAt: existingQueuedRecord?.lastDispatchedAt,
+    startedAt: existingQueuedRecord?.startedAt,
+    retryCount: existingQueuedRecord?.retryCount ?? queuedRecord.retryCount,
+    requeueCount: existingQueuedRecord?.requeueCount ?? queuedRecord.requeueCount,
+    lastRequeueReason: existingQueuedRecord?.lastRequeueReason,
+  });
 
   // Now enqueue to the in-memory queue. The operationId is tracked immediately,
   // preventing TOCTOU races where a concurrent dispatch could pass the

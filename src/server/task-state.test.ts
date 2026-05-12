@@ -195,11 +195,19 @@ describe('state transitions', () => {
     });
     await markQueued(storage, queuedRecord);
 
-    await transitionQueuedToInflight(storage, 'op-1', makeInflightRecord(), {
-      queuedRecord,
-    });
+    const transitionedRecord = await transitionQueuedToInflight(
+      storage,
+      'op-1',
+      makeInflightRecord(),
+      {
+        queuedRecord,
+      },
+    );
 
     expect(storage.getCount(KEYS.operationQueued('op-1'))).toBe(0);
+    expect(transitionedRecord.firstQueuedAt).toBe(1_000);
+    expect(transitionedRecord.retryCount).toBe(2);
+    expect(transitionedRecord.requeueCount).toBe(1);
     const inflightRecord = decode(
       (await storage.get(KEYS.operationInflight('op-1')))!,
     ) as InflightRecord;
