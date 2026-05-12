@@ -1,8 +1,10 @@
 #!/usr/bin/env bun
 
+export { executeCodegen } from './codegen.ts';
 export { executeConformance } from './conformance.ts';
 export { executeDoctor } from './doctor.ts';
 export {
+  CODEGEN_HELP_TEXT,
   CONFORMANCE_HELP_TEXT,
   DOCTOR_HELP_TEXT,
   HELP_TEXT,

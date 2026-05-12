@@ -1,0 +1,433 @@
+import { afterAll, afterEach, describe, expect, it } from 'bun:test';
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+
+import { composeRegistryUrl, executeCodegen } from './codegen.ts';
+import { parseCliArguments } from './parse-arguments.ts';
+
+const FIXTURE_DIR = resolve(import.meta.dir, '__fixtures__/codegen');
+const REGISTRY_FIXTURE = join(FIXTURE_DIR, 'registry.json');
+const EXPECTED_DTS = join(FIXTURE_DIR, 'expected.d.ts');
+const TYPECHECK_FIXTURE_DIR = join(FIXTURE_DIR, 'typecheck');
+
+const tempDirs: string[] = [];
+function makeTempDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'weft-codegen-'));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+describe('codegen parser', () => {
+  it('rejects --server combined with --from', () => {
+    expect(() =>
+      parseCliArguments(['codegen', '--server', 'http://h', '--from', 'r.json', '--out', 'o.d.ts']),
+    ).toThrow(/--server and --from cannot be used together/);
+  });
+
+  it('rejects when neither --server nor --from is provided', () => {
+    expect(() => parseCliArguments(['codegen', '--out', 'o.d.ts'])).toThrow(
+      /exactly one of --server or --from/,
+    );
+  });
+
+  it('rejects when --out is missing', () => {
+    expect(() => parseCliArguments(['codegen', '--from', 'r.json'])).toThrow(/--out is required/);
+  });
+
+  it('rejects --token without --server', () => {
+    expect(() =>
+      parseCliArguments(['codegen', '--from', 'r.json', '--out', 'o.d.ts', '--token', 'abc']),
+    ).toThrow(/--token requires --server/);
+  });
+
+  it('short-circuits on --help without requiring other flags', () => {
+    const parsed = parseCliArguments(['codegen', '--help']);
+    if (parsed.command !== 'codegen') throw new Error('expected codegen command');
+    expect(parsed.help).toBe(true);
+  });
+
+  it('accepts a positive integer --timeout', () => {
+    const parsed = parseCliArguments([
+      'codegen',
+      '--from',
+      'r.json',
+      '--out',
+      'o.d.ts',
+      '--timeout',
+      '50',
+    ]);
+    if (parsed.command !== 'codegen') throw new Error('expected codegen command');
+    expect(parsed.timeoutMs).toBe(50);
+  });
+
+  it.each([['0'], ['1.5'], ['NaN'], ['nope']])('rejects --timeout %p', (value: string) => {
+    expect(() =>
+      parseCliArguments(['codegen', '--from', 'r.json', '--out', 'o.d.ts', '--timeout', value]),
+    ).toThrow(/--timeout must be a positive integer/);
+  });
+
+  it('rejects a negative --timeout (via --timeout=-1 form)', () => {
+    expect(() =>
+      parseCliArguments(['codegen', '--from', 'r.json', '--out', 'o.d.ts', '--timeout=-1']),
+    ).toThrow(/--timeout must be a positive integer/);
+  });
+
+  it('defaults --timeout to 30000 when omitted', () => {
+    const parsed = parseCliArguments(['codegen', '--from', 'r.json', '--out', 'o.d.ts']);
+    if (parsed.command !== 'codegen') throw new Error('expected codegen command');
+    expect(parsed.timeoutMs).toBe(30_000);
+  });
+
+  it('captures --from, --out, --server, --token in the parsed command', () => {
+    const parsed = parseCliArguments([
+      'codegen',
+      '--server',
+      'http://example/base',
+      '--out',
+      '/tmp/x.d.ts',
+      '--token',
+      'abc',
+    ]);
+    if (parsed.command !== 'codegen') throw new Error('expected codegen command');
+    expect(parsed.server).toBe('http://example/base');
+    expect(parsed.out).toBe('/tmp/x.d.ts');
+    expect(parsed.token).toBe('abc');
+  });
+});
+
+describe('composeRegistryUrl', () => {
+  it('appends /v1/registry to a bare origin', () => {
+    expect(composeRegistryUrl('http://host').toString()).toBe('http://host/v1/registry');
+  });
+
+  it('appends /v1/registry to a path prefix', () => {
+    expect(composeRegistryUrl('http://host/base').toString()).toBe('http://host/base/v1/registry');
+  });
+
+  it('handles a trailing slash on the base URL', () => {
+    expect(composeRegistryUrl('http://host/base/').toString()).toBe('http://host/base/v1/registry');
+  });
+
+  it('does not double-append when /v1/registry is already present', () => {
+    expect(composeRegistryUrl('http://host/v1/registry').toString()).toBe(
+      'http://host/v1/registry',
+    );
+    expect(composeRegistryUrl('http://host/v1/registry/').toString()).toBe(
+      'http://host/v1/registry',
+    );
+  });
+});
+
+describe('executeCodegen end-to-end', () => {
+  it('emits the expected .d.ts from the registry fixture', async () => {
+    const dir = makeTempDir();
+    const out = join(dir, 'weft.d.ts');
+    const result = await executeCodegen({ from: REGISTRY_FIXTURE, out, timeoutMs: 30_000 });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('codegen: wrote');
+    const written = await Bun.file(out).text();
+    const expected = await Bun.file(EXPECTED_DTS).text();
+    expect(written).toBe(expected);
+  });
+
+  it('reports "up to date" on the second run and does not rewrite content', async () => {
+    const dir = makeTempDir();
+    const out = join(dir, 'weft.d.ts');
+    await executeCodegen({ from: REGISTRY_FIXTURE, out, timeoutMs: 30_000 });
+    const first = await Bun.file(out).text();
+
+    const second = await executeCodegen({ from: REGISTRY_FIXTURE, out, timeoutMs: 30_000 });
+    expect(second.exitCode).toBe(0);
+    expect(second.stdout).toContain('is up to date');
+    const after = await Bun.file(out).text();
+    expect(after).toBe(first);
+  });
+
+  it('fails with a clear diagnostic on registry version mismatch and writes no output', async () => {
+    const dir = makeTempDir();
+    const bad = join(dir, 'bad.json');
+    const out = join(dir, 'weft.d.ts');
+    const raw = await Bun.file(REGISTRY_FIXTURE).text();
+    writeFileSync(bad, raw.replace('"registryVersion": 1', '"registryVersion": 2'));
+    const result = await executeCodegen({ from: bad, out, timeoutMs: 30_000 });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('registryVersion 2');
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it('fails when --from points at a missing file', async () => {
+    const dir = makeTempDir();
+    const out = join(dir, 'weft.d.ts');
+    const missing = join(dir, 'no-such-file.json');
+    const result = await executeCodegen({ from: missing, out, timeoutMs: 30_000 });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('--from file not found');
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it('fails on malformed JSON without writing partial output', async () => {
+    const dir = makeTempDir();
+    const bad = join(dir, 'bad.json');
+    writeFileSync(bad, '{ not valid json');
+    const out = join(dir, 'weft.d.ts');
+    const result = await executeCodegen({ from: bad, out, timeoutMs: 30_000 });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('failed to parse JSON');
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it('fails when the parent directory does not exist', async () => {
+    const dir = makeTempDir();
+    const out = join(dir, 'no-such-subdir', 'weft.d.ts');
+    const result = await executeCodegen({ from: REGISTRY_FIXTURE, out, timeoutMs: 30_000 });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('does not exist');
+    expect(existsSync(out)).toBe(false);
+  });
+});
+
+type FetchHandler = (request: Request) => Response | Promise<Response>;
+
+function serveOnce(handler: FetchHandler) {
+  return Bun.serve({ port: 0, fetch: handler });
+}
+
+describe('executeCodegen HTTP fetch path', () => {
+  it('sends Authorization: Bearer when --token is provided', async () => {
+    let observedAuth: string | null | undefined;
+    const server = serveOnce((request) => {
+      observedAuth = request.headers.get('authorization');
+      return new Response(Bun.file(REGISTRY_FIXTURE), {
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    try {
+      const dir = makeTempDir();
+      const out = join(dir, 'weft.d.ts');
+      const result = await executeCodegen({
+        server: server.url.toString(),
+        token: 'sekret',
+        out,
+        timeoutMs: 30_000,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(observedAuth).toBe('Bearer sekret');
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  it('uses WEFT_TOKEN when --token is not provided', async () => {
+    let observedAuth: string | null | undefined;
+    const server = serveOnce((request) => {
+      observedAuth = request.headers.get('authorization');
+      return new Response(Bun.file(REGISTRY_FIXTURE), {
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const prior = Bun.env['WEFT_TOKEN'];
+    Bun.env['WEFT_TOKEN'] = 'env-token';
+    try {
+      const dir = makeTempDir();
+      const out = join(dir, 'weft.d.ts');
+      const result = await executeCodegen({
+        server: server.url.toString(),
+        out,
+        timeoutMs: 30_000,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(observedAuth).toBe('Bearer env-token');
+    } finally {
+      if (prior === undefined) delete Bun.env['WEFT_TOKEN'];
+      else Bun.env['WEFT_TOKEN'] = prior;
+      await server.stop(true);
+    }
+  });
+
+  it('--token overrides WEFT_TOKEN', async () => {
+    let observedAuth: string | null | undefined;
+    const server = serveOnce((request) => {
+      observedAuth = request.headers.get('authorization');
+      return new Response(Bun.file(REGISTRY_FIXTURE), {
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const prior = Bun.env['WEFT_TOKEN'];
+    Bun.env['WEFT_TOKEN'] = 'env-token';
+    try {
+      const dir = makeTempDir();
+      const out = join(dir, 'weft.d.ts');
+      await executeCodegen({
+        server: server.url.toString(),
+        token: 'flag-token',
+        out,
+        timeoutMs: 30_000,
+      });
+      expect(observedAuth).toBe('Bearer flag-token');
+    } finally {
+      if (prior === undefined) delete Bun.env['WEFT_TOKEN'];
+      else Bun.env['WEFT_TOKEN'] = prior;
+      await server.stop(true);
+    }
+  });
+
+  it('reports 401 responses with status and URL', async () => {
+    const server = serveOnce(
+      () => new Response('nope', { status: 401, statusText: 'Unauthorized' }),
+    );
+    try {
+      const dir = makeTempDir();
+      const out = join(dir, 'weft.d.ts');
+      const result = await executeCodegen({
+        server: server.url.toString(),
+        out,
+        timeoutMs: 30_000,
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('401');
+      expect(result.stderr).toContain(server.url.toString());
+      expect(existsSync(out)).toBe(false);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  it('reports 500 responses with status and URL', async () => {
+    const server = serveOnce(
+      () => new Response('boom', { status: 500, statusText: 'Internal Server Error' }),
+    );
+    try {
+      const dir = makeTempDir();
+      const out = join(dir, 'weft.d.ts');
+      const result = await executeCodegen({
+        server: server.url.toString(),
+        out,
+        timeoutMs: 30_000,
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('500');
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  it('reports a content-type mismatch when the server returns HTML', async () => {
+    const server = serveOnce(
+      () => new Response('<html>not json</html>', { headers: { 'content-type': 'text/html' } }),
+    );
+    try {
+      const dir = makeTempDir();
+      const out = join(dir, 'weft.d.ts');
+      const result = await executeCodegen({
+        server: server.url.toString(),
+        out,
+        timeoutMs: 30_000,
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('content-type');
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  it('reports a clear diagnostic when the host is unreachable', async () => {
+    const dir = makeTempDir();
+    const out = join(dir, 'weft.d.ts');
+    // Port 1 is reserved (TCPMUX). On every modern OS the connection is
+    // refused or filtered, so `fetch` throws synchronously after a
+    // short kernel-level rejection — fast enough not to trip the
+    // 30s default timeout.
+    const result = await executeCodegen({
+      server: 'http://127.0.0.1:1/',
+      out,
+      timeoutMs: 30_000,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('127.0.0.1:1');
+  });
+
+  it('reaches /base/v1/registry when given a path-prefixed server URL', async () => {
+    let observedPath: string | null | undefined;
+    const server = serveOnce((request) => {
+      const url = new URL(request.url);
+      observedPath = url.pathname;
+      if (url.pathname === '/base/v1/registry') {
+        return new Response(Bun.file(REGISTRY_FIXTURE), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response('not found', { status: 404 });
+    });
+    try {
+      const dir = makeTempDir();
+      const out = join(dir, 'weft.d.ts');
+      const url = new URL('/base', server.url).toString();
+      const result = await executeCodegen({ server: url, out, timeoutMs: 30_000 });
+      expect(result.exitCode).toBe(0);
+      expect(observedPath).toBe('/base/v1/registry');
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  it('times out cleanly against a hanging server', async () => {
+    // A server that accepts the connection and never responds.
+    const server = serveOnce(
+      () =>
+        new Promise<Response>(() => {
+          /* never resolves */
+        }),
+    );
+    try {
+      const dir = makeTempDir();
+      const out = join(dir, 'weft.d.ts');
+      const result = await executeCodegen({
+        server: server.url.toString(),
+        out,
+        timeoutMs: 50,
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('50ms');
+      expect(result.stderr).toContain(server.url.toString());
+      expect(existsSync(out)).toBe(false);
+    } finally {
+      await server.stop(true);
+    }
+  });
+});
+
+describe('generated .d.ts typecheck fixture', () => {
+  it('compiles under strict TypeScript with `@ts-expect-error` lines satisfied', async () => {
+    const proc = Bun.spawn(['bunx', 'tsc', '-p', TYPECHECK_FIXTURE_DIR, '--noEmit'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const exitCode = await proc.exited;
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    if (exitCode !== 0) {
+      throw new Error(`typecheck fixture failed (exit ${exitCode}):\n${stdout}\n${stderr}`);
+    }
+    expect(exitCode).toBe(0);
+  }, 60_000);
+});
+
+afterAll(() => {
+  // The end-to-end fixture write tests use mkdtemp + afterEach
+  // cleanup, so nothing should leak. This guard catches accidental
+  // strays.
+  expect(tempDirs).toHaveLength(0);
+});
+
+// `statSync` is imported so future tests can assert idempotency by
+// inode rather than mtime if needed; suppress unused-import warning
+// for now without removing the import.
+void statSync;
+void dirname;

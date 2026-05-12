@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 
 import type { ScheduleOverlapPolicy } from '../core/types.ts';
+import { parseCodegenArguments } from './codegen-arguments.ts';
 import type {
   CliCommand,
   PersistentStorageBackend,
@@ -18,17 +19,23 @@ const KNOWN_SUBCOMMANDS = new Set([
   'conformance',
   'timeline',
   'schedule',
+  'codegen',
 ]);
 const FLAG_VALUE_OPTIONS = new Set([
   '-p',
   '-d',
   '-s',
   '-w',
+  '-o',
   '--port',
   '--database',
   '--storage',
   '--workflows',
   '--timeout',
+  '--server',
+  '--from',
+  '--token',
+  '--out',
 ]);
 const VALID_STORAGE_BACKENDS = new Set(['sqlite', 'lmdb', 'memory']);
 const SCHEDULE_ACTIONS = new Set(['list', 'create', 'pause', 'resume', 'cancel']);
@@ -41,6 +48,7 @@ const SUBCOMMAND_PARSERS: Record<string, (args: string[]) => CliCommand> = {
   conformance: parseConformanceArguments,
   timeline: parseTimelineArguments,
   schedule: parseScheduleArguments,
+  codegen: parseCodegenArguments,
 };
 
 type ParsedSubcommand = {
