@@ -75,14 +75,14 @@ const RESOURCE_EVENT_NAMES = [
  *
  * @example
  * ```ts
- * import { McpSessionManager } from 'weft/mcp';
+ * import { McpSessionManager, type McpSession } from 'weft/mcp';
  * import { Engine, MemoryStorage } from 'weft';
  *
  * await using storage = new MemoryStorage();
  * await using engine = new Engine({ storage });
  * await using manager = new McpSessionManager(engine);
  *
- * const session = manager.create({ method: 'unauthenticated' });
+ * const session: McpSession = manager.create({ method: 'unauthenticated' });
  * session.notify('notifications/initialized');
  * ```
  */
