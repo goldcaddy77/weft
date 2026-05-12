@@ -70,9 +70,8 @@ export const bulkSignalWorkflowsOperation = defineOperation<
       throw invalidParamsFault(faultMessage(error));
     }
 
-    const operationOptions = bulkOperationOptionsFromInput(input, principal);
-
     try {
+      const operationOptions = bulkOperationOptionsFromInput(input, principal);
       if (operationOptions.dryRun === true) {
         return await e.signalAll(filter, input.name, input.payload, operationOptions);
       }

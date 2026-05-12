@@ -23,6 +23,10 @@ async function* waitForSignalWorkflow(ctx: WorkflowContext, input: unknown) {
   return `${String(input)}:${signal}`;
 }
 
+async function* waitForUnknownSignalWorkflow(ctx: WorkflowContext) {
+  return yield* ctx.waitForSignal('continue');
+}
+
 async function* failingWorkflow(_ctx: WorkflowContext, _input: unknown) {
   throw new Error('bulk failure');
 }
@@ -434,6 +438,34 @@ describe('bulk workflow operations', () => {
 
       await engine.signal(untouchedHandle.id, 'continue', 'cleanup');
       await expect(untouchedHandle.result()).resolves.toBe('other:cleanup');
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('keeps three-argument signalAll object payloads as payloads even when they contain control-shaped keys', async () => {
+    const engine = new Engine({ storage: new MemoryStorage() });
+    engine.register('wait-for-unknown-signal', waitForUnknownSignalWorkflow);
+
+    try {
+      const payload = {
+        requestId: 'payload-request-id',
+        confirmationToken: 'payload-confirmation-token',
+      };
+      const handle = await engine.start('wait-for-unknown-signal', undefined, {
+        id: 'bulk-signal-control-shaped-payload',
+        tags: ['bulk-signal-control-shaped-payload'],
+      });
+      await waitForWorkflowStatus(engine, handle.id, 'running');
+
+      const result = await engine.signalAll(
+        { tags: ['bulk-signal-control-shaped-payload'] },
+        'continue',
+        payload,
+      );
+
+      expect(result).toEqual({ signalled: 1, failed: 0 });
+      await expect(handle.result()).resolves.toEqual(payload);
     } finally {
       await engine[Symbol.asyncDispose]();
     }
@@ -907,6 +939,66 @@ describe('bulk workflow operations', () => {
       const secondStaleWorkflow = await engine.get('bulk-stale-selected-b');
       expect(firstStaleWorkflow?.status).toBe('pending');
       expect(secondStaleWorkflow?.status).toBe('pending');
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('rejects signal confirmation tokens when the action payload changes', async () => {
+    const engine = new Engine({ storage: new MemoryStorage() });
+    engine.register('wait-for-signal', waitForSignalWorkflow);
+
+    try {
+      const handle = await engine.start('wait-for-signal', 'first', {
+        id: 'bulk-stale-signal-payload',
+        tags: ['stale-signal-token'],
+      });
+      await waitForWorkflowStatus(engine, handle.id, 'running');
+
+      const preview = await engine.signalAll(
+        { tags: ['stale-signal-token'] },
+        'continue',
+        'approved',
+        { dryRun: true },
+      );
+
+      await expect(
+        engine.signalAll({ tags: ['stale-signal-token'] }, 'continue', 'changed', {
+          confirmationToken: preview.confirmationToken,
+        }),
+      ).rejects.toThrow('Bulk confirmation token does not match the current dry-run scope');
+      const workflowState = await engine.get(handle.id);
+      expect(workflowState?.status).toBe('running');
+
+      await engine.signal(handle.id, 'continue', 'cleanup');
+      await expect(handle.result()).resolves.toBe('first:cleanup');
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('rejects tag confirmation tokens when the action tags or operation change', async () => {
+    const engine = new Engine({ storage: new MemoryStorage() });
+    engine.register('echo', echoWorkflow);
+
+    try {
+      await createCompletedWorkflow(engine, 'bulk-stale-tag-action', ['selected']);
+
+      const preview = await engine.tagAll({ tags: ['selected'] }, ['archived'], { dryRun: true });
+
+      await expect(
+        engine.tagAll({ tags: ['selected'] }, ['different'], {
+          confirmationToken: preview.confirmationToken,
+        }),
+      ).rejects.toThrow('Bulk confirmation token does not match the current dry-run scope');
+      await expect(
+        engine.untagAll({ tags: ['selected'] }, ['archived'], {
+          confirmationToken: preview.confirmationToken,
+        }),
+      ).rejects.toThrow('Bulk confirmation token does not match the current dry-run scope');
+
+      const workflowState = await engine.get('bulk-stale-tag-action');
+      expect(workflowState?.tags).toEqual(['selected']);
     } finally {
       await engine[Symbol.asyncDispose]();
     }

@@ -33,6 +33,8 @@ import {
   type BulkOperationCommitOptions,
   type BulkOperationDryRunOptions,
   type BulkOperationDryRunResult,
+  type BulkSignalAllCommitOptions,
+  type BulkSignalAllDryRunOptions,
   type BulkSignalResult,
   type BulkTagResult,
   type CheckpointState,
@@ -994,8 +996,14 @@ export class Engine<
     filter: ListFilter,
     name: string,
     payload: unknown,
-    options: BulkOperationDryRunOptions,
+    options: BulkSignalAllDryRunOptions,
   ): Promise<BulkOperationDryRunResult>;
+  async signalAll(
+    filter: ListFilter,
+    name: string,
+    payload: unknown,
+    options: BulkSignalAllCommitOptions,
+  ): Promise<BulkSignalResult>;
   async signalAll(
     filter: ListFilter,
     name: string,
@@ -1005,13 +1013,16 @@ export class Engine<
   async signalAll(
     filter: ListFilter,
     name: string,
-    payload?: unknown,
+    payloadOrOptions?: unknown,
     options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
   ): Promise<BulkSignalResult | BulkOperationDryRunResult> {
-    if (options?.dryRun === true) {
-      return signalAllWorkflows(getInternals(this), filter, name, payload, options);
+    if (options === undefined) {
+      return signalAllWorkflows(getInternals(this), filter, name, payloadOrOptions);
     }
-    return signalAllWorkflows(getInternals(this), filter, name, payload, options);
+    if (options.dryRun === true) {
+      return signalAllWorkflows(getInternals(this), filter, name, payloadOrOptions, options);
+    }
+    return signalAllWorkflows(getInternals(this), filter, name, payloadOrOptions, options);
   }
   async deleteAll(
     filter: ListFilter,

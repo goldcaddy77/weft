@@ -11,6 +11,7 @@ import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
 import type { OperationFault } from '../operation-fault.ts';
+import { principalFromApiKey } from '../principal.ts';
 import {
   bulkSignalWorkflowsOperation,
   bulkSignalWorkflowsRestBinding,
@@ -58,6 +59,20 @@ function request(body?: unknown): Request {
 const registry = createOperationRegistry([bulkSignalWorkflowsOperation]);
 const bindings = [bulkSignalWorkflowsRestBinding];
 
+function bulkAdminHandlerOptions(customRegistry = registry) {
+  return {
+    operationRegistry: customRegistry,
+    restBindings: bindings,
+    authContext: {
+      method: 'api-key' as const,
+      principal: principalFromApiKey({
+        subject: 'bulk-admin-operator',
+        scopes: ['workflows:admin'],
+      }),
+    },
+  };
+}
+
 describe('weft.workflows.bulk.signal', () => {
   it('returns signal counts and signals matching workflows', async () => {
     const engine = createEngine();
@@ -90,7 +105,7 @@ describe('weft.workflows.bulk.signal', () => {
         requestId: 'bulk-signal-request',
       }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      bulkAdminHandlerOptions(),
     );
 
     expect(previewResponse.status).toBe(200);
@@ -118,7 +133,7 @@ describe('weft.workflows.bulk.signal', () => {
         requestId: 'bulk-signal-request',
       }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      bulkAdminHandlerOptions(),
     );
 
     expect(response.status).toBe(200);
@@ -146,8 +161,7 @@ describe('weft.workflows.bulk.signal', () => {
     const engine = createEngine();
 
     const response = await handleRequest(request(['not-an-object']), engine, {
-      operationRegistry: registry,
-      restBindings: bindings,
+      ...bulkAdminHandlerOptions(),
     });
 
     expect(response.status).toBe(400);
@@ -159,8 +173,7 @@ describe('weft.workflows.bulk.signal', () => {
     const engine = createEngine();
 
     let response = await handleRequest(request({ filter: {}, name: 'continue' }), engine, {
-      operationRegistry: registry,
-      restBindings: bindings,
+      ...bulkAdminHandlerOptions(),
     });
 
     expect(response.status).toBe(400);
@@ -175,8 +188,7 @@ describe('weft.workflows.bulk.signal', () => {
       }),
       engine,
       {
-        operationRegistry: registry,
-        restBindings: bindings,
+        ...bulkAdminHandlerOptions(),
       },
     );
 
@@ -208,8 +220,7 @@ describe('weft.workflows.bulk.signal', () => {
       }),
       engine,
       {
-        operationRegistry: failingRegistry,
-        restBindings: bindings,
+        ...bulkAdminHandlerOptions(failingRegistry),
       },
     );
 

@@ -12,7 +12,10 @@ function apiKeyAuth(): HandlerOptions {
   return {
     authContext: {
       method: 'api-key' as const,
-      principal: principalFromApiKey({ subject: 'test', scopes: ['quota:read', 'workflows:read'] }),
+      principal: principalFromApiKey({
+        subject: 'test',
+        scopes: ['quota:read', 'workflows:read', 'workflows:admin'],
+      }),
     },
   };
 }
@@ -196,6 +199,7 @@ describe('handleRequest edge coverage', () => {
     let response = await handleRequest(
       request('POST', '/v1/workflows/bulk/signal', ['not-an-object']),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({ error: 'Request body must be a JSON object' });
@@ -203,6 +207,7 @@ describe('handleRequest edge coverage', () => {
     response = await handleRequest(
       request('POST', '/v1/workflows/bulk/signal', { filter: {}, name: 'continue' }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({
@@ -215,11 +220,16 @@ describe('handleRequest edge coverage', () => {
         name: '',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({ error: 'Field "name" must be a non-empty string' });
 
-    response = await handleRequest(request('DELETE', '/v1/workflows/bulk', { filter: {} }), engine);
+    response = await handleRequest(
+      request('DELETE', '/v1/workflows/bulk', { filter: {} }),
+      engine,
+      apiKeyAuth(),
+    );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({
       error: 'Field "filter" must include at least one of status, type, tags, or attributes',
@@ -228,6 +238,7 @@ describe('handleRequest edge coverage', () => {
     response = await handleRequest(
       request('PATCH', '/v1/workflows/bulk/tags', ['not-an-object']),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({ error: 'Request body must be a JSON object' });
@@ -239,6 +250,7 @@ describe('handleRequest edge coverage', () => {
         operation: 'add',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({
@@ -252,6 +264,7 @@ describe('handleRequest edge coverage', () => {
         operation: 'add',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({
@@ -272,6 +285,7 @@ describe('handleRequest edge coverage', () => {
         confirmationToken: 'bulk:confirmed',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(500);
     expect(typeof ((await json(response)) as { error?: unknown }).error).toBe('string');
@@ -286,6 +300,7 @@ describe('handleRequest edge coverage', () => {
         confirmationToken: 'bulk:confirmed',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(500);
     expect(typeof ((await json(response)) as { error?: unknown }).error).toBe('string');
@@ -299,6 +314,7 @@ describe('handleRequest edge coverage', () => {
         confirmationToken: 'bulk:confirmed',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(500);
     expect(typeof ((await json(response)) as { error?: unknown }).error).toBe('string');
@@ -314,6 +330,7 @@ describe('handleRequest edge coverage', () => {
         confirmationToken: 'bulk:confirmed',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(500);
     expect(typeof ((await json(response)) as { error?: unknown }).error).toBe('string');

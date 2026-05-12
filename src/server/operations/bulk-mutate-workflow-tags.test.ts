@@ -10,6 +10,7 @@ import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
 import type { OperationFault } from '../operation-fault.ts';
+import { principalFromApiKey } from '../principal.ts';
 import {
   bulkMutateWorkflowTagsOperation,
   bulkMutateWorkflowTagsRestBinding,
@@ -38,6 +39,20 @@ function request(body?: unknown): Request {
 const registry = createOperationRegistry([bulkMutateWorkflowTagsOperation]);
 const bindings = [bulkMutateWorkflowTagsRestBinding];
 
+function bulkAdminHandlerOptions(customRegistry = registry) {
+  return {
+    operationRegistry: customRegistry,
+    restBindings: bindings,
+    authContext: {
+      method: 'api-key' as const,
+      principal: principalFromApiKey({
+        subject: 'bulk-admin-operator',
+        scopes: ['workflows:admin'],
+      }),
+    },
+  };
+}
+
 describe('weft.workflows.bulk.tags', () => {
   it('adds and removes tags on matching workflows', async () => {
     const engine = createEngine();
@@ -62,7 +77,7 @@ describe('weft.workflows.bulk.tags', () => {
         requestId: 'bulk-tags-add-request',
       }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      bulkAdminHandlerOptions(),
     );
 
     expect(previewResponse.status).toBe(200);
@@ -90,7 +105,7 @@ describe('weft.workflows.bulk.tags', () => {
         requestId: 'bulk-tags-add-request',
       }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      bulkAdminHandlerOptions(),
     );
 
     expect(response.status).toBe(200);
@@ -118,7 +133,7 @@ describe('weft.workflows.bulk.tags', () => {
         requestId: 'bulk-tags-remove-request',
       }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      bulkAdminHandlerOptions(),
     );
 
     expect(previewResponse.status).toBe(200);
@@ -142,7 +157,7 @@ describe('weft.workflows.bulk.tags', () => {
         requestId: 'bulk-tags-remove-request',
       }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      bulkAdminHandlerOptions(),
     );
 
     expect(response.status).toBe(200);
@@ -165,8 +180,7 @@ describe('weft.workflows.bulk.tags', () => {
     const engine = createEngine();
 
     const response = await handleRequest(request(['not-an-object']), engine, {
-      operationRegistry: registry,
-      restBindings: bindings,
+      ...bulkAdminHandlerOptions(),
     });
 
     expect(response.status).toBe(400);
@@ -185,8 +199,7 @@ describe('weft.workflows.bulk.tags', () => {
       }),
       engine,
       {
-        operationRegistry: registry,
-        restBindings: bindings,
+        ...bulkAdminHandlerOptions(),
       },
     );
 
@@ -203,8 +216,7 @@ describe('weft.workflows.bulk.tags', () => {
       }),
       engine,
       {
-        operationRegistry: registry,
-        restBindings: bindings,
+        ...bulkAdminHandlerOptions(),
       },
     );
 
@@ -237,8 +249,7 @@ describe('weft.workflows.bulk.tags', () => {
       }),
       engine,
       {
-        operationRegistry: failingRegistry,
-        restBindings: bindings,
+        ...bulkAdminHandlerOptions(failingRegistry),
       },
     );
 

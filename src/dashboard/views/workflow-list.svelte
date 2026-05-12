@@ -65,16 +65,34 @@
   type BulkSignalPayloadParseResult =
     | { ok: true; value: unknown }
     | { ok: false; message: string };
+  type BulkPreviewedOperation = {
+    action: BulkWorkflowAction;
+    filter: ListFilter;
+    requestId: string;
+    confirmationToken: string;
+    signalName?: string;
+    signalPayload?: unknown;
+    tags?: string[];
+    tagOperation?: BulkTagMutationOperation;
+  };
+  type BulkPreviewDetail = {
+    label: string;
+    value: string;
+  };
+  type BulkActionErrorPhase = 'preview' | 'commit';
   let bulkAction: BulkWorkflowAction = $state('cancel');
   let bulkTagInput = $state('');
   let bulkSignalNameInput = $state('');
   let bulkSignalPayloadInput = $state('');
   let bulkPreview: BulkOperationDryRunResult | null = $state.raw(null);
+  let bulkPreviewedOperation: BulkPreviewedOperation | null = $state.raw(null);
   let bulkPreviewRequestId: string | null = $state(null);
   let bulkPreviewLoading = $state(false);
   let bulkCommitLoading = $state(false);
   let bulkActionError: string | null = $state(null);
+  let bulkActionErrorPhase: BulkActionErrorPhase | null = $state(null);
   let bulkActionMessage: string | null = $state(null);
+  let bulkPreviewGeneration = 0;
 
   // ---------------------------------------------------------------------------
   // Fetching
@@ -88,6 +106,7 @@
   }
 
   async function fetchWorkflows(generation: number, filters: FetchFilters): Promise<void> {
+    invalidateBulkPreview({ clearMessages: false });
     try {
       const result = await loadWorkflowListData(apiClient, filters, pageSize);
       if (generation !== fetchGeneration) return;
@@ -181,11 +200,22 @@
     });
   }
 
-  function resetBulkPreview(): void {
+  function invalidateBulkPreview(options: { clearMessages?: boolean } = {}): void {
+    bulkPreviewGeneration += 1;
     bulkPreview = null;
+    bulkPreviewedOperation = null;
     bulkPreviewRequestId = null;
+    bulkPreviewLoading = false;
+    if (options.clearMessages === false) {
+      return;
+    }
     bulkActionError = null;
+    bulkActionErrorPhase = null;
     bulkActionMessage = null;
+  }
+
+  function resetBulkPreview(): void {
+    invalidateBulkPreview();
   }
 
   function resetFiltersAndBulkPreview(): void {
@@ -258,103 +288,275 @@
   const bulkActionLabel = $derived(
     BULK_ACTION_OPTIONS.find((option) => option.value === bulkAction)?.label ?? 'Bulk action',
   );
+  const bulkConfirmLabel = $derived.by(() => {
+    if (bulkPreview === null) return 'Confirm';
+
+    const workflowCount = `${bulkPreview.matched} workflow${bulkPreview.matched === 1 ? '' : 's'}`;
+    if (bulkPreviewedOperation?.action === 'cancel') return `Cancel ${workflowCount}`;
+    if (bulkPreviewedOperation?.action === 'delete') return `Delete ${workflowCount}`;
+    if (bulkPreviewedOperation?.action === 'signal') return `Signal ${workflowCount}`;
+    if (bulkPreviewedOperation?.action === 'tag:add') return `Add tags to ${workflowCount}`;
+    if (bulkPreviewedOperation?.action === 'tag:remove') {
+      return `Remove tags from ${workflowCount}`;
+    }
+    return `Confirm ${workflowCount}`;
+  });
+  const bulkActionErrorTitle = $derived.by(() => {
+    if (bulkActionErrorPhase === 'preview') return 'Bulk preview failed';
+    if (bulkActionErrorPhase === 'commit') return 'Bulk confirmation failed';
+    return 'Bulk action failed';
+  });
+  const bulkPreviewAnnouncement = $derived(
+    bulkPreview === null
+      ? ''
+      : `Preview ready: ${bulkActionLabel.toLowerCase()} will affect ${bulkPreview.matched} workflow${bulkPreview.matched === 1 ? '' : 's'}.`,
+  );
+  const bulkPreviewScopeDetails = $derived.by((): BulkPreviewDetail[] => {
+    if (bulkPreview === null) return [];
+    const filter = bulkPreview.scope.filter;
+    const details: BulkPreviewDetail[] = [];
+    details.push({
+      label: 'Status filter',
+      value:
+        filter.status === undefined
+          ? 'Any'
+          : Array.isArray(filter.status)
+            ? filter.status.join(', ')
+            : filter.status,
+    });
+    details.push({ label: 'Type filter', value: filter.type ?? 'Any' });
+    details.push({ label: 'Tag filter', value: filter.tags?.join(', ') ?? 'Any' });
+    if (filter.attributes !== undefined && filter.attributes.length > 0) {
+      details.push({
+        label: 'Attribute filters',
+        value: `${filter.attributes.length} filter${filter.attributes.length === 1 ? '' : 's'}`,
+      });
+    }
+    if (filter.limit !== undefined) {
+      details.push({ label: 'Limit', value: String(filter.limit) });
+    }
+    if (filter.offset !== undefined) {
+      details.push({ label: 'Offset', value: String(filter.offset) });
+    }
+    details.push({
+      label: 'Matched statuses',
+      value: bulkPreview.scope.statuses.join(', ') || 'None',
+    });
+    details.push({
+      label: 'Matched types',
+      value: bulkPreview.scope.workflowTypes.join(', ') || 'None',
+    });
+    details.push({
+      label: 'Matched tenants',
+      value: bulkPreview.scope.tenantIds.join(', ') || 'Unscoped',
+    });
+    return details;
+  });
+  const bulkPreviewActionDetails = $derived.by((): BulkPreviewDetail[] => {
+    if (bulkPreviewedOperation === null) return [];
+    if (bulkPreviewedOperation.action === 'signal') {
+      return [
+        { label: 'Signal', value: bulkPreviewedOperation.signalName ?? '' },
+        { label: 'Payload', value: summarizeBulkPreviewValue(bulkPreviewedOperation.signalPayload) },
+      ];
+    }
+    if (
+      bulkPreviewedOperation.action === 'tag:add' ||
+      bulkPreviewedOperation.action === 'tag:remove'
+    ) {
+      return [
+        {
+          label: bulkPreviewedOperation.action === 'tag:add' ? 'Tags to add' : 'Tags to remove',
+          value: bulkPreviewedOperation.tags?.join(', ') ?? '',
+        },
+      ];
+    }
+    return [];
+  });
 
   function createBulkRequestId(action: BulkWorkflowAction): string {
     return `dashboard:${action}:${Date.now().toString(36)}`;
   }
 
+  function cloneBulkFilter(filter: ListFilter): ListFilter {
+    return {
+      ...(filter.status === undefined ? {} : { status: filter.status }),
+      ...(filter.type === undefined ? {} : { type: filter.type }),
+      ...(filter.tags === undefined ? {} : { tags: [...filter.tags] }),
+      ...(filter.limit === undefined ? {} : { limit: filter.limit }),
+      ...(filter.offset === undefined ? {} : { offset: filter.offset }),
+    };
+  }
+
+  function summarizeBulkPreviewValue(value: unknown): string {
+    if (value === undefined) return 'None';
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) return String(value);
+    return serialized.length > 160 ? `${serialized.slice(0, 157)}...` : serialized;
+  }
+
   async function handleBulkPreview(): Promise<void> {
     if (!canPreviewBulkAction || bulkPreviewLoading) return;
 
+    const previewGeneration = bulkPreviewGeneration + 1;
+    bulkPreviewGeneration = previewGeneration;
     const requestId = createBulkRequestId(bulkAction);
+    const previewAction = bulkAction;
+    const previewFilter = cloneBulkFilter(bulkFilter);
+    const previewTags = [...bulkTags];
+    const previewSignalName = bulkSignalName;
+    const previewSignalPayloadResult = bulkSignalPayloadParseResult;
     bulkPreviewLoading = true;
+    bulkPreview = null;
+    bulkPreviewedOperation = null;
+    bulkPreviewRequestId = null;
     bulkActionError = null;
+    bulkActionErrorPhase = null;
     bulkActionMessage = null;
 
     try {
-      if (bulkAction === 'cancel') {
-        bulkPreview = await apiClient.previewBulkCancelWorkflows(bulkFilter, requestId);
-      } else if (bulkAction === 'signal') {
-        if (!bulkSignalPayloadParseResult.ok) {
-          bulkActionError = bulkSignalPayloadParseResult.message;
+      let preview: BulkOperationDryRunResult;
+      let previewedOperation: BulkPreviewedOperation;
+      if (previewAction === 'cancel') {
+        preview = await apiClient.previewBulkCancelWorkflows(previewFilter, requestId);
+        previewedOperation = {
+          action: previewAction,
+          filter: previewFilter,
+          requestId,
+          confirmationToken: preview.confirmationToken,
+        };
+      } else if (previewAction === 'signal') {
+        if (!previewSignalPayloadResult.ok) {
+          if (previewGeneration === bulkPreviewGeneration) {
+            bulkActionError = previewSignalPayloadResult.message;
+            bulkActionErrorPhase = 'preview';
+          }
           return;
         }
-        bulkPreview = await apiClient.previewBulkSignalWorkflows(
-          bulkFilter,
-          bulkSignalName,
-          bulkSignalPayloadParseResult.value,
+        preview = await apiClient.previewBulkSignalWorkflows(
+          previewFilter,
+          previewSignalName,
+          previewSignalPayloadResult.value,
           requestId,
         );
-      } else if (bulkAction === 'delete') {
-        bulkPreview = await apiClient.previewBulkDeleteWorkflows(bulkFilter, requestId);
+        previewedOperation = {
+          action: previewAction,
+          filter: previewFilter,
+          requestId,
+          confirmationToken: preview.confirmationToken,
+          signalName: previewSignalName,
+          signalPayload: previewSignalPayloadResult.value,
+        };
+      } else if (previewAction === 'delete') {
+        preview = await apiClient.previewBulkDeleteWorkflows(previewFilter, requestId);
+        previewedOperation = {
+          action: previewAction,
+          filter: previewFilter,
+          requestId,
+          confirmationToken: preview.confirmationToken,
+        };
       } else {
-        const operation: BulkTagMutationOperation = bulkAction === 'tag:add' ? 'add' : 'remove';
-        bulkPreview = await apiClient.previewBulkTagWorkflows(
-          bulkFilter,
-          bulkTags,
+        const operation: BulkTagMutationOperation = previewAction === 'tag:add' ? 'add' : 'remove';
+        preview = await apiClient.previewBulkTagWorkflows(
+          previewFilter,
+          previewTags,
           operation,
           requestId,
         );
+        previewedOperation = {
+          action: previewAction,
+          filter: previewFilter,
+          requestId,
+          confirmationToken: preview.confirmationToken,
+          tags: previewTags,
+          tagOperation: operation,
+        };
       }
+      if (previewGeneration !== bulkPreviewGeneration) {
+        return;
+      }
+      bulkPreview = preview;
+      bulkPreviewedOperation = previewedOperation;
       bulkPreviewRequestId = requestId;
     } catch (previewError) {
-      bulkActionError = previewError instanceof Error ? previewError.message : String(previewError);
-      bulkPreview = null;
-      bulkPreviewRequestId = null;
+      if (previewGeneration === bulkPreviewGeneration) {
+        bulkActionError =
+          previewError instanceof Error ? previewError.message : String(previewError);
+        bulkActionErrorPhase = 'preview';
+        bulkPreview = null;
+        bulkPreviewedOperation = null;
+        bulkPreviewRequestId = null;
+      }
     } finally {
-      bulkPreviewLoading = false;
+      if (previewGeneration === bulkPreviewGeneration) {
+        bulkPreviewLoading = false;
+      }
     }
   }
 
   async function handleBulkCommit(): Promise<void> {
-    if (bulkPreview === null || bulkPreviewRequestId === null || bulkCommitLoading) return;
+    if (
+      bulkPreview === null ||
+      bulkPreviewedOperation === null ||
+      bulkPreviewRequestId === null ||
+      bulkPreviewLoading ||
+      bulkCommitLoading
+    ) {
+      return;
+    }
 
     bulkCommitLoading = true;
     bulkActionError = null;
+    bulkActionErrorPhase = null;
     try {
-      if (bulkAction === 'cancel') {
+      if (bulkPreviewedOperation.action === 'cancel') {
         const result = await apiClient.commitBulkCancelWorkflows(
-          bulkFilter,
-          bulkPreview.confirmationToken,
-          bulkPreviewRequestId,
+          bulkPreviewedOperation.filter,
+          bulkPreviewedOperation.confirmationToken,
+          bulkPreviewedOperation.requestId,
         );
         bulkActionMessage = `Cancelled ${result.cancelled} workflow${result.cancelled === 1 ? '' : 's'}.`;
-      } else if (bulkAction === 'signal') {
-        if (!bulkSignalPayloadParseResult.ok) {
-          bulkActionError = bulkSignalPayloadParseResult.message;
-          return;
-        }
+      } else if (bulkPreviewedOperation.action === 'signal') {
         const result = await apiClient.commitBulkSignalWorkflows(
-          bulkFilter,
-          bulkSignalName,
-          bulkSignalPayloadParseResult.value,
-          bulkPreview.confirmationToken,
-          bulkPreviewRequestId,
+          bulkPreviewedOperation.filter,
+          bulkPreviewedOperation.signalName ?? '',
+          bulkPreviewedOperation.signalPayload,
+          bulkPreviewedOperation.confirmationToken,
+          bulkPreviewedOperation.requestId,
         );
         bulkActionMessage = `Signalled ${result.signalled} workflow${result.signalled === 1 ? '' : 's'}.`;
-      } else if (bulkAction === 'delete') {
+      } else if (bulkPreviewedOperation.action === 'delete') {
         const result = await apiClient.commitBulkDeleteWorkflows(
-          bulkFilter,
-          bulkPreview.confirmationToken,
-          bulkPreviewRequestId,
+          bulkPreviewedOperation.filter,
+          bulkPreviewedOperation.confirmationToken,
+          bulkPreviewedOperation.requestId,
         );
         bulkActionMessage = `Deleted ${result.deleted} workflow${result.deleted === 1 ? '' : 's'}.`;
       } else {
-        const operation: BulkTagMutationOperation = bulkAction === 'tag:add' ? 'add' : 'remove';
         const result = await apiClient.commitBulkTagWorkflows(
-          bulkFilter,
-          bulkTags,
-          operation,
-          bulkPreview.confirmationToken,
-          bulkPreviewRequestId,
+          bulkPreviewedOperation.filter,
+          bulkPreviewedOperation.tags ?? [],
+          bulkPreviewedOperation.tagOperation ?? 'add',
+          bulkPreviewedOperation.confirmationToken,
+          bulkPreviewedOperation.requestId,
         );
         bulkActionMessage = `Updated tags on ${result.modified} workflow${result.modified === 1 ? '' : 's'}.`;
       }
       bulkPreview = null;
+      bulkPreviewedOperation = null;
       bulkPreviewRequestId = null;
       handleRefresh();
     } catch (commitError) {
-      bulkActionError = commitError instanceof Error ? commitError.message : String(commitError);
+      const message = commitError instanceof Error ? commitError.message : String(commitError);
+      if (message.includes('confirmation token')) {
+        bulkActionError = 'Preview expired. Run preview again before committing.';
+        bulkPreview = null;
+        bulkPreviewedOperation = null;
+        bulkPreviewRequestId = null;
+      } else {
+        bulkActionError = message;
+      }
+      bulkActionErrorPhase = 'commit';
     } finally {
       bulkCommitLoading = false;
     }
@@ -634,8 +836,8 @@
             variant={bulkAction === 'delete' || bulkAction === 'cancel' ? 'danger' : 'primary'}
             size="md"
             icon={check(14)}
-            label="Confirm"
-            disabled={bulkPreview === null}
+            label={bulkConfirmLabel}
+            disabled={bulkPreview === null || bulkPreviewedOperation === null || bulkPreviewLoading}
             loading={bulkCommitLoading}
             onclick={handleBulkCommit}
           />
@@ -645,7 +847,7 @@
       {#if bulkActionError}
         <Alert
           variant="danger"
-          title="Bulk action failed"
+          title={bulkActionErrorTitle}
           description={bulkActionError}
         />
       {/if}
@@ -667,31 +869,37 @@
       {/if}
 
       {#if bulkPreview}
-        <div class="bulk-preview" aria-live="polite">
+        <div class="bulk-preview" role="status" aria-live="polite">
           <div class="bulk-preview-header">
             <div>
               <span class="bulk-preview-label">{bulkActionLabel}</span>
               <strong>{bulkPreview.matched}</strong>
+              <p>{bulkPreviewAnnouncement}</p>
             </div>
             <span class="bulk-preview-token">{bulkPreview.requestId}</span>
           </div>
 
-          <div class="bulk-preview-grid">
-            <div>
-              <span>Status</span>
-              <strong>{bulkPreview.scope.statuses.join(', ') || 'Any'}</strong>
-            </div>
-            <div>
-              <span>Types</span>
-              <strong>{bulkPreview.scope.workflowTypes.join(', ') || 'Any'}</strong>
-            </div>
-            <div>
-              <span>Tenants</span>
-              <strong>{bulkPreview.scope.tenantIds.join(', ') || 'Unscoped'}</strong>
-            </div>
-          </div>
+          {#if bulkPreviewActionDetails.length > 0}
+            <dl class="bulk-preview-grid" aria-label="Bulk action details">
+              {#each bulkPreviewActionDetails as detail (detail.label)}
+                <div>
+                  <dt>{detail.label}</dt>
+                  <dd>{detail.value}</dd>
+                </div>
+              {/each}
+            </dl>
+          {/if}
 
-          <div class="bulk-preview-samples">
+          <dl class="bulk-preview-grid" aria-label="Bulk action scope">
+            {#each bulkPreviewScopeDetails as detail (detail.label)}
+              <div>
+                <dt>{detail.label}</dt>
+                <dd>{detail.value}</dd>
+              </div>
+            {/each}
+          </dl>
+
+          <div class="bulk-preview-samples" aria-label="Sample workflow IDs">
             {#each bulkPreview.sampleWorkflowIds as workflowId (workflowId)}
               <span>{workflowId}</span>
             {/each}
@@ -1038,7 +1246,7 @@
   }
 
   .bulk-preview-label,
-  .bulk-preview-grid span,
+  .bulk-preview-grid dt,
   .bulk-preview-token {
     display: block;
     font-size: var(--text-xs, 0.75rem);
@@ -1046,9 +1254,19 @@
   }
 
   .bulk-preview-header strong,
-  .bulk-preview-grid strong {
+  .bulk-preview-grid dd {
     font-size: var(--text-sm, 0.875rem);
     color: var(--text, #111827);
+  }
+
+  .bulk-preview-header p,
+  .bulk-preview-grid dd {
+    margin: 0;
+  }
+
+  .bulk-preview-header p {
+    color: var(--text-muted, #6b7280);
+    font-size: var(--text-sm, 0.875rem);
   }
 
   .bulk-preview-token {

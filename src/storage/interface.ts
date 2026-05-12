@@ -410,8 +410,8 @@ export const KEYS = {
   operationQueued: (id: string) => `op:queued:${id}`,
   operationResolved: (id: string) => `op:resolved:${id}`,
   bulkOperationAuditPrefix: () => 'audit:bulk:',
-  bulkOperationAudit: (timestamp: number, requestId: string) =>
-    `audit:bulk:${formatSortableTimestamp(timestamp)}:${encodeStorageKeyComponent(requestId)}`,
+  bulkOperationAudit: (timestamp: number, requestId: string, confirmationToken: string) =>
+    `audit:bulk:${formatSortableTimestamp(timestamp)}:${encodeStorageKeyComponent(requestId)}:${encodeStorageKeyComponent(confirmationToken)}`,
   eventPrefix: (workflowId: string) => `ev:${encodeStorageKeyComponent(workflowId)}:`,
   event: (workflowId: string, sequence: number) =>
     `ev:${encodeStorageKeyComponent(workflowId)}:${String(sequence).padStart(10, '0')}`,

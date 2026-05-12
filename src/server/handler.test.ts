@@ -30,7 +30,10 @@ function apiKeyAuth() {
   return {
     authContext: {
       method: 'api-key' as const,
-      principal: principalFromApiKey({ subject: 'test', scopes: ['quota:read', 'workflows:read'] }),
+      principal: principalFromApiKey({
+        subject: 'test',
+        scopes: ['quota:read', 'workflows:read', 'workflows:admin'],
+      }),
     },
   };
 }
@@ -1142,6 +1145,7 @@ describe('handleRequest', () => {
           requestId: 'bulk-route-cancel',
         }),
         engine,
+        apiKeyAuth(),
       );
       expect(previewResponse.status).toBe(200);
       const preview = await json(previewResponse);
@@ -1153,6 +1157,7 @@ describe('handleRequest', () => {
           requestId: 'bulk-route-cancel',
         }),
         engine,
+        apiKeyAuth(),
       );
       expect(response.status).toBe(200);
       expect(await json(response)).toEqual(
@@ -1205,6 +1210,7 @@ describe('handleRequest', () => {
           requestId: 'bulk-route-signal',
         }),
         engine,
+        apiKeyAuth(),
       );
       expect(previewResponse.status).toBe(200);
       const preview = await json(previewResponse);
@@ -1218,6 +1224,7 @@ describe('handleRequest', () => {
           requestId: 'bulk-route-signal',
         }),
         engine,
+        apiKeyAuth(),
       );
       expect(response.status).toBe(200);
       expect(await json(response)).toEqual(
@@ -1258,6 +1265,7 @@ describe('handleRequest', () => {
           dryRun: true,
         }),
         engine,
+        apiKeyAuth(),
       );
 
       expect(response.status).toBe(422);
@@ -1291,6 +1299,7 @@ describe('handleRequest', () => {
           requestId: 'bulk-route-delete',
         }),
         engine,
+        apiKeyAuth(),
       );
       expect(previewResponse.status).toBe(200);
       const preview = await json(previewResponse);
@@ -1302,6 +1311,7 @@ describe('handleRequest', () => {
           requestId: 'bulk-route-delete',
         }),
         engine,
+        apiKeyAuth(),
       );
       expect(response.status).toBe(200);
       expect(await json(response)).toEqual(
@@ -1337,6 +1347,7 @@ describe('handleRequest', () => {
           requestId: 'bulk-route-tags-add',
         }),
         engine,
+        apiKeyAuth(),
       );
       expect(addPreviewResponse.status).toBe(200);
       const addPreview = await json(addPreviewResponse);
@@ -1350,6 +1361,7 @@ describe('handleRequest', () => {
           requestId: 'bulk-route-tags-add',
         }),
         engine,
+        apiKeyAuth(),
       );
       expect(addResponse.status).toBe(200);
       expect(await json(addResponse)).toEqual(
@@ -1370,6 +1382,7 @@ describe('handleRequest', () => {
           requestId: 'bulk-route-tags-remove',
         }),
         engine,
+        apiKeyAuth(),
       );
       expect(removePreviewResponse.status).toBe(200);
       const removePreview = await json(removePreviewResponse);
@@ -1383,6 +1396,7 @@ describe('handleRequest', () => {
           requestId: 'bulk-route-tags-remove',
         }),
         engine,
+        apiKeyAuth(),
       );
       expect(removeResponse.status).toBe(200);
       expect(await json(removeResponse)).toEqual(
@@ -1407,6 +1421,7 @@ describe('handleRequest', () => {
           operation: 'rename',
         }),
         engine,
+        apiKeyAuth(),
       );
 
       expect(response.status).toBe(400);
@@ -1421,6 +1436,7 @@ describe('handleRequest', () => {
       const missingFilterResponse = await handleRequest(
         request('POST', '/v1/workflows/bulk/cancel', {}),
         engine,
+        apiKeyAuth(),
       );
 
       expect(missingFilterResponse.status).toBe(400);
@@ -1433,6 +1449,7 @@ describe('handleRequest', () => {
           filter: { tags: [] },
         }),
         engine,
+        apiKeyAuth(),
       );
 
       expect(emptyTagsResponse.status).toBe(400);
@@ -1445,6 +1462,7 @@ describe('handleRequest', () => {
           filter: { attributes: [] },
         }),
         engine,
+        apiKeyAuth(),
       );
 
       expect(emptyAttributesResponse.status).toBe(400);
@@ -1457,6 +1475,7 @@ describe('handleRequest', () => {
           filter: { attributes: [{ key: '   ' }] },
         }),
         engine,
+        apiKeyAuth(),
       );
 
       expect(blankAttributeKeyResponse.status).toBe(400);

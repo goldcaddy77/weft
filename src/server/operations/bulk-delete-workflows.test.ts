@@ -11,6 +11,7 @@ import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
 import type { OperationFault } from '../operation-fault.ts';
+import { principalFromApiKey } from '../principal.ts';
 import {
   bulkDeleteWorkflowsOperation,
   bulkDeleteWorkflowsRestBinding,
@@ -60,6 +61,20 @@ function request(body?: unknown): Request {
 const registry = createOperationRegistry([bulkDeleteWorkflowsOperation]);
 const bindings = [bulkDeleteWorkflowsRestBinding];
 
+function bulkAdminHandlerOptions(customRegistry = registry) {
+  return {
+    operationRegistry: customRegistry,
+    restBindings: bindings,
+    authContext: {
+      method: 'api-key' as const,
+      principal: principalFromApiKey({
+        subject: 'bulk-admin-operator',
+        scopes: ['workflows:admin'],
+      }),
+    },
+  };
+}
+
 describe('weft.workflows.bulk.delete', () => {
   it('deletes matching terminal workflows', async () => {
     const engine = createEngine();
@@ -82,10 +97,7 @@ describe('weft.workflows.bulk.delete', () => {
         requestId: 'bulk-delete-request',
       }),
       engine,
-      {
-        operationRegistry: registry,
-        restBindings: bindings,
-      },
+      bulkAdminHandlerOptions(),
     );
 
     expect(previewResponse.status).toBe(200);
@@ -109,10 +121,7 @@ describe('weft.workflows.bulk.delete', () => {
         requestId: 'bulk-delete-request',
       }),
       engine,
-      {
-        operationRegistry: registry,
-        restBindings: bindings,
-      },
+      bulkAdminHandlerOptions(),
     );
 
     expect(response.status).toBe(200);
@@ -140,8 +149,7 @@ describe('weft.workflows.bulk.delete', () => {
     await handle.result();
 
     const response = await handleRequest(request({ filter: { tags: ['selected'] } }), engine, {
-      operationRegistry: registry,
-      restBindings: bindings,
+      ...bulkAdminHandlerOptions(),
     });
 
     expect(response.status).toBe(400);
@@ -170,10 +178,7 @@ describe('weft.workflows.bulk.delete', () => {
     const response = await handleRequest(
       request({ filter: { tags: ['mixed'] }, dryRun: true }),
       engine,
-      {
-        operationRegistry: registry,
-        restBindings: bindings,
-      },
+      bulkAdminHandlerOptions(),
     );
 
     expect(response.status).toBe(422);
@@ -189,8 +194,7 @@ describe('weft.workflows.bulk.delete', () => {
     const engine = createEngine();
 
     const response = await handleRequest(request({ filter: {} }), engine, {
-      operationRegistry: registry,
-      restBindings: bindings,
+      ...bulkAdminHandlerOptions(),
     });
 
     expect(response.status).toBe(400);
@@ -216,8 +220,7 @@ describe('weft.workflows.bulk.delete', () => {
     const failingRegistry = createOperationRegistry([failingOperation]);
 
     const response = await handleRequest(request({ filter: { tags: ['selected'] } }), engine, {
-      operationRegistry: failingRegistry,
-      restBindings: bindings,
+      ...bulkAdminHandlerOptions(failingRegistry),
     });
 
     expect(response.status).toBe(500);

@@ -30,6 +30,7 @@ import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { handleRequest } from './handler.ts';
+import { principalFromApiKey } from './principal.ts';
 
 const AUDIT_EXTRA_KEY = '__auditExtraKey__';
 
@@ -219,6 +220,22 @@ function requestWith(method: string, path: string, body: unknown): Request {
   });
 }
 
+function auditHandlerOptions(path: string) {
+  if (!path.startsWith('/v1/workflows/bulk')) {
+    return undefined;
+  }
+
+  return {
+    authContext: {
+      method: 'api-key' as const,
+      principal: principalFromApiKey({
+        subject: 'bulk-admin-audit',
+        scopes: ['workflows:admin'],
+      }),
+    },
+  };
+}
+
 describe('REST unknown-key disposition baseline audit', () => {
   for (const testCase of AUDIT_CASES) {
     it(`${testCase.name} — extra top-level key does not change status`, async () => {
@@ -228,6 +245,7 @@ describe('REST unknown-key disposition baseline audit', () => {
       const baselineResponse = await handleRequest(
         requestWith(testCase.method, baselinePath, testCase.baselineBody),
         baselineEngine,
+        auditHandlerOptions(baselinePath),
       );
       expect(testCase.expectedBaselineStatuses).toContain(baselineResponse.status);
 
@@ -244,6 +262,7 @@ describe('REST unknown-key disposition baseline audit', () => {
       const auditResponse = await handleRequest(
         requestWith(testCase.method, auditPath, bodyWithExtra),
         auditEngine,
+        auditHandlerOptions(auditPath),
       );
 
       // The baseline disposition is 'strip' or 'passthrough': the extra

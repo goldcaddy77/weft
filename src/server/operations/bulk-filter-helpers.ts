@@ -11,11 +11,14 @@ import type {
   SearchAttributeValue,
   WorkflowStatus,
 } from '../../core/types.ts';
+import {
+  MAX_BULK_CONFIRMATION_TOKEN_LENGTH,
+  MAX_BULK_OPERATION_REQUEST_ID_LENGTH,
+} from '../../core/types/bulk.ts';
 import type { AccessPolicy } from '../authorization.ts';
 import type { OperationFault } from '../operation-fault.ts';
 import type { Principal } from '../principal.ts';
 
-const MAX_BULK_OPERATION_REQUEST_ID_LENGTH = 200;
 const workflowStatusSchema = z.custom<WorkflowStatus>((value) => typeof value === 'string');
 const searchAttributeValueSchema = z.custom<SearchAttributeValue>((value) => {
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
@@ -46,15 +49,15 @@ export type BulkListFilterInput = z.infer<typeof bulkListFilterInputSchema>;
 
 export const bulkOperationControlInputSchema = z.object({
   dryRun: z.boolean().optional(),
-  confirmationToken: z.string().min(1).optional(),
+  confirmationToken: z.string().min(1).max(MAX_BULK_CONFIRMATION_TOKEN_LENGTH).optional(),
   requestId: z.string().min(1).max(MAX_BULK_OPERATION_REQUEST_ID_LENGTH).optional(),
 });
 
 export type BulkOperationControlInput = z.infer<typeof bulkOperationControlInputSchema>;
 
 export const bulkOperatorAccessPolicy = {
-  kind: 'optionalAuth',
-  authenticatedScopes: { kind: 'anyOf', scopes: ['workflows:admin'] },
+  kind: 'scoped',
+  scopes: { kind: 'anyOf', scopes: ['workflows:admin'] },
 } satisfies AccessPolicy;
 
 export function faultMessage(error: unknown): string {

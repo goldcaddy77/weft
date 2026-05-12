@@ -58,6 +58,20 @@ function request(path: string, body?: unknown): Request {
 const registry = createOperationRegistry([bulkCancelWorkflowsOperation]);
 const bindings = [bulkCancelWorkflowsRestBinding];
 
+function bulkAdminHandlerOptions(customRegistry = registry) {
+  return {
+    operationRegistry: customRegistry,
+    restBindings: bindings,
+    authContext: {
+      method: 'api-key' as const,
+      principal: principalFromApiKey({
+        subject: 'bulk-admin-operator',
+        scopes: ['workflows:admin'],
+      }),
+    },
+  };
+}
+
 describe('weft.workflows.bulk.cancel', () => {
   it('returns cancellation counts and cancels matching workflows', async () => {
     const engine = createEngine();
@@ -88,7 +102,7 @@ describe('weft.workflows.bulk.cancel', () => {
         requestId: 'bulk-cancel-request',
       }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      bulkAdminHandlerOptions(),
     );
 
     expect(previewResponse.status).toBe(200);
@@ -110,7 +124,7 @@ describe('weft.workflows.bulk.cancel', () => {
     const response = await handleRequest(
       request('/v1/workflows/bulk/cancel', { filter: { tags: ['selected'] } }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      bulkAdminHandlerOptions(),
     );
 
     expect(response.status).toBe(400);
@@ -125,7 +139,7 @@ describe('weft.workflows.bulk.cancel', () => {
         requestId: 'bulk-cancel-request',
       }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      bulkAdminHandlerOptions(),
     );
 
     expect(confirmedResponse.status).toBe(200);
@@ -155,8 +169,7 @@ describe('weft.workflows.bulk.cancel', () => {
     const engine = createEngine();
 
     const response = await handleRequest(request('/v1/workflows/bulk/cancel', {}), engine, {
-      operationRegistry: registry,
-      restBindings: bindings,
+      ...bulkAdminHandlerOptions(),
     });
 
     expect(response.status).toBe(400);
@@ -176,7 +189,7 @@ describe('weft.workflows.bulk.cancel', () => {
         },
       }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      bulkAdminHandlerOptions(),
     );
 
     expect(response.status).toBe(400);
@@ -196,7 +209,7 @@ describe('weft.workflows.bulk.cancel', () => {
         requestId: 'x'.repeat(201),
       }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      bulkAdminHandlerOptions(),
     );
 
     expect(response.status).toBe(400);
@@ -250,8 +263,7 @@ describe('weft.workflows.bulk.cancel', () => {
       request('/v1/workflows/bulk/cancel', { filter: { tags: ['selected'] } }),
       engine,
       {
-        operationRegistry: failingRegistry,
-        restBindings: bindings,
+        ...bulkAdminHandlerOptions(failingRegistry),
       },
     );
 

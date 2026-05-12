@@ -14,6 +14,7 @@ import type {
   BulkOperationDryRunResult,
   BulkSignalResult,
   BulkTagResult,
+  ListFilter as CoreListFilter,
   ScheduleFilter,
   ScheduleSummary,
   TenantQuotaUsage,
@@ -93,6 +94,7 @@ export interface ListFilter {
   offset?: number;
 }
 
+export type BulkWorkflowFilter = CoreListFilter;
 export type BulkTagMutationOperation = 'add' | 'remove';
 
 export type {
@@ -308,7 +310,7 @@ export class ApiClient {
 
   /** Preview matching workflows before bulk cancellation. */
   async previewBulkCancelWorkflows(
-    filter: ListFilter,
+    filter: BulkWorkflowFilter,
     requestId: string,
   ): Promise<BulkOperationDryRunResult> {
     return request<BulkOperationDryRunResult>('/workflows/bulk/cancel', {
@@ -319,7 +321,7 @@ export class ApiClient {
 
   /** Commit bulk cancellation with a confirmation token from a preview. */
   async commitBulkCancelWorkflows(
-    filter: ListFilter,
+    filter: BulkWorkflowFilter,
     confirmationToken: string,
     requestId: string,
   ): Promise<BulkCancelResult> {
@@ -331,7 +333,7 @@ export class ApiClient {
 
   /** Preview matching terminal workflows before bulk deletion. */
   async previewBulkDeleteWorkflows(
-    filter: ListFilter,
+    filter: BulkWorkflowFilter,
     requestId: string,
   ): Promise<BulkOperationDryRunResult> {
     return request<BulkOperationDryRunResult>('/workflows/bulk', {
@@ -342,7 +344,7 @@ export class ApiClient {
 
   /** Commit bulk deletion with a confirmation token from a preview. */
   async commitBulkDeleteWorkflows(
-    filter: ListFilter,
+    filter: BulkWorkflowFilter,
     confirmationToken: string,
     requestId: string,
   ): Promise<BulkDeleteResult> {
@@ -354,7 +356,7 @@ export class ApiClient {
 
   /** Preview matching workflows before sending a signal in bulk. */
   async previewBulkSignalWorkflows(
-    filter: ListFilter,
+    filter: BulkWorkflowFilter,
     name: string,
     payload: unknown,
     requestId: string,
@@ -373,7 +375,7 @@ export class ApiClient {
 
   /** Commit a bulk signal with a confirmation token from a preview. */
   async commitBulkSignalWorkflows(
-    filter: ListFilter,
+    filter: BulkWorkflowFilter,
     name: string,
     payload: unknown,
     confirmationToken: string,
@@ -393,7 +395,7 @@ export class ApiClient {
 
   /** Preview matching workflows before adding or removing tags in bulk. */
   async previewBulkTagWorkflows(
-    filter: ListFilter,
+    filter: BulkWorkflowFilter,
     tags: string[],
     operation: BulkTagMutationOperation,
     requestId: string,
@@ -406,7 +408,7 @@ export class ApiClient {
 
   /** Commit a bulk tag mutation with a confirmation token from a preview. */
   async commitBulkTagWorkflows(
-    filter: ListFilter,
+    filter: BulkWorkflowFilter,
     tags: string[],
     operation: BulkTagMutationOperation,
     confirmationToken: string,

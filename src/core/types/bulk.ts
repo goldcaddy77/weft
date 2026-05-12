@@ -1,6 +1,9 @@
 import type { WorkflowId, WorkflowStatus } from './identity.ts';
 import type { SearchAttributeValue } from './search-attributes.ts';
 
+export const MAX_BULK_OPERATION_REQUEST_ID_LENGTH = 200;
+export const MAX_BULK_CONFIRMATION_TOKEN_LENGTH = 256;
+
 /**
  * Bulk workflow action names used in previews, confirmations, and audit
  * records.
@@ -195,6 +198,49 @@ export type BulkOperationCommitOptions = {
  * ```
  */
 export type BulkOperationOptions = BulkOperationDryRunOptions | BulkOperationCommitOptions;
+
+/**
+ * Dry-run options for `engine.signalAll`. Pass the signal payload as the
+ * third argument and these controls as the fourth argument.
+ *
+ * @example
+ * ```ts
+ * import type { BulkSignalAllDryRunOptions } from 'weft';
+ *
+ * const options: BulkSignalAllDryRunOptions = { dryRun: true };
+ * void options;
+ * ```
+ */
+export type BulkSignalAllDryRunOptions = BulkOperationDryRunOptions;
+
+/**
+ * Commit options for `engine.signalAll`. Pass the signal payload as the
+ * third argument and these controls as the fourth argument.
+ *
+ * @example
+ * ```ts
+ * import type { BulkSignalAllCommitOptions } from 'weft';
+ *
+ * const options: BulkSignalAllCommitOptions = {
+ *   confirmationToken: 'bulk:token-from-preview',
+ * };
+ * void options;
+ * ```
+ */
+export type BulkSignalAllCommitOptions = BulkOperationCommitOptions;
+
+/**
+ * Control options accepted by `engine.signalAll` as the fourth argument.
+ *
+ * @example
+ * ```ts
+ * import type { BulkSignalAllOptions } from 'weft';
+ *
+ * const options: BulkSignalAllOptions = { dryRun: true };
+ * void options;
+ * ```
+ */
+export type BulkSignalAllOptions = BulkSignalAllDryRunOptions | BulkSignalAllCommitOptions;
 
 /**
  * Durable audit record persisted after a committed bulk operation succeeds.

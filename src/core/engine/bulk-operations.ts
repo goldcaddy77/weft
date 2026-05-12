@@ -24,6 +24,8 @@ import type {
   BulkOperationOptions,
   BulkOperationPrincipal,
   BulkOperationScopeSummary,
+  BulkSignalAllCommitOptions,
+  BulkSignalAllDryRunOptions,
   BulkSignalResult,
   BulkTagResult,
   ListFilter,
@@ -33,6 +35,10 @@ import type {
   WorkflowState,
   WorkflowStatus,
 } from '../types.ts';
+import {
+  MAX_BULK_CONFIRMATION_TOKEN_LENGTH,
+  MAX_BULK_OPERATION_REQUEST_ID_LENGTH,
+} from '../types/bulk.ts';
 import { buildWorkflowTagIndexOperations, normalizeWorkflowTags } from '../workflow-tags.ts';
 import { bulkMutateWorkflowTags } from './attributes-tags.ts';
 import {
@@ -110,6 +116,7 @@ export async function cancelAll(
   filter: ListFilter,
   options: BulkOperationOptions = {},
 ): Promise<BulkCancelResult | BulkOperationDryRunResult> {
+  options = normalizeBulkOperationOptions(options);
   assertScopedBulkWorkflowFilter(filter);
   const actionableFilter = buildActionableBulkWorkflowFilter(
     internals,
@@ -155,9 +162,16 @@ export async function signalAll(
   internals: EngineInternals,
   filter: ListFilter,
   name: string,
-  payload?: unknown,
-  options?: BulkOperationDryRunOptions,
+  payload: unknown,
+  options: BulkSignalAllDryRunOptions,
 ): Promise<BulkOperationDryRunResult>;
+export async function signalAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  name: string,
+  payload: unknown,
+  options: BulkSignalAllCommitOptions,
+): Promise<BulkSignalResult>;
 export async function signalAll(
   internals: EngineInternals,
   filter: ListFilter,
@@ -169,9 +183,17 @@ export async function signalAll(
   internals: EngineInternals,
   filter: ListFilter,
   name: string,
+  payload: unknown,
+  options: BulkOperationOptions,
+): Promise<BulkSignalResult | BulkOperationDryRunResult>;
+export async function signalAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  name: string,
   payload?: unknown,
-  options: BulkOperationOptions = {},
+  maybeOptions?: BulkOperationOptions,
 ): Promise<BulkSignalResult | BulkOperationDryRunResult> {
+  const options = normalizeBulkOperationOptions(maybeOptions ?? {});
   assertScopedBulkWorkflowFilter(filter);
   if (name.length === 0) throw new Error('Field "name" must be a non-empty string');
   const actionableFilter = buildActionableBulkWorkflowFilter(
@@ -226,6 +248,7 @@ export async function deleteAll(
   cleanupWaiters: CleanupWaiters,
   options: BulkOperationOptions = {},
 ): Promise<BulkDeleteResult | BulkOperationDryRunResult> {
+  options = normalizeBulkOperationOptions(options);
   assertScopedBulkWorkflowFilter(filter);
   const candidateWorkflowIds = await collectTerminalWorkflowIds(internals, filter);
   const preparation = await prepareBulkOperationFromWorkflowIds(
@@ -314,6 +337,7 @@ async function mutateTagsWithBulkControls(
   mode: 'add' | 'remove',
   options: BulkOperationOptions,
 ): Promise<BulkTagResult | BulkOperationDryRunResult> {
+  options = normalizeBulkOperationOptions(options);
   assertScopedBulkWorkflowFilter(filter);
   const action: BulkOperationAction = mode === 'add' ? 'tag:add' : 'tag:remove';
   const preparation = await prepareBulkOperation(
@@ -634,8 +658,36 @@ async function persistBulkOperationAuditEvent(
     confirmationToken: preparation.confirmationToken,
   };
 
-  await internals.storage.put(KEYS.bulkOperationAudit(timestamp, requestId), encode(auditEvent));
+  await internals.storage.put(
+    KEYS.bulkOperationAudit(timestamp, requestId, preparation.confirmationToken),
+    encode(auditEvent),
+  );
   return auditEvent;
+}
+
+function normalizeBulkOperationOptions<TOptions extends BulkOperationOptions>(
+  options: TOptions,
+): TOptions {
+  const confirmationToken = 'confirmationToken' in options ? options.confirmationToken : undefined;
+  if (
+    confirmationToken !== undefined &&
+    confirmationToken.length > MAX_BULK_CONFIRMATION_TOKEN_LENGTH
+  ) {
+    throw new Error(
+      `Field "confirmationToken" must be at most ${String(MAX_BULK_CONFIRMATION_TOKEN_LENGTH)} characters`,
+    );
+  }
+
+  if (
+    options.requestId !== undefined &&
+    options.requestId.length > MAX_BULK_OPERATION_REQUEST_ID_LENGTH
+  ) {
+    throw new Error(
+      `Field "requestId" must be at most ${String(MAX_BULK_OPERATION_REQUEST_ID_LENGTH)} characters`,
+    );
+  }
+
+  return options;
 }
 
 function toBulkOperationError(

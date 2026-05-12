@@ -530,6 +530,28 @@ describe('ApiClient', () => {
       }
 
       if (url === '/v1/workflows/bulk/tags') {
+        const body = requestBodyToJson(init);
+        if (body['dryRun'] === true) {
+          return Response.json({
+            dryRun: true,
+            action: 'tag:add',
+            matched: 2,
+            requestId: body['requestId'],
+            scope: {
+              matched: 2,
+              filter: body['filter'],
+              statuses: ['completed'],
+              workflowTypes: ['checkout'],
+              tenantIds: [],
+              sampleWorkflowIds: ['wf-1', 'wf-2'],
+              sampleLimit: 20,
+            },
+            sampleWorkflowIds: ['wf-1', 'wf-2'],
+            confirmationToken: 'bulk:tag-token',
+            confirmationTokenVersion: 1,
+          });
+        }
+
         return Response.json({
           modified: 2,
           auditEvent: {
@@ -551,6 +573,54 @@ describe('ApiClient', () => {
             affectedCount: 2,
             sampleWorkflowIds: ['wf-1', 'wf-2'],
             confirmationToken: 'bulk:tag-token',
+          },
+        });
+      }
+
+      if (url === '/v1/workflows/bulk' && init?.method === 'DELETE') {
+        const body = requestBodyToJson(init);
+        if (body['dryRun'] === true) {
+          return Response.json({
+            dryRun: true,
+            action: 'delete',
+            matched: 2,
+            requestId: body['requestId'],
+            scope: {
+              matched: 2,
+              filter: body['filter'],
+              statuses: ['completed'],
+              workflowTypes: ['checkout'],
+              tenantIds: [],
+              sampleWorkflowIds: ['wf-1', 'wf-2'],
+              sampleLimit: 20,
+            },
+            sampleWorkflowIds: ['wf-1', 'wf-2'],
+            confirmationToken: 'bulk:delete-token',
+            confirmationTokenVersion: 1,
+          });
+        }
+
+        return Response.json({
+          deleted: 2,
+          auditEvent: {
+            type: 'bulk-operation:audit',
+            action: 'delete',
+            requestId: body['requestId'],
+            timestamp: 1,
+            principal: { method: 'api-key' },
+            filterSummary: body['filter'],
+            scope: {
+              matched: 2,
+              filter: body['filter'],
+              statuses: ['completed'],
+              workflowTypes: ['checkout'],
+              tenantIds: [],
+              sampleWorkflowIds: ['wf-1', 'wf-2'],
+              sampleLimit: 20,
+            },
+            affectedCount: 2,
+            sampleWorkflowIds: ['wf-1', 'wf-2'],
+            confirmationToken: body['confirmationToken'],
           },
         });
       }
@@ -581,12 +651,27 @@ describe('ApiClient', () => {
       signalPreview.confirmationToken,
       signalPreview.requestId,
     );
+    const deletePreview = await client.previewBulkDeleteWorkflows(
+      { status: 'completed', type: 'checkout' },
+      'delete-request',
+    );
+    const deleteResult = await client.commitBulkDeleteWorkflows(
+      { status: 'completed', type: 'checkout' },
+      deletePreview.confirmationToken,
+      deletePreview.requestId,
+    );
+    const tagPreview = await client.previewBulkTagWorkflows(
+      { status: 'completed' },
+      ['archived'],
+      'add',
+      'tag-request',
+    );
     const tagResult = await client.commitBulkTagWorkflows(
       { status: 'completed' },
       ['archived'],
       'add',
-      'bulk:tag-token',
-      'tag-request',
+      tagPreview.confirmationToken,
+      tagPreview.requestId,
     );
 
     expect(preview.matched).toBe(2);
@@ -595,6 +680,9 @@ describe('ApiClient', () => {
     expect(result.auditEvent?.requestId).toBe('cancel-request');
     expect(signalPreview.action).toBe('signal');
     expect(signalResult.signalled).toBe(2);
+    expect(deletePreview.action).toBe('delete');
+    expect(deleteResult.deleted).toBe(2);
+    expect(tagPreview.action).toBe('tag:add');
     expect(tagResult.modified).toBe(2);
 
     expect(requests.map((entry) => entry.url)).toEqual([
@@ -602,6 +690,9 @@ describe('ApiClient', () => {
       '/v1/workflows/bulk/cancel',
       '/v1/workflows/bulk/signal',
       '/v1/workflows/bulk/signal',
+      '/v1/workflows/bulk',
+      '/v1/workflows/bulk',
+      '/v1/workflows/bulk/tags',
       '/v1/workflows/bulk/tags',
     ]);
     expect(requests.map((entry) => entry.init?.method)).toEqual([
@@ -609,6 +700,9 @@ describe('ApiClient', () => {
       'POST',
       'POST',
       'POST',
+      'DELETE',
+      'DELETE',
+      'PATCH',
       'PATCH',
     ]);
     expect(requestBodyToJson(requests[0]?.init)).toEqual({
@@ -634,6 +728,30 @@ describe('ApiClient', () => {
       payload: { reviewer: 'Ada' },
       confirmationToken: 'bulk:signal-token',
       requestId: 'signal-request',
+    });
+    expect(requestBodyToJson(requests[4]?.init)).toEqual({
+      filter: { status: 'completed', type: 'checkout' },
+      dryRun: true,
+      requestId: 'delete-request',
+    });
+    expect(requestBodyToJson(requests[5]?.init)).toEqual({
+      filter: { status: 'completed', type: 'checkout' },
+      confirmationToken: 'bulk:delete-token',
+      requestId: 'delete-request',
+    });
+    expect(requestBodyToJson(requests[6]?.init)).toEqual({
+      filter: { status: 'completed' },
+      tags: ['archived'],
+      operation: 'add',
+      dryRun: true,
+      requestId: 'tag-request',
+    });
+    expect(requestBodyToJson(requests[7]?.init)).toEqual({
+      filter: { status: 'completed' },
+      tags: ['archived'],
+      operation: 'add',
+      confirmationToken: 'bulk:tag-token',
+      requestId: 'tag-request',
     });
   });
 });
