@@ -9,7 +9,6 @@ import {
   type ReviewRequest,
 } from '../review/index.ts';
 import type {
-  CompletedReviewEntry,
   OperationOutcome,
   PendingReviewEntry,
   ReviewListEntry,
@@ -19,6 +18,7 @@ import type {
 import {
   deleteCompletedReviewsForWorkflow,
   listCompletedReviewsFromStorage,
+  matchesReviewListFilter,
   persistCompletedReviewRecord,
 } from './completed-review-storage.ts';
 import type { EngineInternals } from './internals.ts';
@@ -46,21 +46,6 @@ function reviewScanPrefix(filter: ReviewListFilter): string {
   return `review:${encodeStorageKeyComponent(filter.workflowId)}:`;
 }
 
-function matchesReviewFilter(
-  review: Pick<CompletedReviewEntry, 'workflowId' | 'reviewType'>,
-  filter: ReviewListFilter,
-): boolean {
-  if (filter.workflowId !== undefined && review.workflowId !== filter.workflowId) {
-    return false;
-  }
-
-  if (filter.reviewType !== undefined && review.reviewType !== filter.reviewType) {
-    return false;
-  }
-
-  return true;
-}
-
 async function listPendingReviews(
   internals: EngineInternals,
   filter: ReviewListFilter,
@@ -69,7 +54,7 @@ async function listPendingReviews(
 
   for await (const [, value] of internals.storage.scan(reviewScanPrefix(filter))) {
     const review = parseStoredReviewRequest(value);
-    if (review !== null && matchesReviewFilter(review, filter)) {
+    if (review !== null && matchesReviewListFilter(review, filter)) {
       reviews.push(toPendingReviewEntry(review));
     }
   }

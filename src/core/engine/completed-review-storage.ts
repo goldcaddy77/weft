@@ -5,8 +5,13 @@ import type { HumanReviewResult, ReviewRequest } from '../review/index.ts';
 import type { CompletedReviewEntry, ReviewListFilter } from '../types.ts';
 import { parseCompletedReviewEntry, toCompletedReviewEntry } from './review-list-entries.ts';
 
-function matchesCompletedReviewFilter(
-  review: CompletedReviewEntry,
+type ReviewListFilterableEntry = {
+  workflowId?: string;
+  reviewType?: string;
+};
+
+export function matchesReviewListFilter(
+  review: ReviewListFilterableEntry,
   filter: ReviewListFilter,
 ): boolean {
   if (filter.workflowId !== undefined && review.workflowId !== filter.workflowId) {
@@ -44,7 +49,7 @@ async function appendCompletedReviews(
     }
 
     const completedReview = parseCompletedReviewEntry(value);
-    if (completedReview !== null && matchesCompletedReviewFilter(completedReview, filter)) {
+    if (completedReview !== null && matchesReviewListFilter(completedReview, filter)) {
       reviews.push(completedReview);
     }
   }
