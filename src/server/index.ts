@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines -- ID:server-index-serve-orchestration */
 /**
  * Bun.serve() wrapper with WebSocket support, dashboard UI, and clean shutdown.
  *
@@ -299,15 +300,17 @@ export function serve(options: ServeOptions): WeftServer {
   const dashboard = options.dashboard ?? null;
 
   const eventFeedBackend = createEngineEventFeedBackend(options.engine);
+  const workerRegistry = new WorkerRegistry(
+    options.routingPolicy !== undefined ? { policy: options.routingPolicy } : undefined,
+  );
+  const taskQueue = new TaskQueue(
+    options.schedulingPolicy !== undefined
+      ? { schedulingPolicy: options.schedulingPolicy }
+      : undefined,
+  );
   const context: ServerContext = {
-    registry: new WorkerRegistry(
-      options.routingPolicy !== undefined ? { policy: options.routingPolicy } : undefined,
-    ),
-    taskQueue: new TaskQueue(
-      options.schedulingPolicy !== undefined
-        ? { schedulingPolicy: options.schedulingPolicy }
-        : undefined,
-    ),
+    registry: workerRegistry,
+    taskQueue,
     workerSockets: new Map(),
     streamSockets: new Map(),
     workerAffinity: new Map(),
@@ -315,9 +318,13 @@ export function serve(options: ServeOptions): WeftServer {
     operationToWorkflow: new Map(),
     pendingTimers: new Set(),
     deadlineTracker: new DeadlineTracker(),
-    liveOperationRegistry: createLiveOperationRegistry(
-      options.metricsCollector !== undefined ? { metricsCollector: options.metricsCollector } : {},
-    ),
+    liveOperationRegistry: createLiveOperationRegistry({
+      workerRegistry,
+      taskQueue,
+      ...(options.metricsCollector !== undefined
+        ? { metricsCollector: options.metricsCollector }
+        : {}),
+    }),
     liveRestBindings: createLiveRestBindings(),
     supportedAuthenticationSchemes: deriveSupportedOpenApiSecuritySchemes(options.auth),
     eventFeedBackend,

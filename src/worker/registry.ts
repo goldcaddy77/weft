@@ -13,6 +13,26 @@ export interface WorkerInfo {
 }
 
 /**
+ * Per-worker projection reported by {@link WorkerRegistry.getWorkerSummaries}.
+ * Derived view used by the public `weft.workers.list` operation and joined
+ * into `weft.task.queues.list` to compute per-queue in-flight totals. The
+ * `now` parameter passed to `getWorkerSummaries` is the same `now` the
+ * operation uses for queue-age math, so a single response is internally
+ * consistent across both data sources.
+ */
+export type WorkerSummary = {
+  id: string;
+  queue: string;
+  activities: string[];
+  concurrency: number;
+  inFlight: number;
+  availableCapacity: number;
+  connectedAt: number;
+  lastHeartbeatAt: number;
+  heartbeatAgeMs: number;
+};
+
+/**
  * Strategy used by {@link WorkerRegistry.findWorker} to pick among eligible workers.
  *
  * - `'least-loaded'` (default) picks the worker with the lowest `inFlight` count.
@@ -388,6 +408,33 @@ export class WorkerRegistry {
   /** Get all registered workers. */
   getAll(): WorkerInfo[] {
     return [...this.#workers.values()];
+  }
+
+  /**
+   * Stable, sorted-by-id snapshot of every connected worker for the public
+   * `weft.workers.list` operation. The caller passes a per-request `now`
+   * so heartbeat ages across the response use one consistent clock; the
+   * same `now` should be reused by the task-queue operation when both run
+   * in the same request to keep the join honest.
+   */
+  getWorkerSummaries(now: number): WorkerSummary[] {
+    const summaries: WorkerSummary[] = [];
+    for (const worker of this.#workers.values()) {
+      const inFlight = worker.inFlight;
+      const concurrency = worker.concurrency;
+      summaries.push({
+        id: worker.id,
+        queue: worker.queue,
+        activities: [...worker.activities],
+        concurrency,
+        inFlight,
+        availableCapacity: Math.max(0, concurrency - inFlight),
+        connectedAt: worker.connectedAt,
+        lastHeartbeatAt: worker.lastHeartbeat,
+        heartbeatAgeMs: now - worker.lastHeartbeat,
+      });
+    }
+    return summaries.toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 
   /** Get worker count. */

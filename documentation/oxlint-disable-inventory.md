@@ -922,3 +922,17 @@ naming the alternative that was rejected.
 - **Rule**: `complexity`
 - **Symbol**: `pickFairShare`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-index-serve-orchestration`
+
+- **File**: `src/server/index.ts`
+- **Rule**: `max-lines`
+- **Symbol**: entire module
+- **Reason**: `serve()` orchestrates [Bun.serve](https://bun.com/docs/api/http) setup, WebSocket upgrade, dashboard hosting, and shutdown sequencing. Splitting further would scatter the lifecycle, so the file is exempted while the structure remains intentional.
+
+## `server-task-queue-includes-snapshot-projection`
+
+- **File**: `src/server/task-queue.ts`
+- **Rule**: `max-lines`
+- **Symbol**: entire module
+- **Reason**: `TaskQueue` carries its data structures plus a stable snapshot projection (`getQueueSummaries`) used by the public `weft.task.queues.list` operation. Keeping the projection beside the state it reads is more honest than exposing private fields through a sibling module.

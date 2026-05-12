@@ -97,6 +97,48 @@ export interface ListFilter {
 export type BulkWorkflowFilter = CoreListFilter;
 export type BulkTagMutationOperation = 'add' | 'remove';
 
+/** Routing strategy the server selects when assigning tasks to workers. */
+export type WorkerRoutingPolicy = 'least-loaded' | 'round-robin' | 'fair-share';
+
+/** Scheduling strategy a task queue applies when ordering pending tasks. */
+export type TaskQueueSchedulingPolicy = 'priority' | 'fifo' | 'lifo';
+
+/** A single connected worker as reported by `GET /v1/workers`. */
+export type WorkerSummary = {
+  id: string;
+  queue: string;
+  activities: string[];
+  concurrency: number;
+  inFlight: number;
+  availableCapacity: number;
+  connectedAt: number;
+  lastHeartbeatAt: number;
+  heartbeatAgeMs: number;
+};
+
+/** Top-level response shape for `GET /v1/workers`. */
+export type ListWorkersResponse = {
+  items: WorkerSummary[];
+  routingPolicy: WorkerRoutingPolicy;
+};
+
+/** Per-queue health as reported by `GET /v1/task-queues`. */
+export type TaskQueueHealth = {
+  queue: string;
+  backlog: number;
+  oldestEnqueuedAt: number | null;
+  oldestQueuedAgeMs: number | null;
+  waitingPollers: number;
+  schedulingPolicy: TaskQueueSchedulingPolicy;
+  inFlight: number;
+  connectedWorkers: number;
+};
+
+/** Top-level response shape for `GET /v1/task-queues`. */
+export type ListTaskQueuesResponse = {
+  items: TaskQueueHealth[];
+};
+
 export type {
   BulkCancelResult,
   BulkDeleteResult,
@@ -418,5 +460,15 @@ export class ApiClient {
       method: 'PATCH',
       body: JSON.stringify({ filter, tags, operation, confirmationToken, requestId }),
     });
+  }
+
+  /** List connected workers with capacity, heartbeat, and routing policy. */
+  async listWorkers(): Promise<ListWorkersResponse> {
+    return request<ListWorkersResponse>('/workers');
+  }
+
+  /** List per-queue health: backlog, oldest age, waiting pollers, in-flight. */
+  async listTaskQueues(): Promise<ListTaskQueuesResponse> {
+    return request<ListTaskQueuesResponse>('/task-queues');
   }
 }
