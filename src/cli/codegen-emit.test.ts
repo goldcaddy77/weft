@@ -76,6 +76,34 @@ describe('jsonSchemaToTypeScript enum and const', () => {
   it('emits unknown for non-primitive const', () => {
     expect(jsonSchemaToTypeScript({ const: { nested: true } })).toBe('unknown');
   });
+
+  it('degrades enum + sibling type assertion to unknown', () => {
+    // `enum`/`const` with `type` is a sibling constraint that may
+    // be contradictory. Rather than silently emit the literal and
+    // hope it satisfies `type`, degrade.
+    expect(jsonSchemaToTypeScript({ type: 'number', enum: ['x'] })).toBe('unknown');
+    expect(jsonSchemaToTypeScript({ type: 'string', const: 42 })).toBe('unknown');
+  });
+
+  it('degrades enum + const on the same node to unknown', () => {
+    expect(jsonSchemaToTypeScript({ enum: ['a'], const: 'a' })).toBe('unknown');
+  });
+
+  it('ignores annotation-only siblings on enum/const', () => {
+    expect(
+      jsonSchemaToTypeScript({
+        description: 'a literal',
+        default: 'a',
+        enum: ['a', 'b'],
+      }),
+    ).toBe('("a" | "b")');
+    expect(
+      jsonSchemaToTypeScript({
+        description: 'a constant',
+        const: 'fixed',
+      }),
+    ).toBe('"fixed"');
+  });
 });
 
 describe('jsonSchemaToTypeScript combinators', () => {
@@ -161,6 +189,35 @@ describe('jsonSchemaToTypeScript combinators', () => {
       }),
     ).toBe('unknown');
   });
+
+  it('degrades multiple combinators on the same node to unknown', () => {
+    expect(
+      jsonSchemaToTypeScript({
+        oneOf: [{ type: 'string' }],
+        allOf: [{ type: 'number' }],
+      }),
+    ).toBe('unknown');
+    expect(
+      jsonSchemaToTypeScript({
+        anyOf: [{ type: 'string' }],
+        oneOf: [{ type: 'number' }],
+      }),
+    ).toBe('unknown');
+  });
+
+  it('ignores annotation-only siblings (description/default/minLength/etc.) on combinators', () => {
+    // `description`, `minLength`, etc. are documentation/validation
+    // hints that do not constrain the TypeScript shape, so the
+    // combinator should still resolve normally.
+    expect(
+      jsonSchemaToTypeScript({
+        description: 'a string or number',
+        default: 'hello',
+        minLength: 1,
+        oneOf: [{ type: 'string' }, { type: 'number' }],
+      }),
+    ).toBe('(string | number)');
+  });
 });
 
 describe('jsonSchemaToTypeScript objects', () => {
@@ -245,6 +302,20 @@ describe('jsonSchemaToTypeScript objects', () => {
   it('empty default-open object becomes Record<string, unknown>', () => {
     expect(jsonSchemaToTypeScript({ type: 'object' })).toBe('Record<string, unknown>');
   });
+
+  it('infers object shape when `type` is absent but `properties` is present', () => {
+    expect(
+      jsonSchemaToTypeScript({
+        properties: { a: { type: 'string' } },
+        required: ['a'],
+        additionalProperties: false,
+      }),
+    ).toBe('{ "a": string; }');
+  });
+
+  it('infers object shape when `type` is absent but `additionalProperties` is present', () => {
+    expect(jsonSchemaToTypeScript({ additionalProperties: false })).toBe('Record<string, never>');
+  });
 });
 
 describe('jsonSchemaToTypeScript arrays (draft-2020-12)', () => {
@@ -305,6 +376,19 @@ describe('jsonSchemaToTypeScript arrays (draft-2020-12)', () => {
 
   it('array with no items keyword emits Array<unknown>', () => {
     expect(jsonSchemaToTypeScript({ type: 'array' })).toBe('Array<unknown>');
+  });
+
+  it('infers array shape when `type` is absent but `items` is present', () => {
+    expect(jsonSchemaToTypeScript({ items: { type: 'string' } })).toBe('Array<string>');
+  });
+
+  it('infers array shape when `type` is absent but `prefixItems` is present', () => {
+    expect(
+      jsonSchemaToTypeScript({
+        prefixItems: [{ type: 'string' }, { type: 'number' }],
+        items: false,
+      }),
+    ).toBe('[string, number]');
   });
 });
 

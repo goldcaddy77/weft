@@ -27,12 +27,16 @@ import {
 import { CodegenEmitError, emitRegistryDeclaration } from './codegen-emit.ts';
 import type { CommandOutput } from './types.ts';
 
-const jsonSchemaObject = z.record(z.string(), z.unknown());
+// JSON Schema permits a boolean at any schema position (`true` →
+// accept anything, `false` → accept nothing). The emitter handles
+// both, so the validator must accept them too at the
+// `inputSchema`/`outputSchema` slots.
+const jsonSchema = z.union([z.boolean(), z.record(z.string(), z.unknown())]);
 
 const workflowEntrySchema = z
   .object({
-    inputSchema: jsonSchemaObject.optional(),
-    outputSchema: jsonSchemaObject.optional(),
+    inputSchema: jsonSchema.optional(),
+    outputSchema: jsonSchema.optional(),
     description: z.string().optional(),
     tags: z.array(z.string()).optional(),
   })
@@ -40,8 +44,8 @@ const workflowEntrySchema = z
 
 const activityEntrySchema = z
   .object({
-    inputSchema: jsonSchemaObject.optional(),
-    outputSchema: jsonSchemaObject.optional(),
+    inputSchema: jsonSchema.optional(),
+    outputSchema: jsonSchema.optional(),
     queue: z.string(),
     description: z.string().optional(),
   })
@@ -296,14 +300,43 @@ function validateSnapshot(value: unknown): Result<RegistrySnapshot> {
   return { ok: true, value: snapshot };
 }
 
+/**
+ * JSON Schema permits a boolean at any schema position. The
+ * canonical `RegistryWorkflowEntry`/`RegistryActivityEntry` types in
+ * `core/registry-snapshot.ts` constrain schemas to `Record<string,
+ * unknown>` because the in-process builder
+ * (`buildRegistrySnapshot`) only produces object schemas. Vendored
+ * snapshots from elsewhere may still use boolean roots — normalize
+ * them to an object form so the projection stays compatible with the
+ * canonical types.
+ *
+ * `true` → `{}` (accept anything → emitter produces `unknown`).
+ * `false` → `{ const: '__never__' }` — a const literal we can encode
+ * structurally, but for simplicity and to avoid a magic value, we
+ * map `false` to `{}` as well and accept the loss of `never`
+ * precision. In practice Zod/Valibot never emit boolean root
+ * schemas, so this only affects hand-vendored snapshots, and the
+ * conservative `unknown` is harmless (the only downside is that the
+ * generated TypeScript becomes wider than strictly necessary).
+ */
+function normalizeRootSchema(
+  schema: boolean | Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (schema === undefined) return undefined;
+  if (typeof schema === 'boolean') return {};
+  return schema;
+}
+
 function projectWorkflows(
   raw: Record<string, z.infer<typeof workflowEntrySchema>>,
 ): Record<string, RegistryWorkflowEntry> {
   const projected: Record<string, RegistryWorkflowEntry> = Object.create(null);
   for (const [name, entry] of Object.entries(raw)) {
     const projection: RegistryWorkflowEntry = {};
-    if (entry.inputSchema !== undefined) projection.inputSchema = entry.inputSchema;
-    if (entry.outputSchema !== undefined) projection.outputSchema = entry.outputSchema;
+    const input = normalizeRootSchema(entry.inputSchema);
+    const output = normalizeRootSchema(entry.outputSchema);
+    if (input !== undefined) projection.inputSchema = input;
+    if (output !== undefined) projection.outputSchema = output;
     if (entry.description !== undefined) projection.description = entry.description;
     if (entry.tags !== undefined) projection.tags = entry.tags;
     projected[name] = projection;
@@ -317,8 +350,10 @@ function projectActivities(
   const projected: Record<string, RegistryActivityEntry> = Object.create(null);
   for (const [name, entry] of Object.entries(raw)) {
     const projection: RegistryActivityEntry = { queue: entry.queue };
-    if (entry.inputSchema !== undefined) projection.inputSchema = entry.inputSchema;
-    if (entry.outputSchema !== undefined) projection.outputSchema = entry.outputSchema;
+    const input = normalizeRootSchema(entry.inputSchema);
+    const output = normalizeRootSchema(entry.outputSchema);
+    if (input !== undefined) projection.inputSchema = input;
+    if (output !== undefined) projection.outputSchema = output;
     if (entry.description !== undefined) projection.description = entry.description;
     projected[name] = projection;
   }

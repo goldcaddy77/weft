@@ -272,6 +272,32 @@ describe('executeCodegen end-to-end', () => {
     expect(existsSync(out)).toBe(false);
   });
 
+  it('accepts boolean root schemas (true/false) and emits valid TypeScript', async () => {
+    // JSON Schema permits a boolean at any schema position. Vendored
+    // snapshots may use this form; the validator should accept it and
+    // the emitter should produce a usable `.d.ts`.
+    const dir = makeTempDir();
+    const bool = join(dir, 'bool.json');
+    const out = join(dir, 'weft.d.ts');
+    writeFileSync(
+      bool,
+      JSON.stringify({
+        registryVersion: 1,
+        workflows: { permissive: { inputSchema: true, outputSchema: false } },
+        activities: { wild: { queue: 'q', inputSchema: true, outputSchema: true } },
+      }),
+    );
+    const result = await executeCodegen({ from: bool, out, timeoutMs: 30_000 });
+    expect(result.exitCode).toBe(0);
+    const written = await Bun.file(out).text();
+    // Boolean roots normalize to `{}` in projection, which the
+    // emitter resolves to `unknown`. The output should at least
+    // compile (we don't pin the exact type because the normalization
+    // is documented as a coarsening).
+    expect(written).toContain('"permissive"');
+    expect(written).toContain('"wild"');
+  });
+
   it('rejects passing both --server and --from to executeCodegen directly', async () => {
     const dir = makeTempDir();
     const out = join(dir, 'weft.d.ts');
@@ -301,6 +327,7 @@ describe('executeCodegen end-to-end', () => {
     expect(parsed['action']).toBe('wrote');
     expect(parsed['out']).toBe(out);
     expect(parsed['workflows']).toBeGreaterThan(0);
+    expect(parsed['activities']).toBeGreaterThan(0);
 
     const second = await executeCodegen({
       from: REGISTRY_FIXTURE,
@@ -310,7 +337,9 @@ describe('executeCodegen end-to-end', () => {
     });
     expect(second.exitCode).toBe(0);
     const repeat = JSON.parse(second.stdout) as Record<string, unknown>;
+    expect(repeat['ok']).toBe(true);
     expect(repeat['action']).toBe('unchanged');
+    expect(repeat['out']).toBe(out);
   });
 
   it('emits {ok:false,error} on stderr with --json on failure', async () => {

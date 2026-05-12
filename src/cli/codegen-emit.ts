@@ -65,18 +65,38 @@ function primitiveTypeFor(typeKeyword: string): string | undefined {
  */
 const MAX_RECURSION_DEPTH = 64;
 
-const SIBLING_ASSERTION_KEYWORDS = [
-  'type',
-  'properties',
-  'required',
-  'additionalProperties',
-  'patternProperties',
-  'items',
-  'prefixItems',
-  'additionalItems',
-  'enum',
-  'const',
-] as const;
+// Annotation-only keywords: documentation, defaults, and validation
+// constraints (string length, numeric bounds, array/object size).
+// They do not constrain the TypeScript shape, so combinator and
+// enum/const handlers may safely ignore them when checking for
+// sibling assertions. Anything outside this set is treated as a real
+// sibling and forces a degrade to `unknown`.
+const ANNOTATION_ONLY_KEYWORDS: ReadonlySet<string> = new Set([
+  'description',
+  'title',
+  'default',
+  '$comment',
+  'examples',
+  'readOnly',
+  'writeOnly',
+  'deprecated',
+  '$schema',
+  '$id',
+  'minLength',
+  'maxLength',
+  'pattern',
+  'format',
+  'minimum',
+  'maximum',
+  'exclusiveMinimum',
+  'exclusiveMaximum',
+  'multipleOf',
+  'minItems',
+  'maxItems',
+  'uniqueItems',
+  'minProperties',
+  'maxProperties',
+]);
 
 /**
  * Thrown by the emitter when the converter cannot produce a type it
@@ -90,9 +110,17 @@ export class CodegenEmitError extends Error {
   }
 }
 
-function hasAnyKey(node: Record<string, unknown>, keys: readonly string[]): boolean {
-  for (const key of keys) {
-    if (key in node) return true;
+/**
+ * Returns true when `node` has any own key not in `expected` and not
+ * in {@link ANNOTATION_ONLY_KEYWORDS}. Used by combinator and
+ * enum/const handlers to detect sibling constraints they cannot
+ * compose with.
+ */
+function hasUnexpectedSibling(node: Record<string, unknown>, expected: readonly string[]): boolean {
+  for (const key of Object.keys(node)) {
+    if (expected.includes(key)) continue;
+    if (ANNOTATION_ONLY_KEYWORDS.has(key)) continue;
+    return true;
   }
   return false;
 }
@@ -102,32 +130,53 @@ function tryCombinator(node: Record<string, unknown>, depth: number): string | u
   const hasAnyOf = Array.isArray(node['anyOf']);
   const hasAllOf = Array.isArray(node['allOf']);
 
-  if (!hasOneOf && !hasAnyOf && !hasAllOf) return undefined;
+  const combinatorCount = (hasOneOf ? 1 : 0) + (hasAnyOf ? 1 : 0) + (hasAllOf ? 1 : 0);
+  if (combinatorCount === 0) return undefined;
+
+  // Multiple combinators on the same node (e.g. `oneOf` + `allOf`)
+  // are conjunctive sibling constraints in JSON Schema. We don't
+  // attempt to compose them — degrade rather than silently pick one.
+  if (combinatorCount > 1) return 'unknown';
 
   // JSON Schema applies sibling keywords conjunctively: a combinator
-  // appearing alongside `type`, `properties`, etc. does NOT replace
-  // those constraints. Rather than implement full sibling
+  // appearing alongside `type`, `properties`, `enum`, etc. does NOT
+  // replace those constraints. Rather than implement full sibling
   // composition (which would balloon the emitter and rarely matters
   // in practice for Zod/Valibot outputs), detect the case and
   // degrade to `unknown` so we never silently emit a too-broad type.
-  if (hasAnyKey(node, SIBLING_ASSERTION_KEYWORDS)) return 'unknown';
+  if (hasUnexpectedSibling(node, ['oneOf', 'anyOf', 'allOf'])) return 'unknown';
 
   if (hasOneOf) return parenUnion(node['oneOf'] as unknown[], depth);
   if (hasAnyOf) return parenUnion(node['anyOf'] as unknown[], depth);
   return parenIntersection(node['allOf'] as unknown[], depth);
 }
 
-function tryEnumOrConst(node: Record<string, unknown>): string | undefined {
-  if ('const' in node) return literalFromValue(node['const']);
-  if (!Array.isArray(node['enum'])) return undefined;
-  // Empty `enum: []` is a degenerate schema. `never` is the precise
-  // TypeScript shape (no value satisfies an empty enum), but we
-  // emit `unknown` for symmetry with other "we don't know" paths.
-  if (node['enum'].length === 0) return 'unknown';
-  const literals = node['enum'].map(literalFromValue);
+function enumLiteralsToTypeScript(entries: unknown[]): string {
+  // Empty `enum: []` is a degenerate schema. We emit `unknown` for
+  // symmetry with other "we don't know" paths.
+  if (entries.length === 0) return 'unknown';
+  const literals = entries.map(literalFromValue);
   if (literals.some((literal) => literal === 'unknown')) return 'unknown';
   if (literals.length === 1) return literals[0]!;
   return `(${literals.join(' | ')})`;
+}
+
+function tryEnumOrConst(node: Record<string, unknown>): string | undefined {
+  const hasConst = 'const' in node;
+  const hasEnum = Array.isArray(node['enum']);
+  if (!hasConst && !hasEnum) return undefined;
+  if (hasConst && hasEnum) return 'unknown';
+
+  // `enum`/`const` paired with other assertion keywords (`type`,
+  // `properties`, etc.) is a sibling constraint we don't compose.
+  // Degrade so we never claim a literal that may not satisfy the
+  // sibling. Annotation-only keywords (description, default, …) are
+  // fine to ignore.
+  const ownKeyword = hasConst ? 'const' : 'enum';
+  if (hasUnexpectedSibling(node, [ownKeyword])) return 'unknown';
+
+  if (hasConst) return literalFromValue(node['const']);
+  return enumLiteralsToTypeScript(node['enum'] as unknown[]);
 }
 
 function dispatchByType(node: Record<string, unknown>, depth: number): string | undefined {
