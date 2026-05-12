@@ -11,6 +11,7 @@ Commands:
   timeline        Inspect workflow timeline and replay history
   version:check   Check workflow version compatibility
   validate        Lint workflow registrations for design-time anti-patterns
+  codegen         Generate TypeScript declarations from a registry snapshot
 
 Serve Options:
   -p, --port <port>           Server port (default: 7233)
@@ -121,4 +122,38 @@ JSON output:
 Checks performed:
   unbounded-retry               Activity retry.maxAttempts is Infinity
   stateful-without-compensator  Non-idempotent activity has no compensate fn
+`;
+
+export const CODEGEN_HELP_TEXT = `
+weft codegen - Generate TypeScript declarations from a registry snapshot
+
+Usage:
+  weft codegen --server <url> --out <file> [options]
+  weft codegen --from <path> --out <file> [options]
+
+Reads a Weft registry snapshot (live HTTP fetch or a vendored JSON file) and
+emits a single deterministic .d.ts that augments the public 'weft' module
+with typed entries for every registered workflow and activity. Subsequent
+runs with unchanged input do not rewrite the output file.
+
+Options:
+      --server <url>     Base URL of a running Weft server. The CLI appends
+                         /v1/registry to whatever path you supply, so
+                         http://host/base becomes http://host/base/v1/registry
+      --from <path>      Read the registry snapshot from a local JSON file
+      --token <token>    Bearer token sent as Authorization header. Requires
+                         --server. Falls back to the WEFT_TOKEN environment
+                         variable when --token is not provided. A persistent
+                         credentials file is not supported in this version
+  -o, --out <file>       Output .d.ts path. Parent directory must already exist
+      --timeout <ms>     Network timeout in milliseconds (default: 30000;
+                         must be a positive integer)
+  -j, --json             Emit a single JSON object on stdout for machine
+                         consumers; errors become {"ok":false,"error":...}
+                         on stderr
+  -h, --help             Show this help message
+
+Exit codes:
+  0   Success or no changes needed (file is up to date)
+  1   Validation, network, or filesystem error (no partial output written)
 `;

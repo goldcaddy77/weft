@@ -1,9 +1,11 @@
 #!/usr/bin/env bun
 
 import {
+  CODEGEN_HELP_TEXT,
   CONFORMANCE_HELP_TEXT,
   createStorage,
   DOCTOR_HELP_TEXT,
+  executeCodegen,
   executeConformance,
   executeDoctor,
   executeSchedule,
@@ -144,6 +146,16 @@ if (parsedArguments.command === 'serve') {
   }
 
   const result = await executeSchedule(parsedArguments);
+  if (result.stderr) console.error(result.stderr);
+  if (result.stdout) console.log(result.stdout);
+  process.exit(result.exitCode);
+} else if (parsedArguments.command === 'codegen') {
+  if (parsedArguments.help) {
+    console.log(CODEGEN_HELP_TEXT);
+    process.exit(0);
+  }
+
+  const result = await executeCodegen(parsedArguments);
   if (result.stderr) console.error(result.stderr);
   if (result.stdout) console.log(result.stdout);
   process.exit(result.exitCode);

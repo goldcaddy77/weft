@@ -1,0 +1,51 @@
+{
+  "registryVersion": 1,
+  "workflows": {
+    "welcome": {
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": ["name"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "greeting": {
+            "type": "string"
+          }
+        },
+        "required": ["greeting"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "activities": {
+    "formatGreeting": {
+      "queue": "default",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": ["name"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "string"
+      }
+    },
+    "ping": {
+      "queue": "default",
+      "outputSchema": {
+        "type": "string"
+      }
+    }
+  }
+}

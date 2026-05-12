@@ -26,6 +26,16 @@ export type CliCommand =
     }
   | { command: 'validate'; entryPaths: string[]; help: boolean; json: boolean }
   | {
+      command: 'codegen';
+      server?: string;
+      from?: string;
+      token?: string;
+      out: string;
+      timeoutMs: number;
+      help: boolean;
+      json: boolean;
+    }
+  | {
       command: 'conformance';
       timeoutMs: number;
       help: boolean;

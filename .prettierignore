@@ -46,3 +46,7 @@ Thumbs.db
 *.d.ts.map
 *.tsbuildinfo
 .dccache
+
+# Codegen fixtures contain reference output that must remain byte-stable.
+src/cli/__fixtures__/codegen/expected.d.ts
+src/cli/__fixtures__/codegen/typecheck/weft.generated.d.ts
