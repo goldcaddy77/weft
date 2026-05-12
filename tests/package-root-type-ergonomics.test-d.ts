@@ -1,4 +1,6 @@
 import {
+  BulkDeleteRequiresTerminalWorkflowsError,
+  BulkOperationConfirmationError,
   Engine,
   signal,
   type BulkOperationDryRunResult,
@@ -67,6 +69,11 @@ void verifyPackageRootWorkflowTyping;
 void engine.start('packageRootWelcome', { id: 'wrong' });
 
 async function verifyPackageRootBulkSignalTyping(): Promise<void> {
+  const noPayloadPreview: BulkOperationDryRunResult = await engine.signalAll(
+    { tags: ['nightly'] },
+    'continue',
+    { dryRun: true },
+  );
   const preview: BulkOperationDryRunResult = await engine.signalAll(
     { tags: ['nightly'] },
     'continue',
@@ -84,14 +91,20 @@ async function verifyPackageRootBulkSignalTyping(): Promise<void> {
     'continue',
     { approved: true },
   );
-  const legacyControlShapedPayloadCommit: BulkSignalResult = await engine.signalAll(
+  const legacyRequestIdPayloadCommit: BulkSignalResult = await engine.signalAll(
     { tags: ['nightly'] },
     'continue',
-    { requestId: 'payload-request', confirmationToken: 'payload-token' },
+    { requestId: 'payload-request' },
   );
+  const confirmationError: BulkOperationConfirmationError = new BulkOperationConfirmationError();
+  const terminalOnlyError: BulkDeleteRequiresTerminalWorkflowsError =
+    new BulkDeleteRequiresTerminalWorkflowsError();
+  void noPayloadPreview;
   void confirmed;
   void legacyPayloadCommit;
-  void legacyControlShapedPayloadCommit;
+  void legacyRequestIdPayloadCommit;
+  void confirmationError;
+  void terminalOnlyError;
 }
 void verifyPackageRootBulkSignalTyping;
 

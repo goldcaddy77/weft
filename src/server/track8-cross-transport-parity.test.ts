@@ -30,6 +30,19 @@ import { createWorkflowEventFeed } from './workflow-event-feed.ts';
 type WorkflowTerminalStatus = 'completed' | 'failed' | 'cancelled' | 'timed-out';
 type WorkflowStatus = 'running' | WorkflowTerminalStatus;
 type TransportName = 'rest' | 'json-rpc-http' | 'json-rpc-websocket' | 'json-rpc-stdio';
+type JsonRpcErrorEnvelope = { code?: number; data?: Record<string, unknown> };
+type JsonRpcResponseEnvelope = { error?: JsonRpcErrorEnvelope; result?: unknown };
+type BulkTransportOutcome = {
+  authorizationOutcome: string;
+  callCount: number;
+  result: unknown;
+  staleFaultCode: string;
+};
+type BulkPreviewStaleCommitOutcome = {
+  authorizationOutcome: string;
+  result: unknown;
+  staleFaultCode: string;
+};
 
 const registry = createLiveOperationRegistry();
 const BULK_TEST_API_KEY = 'weft_test_bulk_workflows_admin_scope_key_xxx';
@@ -81,6 +94,17 @@ async function postJsonRpc(
   params: Record<string, unknown>,
   headers: Record<string, string> = { 'content-type': 'application/json' },
 ): Promise<unknown> {
+  const body = await postJsonRpcEnvelope(server, method, params, headers);
+  expect(body.error).toBeUndefined();
+  return body.result;
+}
+
+async function postJsonRpcEnvelope(
+  server: WeftServer,
+  method: string,
+  params: Record<string, unknown>,
+  headers: Record<string, string> = { 'content-type': 'application/json' },
+): Promise<JsonRpcResponseEnvelope> {
   const response = await fetch(`${server.url}/jsonrpc`, {
     method: 'POST',
     headers: { ...headers, 'content-type': headers['content-type'] ?? 'application/json' },
@@ -92,9 +116,7 @@ async function postJsonRpc(
     }),
   });
   expect(response.status).toBe(200);
-  const body = (await response.json()) as { error?: unknown; result?: unknown };
-  expect(body.error).toBeUndefined();
-  return body.result;
+  return (await response.json()) as JsonRpcResponseEnvelope;
 }
 
 async function postJsonRpcExpectError(
@@ -103,20 +125,7 @@ async function postJsonRpcExpectError(
   params: Record<string, unknown>,
   headers: Record<string, string> = { 'content-type': 'application/json' },
 ): Promise<{ code: number; data?: Record<string, unknown> }> {
-  const response = await fetch(`${server.url}/jsonrpc`, {
-    method: 'POST',
-    headers: { ...headers, 'content-type': headers['content-type'] ?? 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: crypto.randomUUID(),
-      method,
-      params,
-    }),
-  });
-  expect(response.status).toBe(200);
-  const body = (await response.json()) as {
-    error?: { code?: number; data?: Record<string, unknown> };
-  };
+  const body = await postJsonRpcEnvelope(server, method, params, headers);
   expect(body.error).toBeDefined();
   expect(typeof body.error?.code).toBe('number');
   return {
@@ -212,6 +221,16 @@ async function invokeStdioJsonRpc(
   method: string,
   params: Record<string, unknown>,
 ): Promise<unknown> {
+  const response = await invokeStdioJsonRpcEnvelope(engine, method, params);
+  expect(response.error).toBeUndefined();
+  return response.result;
+}
+
+async function invokeStdioJsonRpcEnvelope(
+  engine: Engine,
+  method: string,
+  params: Record<string, unknown>,
+): Promise<JsonRpcResponseEnvelope> {
   const feed = createWorkflowEventFeed(createEngineEventFeedBackend(engine));
   const output = collectingWritable();
   try {
@@ -234,9 +253,7 @@ async function invokeStdioJsonRpc(
     expect(result.exitCode).toBe(0);
     const [firstLine] = output.lines();
     expect(firstLine).toBeDefined();
-    const response = JSON.parse(firstLine!) as { error?: unknown; result?: unknown };
-    expect(response.error).toBeUndefined();
-    return response.result;
+    return JSON.parse(firstLine!) as JsonRpcResponseEnvelope;
   } finally {
     feed.dispose();
   }
@@ -247,40 +264,13 @@ async function invokeStdioJsonRpcExpectError(
   method: string,
   params: Record<string, unknown>,
 ): Promise<{ code: number; data?: Record<string, unknown> }> {
-  const feed = createWorkflowEventFeed(createEngineEventFeedBackend(engine));
-  const output = collectingWritable();
-  try {
-    const result = await runStdioSession({
-      input: readableFromLines([
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: crypto.randomUUID(),
-          method,
-          params,
-        }) + '\n',
-      ]),
-      output: output.stream,
-      admission: { kind: 'allow-unauthenticated-local-admin' },
-      registry,
-      engine,
-      feed,
-    });
-
-    expect(result.exitCode).toBe(0);
-    const [firstLine] = output.lines();
-    expect(firstLine).toBeDefined();
-    const response = JSON.parse(firstLine!) as {
-      error?: { code?: number; data?: Record<string, unknown> };
-    };
-    expect(response.error).toBeDefined();
-    expect(typeof response.error?.code).toBe('number');
-    return {
-      code: response.error!.code!,
-      ...(response.error?.data !== undefined ? { data: response.error.data } : {}),
-    };
-  } finally {
-    feed.dispose();
-  }
+  const response = await invokeStdioJsonRpcEnvelope(engine, method, params);
+  expect(response.error).toBeDefined();
+  expect(typeof response.error?.code).toBe('number');
+  return {
+    code: response.error!.code!,
+    ...(response.error?.data !== undefined ? { data: response.error.data } : {}),
+  };
 }
 
 function assertSuccessParity(
@@ -300,6 +290,61 @@ function assertSuccessParity(
       assertShapeEquivalent(baseline, result, `${label}: ${baselineTransport} vs ${transport}`);
     }
   }
+}
+
+function assertBulkOperationInvariants(
+  results: Record<TransportName, BulkTransportOutcome>,
+  invariants: ParityInvariants,
+  label: string,
+  expectedCallCount: number,
+): void {
+  const baselineTransport: TransportName = 'rest';
+  const baseline = results[baselineTransport];
+
+  for (const [transport, result] of Object.entries(results) as Array<
+    [TransportName, BulkTransportOutcome]
+  >) {
+    if (transport === baselineTransport) continue;
+
+    if (invariants.errorMapping === 'one-to-one') {
+      assertIdenticalFaultCode(
+        baseline.staleFaultCode,
+        result.staleFaultCode,
+        `${label} stale confirmation: ${baselineTransport} vs ${transport}`,
+      );
+    }
+
+    if (invariants.authBehavior === 'identical') {
+      expect(result.authorizationOutcome).toBe(baseline.authorizationOutcome);
+    }
+  }
+
+  if (invariants.sideEffects === 'invoked-once-per-call') {
+    for (const result of Object.values(results)) {
+      expect(result.callCount).toBe(expectedCallCount);
+    }
+  }
+}
+
+function bulkRestFaultCodeFromStatus(status: number): string {
+  if (status === 400) return 'InvalidParams';
+  if (status === 401) return 'Unauthorized';
+  if (status === 403) return 'Forbidden';
+  if (status === 422) return 'Unprocessable';
+  return `HTTP ${status.toString()}`;
+}
+
+function authorizationOutcomeFromRestStatus(status: number): string {
+  if (status >= 200 && status < 300) return 'allowed';
+  return bulkRestFaultCodeFromStatus(status);
+}
+
+function authorizationOutcomeFromJsonRpcResponse(response: JsonRpcResponseEnvelope): string {
+  if (response.error === undefined) return 'allowed';
+  const weftCode = response.error.data?.['weftCode'];
+  return typeof weftCode === 'string'
+    ? weftCode
+    : `JSON-RPC ${String(response.error.code ?? 'error')}`;
 }
 
 function confirmationTokenFromPreview(preview: unknown): string {
@@ -539,7 +584,7 @@ async function invokeBulkCancelTransport(
   transport: TransportName,
   servers: WeftServer[],
   engines: Engine[],
-): Promise<{ callCount: number; result: unknown }> {
+): Promise<BulkTransportOutcome> {
   const engine = createHoldEngine();
   engines.push(engine);
 
@@ -590,126 +635,64 @@ async function invokeBulkCancelTransport(
   servers.push(server);
 
   const requestId = `track8-bulk-cancel-${transport}`;
-  let result: unknown;
+  const previewParameters = { tags: ['selected'], dryRun: true, requestId };
+  const staleParameters = (confirmationToken: string) => ({
+    tags: ['other'],
+    confirmationToken,
+    requestId,
+  });
+  const commitParameters = (confirmationToken: string) => ({
+    tags: ['selected'],
+    confirmationToken,
+    requestId,
+  });
+
+  let outcome: BulkPreviewStaleCommitOutcome;
   switch (transport) {
-    case 'rest': {
-      const previewResponse = await fetch(`${server.url}/v1/workflows/bulk/cancel`, {
-        method: 'POST',
-        headers: bulkJsonHeaders(),
-        body: JSON.stringify({
-          filter: { tags: ['selected'] },
-          dryRun: true,
-          requestId,
-        }),
-      });
-      expect(previewResponse.status).toBe(200);
-      const preview = await previewResponse.json();
-      const confirmationToken = confirmationTokenFromPreview(preview);
-
-      const response = await fetch(`${server.url}/v1/workflows/bulk/cancel`, {
-        method: 'POST',
-        headers: bulkJsonHeaders(),
-        body: JSON.stringify({
+    case 'rest':
+      outcome = await invokeBulkRestPreviewStaleCommit(
+        server,
+        { method: 'POST', path: '/v1/workflows/bulk/cancel' },
+        { filter: { tags: ['selected'] }, dryRun: true, requestId },
+        (confirmationToken) => ({ filter: { tags: ['other'] }, confirmationToken, requestId }),
+        (confirmationToken) => ({
           filter: { tags: ['selected'] },
           confirmationToken,
           requestId,
         }),
-      });
-      expect(response.status).toBe(200);
-      result = await response.json();
-      break;
-    }
-    case 'json-rpc-http': {
-      const preview = await postJsonRpc(
-        server,
-        'weft.workflows.bulk.cancel',
-        {
-          tags: ['selected'],
-          dryRun: true,
-          requestId,
-        },
-        bulkJsonHeaders(),
-      );
-      const confirmationToken = confirmationTokenFromPreview(preview);
-      result = await postJsonRpc(
-        server,
-        'weft.workflows.bulk.cancel',
-        {
-          tags: ['selected'],
-          confirmationToken,
-          requestId,
-        },
-        bulkJsonHeaders(),
       );
       break;
-    }
-    case 'json-rpc-websocket': {
-      const webSocket = await openWebSocket(`${server.url.replace('http://', 'ws://')}/jsonrpc`, {
-        authorization: `Bearer ${BULK_TEST_API_KEY}`,
-      });
-      try {
-        const previewMessagePromise = waitForMessage(
-          webSocket,
-          (parsed) =>
-            typeof parsed === 'object' &&
-            parsed !== null &&
-            (parsed as { id?: string }).id === 'track8-bulk-cancel-preview',
-        );
-        webSocket.send(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            id: 'track8-bulk-cancel-preview',
-            method: 'weft.workflows.bulk.cancel',
-            params: { tags: ['selected'], dryRun: true, requestId },
-          }),
-        );
-        const previewResponse = (await previewMessagePromise) as {
-          error?: unknown;
-          result?: unknown;
-        };
-        expect(previewResponse.error).toBeUndefined();
-        const confirmationToken = confirmationTokenFromPreview(previewResponse.result);
-
-        const commitMessagePromise = waitForMessage(
-          webSocket,
-          (parsed) =>
-            typeof parsed === 'object' &&
-            parsed !== null &&
-            (parsed as { id?: string }).id === 'track8-bulk-cancel-commit',
-        );
-        webSocket.send(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            id: 'track8-bulk-cancel-commit',
-            method: 'weft.workflows.bulk.cancel',
-            params: { tags: ['selected'], confirmationToken, requestId },
-          }),
-        );
-        const response = (await commitMessagePromise) as { error?: unknown; result?: unknown };
-        expect(response.error).toBeUndefined();
-        result = response.result;
-      } finally {
-        webSocket.close();
-      }
+    case 'json-rpc-http':
+      outcome = await invokeBulkJsonRpcPreviewStaleCommit(
+        server,
+        'weft.workflows.bulk.cancel',
+        previewParameters,
+        staleParameters,
+        commitParameters,
+      );
       break;
-    }
-    case 'json-rpc-stdio': {
-      const preview = await invokeStdioJsonRpc(engine, 'weft.workflows.bulk.cancel', {
-        tags: ['selected'],
-        dryRun: true,
-        requestId,
-      });
-      const confirmationToken = confirmationTokenFromPreview(preview);
-      result = await invokeStdioJsonRpc(engine, 'weft.workflows.bulk.cancel', {
-        tags: ['selected'],
-        confirmationToken,
-        requestId,
-      });
+    case 'json-rpc-websocket':
+      outcome = await invokeBulkWebSocketPreviewStaleCommit(
+        server,
+        'weft.workflows.bulk.cancel',
+        previewParameters,
+        staleParameters,
+        commitParameters,
+        `track8-bulk-cancel-${transport}`,
+      );
       break;
-    }
+    case 'json-rpc-stdio':
+      outcome = await invokeBulkStdioPreviewStaleCommit(
+        engine,
+        'weft.workflows.bulk.cancel',
+        previewParameters,
+        staleParameters,
+        commitParameters,
+      );
+      break;
   }
 
-  return { callCount, result };
+  return { callCount, ...outcome };
 }
 
 type BulkRestRoute = {
@@ -723,12 +706,14 @@ async function invokeBulkRestPreviewStaleCommit(
   previewBody: Record<string, unknown>,
   staleBody: (confirmationToken: string) => Record<string, unknown>,
   commitBody: (confirmationToken: string) => Record<string, unknown>,
-): Promise<unknown> {
+): Promise<BulkPreviewStaleCommitOutcome> {
   const previewResponse = await fetch(`${server.url}${route.path}`, {
     method: route.method,
     headers: bulkJsonHeaders(),
     body: JSON.stringify(previewBody),
   });
+  const authorizationOutcome = authorizationOutcomeFromRestStatus(previewResponse.status);
+  expect(authorizationOutcome).toBe('allowed');
   expect(previewResponse.status).toBe(200);
   const preview = await previewResponse.json();
   const confirmationToken = confirmationTokenFromPreview(preview);
@@ -739,6 +724,9 @@ async function invokeBulkRestPreviewStaleCommit(
     body: JSON.stringify(staleBody(confirmationToken)),
   });
   expect(staleResponse.status).toBe(400);
+  await staleResponse.json();
+  const staleFaultCode = bulkRestFaultCodeFromStatus(staleResponse.status);
+  expect(staleFaultCode).toBe('InvalidParams');
 
   const response = await fetch(`${server.url}${route.path}`, {
     method: route.method,
@@ -746,7 +734,7 @@ async function invokeBulkRestPreviewStaleCommit(
     body: JSON.stringify(commitBody(confirmationToken)),
   });
   expect(response.status).toBe(200);
-  return response.json();
+  return { authorizationOutcome, result: await response.json(), staleFaultCode };
 }
 
 async function invokeBulkJsonRpcPreviewStaleCommit(
@@ -755,9 +743,17 @@ async function invokeBulkJsonRpcPreviewStaleCommit(
   previewParameters: Record<string, unknown>,
   staleParameters: (confirmationToken: string) => Record<string, unknown>,
   commitParameters: (confirmationToken: string) => Record<string, unknown>,
-): Promise<unknown> {
-  const preview = await postJsonRpc(server, operationName, previewParameters, bulkJsonHeaders());
-  const confirmationToken = confirmationTokenFromPreview(preview);
+): Promise<BulkPreviewStaleCommitOutcome> {
+  const previewResponse = await postJsonRpcEnvelope(
+    server,
+    operationName,
+    previewParameters,
+    bulkJsonHeaders(),
+  );
+  const authorizationOutcome = authorizationOutcomeFromJsonRpcResponse(previewResponse);
+  expect(authorizationOutcome).toBe('allowed');
+  expect(previewResponse.error).toBeUndefined();
+  const confirmationToken = confirmationTokenFromPreview(previewResponse.result);
 
   const staleError = await postJsonRpcExpectError(
     server,
@@ -765,9 +761,19 @@ async function invokeBulkJsonRpcPreviewStaleCommit(
     staleParameters(confirmationToken),
     bulkJsonHeaders(),
   );
-  expect(staleError.data?.['weftCode']).toBe('InvalidParams');
+  const staleFaultCode = String(staleError.data?.['weftCode']);
+  expect(staleFaultCode).toBe('InvalidParams');
 
-  return postJsonRpc(server, operationName, commitParameters(confirmationToken), bulkJsonHeaders());
+  return {
+    result: await postJsonRpc(
+      server,
+      operationName,
+      commitParameters(confirmationToken),
+      bulkJsonHeaders(),
+    ),
+    staleFaultCode,
+    authorizationOutcome,
+  };
 }
 
 async function sendWebSocketJsonRpc(
@@ -802,7 +808,7 @@ async function invokeBulkWebSocketPreviewStaleCommit(
   staleParameters: (confirmationToken: string) => Record<string, unknown>,
   commitParameters: (confirmationToken: string) => Record<string, unknown>,
   idPrefix: string,
-): Promise<unknown> {
+): Promise<BulkPreviewStaleCommitOutcome> {
   const webSocket = await openWebSocket(`${server.url.replace('http://', 'ws://')}/jsonrpc`, {
     authorization: `Bearer ${BULK_TEST_API_KEY}`,
   });
@@ -813,6 +819,8 @@ async function invokeBulkWebSocketPreviewStaleCommit(
       operationName,
       previewParameters,
     );
+    const authorizationOutcome = authorizationOutcomeFromJsonRpcResponse(previewResponse);
+    expect(authorizationOutcome).toBe('allowed');
     expect(previewResponse.error).toBeUndefined();
     const confirmationToken = confirmationTokenFromPreview(previewResponse.result);
 
@@ -822,7 +830,8 @@ async function invokeBulkWebSocketPreviewStaleCommit(
       operationName,
       staleParameters(confirmationToken),
     );
-    expect(staleResponse.error?.data?.['weftCode']).toBe('InvalidParams');
+    const staleFaultCode = String(staleResponse.error?.data?.['weftCode']);
+    expect(staleFaultCode).toBe('InvalidParams');
 
     const response = await sendWebSocketJsonRpc(
       webSocket,
@@ -831,7 +840,7 @@ async function invokeBulkWebSocketPreviewStaleCommit(
       commitParameters(confirmationToken),
     );
     expect(response.error).toBeUndefined();
-    return response.result;
+    return { authorizationOutcome, result: response.result, staleFaultCode };
   } finally {
     webSocket.close();
   }
@@ -843,27 +852,56 @@ async function invokeBulkStdioPreviewStaleCommit(
   previewParameters: Record<string, unknown>,
   staleParameters: (confirmationToken: string) => Record<string, unknown>,
   commitParameters: (confirmationToken: string) => Record<string, unknown>,
-): Promise<unknown> {
-  const preview = await invokeStdioJsonRpc(engine, operationName, previewParameters);
-  const confirmationToken = confirmationTokenFromPreview(preview);
+): Promise<BulkPreviewStaleCommitOutcome> {
+  const previewResponse = await invokeStdioJsonRpcEnvelope(
+    engine,
+    operationName,
+    previewParameters,
+  );
+  const authorizationOutcome = authorizationOutcomeFromJsonRpcResponse(previewResponse);
+  expect(authorizationOutcome).toBe('allowed');
+  expect(previewResponse.error).toBeUndefined();
+  const confirmationToken = confirmationTokenFromPreview(previewResponse.result);
 
   const staleError = await invokeStdioJsonRpcExpectError(
     engine,
     operationName,
     staleParameters(confirmationToken),
   );
-  expect(staleError.data?.['weftCode']).toBe('InvalidParams');
+  const staleFaultCode = String(staleError.data?.['weftCode']);
+  expect(staleFaultCode).toBe('InvalidParams');
 
-  return invokeStdioJsonRpc(engine, operationName, commitParameters(confirmationToken));
+  return {
+    result: await invokeStdioJsonRpc(engine, operationName, commitParameters(confirmationToken)),
+    staleFaultCode,
+    authorizationOutcome,
+  };
 }
 
 async function invokeBulkSignalTransport(
   transport: TransportName,
   servers: WeftServer[],
   engines: Engine[],
-): Promise<{ result: unknown }> {
+): Promise<BulkTransportOutcome> {
   const engine = createHoldEngine();
   engines.push(engine);
+
+  let callCount = 0;
+  const originalSignalAll = engine.signalAll.bind(engine) as (
+    filter: ListFilter,
+    name: string,
+    payloadOrOptions?: unknown,
+    options?: BulkOperationOptions,
+  ) => Promise<BulkSignalResult | BulkOperationDryRunResult>;
+  engine.signalAll = (async (
+    filter: ListFilter,
+    name: string,
+    payloadOrOptions?: unknown,
+    options?: BulkOperationOptions,
+  ) => {
+    callCount += 1;
+    return originalSignalAll(filter, name, payloadOrOptions, options);
+  }) as Engine['signalAll'];
 
   const firstHandle = await engine.start('hold', null, {
     id: `track8-bulk-signal-selected-a-${transport}`,
@@ -910,10 +948,10 @@ async function invokeBulkSignalTransport(
     requestId,
   });
 
-  let result: unknown;
+  let outcome: BulkPreviewStaleCommitOutcome;
   switch (transport) {
     case 'rest':
-      result = await invokeBulkRestPreviewStaleCommit(
+      outcome = await invokeBulkRestPreviewStaleCommit(
         server,
         { method: 'POST', path: '/v1/workflows/bulk/signal' },
         {
@@ -940,7 +978,7 @@ async function invokeBulkSignalTransport(
       );
       break;
     case 'json-rpc-http':
-      result = await invokeBulkJsonRpcPreviewStaleCommit(
+      outcome = await invokeBulkJsonRpcPreviewStaleCommit(
         server,
         'weft.workflows.bulk.signal',
         previewParameters,
@@ -949,7 +987,7 @@ async function invokeBulkSignalTransport(
       );
       break;
     case 'json-rpc-websocket':
-      result = await invokeBulkWebSocketPreviewStaleCommit(
+      outcome = await invokeBulkWebSocketPreviewStaleCommit(
         server,
         'weft.workflows.bulk.signal',
         previewParameters,
@@ -959,7 +997,7 @@ async function invokeBulkSignalTransport(
       );
       break;
     case 'json-rpc-stdio':
-      result = await invokeBulkStdioPreviewStaleCommit(
+      outcome = await invokeBulkStdioPreviewStaleCommit(
         engine,
         'weft.workflows.bulk.signal',
         previewParameters,
@@ -973,16 +1011,40 @@ async function invokeBulkSignalTransport(
   await expect(secondHandle.result()).resolves.toBe('released');
   await engine.signal(otherHandle.id, 'release', 'cleanup');
   await otherHandle.result();
-  return { result };
+  return { callCount, ...outcome };
 }
 
 async function invokeBulkDeleteTransport(
   transport: TransportName,
   servers: WeftServer[],
   engines: Engine[],
-): Promise<{ result: unknown }> {
+): Promise<BulkTransportOutcome> {
   const engine = createHoldEngine();
   engines.push(engine);
+
+  let callCount = 0;
+  const originalDeleteAll = engine.deleteAll.bind(engine);
+
+  async function trackedDeleteAll(
+    filter: ListFilter,
+    options: BulkOperationDryRunOptions,
+  ): Promise<BulkOperationDryRunResult>;
+  async function trackedDeleteAll(
+    filter: ListFilter,
+    options?: BulkOperationCommitOptions,
+  ): Promise<BulkDeleteResult>;
+  async function trackedDeleteAll(
+    filter: ListFilter,
+    options?: BulkOperationOptions,
+  ): Promise<BulkDeleteResult | BulkOperationDryRunResult> {
+    callCount += 1;
+    if (options?.dryRun === true) {
+      return originalDeleteAll(filter, options);
+    }
+    return originalDeleteAll(filter, options);
+  }
+
+  engine.deleteAll = trackedDeleteAll;
 
   const firstHandle = await engine.start('echo', 'first', {
     id: `track8-bulk-delete-selected-a-${transport}`,
@@ -1011,10 +1073,10 @@ async function invokeBulkDeleteTransport(
     requestId,
   });
 
-  let result: unknown;
+  let outcome: BulkPreviewStaleCommitOutcome;
   switch (transport) {
     case 'rest':
-      result = await invokeBulkRestPreviewStaleCommit(
+      outcome = await invokeBulkRestPreviewStaleCommit(
         server,
         { method: 'DELETE', path: '/v1/workflows/bulk' },
         { filter: { tags: ['selected'] }, dryRun: true, requestId },
@@ -1023,7 +1085,7 @@ async function invokeBulkDeleteTransport(
       );
       break;
     case 'json-rpc-http':
-      result = await invokeBulkJsonRpcPreviewStaleCommit(
+      outcome = await invokeBulkJsonRpcPreviewStaleCommit(
         server,
         'weft.workflows.bulk.delete',
         previewParameters,
@@ -1032,7 +1094,7 @@ async function invokeBulkDeleteTransport(
       );
       break;
     case 'json-rpc-websocket':
-      result = await invokeBulkWebSocketPreviewStaleCommit(
+      outcome = await invokeBulkWebSocketPreviewStaleCommit(
         server,
         'weft.workflows.bulk.delete',
         previewParameters,
@@ -1042,7 +1104,7 @@ async function invokeBulkDeleteTransport(
       );
       break;
     case 'json-rpc-stdio':
-      result = await invokeBulkStdioPreviewStaleCommit(
+      outcome = await invokeBulkStdioPreviewStaleCommit(
         engine,
         'weft.workflows.bulk.delete',
         previewParameters,
@@ -1054,16 +1116,43 @@ async function invokeBulkDeleteTransport(
 
   expect(await engine.get(firstHandle.id)).toBeNull();
   expect(await engine.get(secondHandle.id)).toBeNull();
-  return { result };
+  return { callCount, ...outcome };
 }
 
 async function invokeBulkTagsTransport(
   transport: TransportName,
   servers: WeftServer[],
   engines: Engine[],
-): Promise<{ result: unknown }> {
+): Promise<BulkTransportOutcome> {
   const engine = createHoldEngine();
   engines.push(engine);
+
+  let callCount = 0;
+  const originalTagAll = engine.tagAll.bind(engine);
+
+  async function trackedTagAll(
+    filter: ListFilter,
+    tags: string[],
+    options: BulkOperationDryRunOptions,
+  ): Promise<BulkOperationDryRunResult>;
+  async function trackedTagAll(
+    filter: ListFilter,
+    tags: string[],
+    options?: BulkOperationCommitOptions,
+  ): Promise<BulkTagResult>;
+  async function trackedTagAll(
+    filter: ListFilter,
+    tags: string[],
+    options?: BulkOperationOptions,
+  ): Promise<BulkTagResult | BulkOperationDryRunResult> {
+    callCount += 1;
+    if (options?.dryRun === true) {
+      return originalTagAll(filter, tags, options);
+    }
+    return originalTagAll(filter, tags, options);
+  }
+
+  engine.tagAll = trackedTagAll;
 
   const firstHandle = await engine.start('echo', 'first', {
     id: `track8-bulk-tags-selected-a-${transport}`,
@@ -1102,10 +1191,10 @@ async function invokeBulkTagsTransport(
     requestId,
   });
 
-  let result: unknown;
+  let outcome: BulkPreviewStaleCommitOutcome;
   switch (transport) {
     case 'rest':
-      result = await invokeBulkRestPreviewStaleCommit(
+      outcome = await invokeBulkRestPreviewStaleCommit(
         server,
         { method: 'PATCH', path: '/v1/workflows/bulk/tags' },
         previewParameters,
@@ -1114,7 +1203,7 @@ async function invokeBulkTagsTransport(
       );
       break;
     case 'json-rpc-http':
-      result = await invokeBulkJsonRpcPreviewStaleCommit(
+      outcome = await invokeBulkJsonRpcPreviewStaleCommit(
         server,
         'weft.workflows.bulk.tags',
         previewParameters,
@@ -1123,7 +1212,7 @@ async function invokeBulkTagsTransport(
       );
       break;
     case 'json-rpc-websocket':
-      result = await invokeBulkWebSocketPreviewStaleCommit(
+      outcome = await invokeBulkWebSocketPreviewStaleCommit(
         server,
         'weft.workflows.bulk.tags',
         previewParameters,
@@ -1133,7 +1222,7 @@ async function invokeBulkTagsTransport(
       );
       break;
     case 'json-rpc-stdio':
-      result = await invokeBulkStdioPreviewStaleCommit(
+      outcome = await invokeBulkStdioPreviewStaleCommit(
         engine,
         'weft.workflows.bulk.tags',
         previewParameters,
@@ -1147,7 +1236,7 @@ async function invokeBulkTagsTransport(
   const secondState = await engine.get(secondHandle.id);
   expect(firstState?.tags).toEqual(['bulk', 'selected']);
   expect(secondState?.tags).toEqual(['bulk', 'selected']);
-  return { result };
+  return { callCount, ...outcome };
 }
 
 describe('cross-transport parity', () => {
@@ -1349,8 +1438,9 @@ describe('cross-transport parity', () => {
       'weft.workflows.bulk.cancel',
     );
 
+    assertBulkOperationInvariants(results, invariants, 'weft.workflows.bulk.cancel', 3);
+
     for (const outcome of Object.values(results)) {
-      expect(outcome.callCount).toBe(2);
       expect((outcome.result as { cancelled?: number }).cancelled).toBe(2);
     }
   });
@@ -1380,6 +1470,8 @@ describe('cross-transport parity', () => {
       invariants,
       'weft.workflows.bulk.signal',
     );
+
+    assertBulkOperationInvariants(results, invariants, 'weft.workflows.bulk.signal', 3);
 
     for (const outcome of Object.values(results)) {
       expect((outcome.result as BulkSignalResult).signalled).toBe(2);
@@ -1412,6 +1504,8 @@ describe('cross-transport parity', () => {
       'weft.workflows.bulk.delete',
     );
 
+    assertBulkOperationInvariants(results, invariants, 'weft.workflows.bulk.delete', 3);
+
     for (const outcome of Object.values(results)) {
       expect((outcome.result as BulkDeleteResult).deleted).toBe(2);
     }
@@ -1442,6 +1536,8 @@ describe('cross-transport parity', () => {
       invariants,
       'weft.workflows.bulk.tags',
     );
+
+    assertBulkOperationInvariants(results, invariants, 'weft.workflows.bulk.tags', 3);
 
     for (const outcome of Object.values(results)) {
       expect((outcome.result as BulkTagResult).modified).toBe(2);

@@ -15,6 +15,8 @@
 export { VERSION } from './version.ts';
 // Core
 export {
+  BulkDeleteRequiresTerminalWorkflowsError,
+  BulkOperationConfirmationError,
   Engine,
   EngineCreateNameMismatchError,
   ScheduleHandle,

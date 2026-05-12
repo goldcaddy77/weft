@@ -106,7 +106,6 @@
   }
 
   async function fetchWorkflows(generation: number, filters: FetchFilters): Promise<void> {
-    invalidateBulkPreview({ clearMessages: false });
     try {
       const result = await loadWorkflowListData(apiClient, filters, pageSize);
       if (generation !== fetchGeneration) return;
@@ -125,36 +124,46 @@
     }
   }
 
+  function currentFetchFilters(): FetchFilters {
+    return {
+      status: statusFilter,
+      type: typeFilter,
+      tags: selectedTags,
+      offset: currentOffset,
+    };
+  }
+
+  function startWorkflowFetch(filters: FetchFilters, options: { showLoading?: boolean } = {}): void {
+    if (options.showLoading === true) {
+      loading = true;
+    }
+    const generation = ++fetchGeneration;
+    void fetchWorkflows(generation, filters);
+  }
+
   // ---------------------------------------------------------------------------
   // Polling
   // ---------------------------------------------------------------------------
 
   $effect(() => {
     // Read reactive values synchronously so Svelte tracks them as dependencies.
-    const filters: FetchFilters = {
-      status: statusFilter,
-      type: typeFilter,
-      tags: selectedTags,
-      offset: currentOffset,
-    };
+    const filters = currentFetchFilters();
 
-    loading = true;
-    const generation = ++fetchGeneration;
-    fetchWorkflows(generation, filters);
+    startWorkflowFetch(filters, { showLoading: true });
 
     let interval: ReturnType<typeof setInterval> | null = null;
 
     function startPolling(): void {
       interval = setInterval(() => {
         if (!document.hidden) {
-          fetchWorkflows(generation, filters);
+          startWorkflowFetch(filters);
         }
       }, 5_000);
     }
 
     function handleVisibility(): void {
       if (!document.hidden && interval === null) {
-        fetchWorkflows(generation, filters);
+        startWorkflowFetch(filters);
         startPolling();
       } else if (document.hidden && interval !== null) {
         clearInterval(interval);
@@ -192,12 +201,8 @@
   }
 
   function handleRefresh(): void {
-    fetchWorkflows(fetchGeneration, {
-      status: statusFilter,
-      type: typeFilter,
-      tags: selectedTags,
-      offset: currentOffset,
-    });
+    invalidateBulkPreview({ clearMessages: false });
+    startWorkflowFetch(currentFetchFilters(), { showLoading: true });
   }
 
   function invalidateBulkPreview(options: { clearMessages?: boolean } = {}): void {

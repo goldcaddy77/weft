@@ -201,10 +201,15 @@ function createWorkflowSummary(id: string): WorkflowSummary {
   };
 }
 
-function createWorkflowListResult(): PaginatedResult<WorkflowSummary> {
+function createWorkflowListResult(
+  items: WorkflowSummary[] = [
+    createWorkflowSummary('workflow-1'),
+    createWorkflowSummary('workflow-2'),
+  ],
+): PaginatedResult<WorkflowSummary> {
   return {
-    items: [createWorkflowSummary('workflow-1'), createWorkflowSummary('workflow-2')],
-    total: 2,
+    items,
+    total: items.length,
     offset: 0,
     limit: 20,
   };
@@ -246,12 +251,16 @@ function createWorkflowListApiClient(
     workflowListResponses?: Array<Promise<PaginatedResult<WorkflowSummary>>>;
     commitCancelResult?: Promise<BulkCancelResult>;
     commitCancelError?: Error;
+    onListWorkflows?: () => void;
   } = {},
 ): WorkflowListApiClient {
   const workflowListResponses = [...(options.workflowListResponses ?? [])];
   const defaultWorkflowListResponse = Promise.resolve(createWorkflowListResult());
   return {
-    listWorkflows: () => workflowListResponses.shift() ?? defaultWorkflowListResponse,
+    listWorkflows: () => {
+      options.onListWorkflows?.();
+      return workflowListResponses.shift() ?? defaultWorkflowListResponse;
+    },
     listSchedules: () =>
       Promise.resolve({
         items: [],
@@ -261,30 +270,30 @@ function createWorkflowListApiClient(
       } satisfies PaginatedResult<ScheduleSummary>),
     getRetentionOverview: () => Promise.resolve(createRetentionOverview()),
     getTenantQuotaUsage: () => Promise.reject(new Error('not used by workflow-list tests')),
-    previewBulkCancelWorkflows: (_filter: ListFilter, requestId: string) =>
-      Promise.resolve(createPreview(requestId)),
+    previewBulkCancelWorkflows: (_filter: ListFilter, requestId?: string) =>
+      Promise.resolve(createPreview(requestId ?? 'bulk:test-request')),
     commitBulkCancelWorkflows: () =>
       options.commitCancelError !== undefined
         ? Promise.reject(options.commitCancelError)
         : (options.commitCancelResult ?? Promise.resolve({ cancelled: 2, failed: 0, errors: [] })),
-    previewBulkDeleteWorkflows: (_filter: ListFilter, requestId: string) =>
-      Promise.resolve({ ...createPreview(requestId), action: 'delete' }),
+    previewBulkDeleteWorkflows: (_filter: ListFilter, requestId?: string) =>
+      Promise.resolve({ ...createPreview(requestId ?? 'bulk:test-request'), action: 'delete' }),
     commitBulkDeleteWorkflows: () => Promise.resolve({ deleted: 2 }),
     previewBulkSignalWorkflows: (
       _filter: ListFilter,
       _name: string,
       _payload: unknown,
-      requestId: string,
-    ) => Promise.resolve({ ...createPreview(requestId), action: 'signal' }),
+      requestId?: string,
+    ) => Promise.resolve({ ...createPreview(requestId ?? 'bulk:test-request'), action: 'signal' }),
     commitBulkSignalWorkflows: () => Promise.resolve({ signalled: 2, failed: 0 }),
     previewBulkTagWorkflows: (
       _filter: ListFilter,
       _tags: string[],
       operation: BulkTagMutationOperation,
-      requestId: string,
+      requestId?: string,
     ) =>
       Promise.resolve({
-        ...createPreview(requestId),
+        ...createPreview(requestId ?? 'bulk:test-request'),
         action: operation === 'add' ? 'tag:add' : 'tag:remove',
       }),
     commitBulkTagWorkflows: () => Promise.resolve({ modified: 2 }),
@@ -331,24 +340,137 @@ async function clickButton(label: string): Promise<HTMLButtonElement> {
 }
 
 async function mountWorkflowList(apiClient: WorkflowListApiClient): Promise<{
+  unmount: () => Promise<void>;
   cleanup: () => Promise<void>;
 }> {
   const cleanupDom = installDom();
   const harnessModule = await loadWorkflowListHarnessModule();
   flushSvelte = harnessModule.flushSync;
   const mounted = harnessModule.mountWorkflowList(document.body, apiClient);
+  let unmounted = false;
   flushSvelte();
   await settle();
+  async function unmountComponent(): Promise<void> {
+    if (unmounted) return;
+    await harnessModule.unmountWorkflowList(mounted);
+    unmounted = true;
+    flushSvelte();
+    await settle();
+  }
   return {
+    unmount: unmountComponent,
     cleanup: async () => {
-      await harnessModule.unmountWorkflowList(mounted);
+      await unmountComponent();
       flushSvelte = (): void => {};
       cleanupDom();
     },
   };
 }
 
+function installIntervalController(): {
+  activeCount: () => number;
+  restore: () => void;
+  tick: () => void;
+} {
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  const callbacks = new Map<number, () => void>();
+  let nextHandle = 1;
+
+  globalThis.setInterval = ((
+    handler: TimerHandler,
+    _timeout?: number,
+    ...argumentsList: unknown[]
+  ) => {
+    const handle = nextHandle;
+    nextHandle += 1;
+    if (typeof handler !== 'function') {
+      throw new Error('String interval handlers are not supported in WorkflowList tests');
+    }
+    callbacks.set(handle, () => {
+      handler(...argumentsList);
+    });
+    return handle as unknown as ReturnType<typeof setInterval>;
+  }) as unknown as typeof setInterval;
+
+  globalThis.clearInterval = ((handle?: ReturnType<typeof setInterval>) => {
+    if (handle === undefined) return;
+    callbacks.delete(Number(handle));
+  }) as typeof clearInterval;
+
+  return {
+    activeCount: () => callbacks.size,
+    restore: () => {
+      globalThis.setInterval = originalSetInterval;
+      globalThis.clearInterval = originalClearInterval;
+    },
+    tick: () => {
+      for (const callback of callbacks.values()) {
+        callback();
+      }
+    },
+  };
+}
+
+function setDocumentHidden(hidden: boolean): void {
+  Object.defineProperty(document, 'hidden', {
+    configurable: true,
+    value: hidden,
+  });
+}
+
 describe('WorkflowList view', () => {
+  it('loads on mount, pauses polling while hidden, resumes when visible, and cleans up', async () => {
+    const intervals = installIntervalController();
+    let mounted: Awaited<ReturnType<typeof mountWorkflowList>> | undefined;
+    let listCalls = 0;
+    const apiClient = createWorkflowListApiClient({
+      onListWorkflows: () => {
+        listCalls += 1;
+      },
+    });
+
+    try {
+      mounted = await mountWorkflowList(apiClient);
+
+      expect(listCalls).toBe(1);
+      expect(intervals.activeCount()).toBe(1);
+
+      setDocumentHidden(true);
+      document.dispatchEvent(new Event('visibilitychange'));
+      await settle();
+      intervals.tick();
+      await settle();
+
+      expect(intervals.activeCount()).toBe(0);
+      expect(listCalls).toBe(1);
+
+      setDocumentHidden(false);
+      document.dispatchEvent(new Event('visibilitychange'));
+      await settle();
+
+      expect(intervals.activeCount()).toBe(1);
+      expect(listCalls).toBe(2);
+
+      intervals.tick();
+      await settle();
+
+      expect(listCalls).toBe(3);
+
+      await mounted.unmount();
+      expect(intervals.activeCount()).toBe(0);
+
+      document.dispatchEvent(new Event('visibilitychange'));
+      intervals.tick();
+      await settle();
+
+      expect(listCalls).toBe(3);
+    } finally {
+      await mounted?.cleanup();
+      intervals.restore();
+    }
+  });
+
   it('requires a live dry-run preview before enabling bulk confirmation', async () => {
     const apiClient = createWorkflowListApiClient();
     const { cleanup } = await mountWorkflowList(apiClient);
@@ -373,6 +495,40 @@ describe('WorkflowList view', () => {
       expect(buttonWithText('Confirm').disabled).toBe(true);
     } finally {
       await cleanup();
+    }
+  });
+
+  it('keeps the current preview active during background polling', async () => {
+    const intervals = installIntervalController();
+    const pollResponse = createDeferred<PaginatedResult<WorkflowSummary>>();
+    const apiClient = createWorkflowListApiClient({
+      workflowListResponses: [
+        Promise.resolve(createWorkflowListResult()),
+        Promise.resolve(createWorkflowListResult()),
+        pollResponse.promise,
+      ],
+    });
+    const { cleanup } = await mountWorkflowList(apiClient);
+    try {
+      setDocumentHidden(false);
+      await changeSelectValue(statusFilterSelect(), 'running');
+      await clickButton('Preview');
+      expect(buttonWithText('Cancel 2 workflows').disabled).toBe(false);
+
+      intervals.tick();
+      await settle();
+
+      expect(document.body.textContent).toContain('Preview ready: cancel will affect 2 workflows.');
+      expect(buttonWithText('Cancel 2 workflows').disabled).toBe(false);
+
+      pollResponse.resolve(createWorkflowListResult([createWorkflowSummary('workflow-3')]));
+      await settle();
+
+      expect(document.body.textContent).toContain('Preview ready: cancel will affect 2 workflows.');
+      expect(buttonWithText('Cancel 2 workflows').disabled).toBe(false);
+    } finally {
+      await cleanup();
+      intervals.restore();
     }
   });
 
@@ -403,6 +559,56 @@ describe('WorkflowList view', () => {
       await settle();
     } finally {
       await cleanup();
+    }
+  });
+
+  it('ignores stale polling responses after a committed bulk action refreshes the list', async () => {
+    const intervals = installIntervalController();
+    const stalePollResponse = createDeferred<PaginatedResult<WorkflowSummary>>();
+    const commitRefreshResponse = createDeferred<PaginatedResult<WorkflowSummary>>();
+    let nextWorkflowListResponse: 'default' | 'stale-poll' | 'commit-refresh' = 'default';
+    const apiClient: WorkflowListApiClient = {
+      ...createWorkflowListApiClient(),
+      listWorkflows: () => {
+        if (nextWorkflowListResponse === 'stale-poll') {
+          nextWorkflowListResponse = 'default';
+          return stalePollResponse.promise;
+        }
+        if (nextWorkflowListResponse === 'commit-refresh') {
+          nextWorkflowListResponse = 'default';
+          return commitRefreshResponse.promise;
+        }
+        return Promise.resolve(createWorkflowListResult());
+      },
+    };
+    const { cleanup } = await mountWorkflowList(apiClient);
+    try {
+      setDocumentHidden(false);
+      await changeSelectValue(statusFilterSelect(), 'running');
+      await clickButton('Preview');
+      expect(buttonWithText('Cancel 2 workflows').disabled).toBe(false);
+
+      nextWorkflowListResponse = 'stale-poll';
+      intervals.tick();
+      await settle();
+      nextWorkflowListResponse = 'commit-refresh';
+      await clickButton('Cancel 2 workflows');
+
+      commitRefreshResponse.resolve(createWorkflowListResult([]));
+      await settle();
+      await settle();
+
+      expect(document.body.textContent).toContain('No workflows found');
+
+      stalePollResponse.resolve(createWorkflowListResult());
+      await settle();
+      await settle();
+
+      expect(document.body.textContent).toContain('No workflows found');
+      expect(document.body.textContent).not.toContain('workflow-1');
+    } finally {
+      await cleanup();
+      intervals.restore();
     }
   });
 

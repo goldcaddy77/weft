@@ -673,6 +673,16 @@ describe('ApiClient', () => {
       tagPreview.confirmationToken,
       tagPreview.requestId,
     );
+    const noPayloadSignalPreview = await client.previewBulkSignalWorkflows(
+      { status: 'running' },
+      'ping',
+    );
+    const noPayloadSignalResult = await client.commitBulkSignalWorkflows(
+      { status: 'running' },
+      'ping',
+      undefined,
+      noPayloadSignalPreview.confirmationToken,
+    );
 
     expect(preview.matched).toBe(2);
     expect(preview.scope.tenantIds).toEqual(['acme']);
@@ -684,6 +694,8 @@ describe('ApiClient', () => {
     expect(deleteResult.deleted).toBe(2);
     expect(tagPreview.action).toBe('tag:add');
     expect(tagResult.modified).toBe(2);
+    expect(noPayloadSignalPreview.action).toBe('signal');
+    expect(noPayloadSignalResult.signalled).toBe(2);
 
     expect(requests.map((entry) => entry.url)).toEqual([
       '/v1/workflows/bulk/cancel',
@@ -694,6 +706,8 @@ describe('ApiClient', () => {
       '/v1/workflows/bulk',
       '/v1/workflows/bulk/tags',
       '/v1/workflows/bulk/tags',
+      '/v1/workflows/bulk/signal',
+      '/v1/workflows/bulk/signal',
     ]);
     expect(requests.map((entry) => entry.init?.method)).toEqual([
       'POST',
@@ -704,6 +718,8 @@ describe('ApiClient', () => {
       'DELETE',
       'PATCH',
       'PATCH',
+      'POST',
+      'POST',
     ]);
     expect(requestBodyToJson(requests[0]?.init)).toEqual({
       filter: { status: 'running', type: 'checkout', tags: ['selected'] },
@@ -752,6 +768,16 @@ describe('ApiClient', () => {
       operation: 'add',
       confirmationToken: 'bulk:tag-token',
       requestId: 'tag-request',
+    });
+    expect(requestBodyToJson(requests[8]?.init)).toEqual({
+      filter: { status: 'running' },
+      name: 'ping',
+      dryRun: true,
+    });
+    expect(requestBodyToJson(requests[9]?.init)).toEqual({
+      filter: { status: 'running' },
+      name: 'ping',
+      confirmationToken: 'bulk:signal-token',
     });
   });
 

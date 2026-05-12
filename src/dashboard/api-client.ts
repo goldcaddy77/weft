@@ -344,20 +344,22 @@ export class ApiClient {
   async checkHealth(): Promise<{ status: string }> {
     return request<{ status: string }>('/health');
   }
-
   /** Get retention policies and next sweep timing for the dashboard. */
   async getRetentionOverview(): Promise<RetentionOverview> {
     return request<RetentionOverview>('/retention');
   }
-
   /** Preview matching workflows before bulk cancellation. */
   async previewBulkCancelWorkflows(
     filter: BulkWorkflowFilter,
-    requestId: string,
+    requestId?: string,
   ): Promise<BulkOperationDryRunResult> {
     return request<BulkOperationDryRunResult>('/workflows/bulk/cancel', {
       method: 'POST',
-      body: JSON.stringify({ filter, dryRun: true, requestId }),
+      body: JSON.stringify({
+        filter,
+        dryRun: true,
+        ...(requestId === undefined ? {} : { requestId }),
+      }),
     });
   }
 
@@ -365,22 +367,30 @@ export class ApiClient {
   async commitBulkCancelWorkflows(
     filter: BulkWorkflowFilter,
     confirmationToken: string,
-    requestId: string,
+    requestId?: string,
   ): Promise<BulkCancelResult> {
     return request<BulkCancelResult>('/workflows/bulk/cancel', {
       method: 'POST',
-      body: JSON.stringify({ filter, confirmationToken, requestId }),
+      body: JSON.stringify({
+        filter,
+        confirmationToken,
+        ...(requestId === undefined ? {} : { requestId }),
+      }),
     });
   }
 
   /** Preview matching terminal workflows before bulk deletion. */
   async previewBulkDeleteWorkflows(
     filter: BulkWorkflowFilter,
-    requestId: string,
+    requestId?: string,
   ): Promise<BulkOperationDryRunResult> {
     return request<BulkOperationDryRunResult>('/workflows/bulk', {
       method: 'DELETE',
-      body: JSON.stringify({ filter, dryRun: true, requestId }),
+      body: JSON.stringify({
+        filter,
+        dryRun: true,
+        ...(requestId === undefined ? {} : { requestId }),
+      }),
     });
   }
 
@@ -388,11 +398,15 @@ export class ApiClient {
   async commitBulkDeleteWorkflows(
     filter: BulkWorkflowFilter,
     confirmationToken: string,
-    requestId: string,
+    requestId?: string,
   ): Promise<BulkDeleteResult> {
     return request<BulkDeleteResult>('/workflows/bulk', {
       method: 'DELETE',
-      body: JSON.stringify({ filter, confirmationToken, requestId }),
+      body: JSON.stringify({
+        filter,
+        confirmationToken,
+        ...(requestId === undefined ? {} : { requestId }),
+      }),
     });
   }
 
@@ -400,8 +414,8 @@ export class ApiClient {
   async previewBulkSignalWorkflows(
     filter: BulkWorkflowFilter,
     name: string,
-    payload: unknown,
-    requestId: string,
+    payload?: unknown,
+    requestId?: string,
   ): Promise<BulkOperationDryRunResult> {
     return request<BulkOperationDryRunResult>('/workflows/bulk/signal', {
       method: 'POST',
@@ -410,7 +424,7 @@ export class ApiClient {
         name,
         ...(payload === undefined ? {} : { payload }),
         dryRun: true,
-        requestId,
+        ...(requestId === undefined ? {} : { requestId }),
       }),
     });
   }
@@ -419,9 +433,9 @@ export class ApiClient {
   async commitBulkSignalWorkflows(
     filter: BulkWorkflowFilter,
     name: string,
-    payload: unknown,
+    payload: unknown = undefined,
     confirmationToken: string,
-    requestId: string,
+    requestId?: string,
   ): Promise<BulkSignalResult> {
     return request<BulkSignalResult>('/workflows/bulk/signal', {
       method: 'POST',
@@ -430,7 +444,7 @@ export class ApiClient {
         name,
         ...(payload === undefined ? {} : { payload }),
         confirmationToken,
-        requestId,
+        ...(requestId === undefined ? {} : { requestId }),
       }),
     });
   }
@@ -440,11 +454,17 @@ export class ApiClient {
     filter: BulkWorkflowFilter,
     tags: string[],
     operation: BulkTagMutationOperation,
-    requestId: string,
+    requestId?: string,
   ): Promise<BulkOperationDryRunResult> {
     return request<BulkOperationDryRunResult>('/workflows/bulk/tags', {
       method: 'PATCH',
-      body: JSON.stringify({ filter, tags, operation, dryRun: true, requestId }),
+      body: JSON.stringify({
+        filter,
+        tags,
+        operation,
+        dryRun: true,
+        ...(requestId === undefined ? {} : { requestId }),
+      }),
     });
   }
 
@@ -454,11 +474,17 @@ export class ApiClient {
     tags: string[],
     operation: BulkTagMutationOperation,
     confirmationToken: string,
-    requestId: string,
+    requestId?: string,
   ): Promise<BulkTagResult> {
     return request<BulkTagResult>('/workflows/bulk/tags', {
       method: 'PATCH',
-      body: JSON.stringify({ filter, tags, operation, confirmationToken, requestId }),
+      body: JSON.stringify({
+        filter,
+        tags,
+        operation,
+        confirmationToken,
+        ...(requestId === undefined ? {} : { requestId }),
+      }),
     });
   }
 
