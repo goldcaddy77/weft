@@ -70,17 +70,8 @@ describe('normalizeJSONValue', () => {
     expect(normalizeJSONValue(undefined)).toBeNull();
   });
 
-  it('flattens errors into name/message records via the fallback path', () => {
-    // JSON.stringify of an Error returns "{}", which IS a valid JSONValue,
-    // so the stringify-then-parse path normally short-circuits before the
-    // Error fallback. To exercise the fallback, force JSON.stringify to
-    // throw via a Symbol-keyed toJSON.
-    const error: Error & { toJSON: () => never } = Object.assign(new Error('boom'), {
-      toJSON: () => {
-        throw new Error('cannot serialize');
-      },
-    });
-    expect(normalizeJSONValue(error)).toEqual({ name: 'Error', message: 'boom' });
+  it('flattens errors into name/message records', () => {
+    expect(normalizeJSONValue(new Error('boom'))).toEqual({ name: 'Error', message: 'boom' });
   });
 
   it('stringifies bigints', () => {

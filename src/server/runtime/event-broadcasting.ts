@@ -21,7 +21,7 @@ import type { ServerContext } from './context.ts';
 import { cancelTask } from './task-dispatch.ts';
 import { withRetry } from './websocket-worker.ts';
 
-const TOKEN_EVENT_TYPE = 'agent:token';
+const TOKEN_EVENT_TYPE = 'stream:token';
 
 function workflowChannelPath(workflowId: string, connectionType: 'watch' | 'stream'): string {
   return `/v1/workflows/${encodeURIComponent(workflowId)}/${connectionType}`;

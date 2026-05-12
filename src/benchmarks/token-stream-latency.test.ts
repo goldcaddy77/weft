@@ -9,7 +9,7 @@ import { waitForRealTimersForTesting } from '../testing/fake-timers.ts';
 import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
 
 class TokenEvent extends Event {
-  static readonly type = 'agent:token';
+  static readonly type = 'stream:token';
 
   constructor(
     public readonly workflowId: string,

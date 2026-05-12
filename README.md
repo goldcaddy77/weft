@@ -205,9 +205,14 @@ const paymentWorkflow = workflow({
   name: 'payment',
   handler: async function* (ctx: WorkflowContext, request: PaymentRequest) {
     // Pause and surface the payment details for human approval.
-    const decision = yield* ctx.review(request, { timeout: '72h' });
+    const decision = yield* ctx.review({
+      artifact: request,
+      reviewType: 'payment-approval',
+      reviewers: ['payments-team'],
+      timeout: 72 * 60 * 60 * 1000,
+    });
 
-    if (!decision.approved) {
+    if (decision.decision !== 'approved') {
       return { status: 'rejected', orderId: request.orderId };
     }
 

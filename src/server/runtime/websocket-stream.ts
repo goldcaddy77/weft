@@ -5,7 +5,7 @@ import { KEYS } from '../../storage/interface.ts';
 import type { WebSocketData } from '../json-rpc-websocket-runtime.ts';
 import type { ServerContext } from './context.ts';
 
-const TOKEN_EVENT_TYPE = 'agent:token';
+const TOKEN_EVENT_TYPE = 'stream:token';
 
 export function sendStreamMessage(
   ws: ServerWebSocket<WebSocketData>,

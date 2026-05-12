@@ -9,6 +9,7 @@
  */
 
 import { definitionSchemaToJsonSchema } from '../core/types/definition-schema-to-json.ts';
+import { VERSION } from '../version.ts';
 import { isDiscoverable } from './discovery-filter.ts';
 import { applyDiscoveryInfo, type DiscoveryInfo } from './discovery-info.ts';
 import { asPlainObject, compareStrings } from './json-schema-utilities.ts';
@@ -30,7 +31,7 @@ export type OpenApiSecuritySchemeName = 'bearerAuth' | 'apiKeyAuth';
 export type OpenApiOptions = {
   /** API title. Defaults to `'Weft Workflow Engine'`. */
   title?: string;
-  /** API version. Defaults to `'0.0.1'`. */
+  /** API version. Defaults to the current Weft package version. */
   version?: string;
   /** Operator-supplied discovery metadata applied to the generated document. */
   discoveryInfo?: DiscoveryInfo;
@@ -344,7 +345,7 @@ function emitRoutes(
 // oxlint-disable-next-line complexity -- ID:server-openapi-generate-open-api-document-complexity
 export function generateOpenApiDocument(options?: OpenApiOptions): Record<string, unknown> {
   const title = options?.title ?? 'Weft Workflow Engine';
-  const version = options?.version ?? '0.0.1';
+  const version = options?.version ?? VERSION;
   const infoBlock = applyDiscoveryInfo({ title, version }, options?.discoveryInfo);
   const registry = options?.registry ?? createLiveOperationRegistry();
   const restBindings = options?.restBindings;

@@ -25,6 +25,7 @@
 import { z } from 'zod';
 
 import { definitionSchemaToJsonSchema } from '../core/types/definition-schema-to-json.ts';
+import { VERSION } from '../version.ts';
 import { isDiscoverable } from './discovery-filter.ts';
 import { applyDiscoveryInfo, type DiscoveryInfo } from './discovery-info.ts';
 import { asPlainObject, compareStrings } from './json-schema-utilities.ts';
@@ -47,7 +48,7 @@ export type OpenRpcOptions = {
   readonly transports: ReadonlyArray<OpenRpcTransport>;
   /** Document title. Defaults to `'Weft Workflow Engine'`. */
   readonly title?: string;
-  /** Document version. Defaults to `'0.0.1'`. */
+  /** Document version. Defaults to the current Weft package version. */
   readonly version?: string;
   /** Operator-supplied discovery metadata applied to the `info` object. */
   readonly discoveryInfo?: DiscoveryInfo;
@@ -111,7 +112,7 @@ const DISCOVER_METHOD_NAME = 'rpc.discover';
 
 function buildOpenRpcInfo(options: OpenRpcOptions): Record<string, unknown> {
   const title = options.title ?? 'Weft Workflow Engine';
-  const version = options.version ?? '0.0.1';
+  const version = options.version ?? VERSION;
   const infoBlock = applyDiscoveryInfo({ title, version }, options.discoveryInfo);
   if (options.discoveryInfo?.externalDocs !== undefined) {
     infoBlock['externalDocs'] = { ...options.discoveryInfo.externalDocs };

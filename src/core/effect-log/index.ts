@@ -31,7 +31,7 @@ import { hashString } from '../../runtime/portable.ts';
 import type { Storage } from '../../storage/interface.ts';
 import { KEYS } from '../../storage/interface.ts';
 import { decode, encode } from '../codec.ts';
-import { isJSONValue, type JSONValue } from '../json.ts';
+import { isJSONValue, normalizeJSONValue, type JSONValue } from '../json.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -299,11 +299,11 @@ export class EffectLog {
    * Call this after the effect has returned successfully so that a subsequent
    * restore will replay this output instead of re-executing.
    */
-  async commit(semanticHash: string, effectName: string, output: JSONValue): Promise<void> {
+  async commit(semanticHash: string, effectName: string, output: unknown): Promise<void> {
     const record: EffectRecord = {
       status: 'committed',
       effectName,
-      output,
+      output: normalizeJSONValue(output),
       completedAt: Date.now(),
     };
     await this.#put(semanticHash, record);

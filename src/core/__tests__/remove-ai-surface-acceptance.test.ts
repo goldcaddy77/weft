@@ -99,7 +99,7 @@ describe('remove-ai-surface acceptance gates', () => {
     expect(state!.error).toContain('timed out');
   });
 
-  it('EffectLog: crash after record, replay returns committed output without re-executing', async () => {
+  it('EffectLog: committed replay returns stored output without re-executing', async () => {
     const storage = new MemoryStorage();
     const workflowId = 'wf-crash-replay';
     const operationId = 'op-1';

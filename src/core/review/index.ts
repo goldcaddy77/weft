@@ -2,7 +2,7 @@
  * Human-in-the-loop review protocol.
  *
  * Coordinates review requests, decisions, escalation chains,
- * and partial approval workflows for human oversight of AI artifacts.
+ * and partial approval workflows for durable human oversight.
  *
  * @module human-review
  */
@@ -110,8 +110,8 @@ export interface ReviewOptions {
 
 /**
  * Options passed to `ctx.review()` inside a workflow generator. Extends
- * {@link ReviewOptions} with context-level callbacks the runtime invokes
- * when reviewer messages arrive or an escalation step fires.
+ * {@link ReviewOptions} with the context-level callback the runtime invokes
+ * when an escalation step fires.
  *
  * @example
  * ```ts

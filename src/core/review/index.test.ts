@@ -146,6 +146,26 @@ describe('ReviewCoordinator', () => {
       expect(decision.feedback).toBe('Looks good to me!');
       expect(decision.timestamp).toBeGreaterThan(0);
     });
+
+    it('uses the injected clock for createdAt and decision timestamps', async () => {
+      let now = 1_234;
+      const coordinatorWithClock = new ReviewCoordinator(storage, {
+        getNow: () => now,
+      });
+
+      const request = await coordinatorWithClock.createReview('wf-clock', {
+        artifact: 'document',
+      });
+
+      now = 5_678;
+      const decision = await coordinatorWithClock.submitDecision(request.reviewId, {
+        decision: 'approved',
+        reviewer: 'alice',
+      });
+
+      expect(request.createdAt).toBe(1_234);
+      expect(decision.timestamp).toBe(5_678);
+    });
   });
 
   describe('listPendingReviews', () => {

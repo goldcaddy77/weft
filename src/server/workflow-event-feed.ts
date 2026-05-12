@@ -31,7 +31,7 @@ import type { WeftEventMap } from '../core/events.ts';
  * Discriminator string carried on every envelope. The union covers:
  *
  *   - Dispatched `WeftEventMap` event names (`workflow:started`,
- *     `activity:completed`, `agent:token`, …) — emitted when a
+ *     `activity:completed`, `stream:token`, …) — emitted when a
  *     future log entry type corresponds to a runtime `Event`.
  *   - Durable log entry types not in `WeftEventMap`
  *     (`workflow:checkpoint` — the only one today; add others here

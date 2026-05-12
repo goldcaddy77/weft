@@ -232,9 +232,6 @@ describe('KEYS', () => {
     );
     expect(KEYS.streamMetadata(workflowId, 'stream')).toBe(`blob:${encodedWorkflowId}:stream:meta`);
     expect(KEYS.budgetCharged('operation-1')).toBe('budget-charged:operation-1');
-    expect(KEYS.agentExecutionState(workflowId, 7)).toBe(
-      `agent-execution:${encodedWorkflowId}:0000000007`,
-    );
     expect(KEYS.toolEffect(workflowId, 'agent-1', 'semantic-hash')).toBe(
       `tool-effect:${encodedWorkflowId}:agent-1:semantic-hash`,
     );

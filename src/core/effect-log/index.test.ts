@@ -197,6 +197,17 @@ describe('EffectLog', () => {
     }
   });
 
+  it('normalizes non-JSON committed output before storing it', async () => {
+    await log.record('hash-error', 'report');
+    await log.commit('hash-error', 'report', new Error('boom'));
+
+    const entry = await log.lookup('hash-error');
+    expect(entry?.status).toBe('committed');
+    if (entry?.status === 'committed') {
+      expect(entry.output).toEqual({ name: 'Error', message: 'boom' });
+    }
+  });
+
   it('in-flight record persists to storage and is readable after restore', async () => {
     await log.record('hash-2', 'transfer');
 

@@ -18,7 +18,7 @@ import type { WeftServer } from './index.ts';
 import { serve, wireEventBroadcasting } from './index.ts';
 
 class TokenEvent extends Event {
-  static readonly type = 'agent:token';
+  static readonly type = 'stream:token';
 
   constructor(
     public readonly workflowId: string,

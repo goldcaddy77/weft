@@ -74,6 +74,10 @@ export function normalizeJSONValue(value: unknown): JSONValue {
     return null;
   }
 
+  if (value instanceof Error) {
+    return { name: value.name, message: value.message };
+  }
+
   if (isJSONValue(value)) {
     return value;
   }
