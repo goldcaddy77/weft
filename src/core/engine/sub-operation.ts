@@ -1,4 +1,3 @@
-import type { HumanReviewOptions } from '../../ai/human-review.ts';
 import {
   atomicStateDataKey,
   commitAtomicStateDelete,
@@ -6,6 +5,7 @@ import {
   readAtomicStateSnapshot,
 } from '../atomic-state.ts';
 import type { ContextOperationRequest } from '../context.ts';
+import type { HumanReviewOptions } from '../review/index.ts';
 import {
   assertChildWorkflowNestingDepth,
   executeChildWorkflow,
@@ -16,7 +16,6 @@ import {
   executeActivityOperationResult,
   type ActivityOperationCallbacks,
 } from './operations-activity.ts';
-import type { AgentOperationCallbacks } from './operations-agent.ts';
 import {
   executeRunAllOperationResult,
   type CoordinationOperationCallbacks,
@@ -30,7 +29,6 @@ type SubOperationCallbacks = {
   createActivityOperationCallbacks: () => ActivityOperationCallbacks;
   createChildWorkflowOperationCallbacks: () => ChildWorkflowOperationCallbacks;
   createCoordinationOperationCallbacks: () => CoordinationOperationCallbacks;
-  createAgentOperationCallbacks: () => AgentOperationCallbacks;
   createStateOperationCallbacks: () => StateOperationCallbacks;
 };
 
@@ -185,29 +183,6 @@ export async function executeSubOperation(
         callbacks.createCoordinationOperationCallbacks(),
         speculativeState,
       );
-    case 'agent': {
-      if (speculativeState) {
-        throw new Error('ctx.speculate() does not yet support ctx.agent()');
-      }
-      const agentOperationCallbacks = callbacks.createAgentOperationCallbacks();
-      const { executeAgentLoop } = await import('../../ai/agent/index.ts');
-      const { prompt, ...rest } = operation.options;
-      await agentOperationCallbacks.ensureTerminalCleanupTracked(workflowId);
-
-      const { ToolEffectLog } = await import('../../ai/tool-effect-log.ts');
-      const toolEffectLog = new ToolEffectLog(internals.storage, workflowId, operation.operationId);
-      const agentResult = await executeAgentLoop(
-        {
-          ...rest,
-          provider: rest.provider,
-          signal,
-          toolEffectLog,
-        },
-        prompt,
-      );
-
-      return agentResult.content;
-    }
     default:
       throw new Error(`Unsupported sub-operation type: ${operation.type}`);
   }

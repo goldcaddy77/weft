@@ -1,4 +1,4 @@
-import type { HumanReviewOptions, HumanReviewResult } from '../../ai/human-review.ts';
+import type { HumanReviewOptions, HumanReviewResult } from '../review/index.ts';
 import { parseDuration } from '../scheduler.ts';
 import type { Duration } from '../types.ts';
 import type { Context } from './index.ts';
@@ -102,7 +102,7 @@ export function* waitForUpdate<T = unknown>(
   return envelope;
 }
 
-export function* humanReview(
+export function* review(
   context: Context,
   internals: ContextInternals,
   options: HumanReviewOptions,
@@ -114,7 +114,7 @@ export function* humanReview(
   }
 
   if (internals.explainMode) {
-    console.log(`[weft] ctx.humanReview(${JSON.stringify(options.reviewType ?? 'general')})`);
+    console.log(`[weft] ctx.review(${JSON.stringify(options.reviewType ?? 'general')})`);
     console.log(`  → Creating checkpoint at step ${step}`);
     console.log(`  → Pausing for human review`);
   }

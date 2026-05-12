@@ -126,9 +126,8 @@ export async function writeStreamChunksFromInternals(
     // the injected clock that tests use to assert timeline durations
     // would silently affect unrelated test expectations.
     // Only the `tokens` stream key is surfaced through the feed
-    // backend's `tokens` selector. Other stream keys are internal
-    // to the workflow (e.g., agent-specific chunk buffers) and
-    // don't have a feed mount, so firing notifications for them
+    // backend's `tokens` selector. Other stream keys are internal to the
+    // workflow and don't have a feed mount, so firing notifications for them
     // would just burn CPU walking empty listener buckets.
     if (operation.key === TOKENS_STREAM_KEY) {
       notifyWorkflowFeedCommit(internals, workflowId, 'tokens', {

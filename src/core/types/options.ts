@@ -1,6 +1,6 @@
 import type { AlertingOptions } from '../../alerting/types.ts';
 import type { Storage as WeftStorage } from '../../storage/interface.ts';
-import type { CompressionAlgorithm, CompressionOptions } from '../compression.ts';
+import type { CompressionOptions } from '../compression.ts';
 import type { Interceptor } from '../interceptor.ts';
 import type { TenantResolver } from '../tenant.ts';
 import type { WorkflowStatus } from './identity.ts';
@@ -112,12 +112,7 @@ export interface EngineOptions {
   retentionSweepInterval?: Duration;
   retentionSweepBatchSize?: number;
   /** Payload compression applied at the storage layer. */
-  compression?: CompressionOptions & {
-    /** Compression algorithm for agent workflow checkpoints. Default: 'brotli'. */
-    agentAlgorithm?: CompressionAlgorithm;
-    /** Compression threshold for agent workflow checkpoints. Default: same as main threshold. */
-    agentThreshold?: number;
-  };
+  compression?: CompressionOptions;
   checkpointHistory?: number;
   checkpointSizeWarningThreshold?: number;
   maxNestingDepth?: number;
@@ -153,8 +148,8 @@ export interface EngineOptions {
   };
 
   /**
-   * When providers expose async resume hints, park inline `ctx.agent()` turns
-   * before the blocking LLM call begins. Non-parkable contexts fall back to an
+   * When an execution provider exposes async resume hints, park inline work
+   * before the blocking wait begins. Non-parkable contexts fall back to an
    * in-memory wait. Off by default because only some providers can participate
    * in asynchronous resume flows.
    */

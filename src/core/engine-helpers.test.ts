@@ -5,48 +5,14 @@ import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import {
-  applyAgentInterceptorCallbacks,
   cleanupPartialStreamChunks,
-  createAgentInterceptorExecute,
   createCleanupErrorReporter,
   createExpiredResponseCleanupTick,
   createHandleCacheFinalizer,
   executeRunAllBranches,
 } from './engine-helpers.ts';
-import type { AgentInterception } from './interceptor.ts';
-
-function createAgentInterception(): AgentInterception {
-  return {
-    workflowId: 'wf-1',
-    model: 'test-model',
-    prompt: 'Say hello',
-    headers: new Map<string, string>(),
-  };
-}
 
 describe('engine helpers', () => {
-  it('applyAgentInterceptorCallbacks copies turn and tool callbacks onto the active interception', () => {
-    const target = createAgentInterception();
-    const source = createAgentInterception();
-
-    const onTurnStarted = () => undefined;
-    const onTurnCompleted = () => undefined;
-    const onToolCalled = () => undefined;
-    const onToolReturned = () => undefined;
-
-    source.onTurnStarted = onTurnStarted;
-    source.onTurnCompleted = onTurnCompleted;
-    source.onToolCalled = onToolCalled;
-    source.onToolReturned = onToolReturned;
-
-    applyAgentInterceptorCallbacks(target, source);
-
-    expect(target.onTurnStarted).toBe(onTurnStarted);
-    expect(target.onTurnCompleted).toBe(onTurnCompleted);
-    expect(target.onToolCalled).toBe(onToolCalled);
-    expect(target.onToolReturned).toBe(onToolReturned);
-  });
-
   it('cleanupPartialStreamChunks deletes chunk keys and stream metadata', async () => {
     const storage = new MemoryStorage();
     const workflowId = 'wf-stream';
@@ -206,19 +172,5 @@ describe('engine helpers', () => {
     );
 
     expect(results).toEqual({ alpha: 'ONE', beta: 42 });
-  });
-
-  it('createAgentInterceptorExecute copies callbacks from the interceptor context', () => {
-    const activeInterception = createAgentInterception();
-    const interceptorContext = createAgentInterception();
-    const onTurnStarted = () => undefined;
-    interceptorContext.onTurnStarted = onTurnStarted;
-
-    const execute = createAgentInterceptorExecute(activeInterception);
-    const generator = execute(interceptorContext);
-
-    expect(generator.next()).toEqual({ value: undefined, done: false });
-    expect(activeInterception.onTurnStarted).toBe(onTurnStarted);
-    expect(generator.next()).toEqual({ value: undefined, done: true });
   });
 });

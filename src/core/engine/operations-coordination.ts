@@ -185,10 +185,8 @@ export async function processRaceOperation(
   callbacks: Pick<CoordinationOperationCallbacks, 'executeSubOperation' | 'runOperationWithResult'>,
 ): Promise<void> {
   return callbacks.runOperationWithResult(workflowId, operation, async () => {
-    // Abort losing sub-operations once the race settles. Without this,
-    // a losing agent sub-op would continue running its full LLM loop in
-    // the background, consuming budget and emitting events with no
-    // observer.
+    // Abort losing sub-operations once the race settles so background work does
+    // not keep consuming budget or emit events with no observer.
     const controller = new AbortController();
     const subOperations = operation.operations.map((subOperation) =>
       callbacks.executeSubOperation(workflowId, subOperation, controller.signal),

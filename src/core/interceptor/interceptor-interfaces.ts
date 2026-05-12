@@ -1,7 +1,6 @@
 import type {
   ActivityExecutionInterception,
   ActivityInterception,
-  AgentInterception,
   ChildWorkflowInterception,
   QueryInterception,
   SignalInterception,
@@ -64,11 +63,6 @@ export interface WorkflowInterceptor {
     next: (interception: ChildWorkflowInterception) => Promise<unknown>,
   ): Promise<unknown>;
 
-  agent?(
-    interception: AgentInterception,
-    next: (interception: AgentInterception) => Generator<unknown, unknown, unknown>,
-  ): Generator<unknown, unknown, unknown>;
-
   query?(
     interception: QueryInterception,
     next: (interception: QueryInterception) => Generator<unknown, unknown, unknown>,
@@ -97,7 +91,6 @@ export const WORKFLOW_INTERCEPTOR_HOOKS = Object.freeze([
   'waitForSignal',
   'workflowStart',
   'childWorkflow',
-  'agent',
   'query',
   'signalReceived',
 ] as const);
@@ -203,11 +196,6 @@ export interface ComposedWorkflowInterceptor {
     interception: ChildWorkflowInterception,
     execute: (interception: ChildWorkflowInterception) => Promise<unknown>,
   ): Promise<unknown>;
-
-  agent(
-    interception: AgentInterception,
-    execute: (interception: AgentInterception) => Generator<unknown, unknown, unknown>,
-  ): Generator<unknown, unknown, unknown>;
 
   query(
     interception: QueryInterception,

@@ -132,37 +132,6 @@ export interface ActivityExecutionInterception {
   signal?: AbortSignal;
 }
 
-/** Callback info passed to agent turn-lifecycle hooks. */
-export interface AgentTurnInfo {
-  turnIndex: number;
-  model: string;
-}
-
-/** Callback info passed after an agent turn completes. */
-export interface AgentTurnResultInfo {
-  turnIndex: number;
-  model: string;
-  inputTokens: number;
-  outputTokens: number;
-  cost: number;
-  duration: number;
-  toolCallCount: number;
-}
-
-/** Callback info passed when a tool is called during an agent turn. */
-export interface AgentToolCallInfo {
-  turnIndex: number;
-  toolName: string;
-}
-
-/** Callback info passed when a tool call returns during an agent turn. */
-export interface AgentToolReturnInfo {
-  turnIndex: number;
-  toolName: string;
-  duration: number;
-  success: boolean;
-}
-
 /**
  * Context object passed to a workflow interceptor's `childWorkflow` hook when
  * a workflow spawns a child via `ctx.pipe`, `ctx.map`, or `ctx.reduce`.
@@ -190,39 +159,6 @@ export interface ChildWorkflowInterception {
   headers: Map<string, string>;
   /** Headers from the parent workflow, used for span link creation. */
   parentHeaders: Map<string, string>;
-}
-
-/**
- * Context object passed to a workflow interceptor's `agent` hook when a
- * workflow calls `ctx.agent()`. Includes the model, prompt, headers, and
- * optional turn-lifecycle callbacks for telemetry.
- *
- * @example
- * ```ts
- * import { type AgentInterception, type WorkflowInterceptor } from 'weft';
- *
- * const monitor: WorkflowInterceptor = {
- *   *agent(ctx: AgentInterception, next) {
- *     console.log('agent call model:', ctx.model);
- *     return yield* next(ctx);
- *   },
- * };
- * void monitor;
- * ```
- */
-export interface AgentInterception {
-  workflowId: string;
-  model: string;
-  prompt: string;
-  headers: Map<string, string>;
-  /** Optional callback invoked when each agent turn starts. */
-  onTurnStarted?: (info: AgentTurnInfo) => void;
-  /** Optional callback invoked when each agent turn completes. */
-  onTurnCompleted?: (info: AgentTurnResultInfo) => void;
-  /** Optional callback invoked when a tool is called. */
-  onToolCalled?: (info: AgentToolCallInfo) => void;
-  /** Optional callback invoked when a tool call returns. */
-  onToolReturned?: (info: AgentToolReturnInfo) => void;
 }
 
 /**

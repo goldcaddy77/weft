@@ -1,6 +1,6 @@
 {
   "name": "weft",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "A Bun-native durable execution engine with pluggable key-value storage.",
   "keywords": [
     "bun",
@@ -174,7 +174,6 @@
     "typecheck:package-root": "bun run build && tsc --noEmit -p tsconfig.package-test-d.json",
     "typecheck:tests": "tsc --noEmit -p tsconfig.test-d.json && bun run typecheck:package-root",
     "validate": "bun run lint && bun run typecheck && bun run typecheck:tests && bun run verify:documentation && bun run verify:no-test-sleeps && bun run verify:public-api-jsdoc && bun run test",
-    "verify:agent-bureau": "bun run scripts/verify-agent-bureau.ts",
     "verify:documentation": "bun run scripts/verify-documentation.ts",
     "verify:exports": "bun run scripts/verify-tree-shaking.ts",
     "verify:jsdoc": "bun run scripts/audit-jsdoc-manifest.ts",

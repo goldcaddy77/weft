@@ -5,6 +5,7 @@
  */
 
 import { definitionSchemaToJsonSchema } from '../core/types/definition-schema-to-json.ts';
+import { VERSION } from '../version.ts';
 import {
   buildOperationEntry,
   buildSseChannel,
@@ -119,7 +120,7 @@ function buildAsyncApiInfo(options: AsyncApiOptions): Record<string, unknown> {
   return applyDiscoveryInfo(
     {
       title: options.title ?? 'Weft Workflow Engine',
-      version: options.version ?? '0.0.1',
+      version: options.version ?? VERSION,
     },
     options.discoveryInfo,
   );

@@ -1,13 +1,8 @@
-import type {
-  DebateOptions,
-  HandoffOptions,
-  SuperviseOptions,
-} from '../../ai/coordination/index.ts';
-import type { HumanReviewOptions } from '../../ai/human-review.ts';
 import type { AtomicStateScope } from '../atomic-state.ts';
+import type { HumanReviewOptions } from '../review/index.ts';
 import type { ChildWorkflowOptions } from '../types.ts';
 import type { Context } from './index.ts';
-import type { AgentContextOptions, OffloadReference, StreamSink } from './types.ts';
+import type { OffloadReference, StreamSink } from './types.ts';
 
 /**
  * Discriminated union of all operation descriptors that a workflow generator
@@ -155,13 +150,6 @@ export type ContextOperationRequest =
       callerStack?: string;
     }
   | {
-      type: 'agent';
-      operationId: string;
-      stepIndex: number;
-      options: AgentContextOptions;
-      callerStack?: string;
-    }
-  | {
       type: 'speculate';
       operationId: string;
       execute: (
@@ -182,23 +170,5 @@ export type ContextOperationRequest =
       type: 'wait-review';
       operationId: string;
       reviewOptions: HumanReviewOptions;
-      callerStack?: string;
-    }
-  | {
-      type: 'handoff';
-      operationId: string;
-      options: HandoffOptions;
-      callerStack?: string;
-    }
-  | {
-      type: 'debate';
-      operationId: string;
-      options: DebateOptions;
-      callerStack?: string;
-    }
-  | {
-      type: 'supervise';
-      operationId: string;
-      options: SuperviseOptions;
       callerStack?: string;
     };

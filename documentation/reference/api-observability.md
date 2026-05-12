@@ -32,13 +32,13 @@ function createObservabilityInterceptors(options?: ObservabilityOptions): {
 
 ### `ObservabilityOptions`
 
-| Field            | Type                       | Default     | Description                                                                                                                                                    |
-| ---------------- | -------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `recordPayloads` | `boolean`                  | `false`     | Record activity/workflow inputs as span attributes                                                                                                             |
-| `maxPayloadSize` | `number`                   | `1024`      | Maximum serialized payload size in bytes before truncation                                                                                                     |
-| `eventTarget`    | `EventTarget`              | `undefined` | Engine (or other `EventTarget`) that dispatches workflow lifecycle and agent events. Required for automatic root-span cleanup and for per-turn/per-tool spans. |
-| `onSpanStart`    | `(span: SpanInfo) => void` | `undefined` | Callback when a span starts                                                                                                                                    |
-| `onSpanEnd`      | `(span: SpanInfo) => void` | `undefined` | Callback when a span ends                                                                                                                                      |
+| Field            | Type                       | Default     | Description                                                                                                          |
+| ---------------- | -------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------- |
+| `recordPayloads` | `boolean`                  | `false`     | Record activity/workflow inputs as span attributes                                                                   |
+| `maxPayloadSize` | `number`                   | `1024`      | Maximum serialized payload size in bytes before truncation                                                           |
+| `eventTarget`    | `EventTarget`              | `undefined` | Engine (or other `EventTarget`) that dispatches workflow lifecycle events. Required for automatic root-span cleanup. |
+| `onSpanStart`    | `(span: SpanInfo) => void` | `undefined` | Callback when a span starts                                                                                          |
+| `onSpanEnd`      | `(span: SpanInfo) => void` | `undefined` | Callback when a span ends                                                                                            |
 
 ### `SpanInfo`
 

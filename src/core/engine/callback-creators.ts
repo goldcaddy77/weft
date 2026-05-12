@@ -1,9 +1,8 @@
 /* oxlint-disable max-lines -- ID:core-engine-callback-creators-file-length */
-import { isAgentDefinition } from '../../ai/declaration.ts';
-import type { HumanReviewOptions } from '../../ai/human-review.ts';
 import { KEYS } from '../../storage/interface.ts';
 import type { ContextOperationRequest } from '../context.ts';
 import { UpdateCompletedEvent } from '../events.ts';
+import type { HumanReviewOptions } from '../review/index.ts';
 import type { ScheduleState, TimerEntry } from '../types.ts';
 import { validateAttributeValueSizes } from './attributes-tags.ts';
 import {
@@ -20,9 +19,6 @@ import {
 } from './checkpoint-io.ts';
 import {
   processChildWorkflowOperation,
-  processDebateOperation,
-  processHandoffOperation,
-  processSuperviseOperation,
   type ChildWorkflowOperationCallbacks,
 } from './child-workflow.ts';
 import { evaluateConstraints, type ConstraintCallbacks } from './constraints.ts';
@@ -62,15 +58,6 @@ import {
   type ActivityOperationCallbacks,
 } from './operations-activity.ts';
 import {
-  parkInlineWorkflowForAgentSuspension,
-  waitForSignalPayload as waitForSignalPayloadFromAgentOperations,
-} from './operations-agent-suspension.ts';
-import {
-  processAgentContextOperation,
-  processSpeculateOperation,
-  type AgentOperationCallbacks,
-} from './operations-agent.ts';
-import {
   processParallelOperation,
   processRaceOperation,
   processRunAllOperation,
@@ -86,7 +73,6 @@ import {
 } from './operations-data.ts';
 import {
   completeOperation,
-  failOperation,
   processOperation,
   runOperationWithResult,
   runOperationWithoutResult,
@@ -94,6 +80,7 @@ import {
   type OperationRouterCallbacks,
   type OperationWithCallerStack,
 } from './operations-router.ts';
+import { processSpeculateOperation } from './operations-speculate.ts';
 import {
   processStateCommitOperation,
   processStateReadOperation,
@@ -129,7 +116,7 @@ import {
   type RefreshedScheduleState,
   type ScheduleCallbacks,
 } from './schedules.ts';
-import { consumeSignal, hasBufferedSignal } from './signals.ts';
+import { hasBufferedSignal } from './signals.ts';
 import type { SpeculativeExecutionState } from './speculative-execution-state.ts';
 import {
   commitWorkflowStateOperations,
@@ -289,7 +276,6 @@ export function createRegistrationCallbacks<TWorkflows extends object, TActiviti
 ): RegistrationCallbacks {
   return {
     ensureRetentionSweepInterval: () => ensureRetentionSweepIntervalForEngine(engine),
-    isAgentDefinition,
   };
 }
 export function createBroadcastCallbacks<TWorkflows extends object, TActivities extends object>(
@@ -585,20 +571,13 @@ export function createOperationRouterCallbacks<
         operation,
         createCoordinationOperationCallbacks(engine),
       ),
-    processAgentContextOperation: (workflowId, operation) =>
-      processAgentContextOperation(
-        getInternals(engine),
-        workflowId,
-        operation,
-        createAgentOperationCallbacks(engine),
-      ),
     processSpeculateOperation: (workflowId, operation) =>
-      processSpeculateOperation(
-        getInternals(engine),
-        workflowId,
-        operation,
-        createAgentOperationCallbacks(engine),
-      ),
+      processSpeculateOperation(getInternals(engine), workflowId, operation, {
+        runOperationWithResult: (id, subOperation, execute) =>
+          runOperationWithResultForEngine(engine, id, subOperation, execute),
+        executeSubOperation: (id, subOperation, signal, speculativeState) =>
+          executeSubOperationForEngine(engine, id, subOperation, signal, speculativeState),
+      }),
     processStreamOperation: (workflowId, operation) =>
       processStreamOperation(
         getInternals(engine),
@@ -613,27 +592,6 @@ export function createOperationRouterCallbacks<
         processReviewOperation: (id, options) =>
           processReviewOperationForEngine(engine, id, options),
       }),
-    processHandoffOperation: (workflowId, operation) =>
-      processHandoffOperation(
-        getInternals(engine),
-        workflowId,
-        operation,
-        createChildWorkflowOperationCallbacks(engine),
-      ),
-    processDebateOperation: (workflowId, operation) =>
-      processDebateOperation(
-        getInternals(engine),
-        workflowId,
-        operation,
-        createChildWorkflowOperationCallbacks(engine),
-      ),
-    processSuperviseOperation: (workflowId, operation) =>
-      processSuperviseOperation(
-        getInternals(engine),
-        workflowId,
-        operation,
-        createChildWorkflowOperationCallbacks(engine),
-      ),
     finalizePendingTimelineEntry: (workflowId, status, value) =>
       finalizePendingTimelineEntry(getInternals(engine), workflowId, status, value),
     feedOperationResult: (workflowId, result, error) =>
@@ -661,78 +619,6 @@ export function createChildWorkflowOperationCallbacks<
     loadWorkflowState: (workflowId) => loadWorkflowState(getInternals(engine), workflowId),
     getHandle: (workflowId) => engine.getHandle(workflowId),
     getComposedWorkflowInterceptor: () => getComposedWorkflowInterceptor(getInternals(engine)),
-  };
-}
-
-export function createAgentOperationCallbacks<
-  TWorkflows extends object,
-  TActivities extends object,
->(engine: Engine<TWorkflows, TActivities>): AgentOperationCallbacks {
-  return {
-    runOperationWithResult: (workflowId, operation, execute) =>
-      runOperationWithResultForEngine(engine, workflowId, operation, execute),
-    completeOperation: (workflowId, value) => completeOperationForEngine(engine, workflowId, value),
-    failOperation: (workflowId, operation, error) =>
-      failOperation(
-        getInternals(engine),
-        workflowId,
-        operation,
-        error,
-        createOperationRouterCallbacks(engine),
-      ),
-    executeSubOperation: (workflowId, operation, signal, speculativeState) =>
-      executeSubOperationForEngine(engine, workflowId, operation, signal, speculativeState),
-    ensureTerminalCleanupTracked: (workflowId) =>
-      ensureTerminalCleanupTracked(getInternals(engine), workflowId),
-    hasBufferedSignal: (workflowId, signalName) =>
-      hasBufferedSignal(getInternals(engine), workflowId, signalName),
-    consumeSignal: (workflowId, signalName) =>
-      consumeSignal(getInternals(engine), workflowId, signalName),
-    waitForSignalPayload: (workflowId, signalName) =>
-      waitForSignalPayloadFromAgentOperations(getInternals(engine), workflowId, signalName, {
-        consumeSignal: (id, name) => consumeSignal(getInternals(engine), id, name),
-      }),
-    parkInlineWorkflowForAgentSuspension: (workflowId, stepIndex, resumeToken) =>
-      parkInlineWorkflowForAgentSuspension(
-        getInternals(engine),
-        workflowId,
-        stepIndex,
-        resumeToken,
-        {
-          hasBufferedSignal: (id, signalName) =>
-            hasBufferedSignal(getInternals(engine), id, signalName),
-          loadWorkflowState: (id) => loadWorkflowState(getInternals(engine), id),
-          resumeParkedInlineWorkflow: (id) =>
-            resumeParkedInlineWorkflow(
-              getInternals(engine),
-              id,
-              createInlineParkingCallbacks(engine),
-            ),
-          runSerializedWorkflowStateWrite: (id, writeOperation) =>
-            runSerializedWorkflowStateWrite(getInternals(engine), id, writeOperation),
-        },
-      ),
-    runSerializedWorkflowStateWrite: (workflowId, writeOperation) =>
-      runSerializedWorkflowStateWrite(getInternals(engine), workflowId, writeOperation),
-    loadWorkflowState: (workflowId) => loadWorkflowState(getInternals(engine), workflowId),
-    resumeParkedInlineWorkflow: (workflowId) =>
-      resumeParkedInlineWorkflow(
-        getInternals(engine),
-        workflowId,
-        createInlineParkingCallbacks(engine),
-      ),
-    dispatchEvent: (event) => engine.dispatchEvent(event),
-    broadcastSignalReceived: (message) =>
-      broadcastFromInternals(getInternals(engine), message, createBroadcastCallbacks(engine)),
-    forwardEventToHandle: (workflowId, event) =>
-      forwardEventToHandleFromBroadcast(
-        getInternals(engine),
-        workflowId,
-        event,
-        createBroadcastCallbacks(engine),
-      ),
-    getComposedWorkflowInterceptor: () => getComposedWorkflowInterceptor(getInternals(engine)),
-    getEventTarget: () => engine,
   };
 }
 
@@ -917,7 +803,6 @@ export async function executeSubOperationForEngine<
       createActivityOperationCallbacks: () => createActivityOperationCallbacks(engine),
       createChildWorkflowOperationCallbacks: () => createChildWorkflowOperationCallbacks(engine),
       createCoordinationOperationCallbacks: () => createCoordinationOperationCallbacks(engine),
-      createAgentOperationCallbacks: () => createAgentOperationCallbacks(engine),
       createStateOperationCallbacks: () => createStateOperationCallbacks(engine),
     },
     signal,

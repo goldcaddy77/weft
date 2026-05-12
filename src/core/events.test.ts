@@ -9,7 +9,6 @@ import {
   DevelopmentWarningEvent,
   SignalDeliveredEvent,
   SignalReceivedEvent,
-  TokenEvent,
   UpdateCompletedEvent,
   UpdateReceivedEvent,
   WorkflowCancelledEvent,
@@ -199,27 +198,6 @@ describe('ActivityFailedEvent', () => {
   });
 });
 
-describe('TokenEvent', () => {
-  it('sets all properties from constructor arguments', () => {
-    const event = new TokenEvent('wf-9', 'Hello', 'gpt-4');
-    expect(event.workflowId).toBe('wf-9');
-    expect(event.token).toBe('Hello');
-    expect(event.model).toBe('gpt-4');
-  });
-
-  it('has a matching static type and instance type', () => {
-    const event = new TokenEvent('wf-9', '', 'gpt-4');
-    expect(event.type).toBe(TokenEvent.type);
-    expect(event.type).toBe('agent:token');
-  });
-
-  it('is an instance of Event but not CustomEvent', () => {
-    const event = new TokenEvent('wf-9', '', 'gpt-4');
-    expect(event).toBeInstanceOf(Event);
-    expect(event).not.toBeInstanceOf(CustomEvent);
-  });
-});
-
 describe('SignalReceivedEvent', () => {
   it('sets all properties from constructor arguments', () => {
     const event = new SignalReceivedEvent('wf-10', 'approve', { userId: 42 });
@@ -390,7 +368,6 @@ describe('WeftEventMap type coverage', () => {
     expect(ActivityStartedEvent.type).toBe('activity:started');
     expect(ActivityCompletedEvent.type).toBe('activity:completed');
     expect(ActivityFailedEvent.type).toBe('activity:failed');
-    expect(TokenEvent.type).toBe('agent:token');
     expect(SignalReceivedEvent.type).toBe('signal:received');
     expect(SignalDeliveredEvent.type).toBe('signal:delivered');
     expect(AttributesChangedEvent.type).toBe('attributes:changed');

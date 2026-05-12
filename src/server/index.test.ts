@@ -5,7 +5,6 @@ import { decode, encode } from '../core/codec.ts';
 import { Engine } from '../core/engine.ts';
 import {
   ActivityFailedEvent,
-  TokenEvent,
   WorkflowCancelledEvent,
   WorkflowCompletedEvent,
 } from '../core/events.ts';
@@ -17,6 +16,18 @@ import { DeadlineTracker } from './deadline-tracker.ts';
 import * as handlerModule from './handler.ts';
 import type { WeftServer } from './index.ts';
 import { serve, wireEventBroadcasting } from './index.ts';
+
+class TokenEvent extends Event {
+  static readonly type = 'stream:token';
+
+  constructor(
+    public readonly workflowId: string,
+    public readonly token: string,
+    public readonly model: string,
+  ) {
+    super(TokenEvent.type);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers

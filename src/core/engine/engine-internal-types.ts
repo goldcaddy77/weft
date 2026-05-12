@@ -1,4 +1,3 @@
-import type { LLMProvider } from '../../ai/agent/index.ts';
 import type { Storage as WeftStorage } from '../../storage/interface.ts';
 import type { ConstraintDefinition } from '../constraint.ts';
 import type { ExecutionStrategy } from '../execution-strategy.ts';
@@ -25,8 +24,6 @@ export interface RegistrationEntry {
   migrate?: (checkpoint: unknown, fromVersion: string) => unknown;
   searchAttributes?: SearchAttributeSchema;
   retention?: NormalizedRetentionPolicy;
-  isAgent?: boolean;
-  provider?: LLMProvider;
   constraints?: ConstraintDefinition[];
   versionTupleForTenant?: (
     tenant: import('../tenant.ts').TenantContext | undefined,

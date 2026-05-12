@@ -73,8 +73,6 @@ export function getTimelineOperationLabel(operation: ContextOperationRequest): s
       return operation.key;
     case 'load':
       return operation.reference.key;
-    case 'agent':
-      return operation.options.model;
     default:
       return operation.type;
   }
@@ -136,20 +134,11 @@ export function getTimelineInputSummary(operation: ContextOperationRequest): str
       });
     case 'run-all':
       return summarizeTimelineValue({ branches: Object.keys(operation.branches) });
-    case 'agent':
-      return summarizeTimelineValue({
-        model: operation.options.model,
-        promptLength: operation.options.prompt.length,
-      });
     case 'wait-review':
       return summarizeTimelineValue({
         reviewers: operation.reviewOptions.reviewers,
         artifactType: getTimelineReviewArtifactType(operation.reviewOptions.artifact),
       });
-    case 'handoff':
-    case 'debate':
-    case 'supervise':
-      return summarizeTimelineValue(operation.options);
     default:
       return getTimelineBasicInputSummary(operation);
   }

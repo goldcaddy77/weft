@@ -12,18 +12,7 @@
  * @module weft
  */
 
-/**
- * Current Weft package version. Useful for diagnostics, telemetry, and
- * verifying which build is running.
- *
- * @example
- * ```ts
- * import { VERSION } from 'weft';
- *
- * console.log(`Running Weft ${VERSION}`);
- * ```
- */
-export const VERSION = '0.0.1';
+export { VERSION } from './version.ts';
 // Core
 export {
   Engine,
@@ -84,7 +73,6 @@ export type {
   RetentionOverview,
   RetentionPolicy,
   RetryPolicy,
-  ReviewDecision,
   ScheduleAccessOptions,
   ScheduleDefinition,
   ScheduleFilter,
@@ -167,7 +155,6 @@ export {
   SignalDeliveredEvent,
   SignalReceivedEvent,
   StorageSizeReportedEvent,
-  TokenEvent,
   UpdateCompletedEvent,
   UpdateReceivedEvent,
   WorkflowCancelledEvent,
@@ -269,7 +256,6 @@ export type {
   ActivityExecutionInterception,
   ActivityInterception,
   ActivityInterceptor,
-  AgentInterception,
   ChildWorkflowInterception,
   ComposedActivityInterceptor,
   ComposedWorkflowInterceptor,
@@ -343,70 +329,28 @@ export type {
   MTLSConfig,
 } from './server/authentication';
 
-export { AgentLoopSuspendedError, executeAgentLoop } from './ai/agent/index.ts';
+export { ReviewCompletedEvent, ReviewRequestedEvent } from './core/review/events.ts';
+export type { WeftReviewEventMap } from './core/review/events.ts';
+export { ReviewCoordinator, ReviewTimeoutError } from './core/review/index.ts';
 export type {
-  AgentOptions,
-  AgentResult,
-  AgentTool,
-  PendingProviderResumeState,
-  PersistedAgentLoopState,
-  TurnUsageEntry,
-  VerificationRecorder,
-} from './ai/agent/index.ts';
-
-export type {
-  AgentBureauConversationHistory,
-  ChatOptions,
-  ChatResponse,
-  ChatResumeContext,
-  ChatResumeHint,
-  ConversationHistory,
-  ConversationHistoryMessage,
-  JSONPrimitive,
-  JSONValue,
-  LLMProvider,
-  Message,
-  MessageRole,
-  NormalizedChatResponse,
-  TokenUsage,
-  ToolActionShape,
-  ToolCall,
-  ToolCallInput,
-  ToolDefinition,
-  ToolDescriptor,
-  ToolErrorCategory,
-  ToolErrorShape,
-  ToolResult,
-  ToolResultInput,
-} from './ai/agent/index.ts';
-
-export { createChildHeaders, debate, handoff, supervise } from './ai/coordination/index.ts';
-
-export { agent, isAgentDefinition } from './ai/declaration';
-export type { AgentDefinition, AgentToolDefinition, ToolIdentityResult } from './ai/declaration';
-
-export { ReviewCoordinator, ReviewTimeoutError } from './ai/human-review';
-export type { ReviewCoordinatorOptions } from './ai/human-review';
+  EscalationAction,
+  EscalationStep,
+  HumanReviewOptions,
+  HumanReviewResult,
+  ReviewCoordinatorOptions,
+  ReviewDecision,
+  ReviewOptions,
+  ReviewRequest,
+} from './core/review/index.ts';
 
 export {
-  ToolCallReplayConflictError,
-  ToolEffectLog,
+  EffectLog,
+  EffectReplayConflictError,
   computeSemanticHash,
-} from './ai/tool-effect-log';
-export type { EffectRecord } from './ai/tool-effect-log';
-
-export {
-  AgentCheckpointResumedEvent,
-  AgentCheckpointSizeWarningEvent,
-  AgentToolCalledEvent,
-  AgentToolReturnedEvent,
-  AgentTurnCompletedEvent,
-  AgentTurnStartedEvent,
-  HumanReviewCompletedEvent,
-  HumanReviewRequestedEvent,
-} from './ai/events/index.ts';
-
-export type { AgentRegistrationOptions } from './core/engine';
+} from './core/effect-log/index.ts';
+export type { EffectLogLike, EffectRecord } from './core/effect-log/index.ts';
+export { isJSONValue, normalizeJSONValue } from './core/json.ts';
+export type { JSONPrimitive, JSONValue } from './core/json.ts';
 
 export { createObservabilityInterceptors } from './observability/index';
 export type { InterceptionContext, ObservabilityOptions } from './observability/index';

@@ -240,12 +240,11 @@ export async function cleanupWorkflowStorage(
   const encodedWorkflowId = encodeStorageKeyComponent(workflowId);
 
   // Always sweep internal state. Signals are workflow-scoped scratch space,
-  // and the tool-effect log holds per-tool-call dedup records that have no
-  // consumers after the workflow terminates - leaving them behind would
-  // leak linearly with tool-call volume across the engine's lifetime.
+  // and the effect log holds per-operation dedup records that have no consumers
+  // after the workflow terminates - leaving them behind would leak linearly with
+  // effect volume across the engine's lifetime.
   const prefixes: string[] = [
     `sig:${encodedWorkflowId}:`,
-    `agent-execution:${encodedWorkflowId}:`,
     `state:execution:${encodedWorkflowId}:`,
     `tool-effect:${encodedWorkflowId}:`,
   ];
@@ -309,7 +308,6 @@ export function cleanupTerminalWorkflowMemory(
   internals.workflowsNeedingTerminalCleanup.delete(workflowId);
   internals.checkpoints.delete(workflowId);
   internals.heartbeatDetails.delete(workflowId);
-  internals.agentWorkflowIds.delete(workflowId);
   internals.eventLogHeads.delete(workflowId);
   internals.pendingTimelineEntries.delete(workflowId);
   internals.parkedInlineWorkflows.delete(workflowId);

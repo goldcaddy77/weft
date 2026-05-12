@@ -38,13 +38,12 @@ declare module '../index.ts' {
 }
 
 type RequiredWorkflowContextKeys =
-  | 'agent'
   | 'all'
   | 'archive'
   | 'expose'
   | 'getAttribute'
   | 'getAttributes'
-  | 'humanReview'
+  | 'review'
   | 'load'
   | 'map'
   | 'memo'

@@ -367,7 +367,6 @@ export async function fork(
       internals.checkpoints.delete(workflowId);
       internals.workflowVersionTuples.delete(workflowId);
       internals.eventLogHeads.delete(workflowId);
-      internals.agentWorkflowIds.delete(workflowId);
       internals.workflowHeaders.delete(workflowId);
     }
   }
@@ -474,12 +473,6 @@ export async function startWorkflow(
     // Cache the workflow version tuple for forwarding to event-log entries.
     internals.workflowVersionTuples.set(workflowId, versionTuple);
 
-    // Agent optimization: register before the initial storage batch so the
-    // first checkpoint write uses agent-specific compression (brotli).
-    if (registration.isAgent) {
-      internals.agentWorkflowIds.add(workflowId);
-    }
-
     const startOperations = buildStartBatchOperations(
       internals,
       workflowId,
@@ -533,9 +526,6 @@ export async function startWorkflow(
       internals.checkpoints.delete(workflowId);
       internals.workflowHeaders.delete(workflowId);
       internals.workflowVersionTuples.delete(workflowId);
-      if (registration.isAgent) {
-        internals.agentWorkflowIds.delete(workflowId);
-      }
     }
   }
 }
@@ -592,10 +582,9 @@ export function beginWorkflowExecution(
   executionDeadline: number | undefined,
   tenant: TenantContext | undefined,
   executionStateOwnerId: string,
-  registration: RegistrationEntry,
+  _registration: RegistrationEntry,
   callbacks: LifecycleCallbacks,
 ): void {
-  warmupWorkflowRegistration(internals, registration, callbacks);
   const nestingDepth = internals.pendingNestingDepth ?? 0;
   internals.pendingNestingDepth = undefined;
 
@@ -626,23 +615,6 @@ export function beginWorkflowExecution(
     tenant,
     callbacks,
   );
-}
-
-export function warmupWorkflowRegistration(
-  _internals: EngineInternals,
-  registration: RegistrationEntry,
-  callbacks: Pick<LifecycleCallbacks, 'swallowPromiseRejection'>,
-): void {
-  if (!registration.isAgent) {
-    return;
-  }
-
-  try {
-    const warmupResult = registration.provider?.warmup?.();
-    void callbacks.swallowPromiseRejection(warmupResult);
-  } catch {
-    // Warmup is best-effort; ignore synchronous failures.
-  }
 }
 
 /** Build a {@link WorkflowVersionTuple} from a {@link RegistrationEntry}. */
@@ -698,25 +670,6 @@ export function workflowStateWithVersionTuple(
   };
 }
 
-/**
- * Legacy agent workflows stored only the workflow version (`"1"`) and did
- * not persist agent or tool version metadata. Resume them once, then
- * backfill the current tuple so future resumes become strict.
- */
-export function isLegacyAgentVersionState(
-  _internals: EngineInternals,
-  state: WorkflowState,
-  registration: RegistrationEntry,
-  _callbacks: LifecycleCallbacks,
-): boolean {
-  return (
-    registration.isAgent === true &&
-    state.agentVersion === undefined &&
-    state.toolVersions === undefined
-  );
-}
-
-// oxlint-disable-next-line complexity -- ID:core-engine-derive-prepared-execution-state-complexity
 export function derivePreparedExecutionState(
   internals: EngineInternals,
   workflowId: string,
@@ -741,18 +694,10 @@ export function derivePreparedExecutionState(
     state.tenant,
     callbacks,
   );
-  const legacyAgentVersionState = isLegacyAgentVersionState(
-    internals,
-    state,
-    registration,
-    callbacks,
+  const versionDiff = diffWorkflowVersionTuples(
+    workflowVersionTupleFromState(internals, state, callbacks),
+    registeredVersionTuple,
   );
-  const versionDiff = legacyAgentVersionState
-    ? {}
-    : diffWorkflowVersionTuples(
-        workflowVersionTupleFromState(internals, state, callbacks),
-        registeredVersionTuple,
-      );
   const hasVersionTupleDrift =
     versionDiff.workflowVersion !== undefined ||
     versionDiff.agentVersion !== undefined ||
@@ -766,18 +711,7 @@ export function derivePreparedExecutionState(
   let preparedCheckpoint = checkpoint;
   let shouldPersistPreparedState = false;
 
-  if (legacyAgentVersionState) {
-    preparedState = workflowStateWithVersionTuple(
-      internals,
-      state,
-      registeredVersionTuple,
-      callbacks,
-    );
-    shouldPersistPreparedState = true;
-  } else if (
-    (compatibility === 'needs-migration' || hasVersionTupleDrift) &&
-    registration.migrate
-  ) {
+  if ((compatibility === 'needs-migration' || hasVersionTupleDrift) && registration.migrate) {
     const migrated = migrateCheckpoint(
       checkpoint,
       checkpoint.version,
@@ -1360,12 +1294,7 @@ export function launchWorkflowFromCheckpoint(
     createWorkflowVersionTuple(internals, registration, state.tenant, callbacks),
   );
 
-  if (registration.isAgent) {
-    internals.agentWorkflowIds.add(workflowId);
-  }
-
   const handle = createWorkflowHandle(internals, workflowId, callbacks);
-  warmupWorkflowRegistration(internals, registration, callbacks);
   callbacks.dispatchEvent(new WorkflowStartedEvent(workflowId, state.type, state.input));
 
   if (internals.inlineStrategy) {
@@ -1464,9 +1393,6 @@ export async function resumeWorkflowFromStorage(
     internals.workflowVersionTuples.set(workflowId, registeredVersionTuple);
     internals.eventLogHeads.set(workflowId, restoredHead);
     setWorkflowStartHeaders(internals, workflowId, workflowStartHeaders, callbacks);
-    if (registration.isAgent) {
-      internals.agentWorkflowIds.add(workflowId);
-    }
     internals.parkedInlineWorkflows.delete(workflowId);
 
     if (internals.inlineStrategy) {

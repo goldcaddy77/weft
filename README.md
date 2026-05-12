@@ -19,7 +19,6 @@ Weft runs async workflows to completion across crashes, retries, and arbitrary s
 It's built for two execution shapes that traditional workflow engines treat as second-class:
 
 - **Long-running business processes**—checkouts, onboarding flows, fulfillment pipelines—where a process crash mid-flight must not lose money or leave the system in a partial state.
-- **AI agent loops**—durable ReAct-style LLM execution where each tool call is a checkpoint boundary. Bring any provider; Weft drives the loop and survives crashes mid-conversation.
 
 ## Design Constraints
 
@@ -29,7 +28,7 @@ Weft is a ground-up rethink: what would durable execution look like if you desig
 - **Bun-native on the server.** `Bun.serve()`, `Bun.SQL`, `Bun.build()`, `bun:test`. The full Bun platform, not just "Node.js but faster."
 - **Single binary, every OS.** `bun build --compile` produces standalone executables for darwin-arm64, darwin-x64, linux-x64, linux-arm64, and windows-x64. One CI pipeline, six binaries, zero runtime dependencies.
 - **Runs in the browser.** The core engine (minus the server shell) runs in Web Workers with a Service Worker as its persistence backbone. Same workflow code, different environment.
-- **Agent-native.** Dynamic execution graphs, durable agent loops, human-in-the-loop oversight, and multi-agent coordination are built into the core—each tool call a checkpoint boundary, each conversation durable across crashes.
+- **Human-in-the-loop.** Workflows can pause at any checkpoint and surface a decision to a human reviewer via `ctx.review()`. The workflow resumes with the reviewer's decision—approved or rejected—without any special infrastructure.
 
 > [!IMPORTANT]
 > Workflows run in TypeScript on the engine; activities can run in any language via the `RemoteWorker` protocol. This split is intentional — the checkpoint model requires single-process generator state, so workflow code is TypeScript-only by design. See [ADR 0001](documentation/contributing/architecture-decisions/0001-workflows-typescript-only.md) for the design rationale.
@@ -98,7 +97,6 @@ A few consequences fall out of this:
 
 - **Checkpoint size is bounded by live state, not history length.** Long-running workflows don't accumulate ever-growing event logs. The snapshot reflects whatever's currently in scope at the yield boundary, so a workflow that processes 100 large API responses but only retains a summary checkpoints just that summary.
 - **No `continueAsNew` ceremony.** Workflows can run for years without special handling.
-- **Native agent loops.** Each tool call inside an agent loop is its own checkpoint boundary, so dynamic LLM-driven control flow is just generator code.
 
 ## Core Concepts
 
@@ -113,7 +111,6 @@ A few consequences fall out of this:
 | **Search attribute** | Indexed metadata on a workflow (customer ID, region, status) set via `ctx.setAttribute()` and queryable through the list API. |
 | **Worker**           | A process or thread that executes activities. Inline by default; can run remote over WebSocket.                               |
 | **Interceptor**      | A composable hook that wraps context operations for tracing, validation, encryption, or any cross-cutting concern.            |
-| **Agent**            | A durable LLM execution loop registered via `agent()` or invoked inline with `ctx.agent()`.                                   |
 | **Shared state**     | A compare-and-swap (CAS) durable mutable primitive for safe concurrent reads and writes across workflows.                     |
 
 ## Features
@@ -181,62 +178,52 @@ const orders = await engine.list({
 });
 ```
 
-### AI Agents
+### Human-in-the-Loop Review
 
-Weft adds durability to your agent loop. Bring your provider; bring your tools. Weft drives the loop, checkpoints at every tool-call boundary, and survives crashes mid-conversation.
+Weft can pause a workflow at any checkpoint and surface a decision payload to a human reviewer. The workflow resumes with the reviewer's decision—no polling, no special infrastructure.
 
 ```typescript
-import { Engine, agent, type AgentTool, type LLMProvider } from 'weft';
-import { BunSQLiteStorage } from 'weft/storage/sqlite/bun';
-import Anthropic from '@anthropic-ai/sdk';
+import { Engine, activity, workflow, type WorkflowContext } from 'weft';
+import { SQLiteStorage } from 'weft/storage/sqlite';
 
-const client = new Anthropic();
-
-// Satisfy the structural LLMProvider interface with any SDK.
-const provider: LLMProvider = {
-  name: 'anthropic',
-  async chat(messages, options) {
-    const response = await client.messages.create({
-      model: options.model,
-      max_tokens: options.maxTokens ?? 8096,
-      system: options.systemPrompt,
-      messages: messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-    });
-    const firstBlock = response.content[0];
-    return {
-      content: firstBlock?.type === 'text' ? firstBlock.text : '',
-      toolCalls: [],
-      usage: {
-        inputTokens: response.usage.input_tokens,
-        outputTokens: response.usage.output_tokens,
-        totalTokens: response.usage.input_tokens + response.usage.output_tokens,
-      },
-      model: response.model,
-      stopReason: response.stop_reason === 'end_turn' ? 'end_turn' : 'tool_use',
-    };
-  },
+type PaymentRequest = {
+  orderId: string;
+  amount: number;
+  currency: string;
+  customerId: string;
 };
 
-declare const webSearch: AgentTool;
-declare const factCheck: AgentTool;
-declare const dataQuery: AgentTool;
-
-const researcher = agent({
-  name: 'research',
-  model: 'claude-sonnet-4-20250514',
-  systemPrompt: 'You are a research analyst.',
-  tools: [webSearch, factCheck, dataQuery],
-  maxTurns: 25,
+const chargeCard = activity({
+  name: 'chargeCard',
+  execute: async ({ orderId, amount, currency }: PaymentRequest) => {
+    // Call your payment processor here.
+    return { chargeId: `ch_${orderId}`, amount, currency };
+  },
 });
 
-const engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
-engine.register(researcher, { provider });
+const paymentWorkflow = workflow({
+  name: 'payment',
+  handler: async function* (ctx: WorkflowContext, request: PaymentRequest) {
+    // Pause and surface the payment details for human approval.
+    const decision = yield* ctx.review({
+      artifact: request,
+      reviewType: 'payment-approval',
+      reviewers: ['payments-team'],
+      timeout: 72 * 60 * 60 * 1000,
+    });
 
-const handle = await engine.start('research', 'How did the 2026 Treasury auction go?');
-const { messages, turnUsage } = await handle.result();
+    if (decision.decision !== 'approved') {
+      return { status: 'rejected', orderId: request.orderId };
+    }
+
+    // Only runs after a human approves—checkpoint survives crashes.
+    const charge = yield* ctx.run(chargeCard, request);
+    return { status: 'charged', charge };
+  },
+});
 ```
 
-Crash after 7 of 30 tool calls and the agent picks up at tool call 8—no replay, no re-execution of side effects.
+If the process crashes between the approval decision arriving and `chargeCard` executing, the engine resumes from the last checkpoint—the charge runs exactly once. The reviewer's decision is persisted as part of the checkpoint; there is no resubmission.
 
 ### Pluggable Storage
 
@@ -403,8 +390,6 @@ Each `ctx.step()` is a checkpoint boundary. The engine compiles step-style workf
 | Signal                 | `setHandler` + `condition`                    | `yield* ctx.waitForSignal(name)`                                           |
 | Versioning             | `patched()` / `deprecatePatch()`              | Deploy new code (migration optional)                                       |
 | Long-running workflows | `continueAsNew()`                             | None needed (checkpoint size is bounded by live state, not history length) |
-| Agent declaration      | N/A (build from primitives)                   | `agent()` or `ctx.agent()`—bring your own provider and tools               |
-| Durable agent loop     | Activity boundary only                        | Every tool call is a checkpoint boundary                                   |
 | Dev environment        | Docker Compose + Temporal server              | `bun add weft`                                                             |
 | Bundling               | Webpack for workflow sandbox                  | None                                                                       |
 
@@ -427,17 +412,11 @@ Guides:
 - [Interceptors](documentation/guides/interceptors.md), [Observability](documentation/guides/observability.md), [Testing](documentation/guides/testing.md)
 - [Workflow Versioning](documentation/guides/workflow-versioning.md), [Remote Workers](documentation/guides/remote-workers.md), [Service Worker](documentation/guides/service-worker.md), [Resource Management](documentation/guides/resource-management.md)
 
-Agents:
-
-- [Agent Overview](documentation/agents/agent-overview.md), [Declaration](documentation/agents/agent-declaration.md), [Tools](documentation/agents/agent-tools.md)
-- [Human Review](documentation/agents/agent-human-review.md), [Coordination](documentation/agents/agent-coordination.md)
-- [Observability](documentation/agents/agent-observability.md), [What Weft Owns](documentation/agents/what-weft-owns.md)
-
 Architecture and reference:
 
 - [Design Philosophy](documentation/architecture/design-philosophy.md), [Checkpoint vs. Replay](documentation/architecture/checkpoint-versus-replay.md), [Web Standards](documentation/architecture/web-standards.md)
 - [Browser Runtime](documentation/architecture/browser-runtime.md), [Web Workers](documentation/architecture/web-workers.md), [Single Binary](documentation/architecture/single-binary.md)
-- [API Reference](documentation/reference/) (Engine, Context, Storage, Server, Workers, Agent, Testing, Events, Interceptors, Observability, CLI, Configuration, Types)
+- [API Reference](documentation/reference/) (Engine, Context, Storage, Server, Workers, Testing, Events, Interceptors, Observability, CLI, Configuration, Types)
 
 Contributing:
 

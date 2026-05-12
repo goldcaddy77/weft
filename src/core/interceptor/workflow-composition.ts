@@ -1,6 +1,5 @@
 import type {
   ActivityInterception,
-  AgentInterception,
   ChildWorkflowInterception,
   QueryInterception,
   SignalInterception,
@@ -169,37 +168,6 @@ function composeChildWorkflowHook(
 }
 
 /**
- * Compose the `agent` hooks of all workflow interceptors into a single
- * generator chain.
- */
-function composeAgentHook(
-  interceptors: WorkflowInterceptor[],
-): ComposedWorkflowInterceptor['agent'] {
-  return function* composedAgent(
-    interception: AgentInterception,
-    execute: (interception: AgentInterception) => Generator<unknown, unknown, unknown>,
-  ): Generator<unknown, unknown, unknown> {
-    type Next = (ctx: AgentInterception) => Generator<unknown, unknown, unknown>;
-
-    let chain: Next = execute;
-
-    for (let i = interceptors.length - 1; i >= 0; i--) {
-      const interceptor = interceptors[i]!;
-
-      if (interceptor.agent) {
-        const innerNext = chain;
-        const bound = interceptor.agent.bind(interceptor);
-        chain = function* (ctx: AgentInterception): Generator<unknown, unknown, unknown> {
-          return yield* bound(ctx, innerNext);
-        };
-      }
-    }
-
-    return yield* chain(interception);
-  };
-}
-
-/**
  * Compose the `query` hooks of all workflow interceptors into a single
  * generator chain.
  */
@@ -289,7 +257,6 @@ export function composeWorkflowInterceptors(
     waitForSignal: composeWaitForSignalHook(interceptors),
     workflowStart: composeWorkflowStartHook(interceptors),
     childWorkflow: composeChildWorkflowHook(interceptors),
-    agent: composeAgentHook(interceptors),
     query: composeQueryHook(interceptors),
     signalReceived: composeSignalReceivedHook(interceptors),
   };

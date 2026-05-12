@@ -6,7 +6,6 @@ import { resolveWorkflowTypeTarget, type RegistrationCallbacks } from './registr
 
 const callbacks: RegistrationCallbacks = {
   ensureRetentionSweepInterval: () => undefined,
-  isAgentDefinition: (_value: unknown): _value is never => false,
 };
 
 describe('resolveWorkflowTypeTarget', () => {
@@ -16,6 +15,23 @@ describe('resolveWorkflowTypeTarget', () => {
     expect(resolveWorkflowTypeTarget(getInternals(engine), 'registered-workflow', callbacks)).toBe(
       'registered-workflow',
     );
+
+    engine[Symbol.dispose]();
+  });
+
+  it('preserves migration functions on registration entries', () => {
+    const engine = new Engine();
+    const migrate = (checkpoint: unknown) => checkpoint;
+
+    engine.register('migrated-workflow', {
+      handler: async function* () {
+        return 'done';
+      },
+      migrate,
+      version: '2',
+    });
+
+    expect(getInternals(engine).registrations.get('migrated-workflow')?.migrate).toBe(migrate);
 
     engine[Symbol.dispose]();
   });

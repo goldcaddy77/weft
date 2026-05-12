@@ -13,7 +13,7 @@ import type { WorkflowContext } from './workflow-context.ts';
  * {@link Engine.register}. The engine calls it with a {@link WorkflowContext}
  * and the start `input`, then drives the generator by feeding operation
  * results back via `next`. Use `yield*` (delegated yield) when calling
- * context methods (`ctx.run(...)`, `ctx.sleep(...)`, `ctx.agent(...)`);
+ * context methods (`ctx.run(...)`, `ctx.sleep(...)`, `ctx.review(...)`);
  * a bare `yield` will not produce the operation results expected by the
  * engine.
  *

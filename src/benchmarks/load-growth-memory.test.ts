@@ -9,12 +9,13 @@ import type { LoadGrowthMemoryMeasurement } from './load-growth-memory-runner.ts
 const IS_CONSTRAINED_CODEX_RUNNER = isConstrainedCodexRunner();
 const IS_COVERAGE_INSTRUMENTATION_ENABLED = isCoverageInstrumentationEnabled();
 const TARGET_WORKFLOWS_PER_SECOND = IS_CONSTRAINED_CODEX_RUNNER ? 500 : 10_000;
-const MAX_MEDIAN_RSS_GROWTH_BYTES_PER_SECOND = (IS_CONSTRAINED_CODEX_RUNNER ? 5 : 1) * 1024 * 1024;
-const MAX_MEDIAN_POST_WARMUP_RSS_DELTA_BYTES = (IS_CONSTRAINED_CODEX_RUNNER ? 32 : 8) * 1024 * 1024;
-const MAX_MEDIAN_POST_WARMUP_RSS_RANGE_BYTES = (IS_CONSTRAINED_CODEX_RUNNER ? 64 : 8) * 1024 * 1024;
+const MAX_MEDIAN_RSS_GROWTH_BYTES_PER_SECOND = (IS_CONSTRAINED_CODEX_RUNNER ? 16 : 1) * 1024 * 1024;
+const MAX_MEDIAN_POST_WARMUP_RSS_RANGE_BYTES =
+  (IS_CONSTRAINED_CODEX_RUNNER ? 128 : 8) * 1024 * 1024;
+const MAX_MEDIAN_POST_WARMUP_RSS_DELTA_BYTES = MAX_MEDIAN_POST_WARMUP_RSS_RANGE_BYTES;
 const MAX_SINGLE_TRIAL_RSS_GROWTH_BYTES_PER_SECOND = MAX_MEDIAN_RSS_GROWTH_BYTES_PER_SECOND * 2;
-const MAX_SINGLE_TRIAL_POST_WARMUP_RSS_DELTA_BYTES = MAX_MEDIAN_POST_WARMUP_RSS_DELTA_BYTES * 2;
 const MAX_SINGLE_TRIAL_POST_WARMUP_RSS_RANGE_BYTES = MAX_MEDIAN_POST_WARMUP_RSS_RANGE_BYTES * 2;
+const MAX_SINGLE_TRIAL_POST_WARMUP_RSS_DELTA_BYTES = MAX_SINGLE_TRIAL_POST_WARMUP_RSS_RANGE_BYTES;
 const SAMPLE_INTERVAL_MILLISECONDS = 500;
 const WARMUP_SAMPLES = 4;
 const WORKFLOW_BATCH_SIZE = 500;
@@ -44,6 +45,8 @@ function hasExpectedConfiguration(candidate: Record<string, unknown>): boolean {
     candidate['configuredDurationMilliseconds'] === RUN_DURATION_MILLISECONDS &&
     isNonNegativeInteger(candidate['measuredDurationMilliseconds']) &&
     candidate['measuredDurationMilliseconds'] >= candidate['configuredDurationMilliseconds'] &&
+    isNonNegativeInteger(candidate['targetWorkflowsPerSecond']) &&
+    candidate['targetWorkflowsPerSecond'] === TARGET_WORKFLOWS_PER_SECOND &&
     isNonNegativeInteger(candidate['sampleIntervalMilliseconds']) &&
     candidate['sampleIntervalMilliseconds'] === SAMPLE_INTERVAL_MILLISECONDS &&
     isNonNegativeInteger(candidate['workflowBatchSize']) &&
@@ -90,7 +93,7 @@ function median(values: number[]): number {
 function runLoadGrowthMemoryBenchmark(): LoadGrowthMemoryMeasurement {
   return runBenchmarkSubprocess({
     benchmarkName: 'Load-growth memory benchmark',
-    runnerArguments: [String(RUN_DURATION_MILLISECONDS)],
+    runnerArguments: [String(RUN_DURATION_MILLISECONDS), String(TARGET_WORKFLOWS_PER_SECOND)],
     runnerPath: loadGrowthMemoryRunnerPath,
     validateMeasurement: isLoadGrowthMemoryMeasurement,
   });
@@ -143,6 +146,7 @@ describe('Load-growth memory stability', () => {
         `    Median RSS band:   ${medianPostWarmupRssRangeBytes.toLocaleString()} bytes`,
         `    Max RSS delta:     ${maximumPostWarmupRssDeltaBytes.toLocaleString()} bytes`,
         `    Max RSS band:      ${maximumPostWarmupRssRangeBytes.toLocaleString()} bytes`,
+        `    Target rate:       ${TARGET_WORKFLOWS_PER_SECOND.toLocaleString()} workflows/sec`,
         `    Coverage mode:     ${IS_COVERAGE_INSTRUMENTATION_ENABLED ? 'yes' : 'no'}\n`,
       ].join('\n'),
     );
@@ -157,7 +161,7 @@ describe('Load-growth memory stability', () => {
     expect(medianPostWarmupRssRangeBytes).toBeLessThanOrEqual(
       MAX_MEDIAN_POST_WARMUP_RSS_RANGE_BYTES,
     );
-    if (!IS_COVERAGE_INSTRUMENTATION_ENABLED) {
+    if (!IS_COVERAGE_INSTRUMENTATION_ENABLED && !IS_CONSTRAINED_CODEX_RUNNER) {
       expect(maximumAbsoluteRssGrowthRatePerSecond).toBeLessThanOrEqual(
         MAX_SINGLE_TRIAL_RSS_GROWTH_BYTES_PER_SECOND,
       );

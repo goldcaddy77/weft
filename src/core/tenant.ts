@@ -15,9 +15,8 @@
  *    without one).
  * 3. The tenant is stored on the workflow state so it survives recovery, and
  *    surfaced to workflow code as `ctx.tenant`.
- * 4. Tenant-scoped agent tools are selected by workflow code at invocation
- *    time. AgentDefinition no longer carries a central tenant tool-scoping
- *    field.
+ * 4. Tenant-specific behavior stays in workflow code and registered
+ *    activities rather than in a central tenant-scoping field.
  *
  * @module core/tenant
  */

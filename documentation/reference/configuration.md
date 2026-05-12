@@ -108,44 +108,6 @@ console.log(`Weft server running at ${server.url}`);
 
 ---
 
-## `AgentOptions`
-
-Passed to `executeAgentLoop()`. See the [Agent API reference](./api-agent.md) for the full table.
-
-```ts partial
-interface AgentOptions {
-  model: string;
-  provider: LLMProvider;
-  systemPrompt?: string;
-  tools?: AgentTool[];
-  maxTurns?: number;
-  signal?: AbortSignal;
-  eventTarget?: EventTarget;
-  workflowId?: string;
-  agentId?: string;
-  toolEffectLog?: ToolEffectLogLike;
-  verificationRecorder?: VerificationRecorder;
-  checkpointSizeWarningThreshold?: number;
-}
-```
-
-| Field                            | Type                   | Default     | Description                                           |
-| -------------------------------- | ---------------------- | ----------- | ----------------------------------------------------- |
-| `model`                          | `string`               | --          | Model identifier passed to the provider. Required.    |
-| `provider`                       | `LLMProvider`          | --          | Structural LLM provider. Required.                    |
-| `systemPrompt`                   | `string`               | `undefined` | System message prepended to the conversation.         |
-| `tools`                          | `AgentTool[]`          | `[]`        | Tools available to the model.                         |
-| `maxTurns`                       | `number`               | `10`        | Maximum LLM turns before returning.                   |
-| `signal`                         | `AbortSignal`          | `undefined` | Cancellation signal.                                  |
-| `eventTarget`                    | `EventTarget`          | `undefined` | Target for dispatching agent events.                  |
-| `workflowId`                     | `string`               | `''`        | Workflow ID for event correlation.                    |
-| `agentId`                        | `string`               | `''`        | Agent ID for event correlation.                       |
-| `toolEffectLog`                  | `ToolEffectLogLike`    | `undefined` | Durable effect log for tool-call deduplication.       |
-| `verificationRecorder`           | `VerificationRecorder` | `undefined` | Internal verification sink for speculative execution. |
-| `checkpointSizeWarningThreshold` | `number`               | `65_536`    | Conversation snapshot warning threshold in bytes.     |
-
----
-
 ## `RetryPolicy`
 
 Controls retry behavior for activity execution.
@@ -225,10 +187,10 @@ interface ObservabilityOptions {
 }
 ```
 
-| Field            | Type                       | Default     | Description                                                                                                         |
-| ---------------- | -------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------- |
-| `recordPayloads` | `boolean`                  | `false`     | Record activity/workflow inputs as span attributes.                                                                 |
-| `maxPayloadSize` | `number`                   | `1024`      | Maximum serialized payload size before truncation.                                                                  |
-| `eventTarget`    | `EventTarget`              | `undefined` | Engine or EventTarget for automatic root-span cleanup on terminal events. Required for per-turn and per-tool spans. |
-| `onSpanStart`    | `(span: SpanInfo) => void` | `undefined` | Span start callback.                                                                                                |
-| `onSpanEnd`      | `(span: SpanInfo) => void` | `undefined` | Span end callback.                                                                                                  |
+| Field            | Type                       | Default     | Description                                                               |
+| ---------------- | -------------------------- | ----------- | ------------------------------------------------------------------------- |
+| `recordPayloads` | `boolean`                  | `false`     | Record activity/workflow inputs as span attributes.                       |
+| `maxPayloadSize` | `number`                   | `1024`      | Maximum serialized payload size before truncation.                        |
+| `eventTarget`    | `EventTarget`              | `undefined` | Engine or EventTarget for automatic root-span cleanup on terminal events. |
+| `onSpanStart`    | `(span: SpanInfo) => void` | `undefined` | Span start callback.                                                      |
+| `onSpanEnd`      | `(span: SpanInfo) => void` | `undefined` | Span end callback.                                                        |

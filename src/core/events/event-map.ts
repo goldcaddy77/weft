@@ -1,10 +1,9 @@
-import type { WeftAgentEventMap } from '../../ai/events/index.ts';
+import type { ReviewCompletedEvent, ReviewRequestedEvent } from '../review/events.ts';
 import type {
   ActivityCompletedEvent,
   ActivityFailedEvent,
   ActivityStartedEvent,
 } from './activity-events.ts';
-import type { TokenEvent } from './agent-events.ts';
 import type { AttributesChangedEvent } from './attribute-events.ts';
 import type { SignalDeliveredEvent, SignalReceivedEvent } from './signal-events.ts';
 import type {
@@ -46,7 +45,7 @@ import type {
  * void listenAll;
  * ```
  */
-export type WeftEventMap = WeftAgentEventMap & {
+export type WeftEventMap = {
   'workflow:started': WorkflowStartedEvent;
   'workflow:completed': WorkflowCompletedEvent;
   'workflow:failed': WorkflowFailedEvent;
@@ -57,9 +56,10 @@ export type WeftEventMap = WeftAgentEventMap & {
   'activity:started': ActivityStartedEvent;
   'activity:completed': ActivityCompletedEvent;
   'activity:failed': ActivityFailedEvent;
-  'agent:token': TokenEvent;
   'signal:received': SignalReceivedEvent;
   'signal:delivered': SignalDeliveredEvent;
+  'human-review:requested': ReviewRequestedEvent;
+  'human-review:completed': ReviewCompletedEvent;
   'attributes:changed': AttributesChangedEvent;
   'update:received': UpdateReceivedEvent;
   'update:completed': UpdateCompletedEvent;

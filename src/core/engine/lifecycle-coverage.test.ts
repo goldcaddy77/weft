@@ -4,13 +4,39 @@ import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { serializeCheckpoint } from '../checkpoint/serialization.ts';
 import { encode } from '../codec.ts';
+import type { WorkflowStartInterception } from '../interceptor/interception-contexts.ts';
 import type { Checkpoint, WorkflowState } from '../types.ts';
+import { createLifecycleCallbacks as createEngineLifecycleCallbacks } from './callback-creators.ts';
+import { Engine } from './index.ts';
+import { getInternals } from './internals.ts';
 import {
+  beginWorkflowExecution,
+  buildForkBatchOperations,
+  buildForkSearchAttributes,
+  buildInitialSearchAttributeOperations,
+  buildStartBatchOperations,
+  createForkLineage,
+  createForkedWorkflowState,
   createInitialWorkflowState,
+  createWorkflowVersionTuple,
+  derivePreparedExecutionState,
+  fork,
   launchWorkflowFromCheckpoint,
+  normalizeStartWorkflowTags,
+  prepareResumeState,
   processPendingUpdatesAfterReplay,
+  recoverAll,
   resolveScheduledStartAt,
   resumeWorkflowFromStorage,
+  runWorkflowStartInterceptor,
+  setWorkflowStartHeaders,
+  start,
+  startWorkflow,
+  startWorkflowExecution,
+  throwVersionMismatch,
+  validateSearchAttributes,
+  workflowStateWithVersionTuple,
+  workflowVersionTupleFromState,
 } from './lifecycle.ts';
 
 function createLifecycleCallbacks(overrides: Record<string, unknown> = {}) {
@@ -72,6 +98,218 @@ function createWorkflowState(
 }
 
 describe('engine lifecycle coverage helpers', () => {
+  it('start delegates to startWorkflow with the engine lifecycle callbacks', async () => {
+    const engine = new Engine();
+    engine.register('start-wrapper-workflow', async function* () {
+      return 'started';
+    });
+
+    const handle = await start(
+      getInternals(engine),
+      'start-wrapper-workflow',
+      { value: 1 },
+      undefined,
+      createEngineLifecycleCallbacks(engine),
+    );
+
+    await expect(handle.result()).resolves.toBe('started');
+
+    engine[Symbol.dispose]();
+  });
+
+  it('recoverAll reports missing workflow types unless explicitly acknowledged', async () => {
+    const storage = new MemoryStorage();
+    await storage.put(
+      KEYS.workflow('workflow-missing-type'),
+      encode(createWorkflowState('workflow-missing-type', { type: 'deleted-workflow' })),
+    );
+    await storage.put(
+      KEYS.workflow('workflow-pending-local'),
+      encode(createWorkflowState('workflow-pending-local', { status: 'pending' })),
+    );
+    await storage.put(
+      KEYS.checkpoint('workflow-side-record'),
+      serializeCheckpoint(createCheckpoint('workflow-side-record')),
+    );
+
+    await expect(
+      recoverAll(
+        { registrations: new Map(), storage } as never,
+        createLifecycleCallbacks({
+          getHandle: (workflowId: string) => ({ id: workflowId }),
+        }) as never,
+      ),
+    ).rejects.toThrow('Cannot recover 1 running workflow(s)');
+
+    const skippedEvents: Event[] = [];
+    const handles = await recoverAll(
+      { registrations: new Map(), storage } as never,
+      createLifecycleCallbacks({
+        dispatchEvent: (event: Event) => {
+          skippedEvents.push(event);
+        },
+        getHandle: (workflowId: string) => ({ id: workflowId }),
+      }) as never,
+      { acknowledgeUnknownWorkflowTypes: true },
+    );
+
+    expect(handles.map((handle) => handle.id)).toEqual(['workflow-pending-local']);
+    expect(skippedEvents.map((event) => event.type)).toEqual(['workflow:recovery-skipped']);
+  });
+
+  it('resume returns existing local handles for locally owned workflows', async () => {
+    const storage = new MemoryStorage();
+    const workflowId = 'workflow-local-resume';
+    await storage.put(KEYS.workflow(workflowId), encode(createWorkflowState(workflowId)));
+
+    const handle = { id: workflowId };
+    const resumed = await import('./lifecycle.ts').then(({ resume }) =>
+      resume(
+        { storage } as never,
+        workflowId,
+        createLifecycleCallbacks({
+          getHandle: () => handle,
+          isInlineWorkflowLocallyOwned: () => true,
+        }) as never,
+      ),
+    );
+
+    expect(resumed).toBe(handle as never);
+  });
+
+  it('resume returns existing local handles for checkpoint-owned workflows', async () => {
+    const storage = new MemoryStorage();
+    const workflowId = 'workflow-checkpoint-owned-resume';
+    await storage.put(KEYS.workflow(workflowId), encode(createWorkflowState(workflowId)));
+
+    const handle = { id: workflowId };
+    const resumed = await import('./lifecycle.ts').then(({ resume }) =>
+      resume(
+        { storage } as never,
+        workflowId,
+        createLifecycleCallbacks({
+          getHandle: () => handle,
+          hasLocalCheckpointOwnership: () => true,
+        }) as never,
+      ),
+    );
+
+    expect(resumed).toBe(handle as never);
+  });
+
+  it('fork rejects missing source workflows, missing registrations, and missing checkpoints', async () => {
+    const storage = new MemoryStorage();
+
+    await expect(
+      fork(
+        { storage } as never,
+        'workflow-missing-source',
+        undefined,
+        createLifecycleCallbacks() as never,
+      ),
+    ).rejects.toThrow('Workflow "workflow-missing-source" not found');
+
+    await storage.put(
+      KEYS.workflow('workflow-missing-registration'),
+      encode(createWorkflowState('workflow-missing-registration')),
+    );
+    await expect(
+      fork(
+        { registrations: new Map(), storage } as never,
+        'workflow-missing-registration',
+        undefined,
+        createLifecycleCallbacks() as never,
+      ),
+    ).rejects.toThrow(
+      'No workflow registered with name "workflow" (needed to fork "workflow-missing-registration")',
+    );
+
+    const registrations = new Map([
+      [
+        'workflow',
+        {
+          handler: async function* () {
+            return 'done';
+          },
+          version: '1',
+        },
+      ],
+    ]);
+
+    await expect(
+      fork(
+        { registrations, storage } as never,
+        'workflow-missing-registration',
+        { fromStep: 3 },
+        createLifecycleCallbacks() as never,
+      ),
+    ).rejects.toThrow(
+      'Checkpoint not found at step 3 for workflow "workflow-missing-registration"',
+    );
+
+    await expect(
+      fork(
+        { registrations, storage } as never,
+        'workflow-missing-registration',
+        undefined,
+        createLifecycleCallbacks() as never,
+      ),
+    ).rejects.toThrow('Checkpoint not found for workflow "workflow-missing-registration"');
+  });
+
+  it('cleans transient fork state when fork storage writes fail', async () => {
+    const sourceStorage = new MemoryStorage();
+    const sourceWorkflowId = 'workflow-fork-source-failure';
+    await sourceStorage.put(
+      KEYS.workflow(sourceWorkflowId),
+      encode(createWorkflowState(sourceWorkflowId)),
+    );
+    await sourceStorage.put(
+      KEYS.checkpoint(sourceWorkflowId),
+      serializeCheckpoint(createCheckpoint(sourceWorkflowId)),
+    );
+    const storage = {
+      delete: sourceStorage.delete.bind(sourceStorage),
+      get: sourceStorage.get.bind(sourceStorage),
+      put: sourceStorage.put.bind(sourceStorage),
+      scan: sourceStorage.scan.bind(sourceStorage),
+      batch: async () => {
+        throw new Error('fork batch failed');
+      },
+      [Symbol.dispose]() {
+        sourceStorage[Symbol.dispose]();
+      },
+    };
+    const internals = {
+      checkpoints: new Map<string, Checkpoint>(),
+      eventLogHeads: new Map(),
+      options: { getNow: () => 10_000 },
+      registrations: new Map([
+        [
+          'workflow',
+          {
+            handler: async function* () {
+              return 'done';
+            },
+            version: '1',
+          },
+        ],
+      ]),
+      storage,
+      workflowHeaders: new Map<string, Map<string, string>>(),
+      workflowVersionTuples: new Map(),
+    };
+
+    await expect(
+      fork(internals as never, sourceWorkflowId, undefined, createLifecycleCallbacks() as never),
+    ).rejects.toThrow('fork batch failed');
+
+    expect(internals.checkpoints.size).toBe(0);
+    expect(internals.workflowVersionTuples.size).toBe(0);
+    expect(internals.eventLogHeads.size).toBe(0);
+    expect(internals.workflowHeaders.size).toBe(0);
+  });
+
   it('resolveScheduledStartAt rejects startAfter values that overflow the storage timestamp range', () => {
     expect(() =>
       resolveScheduledStartAt(
@@ -103,6 +341,471 @@ describe('engine lifecycle coverage helpers', () => {
     ).toThrow('options.executionTimeout must resolve to a finite, non-negative deadline');
   });
 
+  it('rejects duplicate pending start reservations before writing state', async () => {
+    await expect(
+      startWorkflow(
+        {
+          options: { getNow: () => 1_000 },
+          pendingStarts: new Set(['workflow-duplicate-start']),
+          registrations: new Map([
+            [
+              'workflow',
+              {
+                handler: async function* () {
+                  return 'done';
+                },
+                version: '1',
+              },
+            ],
+          ]),
+        } as never,
+        'workflow',
+        null,
+        { id: 'workflow-duplicate-start' },
+        undefined,
+        undefined,
+        createLifecycleCallbacks() as never,
+      ),
+    ).rejects.toThrow('Workflow with id "workflow-duplicate-start" already exists');
+  });
+
+  it('creates pending workflow state with tuple metadata, tags, and tenant context', () => {
+    const state = createInitialWorkflowState(
+      {
+        options: { getNow: () => 10_000 },
+      } as never,
+      'workflow-pending-state',
+      'workflow',
+      { value: 1 },
+      {
+        agentVersion: 'agent-2',
+        toolVersions: ['search@3'],
+        workflowVersion: '2',
+      },
+      undefined,
+      ['critical'],
+      { id: 'tenant-a' },
+      'owner-workflow',
+      { fireAt: 20_000, id: 'delay', kind: 'delayed-start', workflowId: 'workflow-pending-state' },
+      createLifecycleCallbacks() as never,
+    );
+
+    expect(state).toEqual(
+      expect.objectContaining({
+        agentVersion: 'agent-2',
+        executionStateOwnerId: 'owner-workflow',
+        status: 'pending',
+        tags: ['critical'],
+        tenant: { id: 'tenant-a' },
+        toolVersions: ['search@3'],
+        version: '2',
+      }),
+    );
+    expect(state.startedAt).toBeUndefined();
+  });
+
+  it('builds version tuples from tenant-specific registrations and stored state', () => {
+    const registration = {
+      version: 'fallback',
+      versionTupleForTenant: (tenant: { id: string } | undefined) => ({
+        agentVersion: tenant?.id ?? 'public',
+        workflowVersion: 'tenant-version',
+      }),
+    };
+
+    expect(
+      createWorkflowVersionTuple(
+        {} as never,
+        registration as never,
+        { id: 'tenant-a' },
+        createLifecycleCallbacks() as never,
+      ),
+    ).toEqual({ agentVersion: 'tenant-a', workflowVersion: 'tenant-version' });
+
+    expect(
+      workflowVersionTupleFromState(
+        {} as never,
+        createWorkflowState('workflow-versioned', {
+          agentVersion: 'agent-1',
+          toolVersions: ['database@4'],
+          version: 'workflow-1',
+        }),
+        createLifecycleCallbacks() as never,
+      ),
+    ).toEqual({
+      agentVersion: 'agent-1',
+      toolVersions: ['database@4'],
+      workflowVersion: 'workflow-1',
+    });
+  });
+
+  it('migrates prepared resume state when workflow version metadata drifts', async () => {
+    const storage = new MemoryStorage();
+    const workflowId = 'workflow-migrated-resume';
+    const state = createWorkflowState(workflowId, {
+      agentVersion: 'agent-1',
+      toolVersions: ['oldTool@1'],
+      version: '1',
+    });
+    const checkpoint = createCheckpoint(workflowId, { locals: { before: true }, version: '1' });
+    const registration = {
+      migrate: (value: unknown) => ({
+        ...(value as Checkpoint),
+        locals: { migrated: true },
+      }),
+      version: '2',
+      versionTupleForTenant: () => ({
+        agentVersion: 'agent-2',
+        toolVersions: ['newTool@2'],
+        workflowVersion: '2',
+      }),
+    };
+    const internals = {
+      options: { getNow: () => 30_000 },
+      storage,
+    };
+
+    const prepared = derivePreparedExecutionState(
+      internals as never,
+      workflowId,
+      state,
+      checkpoint,
+      registration as never,
+      createLifecycleCallbacks() as never,
+    );
+
+    expect(prepared.shouldPersistPreparedState).toBe(true);
+    expect(prepared.checkpoint).toEqual(
+      expect.objectContaining({ locals: { migrated: true }, version: '2' }),
+    );
+    expect(prepared.state).toEqual(
+      expect.objectContaining({
+        agentVersion: 'agent-2',
+        toolVersions: ['newTool@2'],
+        updatedAt: 30_000,
+        version: '2',
+      }),
+    );
+
+    await prepareResumeState(
+      internals as never,
+      workflowId,
+      state,
+      checkpoint,
+      registration as never,
+      createLifecycleCallbacks() as never,
+    );
+
+    expect(await storage.get(KEYS.workflow(workflowId))).not.toBeNull();
+    expect(await storage.get(KEYS.checkpoint(workflowId))).not.toBeNull();
+  });
+
+  it('throws version mismatch errors with tuple drift details', () => {
+    const state = createWorkflowState('workflow-version-mismatch', { version: '1' });
+
+    expect(() =>
+      throwVersionMismatch(
+        {} as never,
+        state.id,
+        state,
+        { version: '2' } as never,
+        { workflowVersion: ['1', '2'] } as never,
+        createLifecycleCallbacks() as never,
+      ),
+    ).toThrow('Version mismatch for workflow "workflow" (workflow-version-mismatch)');
+
+    expect(() =>
+      derivePreparedExecutionState(
+        { options: { getNow: () => 1 } } as never,
+        state.id,
+        state,
+        createCheckpoint(state.id, { version: '1' }),
+        { version: '2' } as never,
+        createLifecycleCallbacks() as never,
+      ),
+    ).toThrow('Version mismatch for workflow "workflow" (workflow-version-mismatch)');
+  });
+
+  it('rewrites workflow state with version tuple metadata', () => {
+    expect(
+      workflowStateWithVersionTuple(
+        { options: { getNow: () => 50_000 } } as never,
+        createWorkflowState('workflow-state-version', {
+          agentVersion: 'old-agent',
+          toolVersions: ['old@1'],
+        }),
+        {
+          agentVersion: 'new-agent',
+          toolVersions: ['new@2'],
+          workflowVersion: '3',
+        },
+        createLifecycleCallbacks() as never,
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        agentVersion: 'new-agent',
+        toolVersions: ['new@2'],
+        updatedAt: 50_000,
+        version: '3',
+      }),
+    );
+  });
+
+  it('validates registered search attributes and builds index operations', () => {
+    const registration = {
+      searchAttributes: { env: { type: 'string' } },
+      version: '1',
+    };
+
+    expect(() =>
+      validateSearchAttributes(
+        {} as never,
+        registration as never,
+        { missing: 'test' },
+        createLifecycleCallbacks() as never,
+      ),
+    ).toThrow('Unknown search attribute "missing". Registered attributes: env');
+
+    expect(
+      buildInitialSearchAttributeOperations(
+        {} as never,
+        'workflow-search',
+        registration as never,
+        { env: 'test' },
+        createLifecycleCallbacks() as never,
+      ).map((operation) => operation.type),
+    ).toEqual(['put', 'put']);
+  });
+
+  it('runs workflow start interceptors with copied parent headers', () => {
+    const captured = runWorkflowStartInterceptor(
+      {} as never,
+      'workflow-intercepted-start',
+      'workflow',
+      { value: 1 },
+      new Map([['traceparent', '00-parent']]),
+      createLifecycleCallbacks({
+        getComposedWorkflowInterceptor: () =>
+          ({
+            workflowStart: (
+              interception: WorkflowStartInterception,
+              next: (interception: WorkflowStartInterception) => void,
+            ) => {
+              interception.headers.set('x-added', 'yes');
+              next(interception);
+            },
+          }) as never,
+      }) as never,
+    );
+
+    expect(captured).toEqual(
+      new Map([
+        ['traceparent', '00-parent'],
+        ['x-added', 'yes'],
+      ]),
+    );
+  });
+
+  it('sets, clears, and persists workflow start headers', () => {
+    const internals = {
+      workflowHeaders: new Map<string, Map<string, string>>(),
+      workflowsNeedingTerminalCleanup: new Set<string>(),
+    };
+
+    setWorkflowStartHeaders(
+      internals as never,
+      'workflow-headers',
+      new Map([['traceparent', '00-header']]),
+      createLifecycleCallbacks() as never,
+    );
+    expect(internals.workflowHeaders.get('workflow-headers')).toEqual(
+      new Map([['traceparent', '00-header']]),
+    );
+    expect(internals.workflowsNeedingTerminalCleanup.has('workflow-headers')).toBe(true);
+
+    setWorkflowStartHeaders(
+      internals as never,
+      'workflow-headers',
+      undefined,
+      createLifecycleCallbacks() as never,
+    );
+    expect(internals.workflowHeaders.has('workflow-headers')).toBe(false);
+  });
+
+  it('builds start batches with headers, additional operations, and timers', () => {
+    const workflowId = 'workflow-start-batch';
+    const operations = buildStartBatchOperations(
+      {} as never,
+      workflowId,
+      createWorkflowState(workflowId, { tags: ['batch'] }),
+      createCheckpoint(workflowId),
+      { searchAttributes: { env: { type: 'string' } }, version: '1' } as never,
+      { searchAttributes: { env: 'test' } },
+      20_000,
+      { fireAt: 15_000, id: 'delay', kind: 'delayed-start', workflowId },
+      new Map([['traceparent', '00-batch']]),
+      [{ key: 'extra-key', type: 'put', value: new Uint8Array([1]) }],
+      createLifecycleCallbacks() as never,
+    );
+
+    expect(operations.some((operation) => operation.key === KEYS.workflowHeaders(workflowId))).toBe(
+      true,
+    );
+    expect(operations.some((operation) => operation.key === 'extra-key')).toBe(true);
+    expect(operations.filter((operation) => operation.key.startsWith('timer-idx:')).length).toBe(2);
+  });
+
+  it('begins worker workflow execution directly when inline execution is disabled', () => {
+    const startWorkflowStrategy = mock(() => {});
+    const dispatchEvent = mock(() => {});
+    const checkpoint = createCheckpoint('workflow-begin-worker');
+    const internals = {
+      inlineStrategy: null,
+      pendingNestingDepth: 2,
+      strategy: { startWorkflow: startWorkflowStrategy },
+      workflowHeaders: new Map([
+        ['workflow-begin-worker', new Map([['traceparent', '00-worker']])],
+      ]),
+      workflowNestingDepths: new Map<string, number>(),
+    };
+
+    beginWorkflowExecution(
+      internals as never,
+      'workflow-begin-worker',
+      'workflow',
+      { value: 1 },
+      checkpoint,
+      25_000,
+      { id: 'tenant-a' },
+      'owner-workflow',
+      { version: '1' } as never,
+      createLifecycleCallbacks({ dispatchEvent }) as never,
+    );
+
+    expect(dispatchEvent).toHaveBeenCalled();
+    expect(startWorkflowStrategy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deadline: 25_000,
+        headers: [['traceparent', '00-worker']],
+        nestingDepth: 2,
+        tenant: { id: 'tenant-a' },
+      }),
+    );
+    expect(internals.pendingNestingDepth).toBeUndefined();
+  });
+
+  it('starts workflow execution with zero-depth and nested metadata', () => {
+    const startWorkflowStrategy = mock(() => {});
+    const internals = {
+      strategy: { startWorkflow: startWorkflowStrategy },
+      workflowHeaders: new Map<string, Map<string, string>>(),
+      workflowNestingDepths: new Map<string, number>(),
+    };
+    const checkpoint = createCheckpoint('workflow-start-execution');
+
+    startWorkflowExecution(
+      internals as never,
+      'workflow-start-execution',
+      'workflow',
+      null,
+      checkpoint,
+      0,
+      undefined,
+      'workflow-start-execution',
+      undefined,
+    );
+
+    startWorkflowExecution(
+      internals as never,
+      'workflow-start-execution-nested',
+      'workflow',
+      null,
+      checkpoint,
+      3,
+      undefined,
+      'owner-workflow',
+      undefined,
+    );
+
+    expect(internals.workflowNestingDepths.has('workflow-start-execution')).toBe(false);
+    expect(internals.workflowNestingDepths.get('workflow-start-execution-nested')).toBe(3);
+    expect(startWorkflowStrategy).toHaveBeenCalledTimes(2);
+  });
+
+  it('builds fork lineage, state, search attributes, and batch operations', () => {
+    const sourceCheckpoint = createCheckpoint('workflow-source', {
+      searchAttributes: { env: 'test' },
+      step: 4,
+    });
+    const lineage = createForkLineage(
+      {} as never,
+      'workflow-source',
+      sourceCheckpoint,
+      createLifecycleCallbacks() as never,
+    );
+    const forkedState = createForkedWorkflowState(
+      {} as never,
+      'workflow-fork',
+      createWorkflowState('workflow-source', { tenant: { id: 'tenant-a' } }),
+      {
+        agentVersion: 'agent-1',
+        toolVersions: ['tool@1'],
+        workflowVersion: '2',
+      },
+      lineage,
+      70_000,
+      createLifecycleCallbacks() as never,
+    );
+    const forkCheckpoint = {
+      ...sourceCheckpoint,
+      searchAttributes: buildForkSearchAttributes(
+        {} as never,
+        sourceCheckpoint,
+        lineage,
+        createLifecycleCallbacks() as never,
+      ),
+      workflowId: 'workflow-fork',
+    };
+
+    const operations = buildForkBatchOperations(
+      {} as never,
+      'workflow-fork',
+      forkedState,
+      forkCheckpoint,
+      new Map([['traceparent', '00-fork']]),
+      createLifecycleCallbacks() as never,
+    );
+
+    expect(lineage).toEqual({ step: 4, workflowId: 'workflow-source' });
+    expect(forkedState).toEqual(
+      expect.objectContaining({
+        agentVersion: 'agent-1',
+        forkedFrom: lineage,
+        tenant: { id: 'tenant-a' },
+        toolVersions: ['tool@1'],
+        version: '2',
+      }),
+    );
+    expect(forkCheckpoint.searchAttributes).toEqual({
+      env: 'test',
+      'weft:forkedFrom': 'workflow-source',
+    });
+    expect(
+      operations.some((operation) => operation.key === KEYS.workflowHeaders('workflow-fork')),
+    ).toBe(true);
+  });
+
+  it('normalizes start workflow tags', () => {
+    expect(
+      normalizeStartWorkflowTags(
+        {} as never,
+        [' Critical ', 'critical', 'Release'],
+        'options.tags',
+        createLifecycleCallbacks() as never,
+      ),
+    ).toEqual(['critical', 'Critical', 'Release']);
+  });
+
   it('processPendingUpdatesAfterReplay routes handler failures through cleanup handling', async () => {
     const error = new Error('pending-update cleanup failed');
     const handleCleanupError = mock(() => {});
@@ -122,14 +825,13 @@ describe('engine lifecycle coverage helpers', () => {
   });
 
   it('launchWorkflowFromCheckpoint starts worker-mode workflows with headers, tenant, and deadlines', () => {
-    const startWorkflow = mock(() => {});
+    const startWorkflowStrategy = mock(() => {});
     const dispatchEvent = mock(() => {});
     const internals = {
-      agentWorkflowIds: new Set<string>(),
       checkpoints: new Map<string, Checkpoint>(),
       inlineStrategy: null,
       registrations: new Map(),
-      strategy: { startWorkflow },
+      strategy: { startWorkflow: startWorkflowStrategy },
       workflowHeaders: new Map([['workflow-worker-launch', new Map([['x-test', '1']])]]),
       workflowVersionTuples: new Map(),
     };
@@ -164,7 +866,7 @@ describe('engine lifecycle coverage helpers', () => {
     expect(returnedHandle.id).toBe(handle.id);
     expect(internals.checkpoints.get(state.id)).toEqual(checkpoint);
     expect(internals.workflowVersionTuples.get(state.id)).toEqual({ workflowVersion: '1' });
-    expect(startWorkflow).toHaveBeenCalledWith(
+    expect(startWorkflowStrategy).toHaveBeenCalledWith(
       expect.objectContaining({
         checkpoint: serializeCheckpoint(checkpoint),
         deadline: 9_000,
@@ -177,6 +879,82 @@ describe('engine lifecycle coverage helpers', () => {
       }),
     );
     expect(dispatchEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it('launchWorkflowFromCheckpoint starts inline workflows with development explanation enabled', () => {
+    const adoptWorkflow = mock(() => {});
+    const continueWorkflow = mock(() => {});
+    const internals = {
+      checkpoints: new Map<string, Checkpoint>(),
+      inlineStrategy: { adoptWorkflow, continueWorkflow },
+      options: { development: true, getNow: () => 1_000 },
+      strategy: { startWorkflow: mock(() => {}) },
+      workflowHeaders: new Map<string, Map<string, string>>(),
+      workflowVersionTuples: new Map(),
+    };
+    const workflowId = 'workflow-inline-launch';
+
+    const handle = launchWorkflowFromCheckpoint(
+      internals as never,
+      workflowId,
+      createWorkflowState(workflowId, {
+        executionDeadline: 9_000,
+        tenant: { id: 'tenant-a' },
+      }),
+      createCheckpoint(workflowId, { accumulatedResults: [[0, 'cached']] }),
+      {
+        handler: async function* () {
+          return 'done';
+        },
+        searchAttributes: { env: 'string' },
+        version: '1',
+      } as never,
+      createLifecycleCallbacks({
+        createWorkflowHandleWithResultPromise: () => ({ id: workflowId }),
+      }) as never,
+    );
+
+    expect(handle.id).toBe(workflowId);
+    expect(adoptWorkflow).toHaveBeenCalledWith(
+      workflowId,
+      expect.any(Object),
+      expect.objectContaining({
+        workflowId,
+      }),
+      expect.any(AbortController),
+    );
+    expect(continueWorkflow).toHaveBeenCalledWith(workflowId, undefined);
+  });
+
+  it('launchWorkflowFromCheckpoint rejects inconsistent inline launch state', () => {
+    let inlineStrategyReads = 0;
+    const internals = {
+      checkpoints: new Map<string, Checkpoint>(),
+      get inlineStrategy() {
+        inlineStrategyReads++;
+        return inlineStrategyReads === 1 ? {} : null;
+      },
+      options: { development: false, getNow: () => 1_000 },
+      strategy: { startWorkflow: mock(() => {}) },
+      workflowVersionTuples: new Map(),
+    };
+    const workflowId = 'workflow-inline-inconsistent';
+
+    expect(() =>
+      launchWorkflowFromCheckpoint(
+        internals as never,
+        workflowId,
+        createWorkflowState(workflowId),
+        createCheckpoint(workflowId),
+        {
+          handler: async function* () {
+            return 'done';
+          },
+          version: '1',
+        } as never,
+        createLifecycleCallbacks() as never,
+      ),
+    ).toThrow('Inline workflow launch requested without an inline strategy.');
   });
 
   it('resumeWorkflowFromStorage rejects non-running stored states before loading a checkpoint', async () => {
@@ -226,10 +1004,149 @@ describe('engine lifecycle coverage helpers', () => {
     );
   });
 
+  it('resumeWorkflowFromStorage rejects running states without checkpoints', async () => {
+    const storage = new MemoryStorage();
+    const workflowId = 'workflow-resume-missing-checkpoint';
+
+    await storage.put(KEYS.workflow(workflowId), encode(createWorkflowState(workflowId)));
+
+    await expect(
+      resumeWorkflowFromStorage(
+        {
+          registrations: new Map(),
+          storage,
+        } as never,
+        workflowId,
+        true,
+        createLifecycleCallbacks() as never,
+      ),
+    ).rejects.toThrow('Checkpoint not found for workflow "workflow-resume-missing-checkpoint"');
+  });
+
+  it('resumeWorkflowFromStorage rejects when termination starts during the serialized resume write', async () => {
+    const baseStorage = new MemoryStorage();
+    const workflowId = 'workflow-resume-terminalizing';
+    let workflowStateReads = 0;
+    const terminalizingWorkflows = new Set<string>();
+    const storage = {
+      delete: baseStorage.delete.bind(baseStorage),
+      put: baseStorage.put.bind(baseStorage),
+      scan: baseStorage.scan.bind(baseStorage),
+      batch: baseStorage.batch.bind(baseStorage),
+      async get(key: string) {
+        const value = await baseStorage.get(key);
+        if (key === KEYS.workflow(workflowId)) {
+          workflowStateReads++;
+          if (workflowStateReads === 2) {
+            terminalizingWorkflows.add(workflowId);
+          }
+        }
+        return value;
+      },
+      [Symbol.dispose]() {
+        baseStorage[Symbol.dispose]();
+      },
+    };
+
+    await baseStorage.put(KEYS.workflow(workflowId), encode(createWorkflowState(workflowId)));
+    await baseStorage.put(
+      KEYS.checkpoint(workflowId),
+      serializeCheckpoint(createCheckpoint(workflowId)),
+    );
+
+    await expect(
+      resumeWorkflowFromStorage(
+        {
+          checkpoints: new Map(),
+          eventLogHeads: new Map(),
+          inlineStrategy: null,
+          options: { development: false, getNow: () => 1_000 },
+          parkedInlineWorkflows: new Set<string>(),
+          registrations: new Map([
+            [
+              'workflow',
+              {
+                handler: async function* () {
+                  return 'done';
+                },
+                version: '1',
+              },
+            ],
+          ]),
+          storage,
+          strategy: { startWorkflow: mock(() => {}) },
+          terminalizingWorkflows,
+          workflowHeaders: new Map<string, Map<string, string>>(),
+          workflowNestingDepths: new Map(),
+          workflowVersionTuples: new Map(),
+          workflowsNeedingTerminalCleanup: new Set<string>(),
+        } as never,
+        workflowId,
+        true,
+        createLifecycleCallbacks({
+          getHandle: () => ({ id: workflowId }),
+        }) as never,
+      ),
+    ).rejects.toThrow(`Cannot resume workflow "${workflowId}": termination is in progress`);
+  });
+
+  it('resumeWorkflowFromStorage rejects when state disappears during the serialized resume write', async () => {
+    const storage = new MemoryStorage();
+    const workflowId = 'workflow-resume-disappears';
+
+    await storage.put(KEYS.workflow(workflowId), encode(createWorkflowState(workflowId)));
+    await storage.put(
+      KEYS.checkpoint(workflowId),
+      serializeCheckpoint(createCheckpoint(workflowId)),
+    );
+
+    await expect(
+      resumeWorkflowFromStorage(
+        {
+          checkpoints: new Map(),
+          eventLogHeads: new Map(),
+          inlineStrategy: null,
+          options: { development: false, getNow: () => 1_000 },
+          parkedInlineWorkflows: new Set<string>(),
+          registrations: new Map([
+            [
+              'workflow',
+              {
+                handler: async function* () {
+                  return 'done';
+                },
+                version: '1',
+              },
+            ],
+          ]),
+          storage,
+          strategy: { startWorkflow: mock(() => {}) },
+          terminalizingWorkflows: new Set<string>(),
+          workflowHeaders: new Map<string, Map<string, string>>(),
+          workflowNestingDepths: new Map(),
+          workflowVersionTuples: new Map(),
+          workflowsNeedingTerminalCleanup: new Set<string>(),
+        } as never,
+        workflowId,
+        true,
+        createLifecycleCallbacks({
+          getHandle: () => ({ id: workflowId }),
+          runSerializedWorkflowStateWrite: async <Result>(
+            _workflowId: string,
+            writeOperation: () => Promise<Result>,
+          ) => {
+            await storage.delete(KEYS.workflow(workflowId));
+            return writeOperation();
+          },
+        }) as never,
+      ),
+    ).rejects.toThrow(`Workflow "${workflowId}" not found in storage`);
+  });
+
   it('resumeWorkflowFromStorage replays worker-mode workflows through the execution strategy', async () => {
     const storage = new MemoryStorage();
     const workflowId = 'workflow-resume-worker-mode';
-    const startWorkflow = mock(() => {});
+    const startWorkflowStrategy = mock(() => {});
     const dispatchEvent = mock(() => {});
     const workflowState = createWorkflowState(workflowId, {
       executionDeadline: 15_000,
@@ -249,7 +1166,6 @@ describe('engine lifecycle coverage helpers', () => {
 
     const handle = { id: workflowId };
     const internals = {
-      agentWorkflowIds: new Set<string>(),
       checkpoints: new Map<string, Checkpoint>(),
       eventLogHeads: new Map(),
       inlineStrategy: null,
@@ -267,7 +1183,7 @@ describe('engine lifecycle coverage helpers', () => {
         ],
       ]),
       storage,
-      strategy: { startWorkflow },
+      strategy: { startWorkflow: startWorkflowStrategy },
       terminalizingWorkflows: new Set<string>(),
       workflowHeaders: new Map<string, Map<string, string>>(),
       workflowNestingDepths: new Map([[workflowId, 2]]),
@@ -292,7 +1208,7 @@ describe('engine lifecycle coverage helpers', () => {
       new Map([['traceparent', '00-test']]),
     );
     expect(internals.workflowsNeedingTerminalCleanup.has(workflowId)).toBe(true);
-    expect(startWorkflow).toHaveBeenCalledWith(
+    expect(startWorkflowStrategy).toHaveBeenCalledWith(
       expect.objectContaining({
         checkpoint: serializeCheckpoint(checkpoint),
         deadline: 15_000,

@@ -1,6 +1,6 @@
 # Events API
 
-Weft uses the standard `EventTarget` API for lifecycle observability. The `Engine` and `WorkflowHandle` classes both extend `EventTarget`, emitting strongly-typed event subclasses. Core events cover workflow and activity lifecycle; agent events cover AI-specific telemetry.
+Weft uses the standard `EventTarget` API for lifecycle observability. The `Engine` and `WorkflowHandle` classes both extend `EventTarget`, emitting strongly-typed event subclasses. Core events cover workflow, activity, and review lifecycle.
 
 All event classes extend the built-in `Event` with a static `type` property matching the event string.
 
@@ -263,110 +263,14 @@ class ConstraintViolatedEvent extends Event {
 }
 ```
 
-### `TokenEvent`
+## Review Events
 
-Emitted for streaming token output from AI agent operations.
+### `ReviewRequestedEvent`
 
-```ts partial
-class TokenEvent extends Event {
-  static readonly type = 'agent:token';
-  readonly workflowId: string;
-  readonly token: string;
-  readonly model: string;
-}
-```
-
----
-
-## Agent Events
-
-### `AgentTurnStartedEvent`
-
-Emitted at the start of each agent LLM turn.
+Emitted when a workflow requests human review before proceeding.
 
 ```ts partial
-class AgentTurnStartedEvent extends Event {
-  static readonly type = 'agent:turn:started';
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly turnIndex: number;
-  readonly model: string;
-  readonly inputTokenEstimate: number;
-  readonly conversationLength: number;
-}
-```
-
-### `AgentTurnCompletedEvent`
-
-Emitted when an agent turn finishes.
-
-```ts partial
-class AgentTurnCompletedEvent extends Event {
-  static readonly type = 'agent:turn:completed';
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly turnIndex: number;
-  readonly model: string;
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-  readonly duration: number;
-  readonly toolCallCount: number;
-  readonly messages: readonly Message[];
-}
-```
-
-### `AgentToolCalledEvent`
-
-Emitted when an agent invokes a tool.
-
-```ts partial
-class AgentToolCalledEvent extends Event {
-  static readonly type = 'agent:tool:called';
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly turnIndex: number;
-  readonly toolName: string;
-  readonly toolInput: unknown;
-  readonly operationId: string;
-}
-```
-
-### `AgentToolReturnedEvent`
-
-Emitted when a tool call completes.
-
-```ts partial
-class AgentToolReturnedEvent extends Event {
-  static readonly type = 'agent:tool:returned';
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly turnIndex: number;
-  readonly toolName: string;
-  readonly duration: number;
-  readonly success: boolean;
-  readonly operationId: string;
-}
-```
-
-### `AgentCheckpointResumedEvent`
-
-Emitted when an agent resumes and the effect log prevents duplicate tool execution.
-
-```ts partial
-class AgentCheckpointResumedEvent extends Event {
-  static readonly type = 'agent:checkpoint:resumed';
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly duplicatesPrevented: number;
-}
-```
-
-### `HumanReviewRequestedEvent`
-
-Emitted when an agent operation requires human review before proceeding.
-
-```ts partial
-class HumanReviewRequestedEvent extends Event {
+class ReviewRequestedEvent extends Event {
   static readonly type = 'human-review:requested';
   readonly workflowId: string;
   readonly reviewId: string;
@@ -375,12 +279,12 @@ class HumanReviewRequestedEvent extends Event {
 }
 ```
 
-### `HumanReviewCompletedEvent`
+### `ReviewCompletedEvent`
 
 Emitted when a human review decision is submitted.
 
 ```ts partial
-class HumanReviewCompletedEvent extends Event {
+class ReviewCompletedEvent extends Event {
   static readonly type = 'human-review:completed';
   readonly workflowId: string;
   readonly reviewId: string;
@@ -399,7 +303,7 @@ class HumanReviewCompletedEvent extends Event {
 A complete mapping of event type strings to their event classes. Use this with `TypedEventTarget` for fully typed `addEventListener` calls.
 
 ```ts partial
-interface WeftEventMap extends WeftAgentEventMap {
+interface WeftEventMap extends WeftReviewEventMap {
   'workflow:started': WorkflowStartedEvent;
   'workflow:completed': WorkflowCompletedEvent;
   'workflow:failed': WorkflowFailedEvent;
@@ -409,7 +313,6 @@ interface WeftEventMap extends WeftAgentEventMap {
   'activity:started': ActivityStartedEvent;
   'activity:completed': ActivityCompletedEvent;
   'activity:failed': ActivityFailedEvent;
-  'agent:token': TokenEvent;
   'signal:received': SignalReceivedEvent;
   'signal:delivered': SignalDeliveredEvent;
   'attributes:changed': AttributesChangedEvent;
@@ -424,19 +327,14 @@ interface WeftEventMap extends WeftAgentEventMap {
 }
 ```
 
-### `WeftAgentEventMap`
+### `WeftReviewEventMap`
 
-The agent-specific subset of the event map.
+The review-specific subset of the event map.
 
 ```ts partial
-interface WeftAgentEventMap {
-  'agent:turn:started': AgentTurnStartedEvent;
-  'agent:turn:completed': AgentTurnCompletedEvent;
-  'agent:tool:called': AgentToolCalledEvent;
-  'agent:tool:returned': AgentToolReturnedEvent;
-  'agent:checkpoint:resumed': AgentCheckpointResumedEvent;
-  'human-review:requested': HumanReviewRequestedEvent;
-  'human-review:completed': HumanReviewCompletedEvent;
+interface WeftReviewEventMap {
+  'human-review:requested': ReviewRequestedEvent;
+  'human-review:completed': ReviewCompletedEvent;
 }
 ```
 

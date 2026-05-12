@@ -9,7 +9,6 @@
   import NavigationItem from './components/navigation-item.svelte';
   import WorkflowList from './views/workflow-list.svelte';
   import WorkflowDetail from './views/workflow-detail.svelte';
-  import WorkflowDetailAgent from './views/workflow-detail-agent.svelte';
   import HumanReviewQueue from './views/human-review-queue.svelte';
   import NotFound from './views/not-found.svelte';
 
@@ -87,8 +86,7 @@
       <NavigationItem
         href="/ui/workflows"
         active={currentMatch.view === 'workflow-list' ||
-          currentMatch.view === 'workflow-detail' ||
-          currentMatch.view === 'workflow-detail-agent'}
+          currentMatch.view === 'workflow-detail'}
         onclick={(event: MouseEvent) => handleNavigationClick(event, '/ui/workflows')}
       >
         Workflows
@@ -120,8 +118,6 @@
       <WorkflowList />
     {:else if currentMatch.view === 'workflow-detail'}
       <WorkflowDetail id={currentMatch.params['id'] ?? ''} />
-    {:else if currentMatch.view === 'workflow-detail-agent'}
-      <WorkflowDetailAgent id={currentMatch.params['id'] ?? ''} />
     {:else if currentMatch.view === 'human-review-queue'}
       <HumanReviewQueue />
     {:else}

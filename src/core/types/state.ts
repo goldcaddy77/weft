@@ -16,10 +16,9 @@ import type { WorkflowOperation } from './workflow-function.ts';
  * Returned by `handle.state()` and `engine.get(workflowId)`. Users observe
  * this shape — they don't construct it. Includes the input, current status,
  * tenant, attributes, retention policy snapshot, and lineage information,
- * plus `failureCategory` (populated on failed workflows), `agentVersion` and
- * `toolVersions` (set when registered via an AgentDefinition), `forkedFrom`
- * lineage metadata, and the optional `executionDeadline`/`terminalCleanupToken`
- * housekeeping fields.
+ * plus `failureCategory` (populated on failed workflows), version tuple
+ * metadata, `forkedFrom` lineage metadata, and the optional
+ * `executionDeadline`/`terminalCleanupToken` housekeeping fields.
  */
 export interface WorkflowState {
   id: WorkflowId;
@@ -48,15 +47,13 @@ export interface WorkflowState {
    */
   executionStateOwnerId?: string;
   /**
-   * Semantic version of the agent definition at the time this workflow was
-   * started. Populated when the workflow was registered via an
-   * {@link AgentDefinition}; absent for plain workflow functions.
+   * Legacy version tuple metadata retained so existing persisted workflow
+   * states can still be decoded and compared during recovery.
    */
   agentVersion?: string;
   /**
-   * Sorted `"${name}@${version}"` tool version strings captured from the
-   * effective tool list at workflow start. Populated when the workflow was
-   * registered via an {@link AgentDefinition} with tools; absent otherwise.
+   * Legacy version tuple metadata retained so existing persisted workflow
+   * states can still be decoded and compared during recovery.
    */
   toolVersions?: string[];
   createdAt: number;
@@ -100,9 +97,8 @@ export type WorkflowTimelineStatus = 'running' | 'completed' | 'failed' | 'cance
  * one operation (activity call, sleep, signal wait, etc.). Returned by
  * `engine.getTimeline(workflowId)` for replay and debugging.
  * The optional `versionTuple` field is populated only for entries produced by
- * versioned workflows or agents and carries the
- * `(workflowVersion, agentVersion, toolVersions[])` tuple captured at the time
- * of the operation.
+ * versioned workflows and carries the version tuple captured at the time of
+ * the operation.
  */
 export type WorkflowTimelineEntry = {
   step: number;

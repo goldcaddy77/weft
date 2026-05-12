@@ -39,11 +39,6 @@ interface WorkflowInterceptor {
     next: (interception: ChildWorkflowInterception) => Promise<unknown>,
   ): Promise<unknown>;
 
-  agent?(
-    interception: AgentInterception,
-    next: (interception: AgentInterception) => Generator<unknown, unknown, unknown>,
-  ): Generator<unknown, unknown, unknown>;
-
   query?(
     interception: QueryInterception,
     next: (interception: QueryInterception) => Generator<unknown, unknown, unknown>,

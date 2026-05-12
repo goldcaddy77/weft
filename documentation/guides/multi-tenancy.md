@@ -69,7 +69,7 @@ Resolver errors fail `engine.start()` before the first checkpoint is written. Th
 
 ## Tenant context in workflows
 
-`ctx.tenant` is persisted on workflow state, so it survives recovery. Use it for decisions that belong in orchestration: choosing a queue, adding search attributes, selecting agent tools, or including tenant identity in activity input.
+`ctx.tenant` is persisted on workflow state, so it survives recovery. Use it for decisions that belong in orchestration: choosing a queue, adding search attributes, routing human reviews, or including tenant identity in activity input.
 
 ```typescript partial
 engine.register('provision-account', async function* (ctx, input: { accountId: string }) {
@@ -135,35 +135,27 @@ console.log(usage.activeWorkflows.used, usage.activeWorkflows.limit);
 
 When JWT authentication is enabled, the quota endpoint limits tenant-scoped callers to their own tenant claim. API-key callers with the `quota:read` scope can inspect the requested tenant.
 
-## Agents and tools
+## Tenant-scoped workflow decisions
 
-Agent definitions are tenant-agnostic post-shrinkage. The workflow author scopes tools per tenant before invoking the agent — Weft no longer enforces tool isolation centrally. Use `ctx.tenant` inside the workflow body to compose the right tool set:
+Use `ctx.tenant` inside the workflow body to choose queues, review routing, or activity input:
 
 ```typescript partial
-const supportAgent = agent({
-  name: 'support',
-  model: 'claude-sonnet-4-20250514',
-  systemPrompt: 'Help the customer support team resolve tickets.',
-});
-
-function pickToolsForTenant(tenant: TenantContext | undefined): AgentToolDefinition[] {
-  if (tenant?.attributes?.['tier'] === 'enterprise') {
-    return [ticketSearch, contractLookup, escalationTool];
+engine.register('support-workflow', async function* (ctx, input: { ticketId: string }) {
+  const tenantId = ctx.tenant?.id;
+  if (!tenantId) {
+    throw new Error('support-workflow requires a tenant');
   }
-  return [ticketSearch];
-}
 
-engine.register('support-workflow', async function* (ctx) {
-  const result = yield* ctx.agent({
-    model: supportAgent.model,
-    prompt: 'Resolve the customer ticket.',
-    tools: pickToolsForTenant(ctx.tenant),
+  const ticket = yield* ctx.run(loadTicket, { tenantId, ticketId: input.ticketId });
+  const decision = yield* ctx.review({
+    artifact: ticket,
+    reviewType: 'support-escalation',
+    reviewers: [`support-leads:${tenantId}`],
   });
-  return result;
+
+  return yield* ctx.run(applySupportDecision, { tenantId, ticketId: input.ticketId, decision });
 });
 ```
-
-See [`what-weft-owns.md`](../agents/what-weft-owns.md) for the responsibility-shift rationale and the canonical mock-provider example.
 
 ## Remote workers and interceptors
 

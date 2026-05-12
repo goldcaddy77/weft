@@ -81,7 +81,7 @@ try {
     console.log(error.storedVersion); // '1.0.0'
     console.log(error.registeredVersion); // '2.0.0'
     console.log(error.fieldDiffs); // populated when checkpoint shape drifted
-    console.log(error.versionDiff); // workflow/agent/tool version delta
+    console.log(error.versionDiff); // workflow version delta
   }
 }
 ```

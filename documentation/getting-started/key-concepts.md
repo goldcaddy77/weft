@@ -107,36 +107,32 @@ Because session state is checkpointed alongside the workflow, the counter persis
 
 An **interceptor** is a composable hook that wraps workflow context operations---activities, sleeps, signals---for cross-cutting concerns like tracing, validation, and encryption. Interceptors chain via `next()` delegation, so you can stack as many as you need without any of them knowing about each other.
 
-## Agent
-
-An **agent** is a durable LLM-powered execution loop that follows the ReAct pattern: one LLM call, then tool calls, then another LLM call, and so on. Agents are registered as workflows via `agent()` or invoked as a step within a larger workflow via `ctx.agent()`. They manage context windows, respect token budgets, and support human-in-the-loop review.
-
-## Turn
-
-A **turn** is a single iteration of an agent loop: one LLM call and its resulting tool calls. Each turn is a checkpoint boundary, which means the agent survives crashes mid-conversation. If the process dies between turn 5 and turn 6, it picks up at turn 6 on restart.
-
-## Model Router
-
-A **model router** is a pluggable component that selects which LLM model to use for each turn. You might route based on conversation complexity, cost constraints, or quality requirements---starting with a cheap model and escalating to a more capable one when the task demands it.
-
-## Context Strategy
-
-A **context strategy** is a pluggable component that manages conversation history within the LLM's context window. As conversations grow, you need to decide what to keep and what to drop. Strategies like sliding window, summarization, or RAG let you control this without touching your agent logic.
-
-## MCP (Model Context Protocol)
-
-**MCP** is a standard protocol for discovering and invoking LLM tools from external servers. Weft's MCP client supports both stdio and HTTP+SSE transports, so your agents can call tools hosted anywhere without coupling to a specific provider.
-
 ## Shared State
 
-**Shared state** is a CAS-backed (compare-and-swap) durable mutable state primitive. Multiple concurrent agents or workflows can read from and write to it without clobbering each other's writes. Think of it as a durable, conflict-safe scratchpad.
+**Shared state** is a CAS-backed (compare-and-swap) durable mutable state primitive. Multiple concurrent workflows can read from and write to it without clobbering each other's writes. Think of it as a durable, conflict-safe scratchpad.
 
 ## Human Review
 
-**Human review** is a structured interaction protocol for human-in-the-loop workflows. When an agent or workflow reaches a decision that needs human oversight, it can pause and request approval, rejection, conversation threading, escalation, or partial approval. The workflow stays checkpointed while waiting---it costs nothing to wait for a human.
+**Human review** is a structured interaction protocol for human-in-the-loop workflows. When a workflow reaches a decision that needs human oversight, it can pause and request approval, rejection, escalation, or partial approval. The workflow stays checkpointed while waiting---it costs nothing to wait for a human.
+
+```typescript partial
+engine.register('payment-review', async function* (ctx, payment) {
+  const decision = yield* ctx.review({
+    artifact: payment,
+    reviewType: 'payment-approval',
+    timeout: 72 * 60 * 60 * 1000,
+  });
+
+  if (decision.decision !== 'approved') {
+    return { status: 'rejected' };
+  }
+
+  return yield* ctx.run(chargeCard, payment);
+});
+```
 
 ## How They Fit Together
 
-A workflow orchestrates activities, sleeping between them when needed. Signals and updates let the outside world communicate with running workflows. Checkpoints make the whole thing durable. For AI workloads, agents extend the workflow model with turns, model routing, context strategies, and human review. Storage, interceptors, and search attributes handle the operational concerns underneath.
+A workflow orchestrates activities, sleeping between them when needed. Signals, updates, and reviews let the outside world communicate with running workflows. Checkpoints make the whole thing durable. Storage, interceptors, and search attributes handle the operational concerns underneath.
 
 That's the vocabulary. Now you can dig into the specific guides knowing what each term means.

@@ -7,19 +7,11 @@ import type { EngineInternals } from './internals.ts';
 import { encodedValuesEqual } from './state-utilities.ts';
 
 type ChildWorkflowOperation = Extract<ContextOperationRequest, { type: 'child-workflow' }>;
-type HandoffOperation = Extract<ContextOperationRequest, { type: 'handoff' }>;
-type DebateOperation = Extract<ContextOperationRequest, { type: 'debate' }>;
-type SuperviseOperation = Extract<ContextOperationRequest, { type: 'supervise' }>;
-type ChildWorkflowResultOperation =
-  | ChildWorkflowOperation
-  | HandoffOperation
-  | DebateOperation
-  | SuperviseOperation;
 
 export type ChildWorkflowOperationCallbacks = {
   runOperationWithResult: (
     workflowId: string,
-    operation: ChildWorkflowResultOperation,
+    operation: ChildWorkflowOperation,
     execute: () => Promise<unknown>,
   ) => Promise<void>;
   start: (type: string, input: unknown, options?: StartOptions) => Promise<WorkflowHandle>;
@@ -159,44 +151,4 @@ export async function executeChildWorkflow(
     },
     executeChild,
   );
-}
-
-export async function processHandoffOperation(
-  internals: EngineInternals,
-  workflowId: string,
-  operation: HandoffOperation,
-  callbacks: Pick<ChildWorkflowOperationCallbacks, 'runOperationWithResult'>,
-): Promise<void> {
-  return callbacks.runOperationWithResult(workflowId, operation, async () => {
-    const { handoff: executeHandoff, createChildHeaders } =
-      await import('../../ai/coordination/index.ts');
-    return executeHandoff({
-      ...operation.options,
-      headers: createChildHeaders(internals.workflowHeaders.get(workflowId)),
-    });
-  });
-}
-
-export async function processDebateOperation(
-  _internals: EngineInternals,
-  workflowId: string,
-  operation: DebateOperation,
-  callbacks: Pick<ChildWorkflowOperationCallbacks, 'runOperationWithResult'>,
-): Promise<void> {
-  return callbacks.runOperationWithResult(workflowId, operation, async () => {
-    const { debate: executeDebate } = await import('../../ai/coordination/index.ts');
-    return executeDebate(operation.options);
-  });
-}
-
-export async function processSuperviseOperation(
-  _internals: EngineInternals,
-  workflowId: string,
-  operation: SuperviseOperation,
-  callbacks: Pick<ChildWorkflowOperationCallbacks, 'runOperationWithResult'>,
-): Promise<void> {
-  return callbacks.runOperationWithResult(workflowId, operation, async () => {
-    const { supervise: executeSupervise } = await import('../../ai/coordination/index.ts');
-    return executeSupervise(operation.options);
-  });
 }

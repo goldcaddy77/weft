@@ -14,32 +14,6 @@ The oxlint-strict initiative is complete when this file lists **at most 5
 permanent suppressions**, each with a one-paragraph rationale and a comment
 naming the alternative that was rejected.
 
-## `ai-agent-resolve-tool-execution-complexity`
-
-- **File**: `src/ai/agent/tool-execution.ts`
-- **Rule**: `complexity`
-- **Symbol**: `resolveToolExecution`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `ai-agent-types-file-length`
-
-- **File**: `src/ai/agent/types.ts`
-- **Rule**: `max-lines`
-- **Symbol**: `(whole file)`
-- **Reason**: Canonical home for the structural agent types Weft owns post-shrinkage (LLMProvider, Message, ToolCall, ToolResult, ToolDefinition, ChatOptions, ChatResponse, ChatResumeHint, ChatResumeContext, TokenUsage, AgentOptions, AgentResult, AgentTool, TurnUsageEntry, PersistedAgentLoopState, AgentLoopSuspendedError, plus internal runtime shapes). JSDoc + `@example` blocks on each public type are required by the JSDoc audit and account for most of the line count. Splitting would fragment the structural-types contract that downstream consumers (Agent Bureau, armorer) target.
-
-## `ai-coordination-supervise-complexity`
-
-- **File**: `src/ai/coordination/supervise.ts`
-- **Rule**: `complexity`
-- **Symbol**: `supervise`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-- **File**: `src/ai/events.ts`
-- **Rule**: `max-lines`
-- **Symbol**: `(whole file)`
-- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
-
 ## `benchmarks-memory-per-workflow-runner-measure-memory-per-workflow-complexity`
 
 - **File**: `src/benchmarks/memory-per-workflow-runner.ts`
@@ -219,13 +193,6 @@ naming the alternative that was rejected.
 - **File**: `src/core/engine/index.ts`
 - **Rule**: `complexity`
 - **Symbol**: `decodeScheduleRuntimeFields`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `core-engine-derive-prepared-execution-state-complexity`
-
-- **File**: `src/core/engine/index.ts`
-- **Rule**: `complexity`
-- **Symbol**: `derivePreparedExecutionState`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
 ## `core-engine-callback-creators-file-length`
@@ -948,17 +915,3 @@ naming the alternative that was rejected.
 - **Rule**: `complexity`
 - **Symbol**: `pickFairShare`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `core-engine-operations-agent-suspension-file-length`
-
-- **File**: `src/core/engine/operations-agent-suspension.ts`
-- **Rule**: `max-lines`
-- **Symbol**: `(whole file)`
-- **Reason**: Agent suspension module grew during the AI Surface Shrinkage refactor to accommodate the new PersistedAgentLoopState v2 validator, signal-waiter tracking, and crash-window repair logic. The functions are tightly coupled around the suspension lifecycle and splitting would fragment the durability contract.
-
-## `core-engine-operations-agent-suspension-is-persisted-state-complexity`
-
-- **File**: `src/core/engine/operations-agent-suspension.ts`
-- **Rule**: `complexity`
-- **Symbol**: `isPersistedAgentLoopStateValue`
-- **Reason**: Runtime type guard for PersistedAgentLoopState v2 — checks seven required fields plus schema version. Splitting into sub-validators adds indirection without clarity gain; the linear field checks are the complexity.

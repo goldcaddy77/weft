@@ -1,7 +1,6 @@
 import type { BatchOperation } from '../../storage/interface.ts';
 import { KEYS, encodeStorageKeyComponent } from '../../storage/interface.ts';
 import { decode, encode } from '../codec.ts';
-import { isRecord } from '../debug-output.ts';
 import { SignalReceivedEvent } from '../events.ts';
 import type { ComposedWorkflowInterceptor } from '../interceptor.ts';
 import type { WorkflowState } from '../types.ts';
@@ -49,20 +48,12 @@ export async function signal(
     signalName: string,
     signalPayload: unknown,
   ): Promise<void> => {
-    const deliveries: BufferedSignalDelivery[] = [{ signalName, payload: signalPayload }];
-    for (const internalSignalName of await findMatchingAgentResumeSignalNames(
+    await bufferSignalPayloads(
       internals,
       targetWorkflowId,
-      signalName,
-    )) {
-      deliveries.push({
-        signalName: internalSignalName,
-        payload: signalPayload,
-        options: { emitPublicEvent: false },
-      });
-    }
-
-    await bufferSignalPayloads(internals, targetWorkflowId, deliveries, callbacks);
+      [{ signalName, payload: signalPayload }],
+      callbacks,
+    );
   };
 
   // Run signalReceived interceptor hook wrapping actual delivery
@@ -186,68 +177,6 @@ function deliverBufferedSignals(
   if (shouldResumeParkedWorkflow) {
     void callbacks.resumeParkedInlineWorkflow(workflowId);
   }
-}
-
-function createAgentResumeSignalName(stepIndex: number, resumeToken: string): string {
-  return `agent-resume:${String(stepIndex).padStart(10, '0')}:${resumeToken}`;
-}
-
-function parseAgentExecutionStepIndex(key: string): number | undefined {
-  const stepIndexText = key.slice(key.lastIndexOf(':') + 1);
-  const stepIndex = Number.parseInt(stepIndexText, 10);
-  if (!Number.isSafeInteger(stepIndex) || stepIndex < 0) {
-    return undefined;
-  }
-
-  return stepIndex;
-}
-
-function isPendingAgentResumeState(value: unknown): value is {
-  turnIndex: number;
-  hint: { resumeToken: string };
-  resumed: boolean;
-} {
-  return (
-    isRecord(value) &&
-    typeof value['turnIndex'] === 'number' &&
-    isRecord(value['hint']) &&
-    typeof value['hint']['resumeToken'] === 'string' &&
-    typeof value['resumed'] === 'boolean'
-  );
-}
-
-function isStoredPendingAgentExecutionState(value: unknown): value is {
-  pendingResume: { turnIndex: number; hint: { resumeToken: string }; resumed: boolean };
-} {
-  return isRecord(value) && isPendingAgentResumeState(value['pendingResume']);
-}
-
-async function findMatchingAgentResumeSignalNames(
-  internals: EngineInternals,
-  workflowId: string,
-  resumeToken: string,
-): Promise<string[]> {
-  const matchingSignalNames = new Set<string>();
-  const prefix = `agent-execution:${encodeStorageKeyComponent(workflowId)}:`;
-
-  for await (const [key, value] of internals.storage.scan(prefix)) {
-    const decoded = decode(value);
-    if (!isStoredPendingAgentExecutionState(decoded)) {
-      continue;
-    }
-
-    const pendingResume = decoded.pendingResume;
-    if (pendingResume.resumed || pendingResume.hint.resumeToken !== resumeToken) {
-      continue;
-    }
-
-    const stepIndex = parseAgentExecutionStepIndex(key);
-    if (stepIndex !== undefined) {
-      matchingSignalNames.add(createAgentResumeSignalName(stepIndex, resumeToken));
-    }
-  }
-
-  return [...matchingSignalNames];
 }
 
 export async function hasBufferedSignal(

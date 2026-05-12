@@ -1,10 +1,11 @@
 import type { ServerWebSocket } from 'bun';
 
 import type { Engine } from '../../core/engine.ts';
-import { TokenEvent } from '../../core/events.ts';
 import { KEYS } from '../../storage/interface.ts';
 import type { WebSocketData } from '../json-rpc-websocket-runtime.ts';
 import type { ServerContext } from './context.ts';
+
+const TOKEN_EVENT_TYPE = 'stream:token';
 
 export function sendStreamMessage(
   ws: ServerWebSocket<WebSocketData>,
@@ -136,7 +137,7 @@ export async function replayTokenStream(
         ws,
         chunk.sequence,
         JSON.stringify({
-          type: TokenEvent.type,
+          type: TOKEN_EVENT_TYPE,
           timestamp: Date.now(),
           sequence: chunk.sequence,
           data: chunk.value,

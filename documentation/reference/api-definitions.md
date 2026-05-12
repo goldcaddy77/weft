@@ -188,5 +188,3 @@ void tracing;
 void positiveBalance;
 void dailyCheckoutSweep;
 ```
-
-Agents use the `agent({ ... })` helper.

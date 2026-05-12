@@ -181,7 +181,6 @@ The server supports WebSocket connections for real-time streaming. When a reques
 Three WebSocket routes are available:
 
 - `/v1/workflows/:id/watch` --- observe workflow state changes in real time
-- `/v1/workflows/:id/stream` --- stream tokens from agent workflows
 - `/v1/tasks/:queue/stream` --- [remote worker](./remote-workers.md) task dispatch
 
 ## The `handleRequest()` function

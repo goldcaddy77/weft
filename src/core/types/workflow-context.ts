@@ -1,19 +1,10 @@
 import type {
-  DebateOptions,
-  DebateResult,
-  HandoffOptions,
-  HandoffResult,
-  SuperviseOptions,
-  SuperviseResult,
-} from '../../ai/coordination/index.ts';
-import type { HumanReviewOptions, HumanReviewResult } from '../../ai/human-review.ts';
-import type {
-  AgentContextOptions,
   ErasedSagaStep,
   OffloadReference,
   StreamReference,
   StreamSink,
 } from '../context/types.ts';
+import type { HumanReviewOptions, HumanReviewResult } from '../review/index.ts';
 import type { TenantContext } from '../tenant.ts';
 import type { ActivityCallable, ActivityCallOptions } from './activity.ts';
 import type { WorkflowId } from './identity.ts';
@@ -42,7 +33,7 @@ import type {
  * The durable workflow authoring surface passed to every
  * {@link WorkflowFunction}. Workflow handlers can call `ctx.run`,
  * `ctx.sleep`, `ctx.waitForSignal`, `ctx.startChild`, composition helpers,
- * search-attribute helpers, update registration, and AI helpers directly.
+ * search-attribute helpers, update registration, and review helpers directly.
  *
  * @example
  * ```ts
@@ -125,7 +116,7 @@ export interface WorkflowContext {
   waitForUpdate<T = unknown>(
     name: string,
   ): WorkflowOperation<{ payload: T; respond: (result: unknown) => void }>;
-  humanReview(options: HumanReviewOptions): WorkflowOperation<HumanReviewResult>;
+  review(options: HumanReviewOptions): WorkflowOperation<HumanReviewResult>;
   all(operations: WorkflowOperation<unknown>[]): WorkflowOperation<unknown[]>;
   race(operations: WorkflowOperation<unknown>[]): WorkflowOperation<unknown>;
   memo<T>(key: string, fn: () => T | Promise<T>): WorkflowOperation<T>;
@@ -189,15 +180,11 @@ export interface WorkflowContext {
     options?: WorkflowReduceOptions,
   ): WorkflowOperation<TAccumulator>;
   explain(enabled?: boolean): void;
-  agent(options: AgentContextOptions): WorkflowOperation<unknown>;
   speculate<TResult>(
     execute: (
       context: WorkflowContext,
     ) => WorkflowOperation<TResult> | AsyncGenerator<unknown, TResult, unknown>,
   ): WorkflowOperation<TResult>;
-  handoff(options: HandoffOptions): WorkflowOperation<HandoffResult>;
-  debate(options: DebateOptions): WorkflowOperation<DebateResult>;
-  supervise(options: SuperviseOptions): WorkflowOperation<SuperviseResult>;
   setAttribute<TValue extends SearchAttributeValue>(
     key: SearchAttributeHandle<TValue>,
     value: TValue,

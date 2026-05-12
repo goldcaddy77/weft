@@ -1,6 +1,4 @@
-import type { VerificationRecorder } from '../../ai/agent/index.ts';
-
-export class SpeculativeExecutionState implements VerificationRecorder {
+export class SpeculativeExecutionState {
   readonly #verifications: Array<Promise<{ failed: false } | { failed: true; error: unknown }>>;
   readonly #compensations: Array<() => Promise<void>>;
 

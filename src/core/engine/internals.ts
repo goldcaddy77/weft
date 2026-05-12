@@ -18,7 +18,6 @@
  * `src/core/engine/**` (see documentation/internal-imports-allowlist.json).
  */
 
-import type { HumanReviewResult, ReviewCoordinator } from '../../ai/human-review.ts';
 import type { AlertManager } from '../../alerting/alert-manager.ts';
 import type { Storage as WeftStorage } from '../../storage/interface.ts';
 import type { ActivityWorkerDispatcher } from '../../workers/activity-worker-dispatcher.ts';
@@ -31,6 +30,7 @@ import type {
   ComposedWorkflowInterceptor,
   Interceptor,
 } from '../interceptor.ts';
+import type { HumanReviewResult, ReviewCoordinator } from '../review/index.ts';
 import type { Scheduler } from '../scheduler.ts';
 import type { TenantQuotaManager } from '../tenant-quotas.ts';
 import type { Checkpoint } from '../types.ts';
@@ -120,7 +120,6 @@ export interface EngineInternals {
   reviewTimerIds: Map<string, string[]>;
   pendingWebhooks: Set<AbortController>;
   alertManager: AlertManager | null;
-  agentWorkflowIds: Set<string>;
   eventLogHeads: Map<string, Readonly<EventHeadRecord>>;
   workflowFeedListeners: Map<string, Set<WorkflowFeedListener>>;
   workflowVersionTuples: Map<string, WorkflowVersionTuple>;

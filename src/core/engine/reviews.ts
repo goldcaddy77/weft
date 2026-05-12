@@ -1,14 +1,14 @@
-import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from '../../ai/events/index.ts';
+import type { BatchOperation } from '../../storage/interface.ts';
+import { KEYS, encodeStorageKeyComponent } from '../../storage/interface.ts';
+import { decode, encode } from '../codec.ts';
+import { ReviewCompletedEvent, ReviewRequestedEvent } from '../review/events.ts';
 import {
   ReviewTimeoutError,
   type HumanReviewOptions,
   type HumanReviewResult,
   type ReviewOptions,
   type ReviewRequest,
-} from '../../ai/human-review.ts';
-import type { BatchOperation } from '../../storage/interface.ts';
-import { KEYS, encodeStorageKeyComponent } from '../../storage/interface.ts';
-import { decode, encode } from '../codec.ts';
+} from '../review/index.ts';
 import type { OperationOutcome, SubmitReviewOptions } from '../types.ts';
 import type { EngineInternals } from './internals.ts';
 import { trackWaiterKey, untrackWaiterKey } from './signals.ts';
@@ -111,10 +111,10 @@ export async function submitReview(
     { type: 'delete', key: reviewKey },
   ]);
 
-  // Dispatch HumanReviewCompletedEvent
+  // Dispatch ReviewCompletedEvent
   const duration = reviewData ? now - reviewData.createdAt : 0;
   callbacks.dispatchEvent(
-    new HumanReviewCompletedEvent(resolvedWorkflowId ?? '', reviewId, decision, reviewer, duration),
+    new ReviewCompletedEvent(resolvedWorkflowId ?? '', reviewId, decision, reviewer, duration),
   );
 
   // Wake the waiting workflow by resolving its review waiter
@@ -278,9 +278,9 @@ export async function processReviewOperation(
 
   const reviewId = reviewRequest.reviewId;
 
-  // Dispatch HumanReviewRequestedEvent
+  // Dispatch ReviewRequestedEvent
   callbacks.dispatchEvent(
-    new HumanReviewRequestedEvent(
+    new ReviewRequestedEvent(
       workflowId,
       reviewId,
       reviewRequest.reviewType,
