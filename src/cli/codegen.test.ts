@@ -1,7 +1,7 @@
 import { afterAll, afterEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { composeRegistryUrl, executeCodegen } from './codegen.ts';
 import { parseCliArguments } from './parse-arguments.ts';
@@ -83,6 +83,22 @@ describe('codegen parser', () => {
     const parsed = parseCliArguments(['codegen', '--from', 'r.json', '--out', 'o.d.ts']);
     if (parsed.command !== 'codegen') throw new Error('expected codegen command');
     expect(parsed.timeoutMs).toBe(30_000);
+  });
+
+  it('accepts --json and -j as boolean flags', () => {
+    const long = parseCliArguments(['codegen', '--from', 'r.json', '--out', 'o.d.ts', '--json']);
+    const short = parseCliArguments(['codegen', '--from', 'r.json', '--out', 'o.d.ts', '-j']);
+    if (long.command !== 'codegen' || short.command !== 'codegen') {
+      throw new Error('expected codegen command');
+    }
+    expect(long.json).toBe(true);
+    expect(short.json).toBe(true);
+  });
+
+  it('defaults --json to false when omitted', () => {
+    const parsed = parseCliArguments(['codegen', '--from', 'r.json', '--out', 'o.d.ts']);
+    if (parsed.command !== 'codegen') throw new Error('expected codegen command');
+    expect(parsed.json).toBe(false);
   });
 
   it('captures --from, --out, --server, --token in the parsed command', () => {
@@ -190,6 +206,125 @@ describe('executeCodegen end-to-end', () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('does not exist');
     expect(existsSync(out)).toBe(false);
+  });
+
+  it('fails when the output directory is not writable', async () => {
+    const dir = makeTempDir();
+    chmodSync(dir, 0o555);
+    const out = join(dir, 'weft.d.ts');
+    try {
+      const result = await executeCodegen({ from: REGISTRY_FIXTURE, out, timeoutMs: 30_000 });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toMatch(/failed to write|EACCES|permission/i);
+      expect(existsSync(out)).toBe(false);
+    } finally {
+      // Restore so afterEach can clean up.
+      chmodSync(dir, 0o755);
+    }
+  });
+
+  it('fails on Zod validation errors (valid version, missing required field)', async () => {
+    const dir = makeTempDir();
+    const bad = join(dir, 'bad.json');
+    const out = join(dir, 'weft.d.ts');
+    writeFileSync(
+      bad,
+      JSON.stringify({
+        registryVersion: 1,
+        workflows: {},
+        // Activity missing the required `queue` field.
+        activities: { broken: { outputSchema: { type: 'string' } } },
+      }),
+    );
+    const result = await executeCodegen({ from: bad, out, timeoutMs: 30_000 });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('invalid registry snapshot');
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it('catches CodegenEmitError from a pathologically deep schema', async () => {
+    const dir = makeTempDir();
+    const bad = join(dir, 'deep.json');
+    const out = join(dir, 'weft.d.ts');
+    // Build a 200-deep nested object schema. The emitter caps recursion
+    // at 64 and throws CodegenEmitError, which `executeCodegen` must
+    // translate to exitCode 1 — never reject.
+    let deep: Record<string, unknown> = { type: 'string' };
+    for (let i = 0; i < 200; i++) {
+      deep = {
+        type: 'object',
+        properties: { nested: deep },
+        required: ['nested'],
+        additionalProperties: false,
+      };
+    }
+    writeFileSync(
+      bad,
+      JSON.stringify({
+        registryVersion: 1,
+        workflows: { tooDeep: { inputSchema: deep } },
+        activities: {},
+      }),
+    );
+    const result = await executeCodegen({ from: bad, out, timeoutMs: 30_000 });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/nesting|recursion|levels of/i);
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it('rejects passing both --server and --from to executeCodegen directly', async () => {
+    const dir = makeTempDir();
+    const out = join(dir, 'weft.d.ts');
+    const result = await executeCodegen({
+      server: 'http://example.invalid',
+      from: REGISTRY_FIXTURE,
+      out,
+      timeoutMs: 30_000,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('--server and --from cannot be used together');
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it('emits a single JSON object on stdout with --json on success', async () => {
+    const dir = makeTempDir();
+    const out = join(dir, 'weft.d.ts');
+    const first = await executeCodegen({
+      from: REGISTRY_FIXTURE,
+      out,
+      timeoutMs: 30_000,
+      json: true,
+    });
+    expect(first.exitCode).toBe(0);
+    const parsed = JSON.parse(first.stdout) as Record<string, unknown>;
+    expect(parsed['ok']).toBe(true);
+    expect(parsed['action']).toBe('wrote');
+    expect(parsed['out']).toBe(out);
+    expect(parsed['workflows']).toBeGreaterThan(0);
+
+    const second = await executeCodegen({
+      from: REGISTRY_FIXTURE,
+      out,
+      timeoutMs: 30_000,
+      json: true,
+    });
+    expect(second.exitCode).toBe(0);
+    const repeat = JSON.parse(second.stdout) as Record<string, unknown>;
+    expect(repeat['action']).toBe('unchanged');
+  });
+
+  it('emits {ok:false,error} on stderr with --json on failure', async () => {
+    const dir = makeTempDir();
+    const result = await executeCodegen({
+      from: join(dir, 'no-such-file.json'),
+      out: join(dir, 'weft.d.ts'),
+      timeoutMs: 30_000,
+      json: true,
+    });
+    expect(result.exitCode).toBe(1);
+    const parsed = JSON.parse(result.stderr ?? '') as Record<string, unknown>;
+    expect(parsed['ok']).toBe(false);
+    expect(parsed['error']).toContain('--from file not found');
   });
 });
 
@@ -337,6 +472,52 @@ describe('executeCodegen HTTP fetch path', () => {
     }
   });
 
+  it('reports a parse error when the body claims JSON but is malformed', async () => {
+    const server = serveOnce(
+      () => new Response('not actually json', { headers: { 'content-type': 'application/json' } }),
+    );
+    try {
+      const dir = makeTempDir();
+      const out = join(dir, 'weft.d.ts');
+      const result = await executeCodegen({
+        server: server.url.toString(),
+        out,
+        timeoutMs: 30_000,
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('failed to parse response body');
+      expect(existsSync(out)).toBe(false);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  it('sends no Authorization header when neither --token nor WEFT_TOKEN is set', async () => {
+    let observedAuth: string | null | undefined;
+    const server = serveOnce((request) => {
+      observedAuth = request.headers.get('authorization');
+      return new Response(Bun.file(REGISTRY_FIXTURE), {
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const prior = Bun.env['WEFT_TOKEN'];
+    delete Bun.env['WEFT_TOKEN'];
+    try {
+      const dir = makeTempDir();
+      const out = join(dir, 'weft.d.ts');
+      const result = await executeCodegen({
+        server: server.url.toString(),
+        out,
+        timeoutMs: 30_000,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(observedAuth).toBeNull();
+    } finally {
+      if (prior !== undefined) Bun.env['WEFT_TOKEN'] = prior;
+      await server.stop(true);
+    }
+  });
+
   it('reports a clear diagnostic when the host is unreachable', async () => {
     const dir = makeTempDir();
     const out = join(dir, 'weft.d.ts');
@@ -425,9 +606,3 @@ afterAll(() => {
   // strays.
   expect(tempDirs).toHaveLength(0);
 });
-
-// `statSync` is imported so future tests can assert idempotency by
-// inode rather than mtime if needed; suppress unused-import warning
-// for now without removing the import.
-void statSync;
-void dirname;

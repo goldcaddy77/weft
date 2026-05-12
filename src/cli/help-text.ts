@@ -148,6 +148,9 @@ Options:
   -o, --out <file>       Output .d.ts path. Parent directory must already exist
       --timeout <ms>     Network timeout in milliseconds (default: 30000;
                          must be a positive integer)
+  -j, --json             Emit a single JSON object on stdout for machine
+                         consumers; errors become {"ok":false,"error":...}
+                         on stderr
   -h, --help             Show this help message
 
 Exit codes:

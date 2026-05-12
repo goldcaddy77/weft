@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import type { RegistrySnapshot } from '../core/registry-snapshot.ts';
 import {
+  CodegenEmitError,
   emitPropertyKey,
   emitRegistryDeclaration,
   jsonSchemaToTypeScript,
@@ -55,6 +56,14 @@ describe('jsonSchemaToTypeScript enum and const', () => {
 
   it('emits unknown when an enum contains a non-primitive', () => {
     expect(jsonSchemaToTypeScript({ enum: ['a', { nested: true }] })).toBe('unknown');
+  });
+
+  it('degrades empty enum to unknown', () => {
+    expect(jsonSchemaToTypeScript({ enum: [] })).toBe('unknown');
+  });
+
+  it('emits a bare literal for a single-entry enum (no parens)', () => {
+    expect(jsonSchemaToTypeScript({ enum: ['only'] })).toBe('"only"');
   });
 
   it('emits a primitive literal for const', () => {
@@ -115,6 +124,42 @@ describe('jsonSchemaToTypeScript combinators', () => {
         oneOf: [{ type: 'string' }, { type: 'null' }],
       }),
     ).toBe('(string | null)');
+  });
+
+  it('degrades empty type-as-array to unknown', () => {
+    expect(jsonSchemaToTypeScript({ type: [] })).toBe('unknown');
+  });
+
+  it('emits a bare type for a single-element type-as-array (no parens)', () => {
+    expect(jsonSchemaToTypeScript({ type: ['string'] })).toBe('string');
+  });
+
+  it('throws CodegenEmitError on excessive recursion depth', () => {
+    let deep: Record<string, unknown> = { type: 'string' };
+    for (let i = 0; i < 200; i++) {
+      deep = { type: 'array', items: deep };
+    }
+    expect(() => jsonSchemaToTypeScript(deep)).toThrow(CodegenEmitError);
+  });
+
+  it('degrades combinator + sibling assertion to unknown rather than dropping siblings', () => {
+    // JSON Schema applies sibling keywords conjunctively. Rather than
+    // implementing full composition, the emitter detects this case
+    // and degrades to `unknown` so it never silently emits a
+    // too-broad type.
+    expect(
+      jsonSchemaToTypeScript({
+        type: 'object',
+        properties: { a: { type: 'string' } },
+        allOf: [{ properties: { b: { type: 'number' } } }],
+      }),
+    ).toBe('unknown');
+    expect(
+      jsonSchemaToTypeScript({
+        type: 'string',
+        oneOf: [{ const: 'a' }, { const: 'b' }],
+      }),
+    ).toBe('unknown');
   });
 });
 
@@ -327,7 +372,11 @@ describe('emitRegistryDeclaration', () => {
   });
 
   it('sorts keys deterministically regardless of insertion order', () => {
-    const snapshot = buildSnapshot({
+    // Two snapshots with explicitly reversed insertion order: V8
+    // preserves string-key insertion order, so this is the only way
+    // to prove the emitter sorts rather than relying on iteration
+    // luck.
+    const snapshotA = buildSnapshot({
       workflows: {
         zeta: { inputSchema: { type: 'string' } },
         alpha: { inputSchema: { type: 'string' } },
@@ -337,9 +386,21 @@ describe('emitRegistryDeclaration', () => {
         aPing: { queue: 'q', outputSchema: { type: 'string' } },
       },
     });
-    const output = emitRegistryDeclaration(snapshot);
-    expect(output.indexOf('"alpha"')).toBeLessThan(output.indexOf('"zeta"'));
-    expect(output.indexOf('"aPing"')).toBeLessThan(output.indexOf('"zPing"'));
+    const snapshotB = buildSnapshot({
+      workflows: {
+        alpha: { inputSchema: { type: 'string' } },
+        zeta: { inputSchema: { type: 'string' } },
+      },
+      activities: {
+        aPing: { queue: 'q', outputSchema: { type: 'string' } },
+        zPing: { queue: 'q', outputSchema: { type: 'string' } },
+      },
+    });
+    const outputA = emitRegistryDeclaration(snapshotA);
+    const outputB = emitRegistryDeclaration(snapshotB);
+    expect(outputA).toBe(outputB);
+    expect(outputA.indexOf('"alpha"')).toBeLessThan(outputA.indexOf('"zeta"'));
+    expect(outputA.indexOf('"aPing"')).toBeLessThan(outputA.indexOf('"zPing"'));
   });
 
   it('uses null-prototype-safe key handling for names like __proto__', () => {

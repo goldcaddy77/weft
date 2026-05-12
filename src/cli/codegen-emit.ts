@@ -53,51 +53,113 @@ function primitiveTypeFor(typeKeyword: string): string | undefined {
   }
 }
 
-function tryCombinator(node: Record<string, unknown>): string | undefined {
-  if (Array.isArray(node['oneOf'])) return parenUnion(node['oneOf']);
-  if (Array.isArray(node['anyOf'])) return parenUnion(node['anyOf']);
-  if (Array.isArray(node['allOf'])) return parenIntersection(node['allOf']);
-  return undefined;
+/**
+ * Maximum recursion depth for `jsonSchemaToTypeScript`. JSON Schema
+ * inputs are generated from finite TypeScript types in practice, so a
+ * 64-deep bound is comfortably more than enough for any real workflow
+ * or activity schema, while still cheaply bounding the converter
+ * against a hostile or malformed input. When the limit is hit, the
+ * converter throws {@link CodegenEmitError}, which the executor
+ * converts to a `CommandOutput` with exit code 1 — the user-facing
+ * contract that the CLI never crashes on bad input is preserved.
+ */
+const MAX_RECURSION_DEPTH = 64;
+
+const SIBLING_ASSERTION_KEYWORDS = [
+  'type',
+  'properties',
+  'required',
+  'additionalProperties',
+  'patternProperties',
+  'items',
+  'prefixItems',
+  'additionalItems',
+  'enum',
+  'const',
+] as const;
+
+/**
+ * Thrown by the emitter when the converter cannot produce a type it
+ * is willing to stand behind (e.g. recursion overflow). Callers must
+ * translate this to a user-facing diagnostic.
+ */
+export class CodegenEmitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CodegenEmitError';
+  }
+}
+
+function hasAnyKey(node: Record<string, unknown>, keys: readonly string[]): boolean {
+  for (const key of keys) {
+    if (key in node) return true;
+  }
+  return false;
+}
+
+function tryCombinator(node: Record<string, unknown>, depth: number): string | undefined {
+  const hasOneOf = Array.isArray(node['oneOf']);
+  const hasAnyOf = Array.isArray(node['anyOf']);
+  const hasAllOf = Array.isArray(node['allOf']);
+
+  if (!hasOneOf && !hasAnyOf && !hasAllOf) return undefined;
+
+  // JSON Schema applies sibling keywords conjunctively: a combinator
+  // appearing alongside `type`, `properties`, etc. does NOT replace
+  // those constraints. Rather than implement full sibling
+  // composition (which would balloon the emitter and rarely matters
+  // in practice for Zod/Valibot outputs), detect the case and
+  // degrade to `unknown` so we never silently emit a too-broad type.
+  if (hasAnyKey(node, SIBLING_ASSERTION_KEYWORDS)) return 'unknown';
+
+  if (hasOneOf) return parenUnion(node['oneOf'] as unknown[], depth);
+  if (hasAnyOf) return parenUnion(node['anyOf'] as unknown[], depth);
+  return parenIntersection(node['allOf'] as unknown[], depth);
 }
 
 function tryEnumOrConst(node: Record<string, unknown>): string | undefined {
   if ('const' in node) return literalFromValue(node['const']);
-  if (Array.isArray(node['enum'])) {
-    const literals = node['enum'].map(literalFromValue);
-    if (literals.some((literal) => literal === 'unknown')) return 'unknown';
-    return `(${literals.join(' | ')})`;
-  }
-  return undefined;
+  if (!Array.isArray(node['enum'])) return undefined;
+  // Empty `enum: []` is a degenerate schema. `never` is the precise
+  // TypeScript shape (no value satisfies an empty enum), but we
+  // emit `unknown` for symmetry with other "we don't know" paths.
+  if (node['enum'].length === 0) return 'unknown';
+  const literals = node['enum'].map(literalFromValue);
+  if (literals.some((literal) => literal === 'unknown')) return 'unknown';
+  if (literals.length === 1) return literals[0]!;
+  return `(${literals.join(' | ')})`;
 }
 
-function dispatchByType(node: Record<string, unknown>): string | undefined {
+function dispatchByType(node: Record<string, unknown>, depth: number): string | undefined {
   const typeKeyword = node['type'];
 
   if (Array.isArray(typeKeyword)) {
     // `type: ['string', 'null']` flattens to a union of the per-type
     // results so callers get `(string | null)` rather than `unknown`.
+    if (typeKeyword.length === 0) return 'unknown';
     const branches = typeKeyword.map((branchType) =>
-      jsonSchemaToTypeScript({ ...node, type: branchType }),
+      jsonSchemaToTypeScriptAtDepth({ ...node, type: branchType }, depth + 1),
     );
+    if (branches.length === 1) return branches[0]!;
     return `(${branches.join(' | ')})`;
   }
 
   if (typeof typeKeyword === 'string') {
     const primitive = primitiveTypeFor(typeKeyword);
     if (primitive !== undefined) return primitive;
-    if (typeKeyword === 'array') return arrayTypeScript(node);
-    if (typeKeyword === 'object') return objectTypeScript(node);
+    if (typeKeyword === 'array') return arrayTypeScript(node, depth);
+    if (typeKeyword === 'object') return objectTypeScript(node, depth);
   }
 
   return undefined;
 }
 
-function dispatchByShape(node: Record<string, unknown>): string | undefined {
+function dispatchByShape(node: Record<string, unknown>, depth: number): string | undefined {
   // `properties` or `additionalProperties` without an explicit
   // `type: 'object'` is still object-shaped (some converters omit
   // `type`). Same for `items`/`prefixItems` → array.
-  if ('properties' in node || 'additionalProperties' in node) return objectTypeScript(node);
-  if ('items' in node || 'prefixItems' in node) return arrayTypeScript(node);
+  if ('properties' in node || 'additionalProperties' in node) return objectTypeScript(node, depth);
+  if ('items' in node || 'prefixItems' in node) return arrayTypeScript(node, depth);
   return undefined;
 }
 
@@ -109,31 +171,41 @@ function normalizeSchema(schema: unknown): Record<string, unknown> | string {
   return schema as Record<string, unknown>;
 }
 
-/** Convert a single JSON Schema fragment to a TypeScript type expression. */
-export function jsonSchemaToTypeScript(schema: unknown): string {
+function jsonSchemaToTypeScriptAtDepth(schema: unknown, depth: number): string {
+  if (depth > MAX_RECURSION_DEPTH) {
+    throw new CodegenEmitError(
+      `JSON Schema converter exceeded ${MAX_RECURSION_DEPTH} levels of nesting`,
+    );
+  }
   const node = normalizeSchema(schema);
   if (typeof node === 'string') return node;
-  // Combinators take precedence over `type` because they can apply to
-  // any value shape (e.g. `{ allOf: [...] }` with no top-level `type`).
+  // Combinators take precedence over `type` only when no sibling
+  // assertion keywords are present; otherwise `tryCombinator`
+  // degrades to `unknown` (see comment inside it).
   return (
-    tryCombinator(node) ??
+    tryCombinator(node, depth) ??
     tryEnumOrConst(node) ??
-    dispatchByType(node) ??
-    dispatchByShape(node) ??
+    dispatchByType(node, depth) ??
+    dispatchByShape(node, depth) ??
     'unknown'
   );
 }
 
-function parenUnion(branches: unknown[]): string {
+/** Convert a single JSON Schema fragment to a TypeScript type expression. */
+export function jsonSchemaToTypeScript(schema: unknown): string {
+  return jsonSchemaToTypeScriptAtDepth(schema, 0);
+}
+
+function parenUnion(branches: unknown[], depth: number): string {
   if (branches.length === 0) return 'unknown';
-  const types = branches.map(jsonSchemaToTypeScript);
+  const types = branches.map((branch) => jsonSchemaToTypeScriptAtDepth(branch, depth + 1));
   if (types.length === 1) return types[0]!;
   return `(${types.join(' | ')})`;
 }
 
-function parenIntersection(branches: unknown[]): string {
+function parenIntersection(branches: unknown[], depth: number): string {
   if (branches.length === 0) return 'unknown';
-  const types = branches.map(jsonSchemaToTypeScript);
+  const types = branches.map((branch) => jsonSchemaToTypeScriptAtDepth(branch, depth + 1));
   if (types.length === 1) return types[0]!;
   return `(${types.join(' & ')})`;
 }
@@ -146,15 +218,16 @@ function literalFromValue(value: unknown): string {
   return 'unknown';
 }
 
-function arrayTypeScript(node: Record<string, unknown>): string {
+function arrayTypeScript(node: Record<string, unknown>, depth: number): string {
   const prefixItems = node['prefixItems'];
   const itemsRaw = node['items'];
   const additionalItemsRaw = node['additionalItems'];
+  const childDepth = depth + 1;
 
   // Draft-2020-12: `prefixItems` carries the tuple positions, and
   // `items` (a single schema or `false`) controls the rest.
   if (Array.isArray(prefixItems)) {
-    const positions = prefixItems.map(jsonSchemaToTypeScript);
+    const positions = prefixItems.map((p) => jsonSchemaToTypeScriptAtDepth(p, childDepth));
     if (itemsRaw === false) {
       return `[${positions.join(', ')}]`;
     }
@@ -162,21 +235,21 @@ function arrayTypeScript(node: Record<string, unknown>): string {
       // Draft-2020-12 default is open: rest of `unknown`.
       return `[${[...positions, '...unknown[]'].join(', ')}]`;
     }
-    const restType = jsonSchemaToTypeScript(itemsRaw);
+    const restType = jsonSchemaToTypeScriptAtDepth(itemsRaw, childDepth);
     return `[${[...positions, `...${restType}[]`].join(', ')}]`;
   }
 
   // Legacy draft: `items` may be an array of position schemas, in
   // which case `additionalItems` plays the rest-controller role.
   if (Array.isArray(itemsRaw)) {
-    const positions = itemsRaw.map(jsonSchemaToTypeScript);
+    const positions = itemsRaw.map((p) => jsonSchemaToTypeScriptAtDepth(p, childDepth));
     if (additionalItemsRaw === false) {
       return `[${positions.join(', ')}]`;
     }
     if (additionalItemsRaw === undefined) {
       return `[${[...positions, '...unknown[]'].join(', ')}]`;
     }
-    const restType = jsonSchemaToTypeScript(additionalItemsRaw);
+    const restType = jsonSchemaToTypeScriptAtDepth(additionalItemsRaw, childDepth);
     return `[${[...positions, `...${restType}[]`].join(', ')}]`;
   }
 
@@ -186,7 +259,7 @@ function arrayTypeScript(node: Record<string, unknown>): string {
   if (itemsRaw === false) {
     return '[]';
   }
-  return `Array<${jsonSchemaToTypeScript(itemsRaw)}>`;
+  return `Array<${jsonSchemaToTypeScriptAtDepth(itemsRaw, childDepth)}>`;
 }
 
 type ObjectRendering = {
@@ -198,9 +271,11 @@ type ObjectRendering = {
 function renderObjectProperties(
   properties: Record<string, unknown> | undefined,
   requiredSet: ReadonlySet<string>,
+  depth: number,
 ): ObjectRendering {
   const declaredKeys = properties ? Object.keys(properties) : [];
-  const missingRequired = [...requiredSet].filter((key) => !declaredKeys.includes(key));
+  const declaredKeySet = new Set(declaredKeys);
+  const missingRequired = [...requiredSet].filter((key) => !declaredKeySet.has(key));
   const allKeys = [...declaredKeys, ...missingRequired].toSorted(codepointCompare);
 
   const propertyLines: string[] = [];
@@ -209,8 +284,8 @@ function renderObjectProperties(
 
   for (const key of allKeys) {
     const isRequired = requiredSet.has(key);
-    const schemaForKey = properties && key in properties ? properties[key] : undefined;
-    const valueType = jsonSchemaToTypeScript(schemaForKey);
+    const schemaForKey = properties && declaredKeySet.has(key) ? properties[key] : undefined;
+    const valueType = jsonSchemaToTypeScriptAtDepth(schemaForKey, depth + 1);
     namedValueTypes.push(valueType);
     if (!isRequired) hasOptionalNamedProperty = true;
     propertyLines.push(`${emitPropertyKey(key)}${isRequired ? '' : '?'}: ${valueType};`);
@@ -230,7 +305,7 @@ function emptyObjectTypeScript(indexSignature: string | undefined): string {
   return `{ [index: string]: ${indexSignature} }`;
 }
 
-function objectTypeScript(node: Record<string, unknown>): string {
+function objectTypeScript(node: Record<string, unknown>, depth: number): string {
   const propertiesRaw = node['properties'];
   const properties =
     propertiesRaw !== null && typeof propertiesRaw === 'object' && !Array.isArray(propertiesRaw)
@@ -243,11 +318,12 @@ function objectTypeScript(node: Record<string, unknown>): string {
       : [],
   );
 
-  const rendering = renderObjectProperties(properties, requiredSet);
+  const rendering = renderObjectProperties(properties, requiredSet, depth);
   const indexSignature = indexSignatureForObject(
     node['additionalProperties'],
     rendering.namedValueTypes,
     rendering.hasOptionalNamedProperty,
+    depth,
   );
 
   if (rendering.propertyLines.length === 0) {
@@ -277,6 +353,7 @@ function indexSignatureForObject(
   additionalRaw: unknown,
   namedValueTypes: readonly string[],
   hasOptionalNamedProperty: boolean,
+  depth: number,
 ): string | undefined {
   if (additionalRaw === false) return undefined;
   if (additionalRaw === undefined || additionalRaw === true) return 'unknown';
@@ -286,7 +363,7 @@ function indexSignatureForObject(
     typeof additionalRaw === 'object' &&
     !Array.isArray(additionalRaw)
   ) {
-    const typedValue = jsonSchemaToTypeScript(additionalRaw);
+    const typedValue = jsonSchemaToTypeScriptAtDepth(additionalRaw, depth + 1);
     const unionMembers = new Set<string>([typedValue, ...namedValueTypes]);
     if (hasOptionalNamedProperty) unionMembers.add('undefined');
     const members = [...unionMembers];

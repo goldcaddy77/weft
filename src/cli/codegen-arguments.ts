@@ -28,6 +28,7 @@ type CodegenParsedValues = {
   out?: string;
   timeout?: string;
   help?: boolean;
+  json?: boolean;
 };
 
 function validateCodegenFlags(values: CodegenParsedValues): void {
@@ -51,6 +52,7 @@ function buildCodegenCommand(values: CodegenParsedValues, help: boolean): CliCom
     out: values.out ?? '',
     timeoutMs: help ? CODEGEN_DEFAULT_TIMEOUT_MS : parseCodegenTimeout(values.timeout),
     help,
+    json: values.json ?? false,
     ...(values.server !== undefined ? { server: values.server } : {}),
     ...(values.from !== undefined ? { from: values.from } : {}),
     ...(values.token !== undefined ? { token: values.token } : {}),
@@ -67,6 +69,7 @@ export function parseCodegenArguments(args: string[]): CliCommand {
       token: { type: 'string' },
       out: { type: 'string', short: 'o' },
       timeout: { type: 'string' },
+      json: { type: 'boolean', short: 'j', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
     strict: true,

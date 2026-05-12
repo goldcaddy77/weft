@@ -33,6 +33,7 @@ export type CliCommand =
       out: string;
       timeoutMs: number;
       help: boolean;
+      json: boolean;
     }
   | {
       command: 'conformance';

@@ -18,14 +18,21 @@ import { basename, dirname } from 'node:path';
 
 import { z } from 'zod';
 
-import { REGISTRY_VERSION, type RegistrySnapshot } from '../core/registry-snapshot.ts';
-import { emitRegistryDeclaration } from './codegen-emit.ts';
+import {
+  REGISTRY_VERSION,
+  type RegistryActivityEntry,
+  type RegistrySnapshot,
+  type RegistryWorkflowEntry,
+} from '../core/registry-snapshot.ts';
+import { CodegenEmitError, emitRegistryDeclaration } from './codegen-emit.ts';
 import type { CommandOutput } from './types.ts';
+
+const jsonSchemaObject = z.record(z.string(), z.unknown());
 
 const workflowEntrySchema = z
   .object({
-    inputSchema: z.unknown().optional(),
-    outputSchema: z.unknown().optional(),
+    inputSchema: jsonSchemaObject.optional(),
+    outputSchema: jsonSchemaObject.optional(),
     description: z.string().optional(),
     tags: z.array(z.string()).optional(),
   })
@@ -33,8 +40,8 @@ const workflowEntrySchema = z
 
 const activityEntrySchema = z
   .object({
-    inputSchema: z.unknown().optional(),
-    outputSchema: z.unknown().optional(),
+    inputSchema: jsonSchemaObject.optional(),
+    outputSchema: jsonSchemaObject.optional(),
     queue: z.string(),
     description: z.string().optional(),
   })
@@ -55,6 +62,8 @@ export type CodegenOptions = {
   token?: string;
   out: string;
   timeoutMs: number;
+  /** When true, emit a single JSON object on stdout for machine consumers. */
+  json?: boolean;
 };
 
 /**
@@ -63,35 +72,61 @@ export type CodegenOptions = {
  */
 export async function executeCodegen(options: CodegenOptions): Promise<CommandOutput> {
   const snapshotResult = await loadSnapshot(options);
-  if (!snapshotResult.ok) {
-    return { stdout: '', stderr: snapshotResult.error, exitCode: 1 };
-  }
+  if (!snapshotResult.ok) return formatFailure(snapshotResult.error, options);
 
   const validation = validateSnapshot(snapshotResult.value);
-  if (!validation.ok) {
-    return { stdout: '', stderr: validation.error, exitCode: 1 };
-  }
+  if (!validation.ok) return formatFailure(validation.error, options);
 
   const snapshot = validation.value;
-  const content = emitRegistryDeclaration(snapshot);
+  let content: string;
+  try {
+    content = emitRegistryDeclaration(snapshot);
+  } catch (error) {
+    if (error instanceof CodegenEmitError) {
+      return formatFailure(`codegen: ${error.message}`, options);
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    return formatFailure(`codegen: unexpected emitter failure: ${message}`, options);
+  }
 
   const writeResult = await writeOutput(options.out, content);
-  if (!writeResult.ok) {
-    return { stdout: '', stderr: writeResult.error, exitCode: 1 };
-  }
+  if (!writeResult.ok) return formatFailure(writeResult.error, options);
 
   const workflowCount = Object.keys(snapshot.workflows).length;
   const activityCount = Object.keys(snapshot.activities).length;
 
-  if (writeResult.action === 'unchanged') {
+  return formatSuccess(options, writeResult.action, workflowCount, activityCount);
+}
+
+function formatFailure(message: string, options: CodegenOptions): CommandOutput {
+  if (options.json) {
     return {
-      stdout: `codegen: ${options.out} is up to date`,
-      exitCode: 0,
+      stdout: '',
+      stderr: JSON.stringify({ ok: false, error: message }),
+      exitCode: 1,
     };
   }
+  return { stdout: '', stderr: message, exitCode: 1 };
+}
 
+function formatSuccess(
+  options: CodegenOptions,
+  action: 'wrote' | 'unchanged',
+  workflows: number,
+  activities: number,
+): CommandOutput {
+  if (options.json) {
+    const payload =
+      action === 'unchanged'
+        ? { ok: true, action, out: options.out }
+        : { ok: true, action, out: options.out, workflows, activities };
+    return { stdout: JSON.stringify(payload), exitCode: 0 };
+  }
+  if (action === 'unchanged') {
+    return { stdout: `codegen: ${options.out} is up to date`, exitCode: 0 };
+  }
   return {
-    stdout: `codegen: wrote ${options.out} (${workflowCount} workflows, ${activityCount} activities)`,
+    stdout: `codegen: wrote ${options.out} (${workflows} workflows, ${activities} activities)`,
     exitCode: 0,
   };
 }
@@ -99,6 +134,13 @@ export async function executeCodegen(options: CodegenOptions): Promise<CommandOu
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
 async function loadSnapshot(options: CodegenOptions): Promise<Result<unknown>> {
+  // Re-guard the source XOR even though the parser already rejects this
+  // combination, because `executeCodegen` is exported and may be called
+  // programmatically from tests or future tooling that bypasses the
+  // parser.
+  if (options.from !== undefined && options.server !== undefined) {
+    return { ok: false, error: 'codegen: --server and --from cannot be used together' };
+  }
   if (options.from !== undefined) {
     return loadSnapshotFromFile(options.from);
   }
@@ -222,17 +264,14 @@ function validateSnapshot(value: unknown): Result<RegistrySnapshot> {
   // the full Zod schema, since the version check is the most likely
   // failure when consumers vendor a snapshot from an older or newer
   // server.
-  if (
-    value !== null &&
-    typeof value === 'object' &&
-    'registryVersion' in value &&
-    (value as { registryVersion?: unknown }).registryVersion !== REGISTRY_VERSION
-  ) {
-    const actual = (value as { registryVersion?: unknown }).registryVersion;
-    return {
-      ok: false,
-      error: `codegen: registryVersion ${String(actual)} is not supported (expected ${REGISTRY_VERSION}); upgrade or regenerate the snapshot`,
-    };
+  if (value !== null && typeof value === 'object' && 'registryVersion' in value) {
+    const { registryVersion: actual } = value as { registryVersion?: unknown };
+    if (actual !== REGISTRY_VERSION) {
+      return {
+        ok: false,
+        error: `codegen: registryVersion ${String(actual)} is not supported (expected ${REGISTRY_VERSION}); upgrade or regenerate the snapshot`,
+      };
+    }
   }
 
   const parsed = registrySnapshotSchema.safeParse(value);
@@ -242,7 +281,48 @@ function validateSnapshot(value: unknown): Result<RegistrySnapshot> {
       error: `codegen: invalid registry snapshot: ${formatZodError(parsed.error)}`,
     };
   }
-  return { ok: true, value: parsed.data as RegistrySnapshot };
+  // Zod's `passthrough` keeps unknown top-level keys (forward-compat),
+  // but that pulls in an `[x: string]: unknown` index signature on the
+  // inferred type. We only care about the known fields downstream, so
+  // project the parsed value onto the `RegistrySnapshot` shape by
+  // copying just the documented keys. This preserves forward-compat
+  // (unknown keys are accepted by the validator) without leaking the
+  // index signature into the emitter's type domain.
+  const snapshot: RegistrySnapshot = {
+    registryVersion: parsed.data.registryVersion,
+    workflows: projectWorkflows(parsed.data.workflows),
+    activities: projectActivities(parsed.data.activities),
+  };
+  return { ok: true, value: snapshot };
+}
+
+function projectWorkflows(
+  raw: Record<string, z.infer<typeof workflowEntrySchema>>,
+): Record<string, RegistryWorkflowEntry> {
+  const projected: Record<string, RegistryWorkflowEntry> = Object.create(null);
+  for (const [name, entry] of Object.entries(raw)) {
+    const projection: RegistryWorkflowEntry = {};
+    if (entry.inputSchema !== undefined) projection.inputSchema = entry.inputSchema;
+    if (entry.outputSchema !== undefined) projection.outputSchema = entry.outputSchema;
+    if (entry.description !== undefined) projection.description = entry.description;
+    if (entry.tags !== undefined) projection.tags = entry.tags;
+    projected[name] = projection;
+  }
+  return projected;
+}
+
+function projectActivities(
+  raw: Record<string, z.infer<typeof activityEntrySchema>>,
+): Record<string, RegistryActivityEntry> {
+  const projected: Record<string, RegistryActivityEntry> = Object.create(null);
+  for (const [name, entry] of Object.entries(raw)) {
+    const projection: RegistryActivityEntry = { queue: entry.queue };
+    if (entry.inputSchema !== undefined) projection.inputSchema = entry.inputSchema;
+    if (entry.outputSchema !== undefined) projection.outputSchema = entry.outputSchema;
+    if (entry.description !== undefined) projection.description = entry.description;
+    projected[name] = projection;
+  }
+  return projected;
 }
 
 function formatZodError(error: z.ZodError): string {
