@@ -4,12 +4,12 @@ import { z } from 'zod';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
-import { waitForRealTimersForTesting } from '../testing/fake-timers.ts';
+import { waitForCondition } from '../testing/fake-timers.ts';
 import { runMcpStdioSession } from './stdio.ts';
 
 type ParsedLine = {
   jsonrpc: '2.0';
-  id?: string | number;
+  id?: string | number | null;
   method?: string;
   result?: unknown;
   error?: { code: number; message: string };
@@ -37,6 +37,7 @@ function createEngine(): Engine {
 function controllableInput(): {
   stream: ReadableStream<Uint8Array>;
   send(message: Record<string, unknown>): void;
+  sendRaw(text: string): void;
   close(): void;
 } {
   const encoder = new TextEncoder();
@@ -50,6 +51,9 @@ function controllableInput(): {
     stream,
     send(message) {
       controller.enqueue(encoder.encode(`${JSON.stringify(message)}\n`));
+    },
+    sendRaw(text) {
+      controller.enqueue(encoder.encode(text));
     },
     close() {
       controller.close();
@@ -87,18 +91,57 @@ async function waitForLine(
   output: { lines(): ParsedLine[] },
   predicate: (line: ParsedLine) => boolean,
 ): Promise<ParsedLine> {
-  const deadline = Date.now() + 2_000;
-  while (Date.now() < deadline) {
-    const found = output.lines().find(predicate);
-    if (found) return found;
-    await waitForRealTimersForTesting(10);
-  }
-  throw new Error('timed out waiting for MCP stdio line');
+  let found: ParsedLine | undefined;
+  await waitForCondition(
+    () => {
+      found = output.lines().find(predicate);
+      return found !== undefined;
+    },
+    { timeoutMs: 2_000, intervalMs: 10, label: 'MCP stdio line' },
+  );
+  return found!;
 }
 
 function toolText(result: unknown): unknown {
   const content = (result as { content: Array<{ type: 'text'; text: string }> }).content;
   return JSON.parse(content[0]!.text);
+}
+
+async function expectRejectedStartupTokenAdmission({
+  frame,
+  rawFrame,
+  maxFrameBytes,
+  expectedLine,
+  expectedReason,
+}: {
+  frame?: Record<string, unknown>;
+  rawFrame?: string;
+  maxFrameBytes?: number;
+  expectedLine: Pick<ParsedLine, 'id' | 'error'>;
+  expectedReason: string;
+}): Promise<void> {
+  const input = controllableInput();
+  const output = collectingOutput();
+
+  const options = {
+    input: input.stream,
+    output: output.stream,
+    engine: createEngine(),
+    admission: { kind: 'startup-token', token: 'secret-token' },
+  } as const;
+  const session = runMcpStdioSession(
+    maxFrameBytes === undefined ? options : { ...options, maxFrameBytes },
+  );
+
+  if (rawFrame !== undefined) {
+    input.sendRaw(rawFrame.endsWith('\n') ? rawFrame : `${rawFrame}\n`);
+  } else if (frame !== undefined) {
+    input.send(frame);
+  }
+
+  const line = await waitForLine(output, (candidate) => candidate.error !== undefined);
+  expect(line).toMatchObject(expectedLine);
+  expect(await session).toEqual({ exitCode: 2, reason: expectedReason });
 }
 
 describe('runMcpStdioSession', () => {
@@ -114,6 +157,166 @@ describe('runMcpStdioSession', () => {
       exitCode: 2,
       reason: 'MCP stdio startup token must be non-empty',
     });
+  });
+
+  it('accepts startup-token admission and then runs the MCP initialize handshake', async () => {
+    const engine = createEngine();
+    const input = controllableInput();
+    const output = collectingOutput();
+
+    const session = runMcpStdioSession({
+      input: input.stream,
+      output: output.stream,
+      engine,
+      admission: { kind: 'startup-token', token: 'secret-token' },
+    });
+
+    input.send({
+      jsonrpc: '2.0',
+      id: 'auth',
+      method: 'weft.authenticate',
+      params: { token: 'secret-token' },
+    });
+    await waitForLine(output, (line) => line.id === 'auth' && line.result !== undefined);
+
+    input.send({
+      jsonrpc: '2.0',
+      id: 'init',
+      method: 'initialize',
+      params: { protocolVersion: '2025-11-25', capabilities: {} },
+    });
+    await waitForLine(output, (line) => line.id === 'init' && line.result !== undefined);
+
+    input.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    input.send({ jsonrpc: '2.0', id: 'tools', method: 'tools/list', params: {} });
+    await waitForLine(output, (line) => line.id === 'tools' && line.result !== undefined);
+
+    input.close();
+    expect(await session).toEqual({ exitCode: 0 });
+  });
+
+  it('rejects startup-token admission for mismatch, malformed JSON, missing token, and oversize frames', async () => {
+    await expectRejectedStartupTokenAdmission({
+      frame: {
+        jsonrpc: '2.0',
+        id: 'wrong-token',
+        method: 'weft.authenticate',
+        params: { token: 'wrong' },
+      },
+      expectedLine: {
+        id: 'wrong-token',
+        error: { code: -32010, message: 'startup token mismatch' },
+      },
+      expectedReason: 'startup token mismatch',
+    });
+
+    await expectRejectedStartupTokenAdmission({
+      rawFrame: '{not-json}\n',
+      expectedLine: {
+        id: null,
+        error: { code: -32010, message: 'first frame was not valid JSON' },
+      },
+      expectedReason: 'first frame was not valid JSON',
+    });
+
+    await expectRejectedStartupTokenAdmission({
+      frame: {
+        jsonrpc: '2.0',
+        id: 'missing-token',
+        method: 'weft.authenticate',
+        params: {},
+      },
+      expectedLine: {
+        id: 'missing-token',
+        error: { code: -32010, message: 'startup token mismatch' },
+      },
+      expectedReason: 'startup token mismatch',
+    });
+
+    await expectRejectedStartupTokenAdmission({
+      rawFrame: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'oversize-auth',
+        method: 'weft.authenticate',
+        params: { token: 'secret-token' },
+      }),
+      maxFrameBytes: 10,
+      expectedLine: {
+        id: null,
+        error: { code: -32010, message: 'authenticate frame exceeds maxFrameBytes' },
+      },
+      expectedReason: 'authenticate frame exceeds maxFrameBytes',
+    });
+  });
+
+  it('accepts startup-token authenticate frames split across chunks', async () => {
+    const engine = createEngine();
+    const input = controllableInput();
+    const output = collectingOutput();
+
+    const session = runMcpStdioSession({
+      input: input.stream,
+      output: output.stream,
+      engine,
+      admission: { kind: 'startup-token', token: 'secret-token' },
+    });
+
+    const frame = `${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 'chunked-auth',
+      method: 'weft.authenticate',
+      params: { token: 'secret-token' },
+    })}\n`;
+    input.sendRaw(frame.slice(0, 10));
+    input.sendRaw(frame.slice(10));
+    await waitForLine(output, (line) => line.id === 'chunked-auth' && line.result !== undefined);
+
+    input.close();
+    expect(await session).toEqual({ exitCode: 0 });
+  });
+
+  it('rejects regular MCP traffic until initialize and notifications/initialized complete', async () => {
+    const engine = createEngine();
+    const input = controllableInput();
+    const output = collectingOutput();
+
+    const session = runMcpStdioSession({
+      input: input.stream,
+      output: output.stream,
+      engine,
+      admission: { kind: 'allow-unauthenticated-local-admin' },
+    });
+
+    input.send({ jsonrpc: '2.0', id: 'before-init', method: 'tools/list', params: {} });
+    const beforeInit = await waitForLine(output, (line) => line.id === 'before-init');
+    expect(beforeInit.error).toMatchObject({
+      code: -32000,
+      message: 'MCP session must be initialized before requests',
+    });
+
+    input.send({
+      jsonrpc: '2.0',
+      id: 'init',
+      method: 'initialize',
+      params: { protocolVersion: '2025-11-25', capabilities: {} },
+    });
+    await waitForLine(output, (line) => line.id === 'init' && line.result !== undefined);
+
+    input.send({ jsonrpc: '2.0', id: 'before-ready', method: 'tools/list', params: {} });
+    const beforeReady = await waitForLine(output, (line) => line.id === 'before-ready');
+    expect(beforeReady.error).toMatchObject({
+      code: -32000,
+      message: 'MCP session must receive notifications/initialized before requests',
+    });
+
+    input.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    input.send({ jsonrpc: '2.0', id: 'after-ready', method: 'tools/list', params: {} });
+    const afterReady = await waitForLine(output, (line) => line.id === 'after-ready');
+    expect(afterReady.error).toBeUndefined();
+    expect(afterReady.result).toMatchObject({ tools: expect.any(Array) });
+
+    input.close();
+    expect(await session).toEqual({ exitCode: 0 });
   });
 
   it('initializes, lists tools, calls workflow tools, and exits cleanly', async () => {
@@ -188,6 +391,7 @@ describe('runMcpStdioSession', () => {
       },
     });
     await waitForLine(output, (line) => line.id === 'init');
+    input.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
 
     input.send({
       jsonrpc: '2.0',
@@ -196,20 +400,29 @@ describe('runMcpStdioSession', () => {
       params: { name: 'hold_for_stdio_cancel', arguments: { value: 'cancel' } },
     });
 
-    let workflowId: string | undefined;
-    const deadline = Date.now() + 2_000;
-    while (Date.now() < deadline && workflowId === undefined) {
-      const workflows = await engine.list({ type: 'hold-for-stdio-cancel' });
-      workflowId = workflows.items.find((workflow) => workflow.status === 'running')?.id;
-      if (workflowId === undefined) await waitForRealTimersForTesting(10);
-    }
-    expect(workflowId).toBeTruthy();
+    let workflowId = '';
+    await waitForCondition(
+      async () => {
+        const workflows = await engine.list({ type: 'hold-for-stdio-cancel' });
+        workflowId = workflows.items.find((workflow) => workflow.status === 'running')?.id ?? '';
+        return workflowId.length > 0;
+      },
+      { timeoutMs: 2_000, intervalMs: 10, label: 'running stdio workflow' },
+    );
 
     input.send({
       jsonrpc: '2.0',
       method: 'notifications/cancelled',
       params: { requestId: 'pending', reason: 'stdio test cancellation' },
     });
+
+    await waitForCondition(
+      async () => {
+        const state = await engine.get(workflowId);
+        return state?.status === 'cancelled';
+      },
+      { timeoutMs: 2_000, intervalMs: 10, label: 'stdio workflow cancellation' },
+    );
 
     const cancelledLine = await waitForLine(output, (line) => line.id === 'pending');
     expect((cancelledLine.result as { isError?: boolean }).isError).toBe(true);

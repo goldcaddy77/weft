@@ -1,5 +1,5 @@
 import type { Engine } from '../core/engine.ts';
-import { anonymousPrincipal, type Principal } from '../server/principal.ts';
+import { anonymousPrincipal, isAuthenticated, type Principal } from '../server/principal.ts';
 import { dispatchMcpMessage } from './dispatcher.ts';
 import {
   accepts,
@@ -9,7 +9,7 @@ import {
   parseMcpMessage,
   type McpResponse,
 } from './protocol.ts';
-import { McpSessionManager, type McpSession } from './session.ts';
+import { McpSessionLimitExceededError, McpSessionManager, type McpSession } from './session.ts';
 
 /**
  * Options for handling one Streamable HTTP MCP request.
@@ -117,12 +117,12 @@ async function handleMcpPost(options: McpHttpRequestOptions): Promise<Response> 
 
   const sessionResolution = resolvePostSession(options, methodName(parsed.value));
   if (sessionResolution instanceof Response) return sessionResolution;
-  const { session, createdSession } = sessionResolution;
+  const { session, createdSession, principal } = sessionResolution;
 
   const result = await dispatchMcpMessage(parsed.value, {
     engine: options.engine,
     session,
-    principal: session.principal,
+    principal,
     authRequired: authRequiredFromOptions(options),
   });
 
@@ -166,13 +166,28 @@ async function readMcpJsonBody(
 function resolvePostSession(
   options: McpHttpRequestOptions,
   method: string | undefined,
-): { readonly session: McpSession; readonly createdSession: boolean } | Response {
+):
+  | {
+      readonly session: McpSession;
+      readonly createdSession: boolean;
+      readonly principal: Principal;
+    }
+  | Response {
   const sessionHeader = sessionIdFromHeaders(options.request.headers);
   if (method === 'initialize' && sessionHeader === null) {
-    return {
-      session: options.sessionManager.create(options.principal ?? anonymousPrincipal()),
-      createdSession: true,
-    };
+    const principal = principalFromOptions(options);
+    try {
+      return {
+        session: options.sessionManager.create(principal),
+        createdSession: true,
+        principal,
+      };
+    } catch (error) {
+      if (error instanceof McpSessionLimitExceededError) {
+        return new Response(error.message, { status: 429, headers: noStoreHeaders() });
+      }
+      throw error;
+    }
   }
 
   const versionFailure = validateProtocolVersion(options.request.headers);
@@ -180,7 +195,12 @@ function resolvePostSession(
   if (sessionHeader === null) return new Response('Missing Mcp-Session-Id', { status: 400 });
   const session = options.sessionManager.get(sessionHeader);
   if (session === undefined) return new Response('MCP session not found', { status: 404 });
-  return { session, createdSession: false };
+  const principal = principalFromOptions(options);
+  if (!isSameSessionOwner(session.principal, principal)) {
+    return new Response('Forbidden', { status: 403, headers: noStoreHeaders() });
+  }
+  options.sessionManager.touch(session);
+  return { session, createdSession: false, principal };
 }
 
 function handleMcpGet(options: McpHttpRequestOptions): Response {
@@ -193,6 +213,11 @@ function handleMcpGet(options: McpHttpRequestOptions): Response {
   if (sessionId === null) return new Response('Missing Mcp-Session-Id', { status: 400 });
   const session = options.sessionManager.get(sessionId);
   if (session === undefined) return new Response('MCP session not found', { status: 404 });
+  const principal = principalFromOptions(options);
+  if (!isSameSessionOwner(session.principal, principal)) {
+    return new Response('Forbidden', { status: 403, headers: noStoreHeaders() });
+  }
+  options.sessionManager.touch(session);
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -230,6 +255,11 @@ function handleMcpGet(options: McpHttpRequestOptions): Response {
 function handleMcpDelete(options: McpHttpRequestOptions): Response {
   const sessionId = sessionIdFromHeaders(options.request.headers);
   if (sessionId === null) return new Response('Missing Mcp-Session-Id', { status: 400 });
+  const session = options.sessionManager.get(sessionId);
+  if (session === undefined) return new Response('MCP session not found', { status: 404 });
+  if (!isSameSessionOwner(session.principal, principalFromOptions(options))) {
+    return new Response('Forbidden', { status: 403, headers: noStoreHeaders() });
+  }
   options.sessionManager.delete(sessionId);
   return new Response(null, { status: 204, headers: noStoreHeaders() });
 }
@@ -264,6 +294,16 @@ function noStoreHeaders(): Record<string, string> {
 function authRequiredFromOptions(options: McpHttpRequestOptions): boolean {
   const value = Reflect.get(options, 'authRequired');
   return typeof value === 'boolean' ? value : true;
+}
+
+function principalFromOptions(options: McpHttpRequestOptions): Principal {
+  return options.principal ?? anonymousPrincipal();
+}
+
+function isSameSessionOwner(left: Principal, right: Principal): boolean {
+  if (left.method !== right.method) return false;
+  if (!isAuthenticated(left) || !isAuthenticated(right)) return left.method === right.method;
+  return left.subject === right.subject && left.tenantId === right.tenantId;
 }
 
 async function readBodyBounded(request: Request, maxBytes: number): Promise<Uint8Array> {

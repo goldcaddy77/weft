@@ -1,6 +1,5 @@
 import type { Engine } from '../core/engine.ts';
 import { RegistrySchemaConversionError, buildRegistrySnapshot } from '../core/registry-snapshot.ts';
-import type { ListFilter } from '../core/types.ts';
 import {
   McpToolExecutionError,
   applyPrincipalTenantToInput,
@@ -9,6 +8,7 @@ import {
   listVisibleWorkflows,
   type McpAccessContext,
 } from './access.ts';
+import { parseMcpListFilter } from './list-filter.ts';
 import type { McpSession } from './session.ts';
 
 /** MCP tool definition. */
@@ -226,14 +226,16 @@ function builtInTools(): ToolImplementation[] {
         inputSchema: objectSchema({
           status: {},
           type: { type: 'string' },
+          tags: { type: 'array', items: { type: 'string' } },
           limit: { type: 'number' },
           offset: { type: 'number' },
         }),
       },
       call: async (argumentsValue, context) => {
         assertScope(context, 'workflows:read', 'Listing workflows');
-        const filter = { ...requireObject(argumentsValue) } as ListFilter;
-        const result = await listVisibleWorkflows(context.engine, context.principal, filter);
+        const parsed = parseMcpListFilter(requireObject(argumentsValue));
+        if (!parsed.ok) throw new McpToolExecutionError(parsed.message);
+        const result = await listVisibleWorkflows(context.engine, context.principal, parsed.filter);
         return result;
       },
     },

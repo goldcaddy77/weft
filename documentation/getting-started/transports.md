@@ -1,6 +1,6 @@
 # Choosing a transport
 
-Weft exposes runtime operations over four operation-catalog transports, plus an MCP surface for external MCP clients. The operation-catalog transports route through the same operation registry, so the operation you call and the result you get back are the same regardless of which one you pick. MCP is different: it maps registered workflows and workflow resources into the Model Context Protocol.
+Weft exposes runtime operations over four operation-catalog transports, plus a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) surface for external MCP clients. The operation-catalog transports route through the same operation registry, so the operation you call and the result you get back are the same regardless of which one you pick. MCP is different: it maps registered workflows and workflow resources into the Model Context Protocol.
 
 ## REST (`/v1/*`)
 

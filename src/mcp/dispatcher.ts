@@ -68,9 +68,11 @@ async function dispatchNotification(
   context: McpDispatchContext,
 ): Promise<void> {
   if (request.method === 'notifications/initialized') {
-    context.session.initialized = true;
+    if (context.session.phase === 'initializing') context.session.phase = 'ready';
     return;
   }
+
+  if (context.session.phase !== 'ready') return;
 
   if (request.method === 'notifications/cancelled') {
     const params = objectParams(request.params);
@@ -110,6 +112,8 @@ async function dispatchRequest(request: McpRequest, context: McpDispatchContext)
     throw new McpProtocolError(-32011, 'MCP request requires authentication');
   }
 
+  enforceSessionPhase(request, context);
+
   const handler = REQUEST_HANDLERS[request.method];
   if (handler === undefined) {
     throw new McpResponseError(methodNotFound(request.id ?? null, request.method));
@@ -123,7 +127,7 @@ function initialize(params: unknown, session: McpSession): unknown {
     typeof record['protocolVersion'] === 'string' ? record['protocolVersion'] : undefined;
   session.protocolVersion =
     requestedVersion === MCP_PROTOCOL_VERSION ? requestedVersion : MCP_PROTOCOL_VERSION;
-  session.initialized = true;
+  session.phase = 'initializing';
   return {
     protocolVersion: session.protocolVersion,
     capabilities: {
@@ -139,6 +143,24 @@ function initialize(params: unknown, session: McpSession): unknown {
       version: '0.1.0',
     },
   };
+}
+
+function enforceSessionPhase(request: McpRequest, context: McpDispatchContext): void {
+  if (request.method === 'initialize') {
+    if (context.session.phase !== 'new') {
+      throw new McpProtocolError(-32000, 'MCP session is already initialized');
+    }
+    return;
+  }
+  if (context.session.phase === 'new') {
+    throw new McpProtocolError(-32000, 'MCP session must be initialized before requests');
+  }
+  if (context.session.phase === 'initializing') {
+    throw new McpProtocolError(
+      -32000,
+      'MCP session must receive notifications/initialized before requests',
+    );
+  }
 }
 
 async function callTool(request: McpRequest, context: McpDispatchContext): Promise<unknown> {

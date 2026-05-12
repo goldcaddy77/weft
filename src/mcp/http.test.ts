@@ -7,9 +7,9 @@ import type { WorkflowContext } from '../core/types.ts';
 import { signJWT } from '../server/authentication.ts';
 import { serve, type WeftServer } from '../server/index.ts';
 import { MemoryStorage } from '../storage/memory.ts';
-import { waitForRealTimersForTesting } from '../testing/fake-timers.ts';
+import { waitForCondition } from '../testing/fake-timers.ts';
 import { handleMcpHttpRequest } from './http.ts';
-import { createMcpSessionManager } from './session.ts';
+import { createMcpSessionManager, type McpSessionManager } from './session.ts';
 
 const MCP_PROTOCOL_VERSION = '2025-11-25';
 const TEST_SECRET = 'mcp-test-secret-at-least-32-chars';
@@ -49,9 +49,22 @@ function createEngine(): Engine {
       tenantId: z.string().optional(),
       label: z.string().optional(),
     }),
-    handler: async function* (context: WorkflowContext) {
-      return yield* context.waitForSignal<string>('release');
+    handler: async function* (
+      context: WorkflowContext,
+      input: { tenantId?: string | undefined; label?: string | undefined },
+    ) {
+      let label = input.label ?? 'initial';
+      context.onQuery('label', () => label);
+      context.onUpdate('setLabel', (payload) => {
+        label = typeof payload === 'string' ? payload : 'updated';
+        return label;
+      });
+      const released = yield* context.waitForSignal<string>('release');
+      return { label, released };
     },
+  });
+  engine.register('hidden-no-schema', async function* () {
+    return 'hidden';
   });
 
   engine.registerActivity('internal-only-activity', async () => 'not exposed');
@@ -64,13 +77,13 @@ async function waitForStatus(
   workflowId: string,
   status: 'running' | 'completed' | 'cancelled',
 ): Promise<void> {
-  const deadline = Date.now() + 2_000;
-  while (Date.now() < deadline) {
-    const state = await engine.get(workflowId);
-    if (state?.status === status) return;
-    await waitForRealTimersForTesting(10);
-  }
-  throw new Error(`workflow ${workflowId} did not reach ${status}`);
+  await waitForCondition(
+    async () => {
+      const state = await engine.get(workflowId);
+      return state?.status === status;
+    },
+    { timeoutMs: 2_000, intervalMs: 10, label: `workflow ${workflowId} to reach ${status}` },
+  );
 }
 
 async function initialize(server: WeftServer, headers?: HeadersInit): Promise<string> {
@@ -108,6 +121,17 @@ async function initialize(server: WeftServer, headers?: HeadersInit): Promise<st
     },
     serverInfo: { name: 'weft' },
   });
+
+  const initialized = await mcpPost(
+    server,
+    sessionId!,
+    {
+      jsonrpc: '2.0',
+      method: 'notifications/initialized',
+    },
+    headers,
+  );
+  expect(initialized.status).toBe(202);
 
   return sessionId!;
 }
@@ -173,8 +197,12 @@ describe('MCP Streamable HTTP transport', () => {
     );
     expect(names).toContain('greet_customer');
     expect(names).toContain('start_workflow');
+    expect(names).toContain('signal_workflow');
+    expect(names).toContain('query_workflow');
     expect(names).toContain('cancel_workflow');
+    expect(names).toContain('get_workflow_state');
     expect(names).not.toContain('internal_only_activity');
+    expect(names).not.toContain('hidden_no_schema');
 
     const greetTool = (
       tools.result as { tools: Array<{ name: string; inputSchema: unknown }> }
@@ -195,6 +223,80 @@ describe('MCP Streamable HTTP transport', () => {
       result: { message: 'Hello, Ada!' },
       workflowId: expect.any(String),
     });
+
+    const started = await mcpJson(server, sessionId, {
+      jsonrpc: '2.0',
+      id: 'start-control',
+      method: 'tools/call',
+      params: {
+        name: 'start_workflow',
+        arguments: {
+          type: 'hold-for-cancel',
+          id: 'mcp-control-workflow',
+          input: { label: 'initial-label' },
+        },
+      },
+    });
+    expect(parseToolText(started.result)).toEqual({ workflowId: 'mcp-control-workflow' });
+    await waitForStatus(engine, 'mcp-control-workflow', 'running');
+
+    const queried = await mcpJson(server, sessionId, {
+      jsonrpc: '2.0',
+      id: 'query-control',
+      method: 'tools/call',
+      params: {
+        name: 'query_workflow',
+        arguments: { workflowId: 'mcp-control-workflow', name: 'label' },
+      },
+    });
+    expect(parseToolText(queried.result)).toEqual({ result: 'initial-label' });
+
+    const updated = await mcpJson(server, sessionId, {
+      jsonrpc: '2.0',
+      id: 'update-control',
+      method: 'tools/call',
+      params: {
+        name: 'update_workflow',
+        arguments: {
+          workflowId: 'mcp-control-workflow',
+          name: 'setLabel',
+          payload: 'updated-label',
+        },
+      },
+    });
+    expect(parseToolText(updated.result)).toEqual({ result: 'updated-label' });
+
+    const signalled = await mcpJson(server, sessionId, {
+      jsonrpc: '2.0',
+      id: 'signal-control',
+      method: 'tools/call',
+      params: {
+        name: 'signal_workflow',
+        arguments: { workflowId: 'mcp-control-workflow', name: 'release', payload: 'done' },
+      },
+    });
+    expect(parseToolText(signalled.result)).toEqual({ ok: true });
+    await waitForStatus(engine, 'mcp-control-workflow', 'completed');
+
+    const state = await mcpJson(server, sessionId, {
+      jsonrpc: '2.0',
+      id: 'get-control',
+      method: 'tools/call',
+      params: { name: 'get_workflow_state', arguments: { workflowId: 'mcp-control-workflow' } },
+    });
+    expect(parseToolText(state.result)).toMatchObject({
+      id: 'mcp-control-workflow',
+      status: 'completed',
+    });
+
+    const failedToolCall = await mcpJson(server, sessionId, {
+      jsonrpc: '2.0',
+      id: 'bad-tool-call',
+      method: 'tools/call',
+      params: { name: 'get_workflow_state', arguments: {} },
+    });
+    expect(failedToolCall.error).toBeUndefined();
+    expect((failedToolCall.result as ToolCallResult).isError).toBe(true);
   });
 
   it('reads workflow resources and emits resource update notifications for subscriptions', async () => {
@@ -218,6 +320,38 @@ describe('MCP Streamable HTTP transport', () => {
     expect(JSON.parse(contents[0]!.text)).toMatchObject({
       id: handle.id,
       status: 'running',
+    });
+
+    const events = await mcpJson(server, sessionId, {
+      jsonrpc: '2.0',
+      id: 'events',
+      method: 'resources/read',
+      params: { uri: `weft://workflows/${handle.id}/events` },
+    });
+    const eventContents = (events.result as { contents: Array<{ text: string }> }).contents;
+    expect(JSON.parse(eventContents[0]!.text)).toMatchObject({ events: expect.any(Array) });
+
+    const checkpoints = await mcpJson(server, sessionId, {
+      jsonrpc: '2.0',
+      id: 'checkpoints',
+      method: 'resources/read',
+      params: { uri: `weft://workflows/${handle.id}/checkpoints` },
+    });
+    const checkpointContents = (checkpoints.result as { contents: Array<{ text: string }> })
+      .contents;
+    expect(JSON.parse(checkpointContents[0]!.text)).toMatchObject({
+      checkpoints: expect.any(Array),
+    });
+
+    const search = await mcpJson(server, sessionId, {
+      jsonrpc: '2.0',
+      id: 'search',
+      method: 'resources/read',
+      params: { uri: 'weft://workflows/search?status=running&type=hold-for-cancel' },
+    });
+    const searchContents = (search.result as { contents: Array<{ text: string }> }).contents;
+    expect(JSON.parse(searchContents[0]!.text)).toMatchObject({
+      items: [expect.objectContaining({ id: handle.id })],
     });
 
     const controller = new AbortController();
@@ -259,14 +393,15 @@ describe('MCP Streamable HTTP transport', () => {
       params: { name: 'hold_for_cancel', arguments: { label: 'cancel-me' } },
     });
 
-    let workflowId: string | undefined;
-    const deadline = Date.now() + 2_000;
-    while (Date.now() < deadline && workflowId === undefined) {
-      const list = await engine.list({ type: 'hold-for-cancel' });
-      workflowId = list.items.find((item) => item.status === 'running')?.id;
-      if (workflowId === undefined) await waitForRealTimersForTesting(10);
-    }
-    expect(workflowId).toBeTruthy();
+    let workflowId = '';
+    await waitForCondition(
+      async () => {
+        const list = await engine.list({ type: 'hold-for-cancel' });
+        workflowId = list.items.find((item) => item.status === 'running')?.id ?? '';
+        return workflowId.length > 0;
+      },
+      { timeoutMs: 2_000, intervalMs: 10, label: 'running MCP workflow tool call' },
+    );
 
     const cancellation = await mcpPost(server, sessionId, {
       jsonrpc: '2.0',
@@ -274,7 +409,7 @@ describe('MCP Streamable HTTP transport', () => {
       params: { requestId: 'pending-tool-call', reason: 'test cancellation' },
     });
     expect(cancellation.status).toBe(202);
-    await waitForStatus(engine, workflowId!, 'cancelled');
+    await waitForStatus(engine, workflowId, 'cancelled');
 
     const response = await pendingCall;
     const toolResult = response.result as ToolCallResult;
@@ -301,6 +436,30 @@ describe('MCP Streamable HTTP transport', () => {
       {
         sub: 'tenant-a-user',
         tenantId: 'tenant-a',
+        scope: [
+          'workflows:read',
+          'workflows:write',
+          'signals:write',
+          'updates:write',
+          'queries:read',
+          'events:read',
+          'system:read',
+        ].join(' '),
+      },
+      TEST_SECRET,
+    );
+    const readOnlyToken = await signJWT(
+      {
+        sub: 'tenant-a-user',
+        tenantId: 'tenant-a',
+        scope: 'workflows:read',
+      },
+      TEST_SECRET,
+    );
+    const tenantBToken = await signJWT(
+      {
+        sub: 'tenant-b-user',
+        tenantId: 'tenant-b',
         scope: [
           'workflows:read',
           'workflows:write',
@@ -347,6 +506,51 @@ describe('MCP Streamable HTTP transport', () => {
       { authorization: `Bearer ${token}` },
     );
     expect(denied.error?.code).toBe(-32002);
+
+    const mismatchedPrincipal = await mcpPost(
+      server,
+      sessionId,
+      {
+        jsonrpc: '2.0',
+        id: 'wrong-principal',
+        method: 'tools/list',
+        params: {},
+      },
+      { authorization: `Bearer ${tenantBToken}` },
+    );
+    expect(mismatchedPrincipal.status).toBe(403);
+
+    const readOnlyList = await mcpJson(
+      server,
+      sessionId,
+      {
+        jsonrpc: '2.0',
+        id: 'readonly-list',
+        method: 'tools/call',
+        params: { name: 'list_workflows', arguments: {} },
+      },
+      { authorization: `Bearer ${readOnlyToken}` },
+    );
+    expect(parseToolText(readOnlyList.result)).toMatchObject({
+      items: [expect.objectContaining({ id: 'tenant-a-workflow' })],
+    });
+
+    const readOnlyWrite = await mcpJson(
+      server,
+      sessionId,
+      {
+        jsonrpc: '2.0',
+        id: 'readonly-write',
+        method: 'tools/call',
+        params: {
+          name: 'start_workflow',
+          arguments: { type: 'greet-customer', input: { name: 'Ada' } },
+        },
+      },
+      { authorization: `Bearer ${readOnlyToken}` },
+    );
+    expect((readOnlyWrite.result as ToolCallResult).isError).toBe(true);
+    expect((readOnlyWrite.result as ToolCallResult).content[0]?.text).toContain('workflows:write');
   });
 
   it('denies anonymous direct-handler requests when authentication is required', async () => {
@@ -369,6 +573,9 @@ describe('MCP Streamable HTTP transport', () => {
       const sessionId = initialized.headers.get('Mcp-Session-Id');
       expect(sessionId).toBeTruthy();
 
+      const ready = await sendDirectInitializedNotification(engine, sessionManager, sessionId!);
+      expect(ready.status).toBe(202);
+
       const tools = await handleMcpHttpRequest({
         request: jsonRequest(
           { jsonrpc: '2.0', id: 'tools', method: 'tools/list', params: {} },
@@ -385,6 +592,213 @@ describe('MCP Streamable HTTP transport', () => {
         code: -32011,
         message: 'MCP request requires authentication',
       });
+    } finally {
+      await sessionManager[Symbol.asyncDispose]();
+    }
+  });
+
+  it('requires initialize and initialized notification before normal requests', async () => {
+    const engine = createEngine();
+    const sessionManager = createMcpSessionManager(engine);
+
+    try {
+      const initialized = await initializeDirectHandlerSession(engine, sessionManager);
+      expect(initialized.status).toBe(200);
+      const sessionId = initialized.headers.get('Mcp-Session-Id');
+      expect(sessionId).toBeTruthy();
+
+      const beforeReady = await handleMcpHttpRequest({
+        request: jsonRequest(
+          { jsonrpc: '2.0', id: 'tools', method: 'tools/list', params: {} },
+          sessionId!,
+        ),
+        engine,
+        sessionManager,
+        authRequired: false,
+      });
+      expect(beforeReady.status).toBe(200);
+      expect((await beforeReady.json()) as JsonRpcEnvelope).toMatchObject({
+        error: {
+          code: -32000,
+          message: 'MCP session must receive notifications/initialized before requests',
+        },
+      });
+
+      const ready = await sendDirectInitializedNotification(engine, sessionManager, sessionId!);
+      expect(ready.status).toBe(202);
+
+      const afterReady = await handleMcpHttpRequest({
+        request: jsonRequest(
+          { jsonrpc: '2.0', id: 'tools-ready', method: 'tools/list', params: {} },
+          sessionId!,
+        ),
+        engine,
+        sessionManager,
+        authRequired: false,
+      });
+      expect(afterReady.status).toBe(200);
+      const envelope = (await afterReady.json()) as JsonRpcEnvelope;
+      expect(envelope.error).toBeUndefined();
+    } finally {
+      await sessionManager[Symbol.asyncDispose]();
+    }
+  });
+
+  it('returns HTTP negotiation and session errors for invalid MCP transport requests', async () => {
+    const engine = createEngine();
+    const sessionManager = createMcpSessionManager(engine);
+
+    try {
+      const methodNotAllowed = await handleMcpHttpRequest({
+        request: new Request('http://localhost/mcp', { method: 'PUT' }),
+        engine,
+        sessionManager,
+        authRequired: false,
+      });
+      expect(methodNotAllowed.status).toBe(405);
+
+      const badAccept = await handleMcpHttpRequest({
+        request: jsonRequest(
+          { jsonrpc: '2.0', id: 'bad-accept', method: 'initialize', params: {} },
+          undefined,
+          { accept: 'text/plain' },
+        ),
+        engine,
+        sessionManager,
+        authRequired: false,
+      });
+      expect(badAccept.status).toBe(406);
+
+      const badContentType = await handleMcpHttpRequest({
+        request: jsonRequest(
+          { jsonrpc: '2.0', id: 'bad-content', method: 'initialize', params: {} },
+          undefined,
+          { 'content-type': 'text/plain' },
+        ),
+        engine,
+        sessionManager,
+        authRequired: false,
+      });
+      expect(badContentType.status).toBe(415);
+
+      const missingSession = await handleMcpHttpRequest({
+        request: jsonRequest({ jsonrpc: '2.0', id: 'missing', method: 'tools/list', params: {} }),
+        engine,
+        sessionManager,
+        authRequired: false,
+      });
+      expect(missingSession.status).toBe(400);
+
+      const unknownSession = await handleMcpHttpRequest({
+        request: jsonRequest(
+          { jsonrpc: '2.0', id: 'unknown', method: 'tools/list', params: {} },
+          'missing-session',
+        ),
+        engine,
+        sessionManager,
+        authRequired: false,
+      });
+      expect(unknownSession.status).toBe(404);
+
+      const oversize = await handleMcpHttpRequest({
+        request: jsonRequest({ jsonrpc: '2.0', id: 'oversize', method: 'initialize', params: {} }),
+        engine,
+        sessionManager,
+        authRequired: false,
+        maxBodyBytes: 5,
+      });
+      expect(oversize.status).toBe(413);
+
+      const initialized = await initializeDirectHandlerSession(engine, sessionManager);
+      const sessionId = initialized.headers.get('Mcp-Session-Id');
+      expect(sessionId).toBeTruthy();
+
+      const wrongVersion = await handleMcpHttpRequest({
+        request: jsonRequest(
+          { jsonrpc: '2.0', id: 'wrong-version', method: 'tools/list', params: {} },
+          sessionId!,
+          { 'Mcp-Protocol-Version': '1999-01-01' },
+        ),
+        engine,
+        sessionManager,
+        authRequired: false,
+      });
+      expect(wrongVersion.status).toBe(400);
+
+      const deleted = await handleMcpHttpRequest({
+        request: new Request('http://localhost/mcp', {
+          method: 'DELETE',
+          headers: { 'Mcp-Session-Id': sessionId! },
+        }),
+        engine,
+        sessionManager,
+        authRequired: false,
+      });
+      expect(deleted.status).toBe(204);
+
+      const afterDelete = await handleMcpHttpRequest({
+        request: jsonRequest(
+          { jsonrpc: '2.0', id: 'after-delete', method: 'tools/list', params: {} },
+          sessionId!,
+        ),
+        engine,
+        sessionManager,
+        authRequired: false,
+      });
+      expect(afterDelete.status).toBe(404);
+
+      const getAfterDelete = await handleMcpHttpRequest({
+        request: new Request('http://localhost/mcp', {
+          headers: { accept: 'text/event-stream', 'Mcp-Session-Id': sessionId! },
+        }),
+        engine,
+        sessionManager,
+        authRequired: false,
+      });
+      expect(getAfterDelete.status).toBe(404);
+    } finally {
+      await sessionManager[Symbol.asyncDispose]();
+    }
+  });
+
+  it('rejects excess live sessions and purges idle sessions before accepting new initialization', async () => {
+    const engine = createEngine();
+    let now = 1_000;
+    const sessionManager = createMcpSessionManager(engine, {
+      maximumSessions: 1,
+      sessionIdleTimeoutMilliseconds: 10,
+      currentTimeMilliseconds: () => now,
+    });
+
+    try {
+      const first = await initializeDirectHandlerSession(engine, sessionManager);
+      expect(first.status).toBe(200);
+      const firstSessionId = first.headers.get('Mcp-Session-Id');
+      expect(firstSessionId).toBeTruthy();
+
+      const rejected = await initializeDirectHandlerSession(engine, sessionManager);
+      expect(rejected.status).toBe(429);
+      expect(await rejected.text()).toBe('Too many MCP sessions');
+      expect(rejected.headers.get('Mcp-Session-Id')).toBeNull();
+
+      now += 11;
+
+      const acceptedAfterExpiry = await initializeDirectHandlerSession(engine, sessionManager);
+      expect(acceptedAfterExpiry.status).toBe(200);
+      const nextSessionId = acceptedAfterExpiry.headers.get('Mcp-Session-Id');
+      expect(nextSessionId).toBeTruthy();
+      expect(nextSessionId).not.toBe(firstSessionId);
+
+      const staleSessionLookup = await handleMcpHttpRequest({
+        request: jsonRequest(
+          { jsonrpc: '2.0', id: 'tools', method: 'tools/list', params: {} },
+          firstSessionId!,
+        ),
+        engine,
+        sessionManager,
+        authRequired: false,
+      });
+      expect(staleSessionLookup.status).toBe(404);
     } finally {
       await sessionManager[Symbol.asyncDispose]();
     }
@@ -411,16 +825,54 @@ async function readUntil(response: Response, expectedText: string): Promise<stri
   throw new Error(`did not receive ${expectedText}`);
 }
 
-function jsonRequest(message: Record<string, unknown>, sessionId?: string): Request {
-  const headers = new Headers({
+function jsonRequest(
+  message: Record<string, unknown>,
+  sessionId?: string,
+  headers?: HeadersInit,
+): Request {
+  const baseHeaders = new Headers({
     accept: 'application/json, text/event-stream',
     'content-type': 'application/json',
     'Mcp-Protocol-Version': MCP_PROTOCOL_VERSION,
   });
-  if (sessionId !== undefined) headers.set('Mcp-Session-Id', sessionId);
+  const requestHeaders = new Headers(baseHeaders);
+  for (const [key, value] of new Headers(headers ?? {})) {
+    requestHeaders.set(key, value);
+  }
+  if (sessionId !== undefined) requestHeaders.set('Mcp-Session-Id', sessionId);
   return new Request('http://localhost/mcp', {
     method: 'POST',
-    headers,
+    headers: requestHeaders,
     body: JSON.stringify(message),
+  });
+}
+
+function initializeDirectHandlerSession(
+  engine: Engine,
+  sessionManager: McpSessionManager,
+): Promise<Response> {
+  return handleMcpHttpRequest({
+    request: jsonRequest({
+      jsonrpc: '2.0',
+      id: 'init',
+      method: 'initialize',
+      params: { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {} },
+    }),
+    engine,
+    sessionManager,
+    authRequired: false,
+  });
+}
+
+function sendDirectInitializedNotification(
+  engine: Engine,
+  sessionManager: McpSessionManager,
+  sessionId: string,
+): Promise<Response> {
+  return handleMcpHttpRequest({
+    request: jsonRequest({ jsonrpc: '2.0', method: 'notifications/initialized' }, sessionId),
+    engine,
+    sessionManager,
+    authRequired: false,
   });
 }

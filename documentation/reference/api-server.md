@@ -247,7 +247,7 @@ Both documents enumerate operations from the unified catalog. To see which trans
 
 ### MCP Server
 
-The MCP server exposes Weft workflows to Model Context Protocol clients. It is not a fifth operation-catalog transport: `tools/list`, `tools/call`, and `resources/read` are MCP methods that adapt registered workflows and workflow resources into the MCP protocol.
+The MCP server exposes Weft workflows to [Model Context Protocol](https://modelcontextprotocol.io/) clients. It is not a fifth operation-catalog transport: `tools/list`, `tools/call`, and `resources/read` are MCP methods that adapt registered workflows and workflow resources into the MCP protocol.
 
 | Method   | Path   | Description                                             |
 | -------- | ------ | ------------------------------------------------------- |

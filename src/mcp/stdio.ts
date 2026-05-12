@@ -108,7 +108,10 @@ export async function runMcpStdioSession(
 
   try {
     const admitted = await runAdmission(options, runtime);
-    if (!admitted.ok) return admitted.result;
+    if (!admitted.ok) {
+      await closeRuntime(runtime);
+      return admitted.result;
+    }
     await runMainReadLoop(options, runtime, admitted.remainder, pending);
     await Promise.all(pending);
     await closeRuntime(runtime);

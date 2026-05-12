@@ -5,6 +5,7 @@ import {
   listVisibleWorkflows,
   type McpAccessContext,
 } from './access.ts';
+import { parseMcpListFilterFromSearchParams } from './list-filter.ts';
 import type { McpSession } from './session.ts';
 
 /** MCP resource definition. */
@@ -59,7 +60,7 @@ export function listMcpResourceTemplates(): McpResourceTemplate[] {
       mimeType: 'application/json',
     },
     {
-      uriTemplate: 'weft://workflows/search{?status,type,limit,offset}',
+      uriTemplate: 'weft://workflows/search{?status,type,tag,limit,offset}',
       name: 'workflow_search',
       title: 'Workflow search',
       description: 'List visible Weft workflows using query filters.',
@@ -149,6 +150,13 @@ type ParsedResourceUri =
   | { readonly kind: 'search'; readonly filter: ListFilter };
 
 function parseWeftResourceUri(uri: string): ParsedResourceUri | null {
+  const url = parseWeftUrl(uri);
+  if (url === null) return null;
+  if (url.pathname === '/search') return parseSearchResource(url.searchParams);
+  return parseWorkflowResourcePath(url.pathname);
+}
+
+function parseWeftUrl(uri: string): URL | null {
   let url: URL;
   try {
     url = new URL(uri);
@@ -156,11 +164,16 @@ function parseWeftResourceUri(uri: string): ParsedResourceUri | null {
     return null;
   }
   if (url.protocol !== 'weft:' || url.hostname !== 'workflows') return null;
-  if (url.pathname === '/search') {
-    return { kind: 'search', filter: filterFromSearchParams(url.searchParams) };
-  }
+  return url;
+}
 
-  const parts = url.pathname.split('/').filter(Boolean);
+function parseSearchResource(searchParams: URLSearchParams): ParsedResourceUri | null {
+  const parsed = parseMcpListFilterFromSearchParams(searchParams);
+  return parsed.ok ? { kind: 'search', filter: parsed.filter } : null;
+}
+
+function parseWorkflowResourcePath(pathname: string): ParsedResourceUri | null {
+  const parts = pathname.split('/').filter(Boolean);
   if (parts.length !== 2) return null;
   const [workflowId, resourceKind] = parts;
   if (!workflowId) return null;
@@ -168,25 +181,4 @@ function parseWeftResourceUri(uri: string): ParsedResourceUri | null {
     return { kind: resourceKind, workflowId };
   }
   return null;
-}
-
-function filterFromSearchParams(searchParams: URLSearchParams): ListFilter {
-  const filter: ListFilter = {};
-  const status = searchParams.getAll('status');
-  if (status.length === 1) filter.status = status[0] as never;
-  if (status.length > 1) filter.status = status as never;
-  const type = searchParams.get('type');
-  if (type !== null) filter.type = type;
-  const limit = coerceNonNegativeInteger(searchParams.get('limit'));
-  if (limit !== undefined) filter.limit = limit;
-  const offset = coerceNonNegativeInteger(searchParams.get('offset'));
-  if (offset !== undefined) filter.offset = offset;
-  return filter;
-}
-
-function coerceNonNegativeInteger(value: string | null): number | undefined {
-  if (value === null) return undefined;
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) return undefined;
-  return parsed;
 }
