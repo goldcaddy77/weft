@@ -90,6 +90,18 @@ export type RemoteWorkerJsonValue =
   | { [key: string]: RemoteWorkerJsonValue };
 
 /**
+ * Optional capabilities advertised by a RemoteWorker at registration time.
+ *
+ * @example
+ * ```ts
+ * import type { RemoteWorkerCapabilities } from 'weft/worker-protocol';
+ *
+ * const capabilities: RemoteWorkerCapabilities = { region: 'us-west', gpu: false };
+ * ```
+ */
+export type RemoteWorkerCapabilities = Readonly<Record<string, RemoteWorkerJsonValue>>;
+
+/**
  * Worker registration message sent immediately after opening a worker stream.
  *
  * @example
@@ -111,6 +123,12 @@ export type RegisterMessage = {
   readonly activities: readonly string[];
   readonly concurrency?: number;
   readonly queue?: string;
+  readonly deploymentName?: string;
+  readonly buildId?: string;
+  readonly runtimeVersion?: string;
+  readonly gitSha?: string;
+  readonly startedAt?: number;
+  readonly capabilities?: RemoteWorkerCapabilities;
 };
 
 /**
@@ -456,6 +474,12 @@ export const REMOTE_WORKER_MESSAGE_SCHEMAS = {
       },
       concurrency: { type: 'number', minimum: 1, maximum: 1000 },
       queue: { type: 'string', minLength: 1 },
+      deploymentName: { type: 'string', minLength: 1 },
+      buildId: { type: 'string', minLength: 1 },
+      runtimeVersion: { type: 'string', minLength: 1 },
+      gitSha: { type: 'string', minLength: 1 },
+      startedAt: { type: 'number' },
+      capabilities: jsonObjectSchema,
     },
   },
   heartbeat: {
@@ -674,6 +698,11 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   return Object.values(value).every((entry) => typeof entry === 'string');
 }
 
+function isRemoteWorkerCapabilities(value: unknown): value is RemoteWorkerCapabilities {
+  if (!isRecord(value)) return false;
+  return Object.values(value).every(isRemoteWorkerJsonValue);
+}
+
 function protocolFailure(
   code: RemoteWorkerProtocolFailure['code'],
   message: string,
@@ -732,6 +761,54 @@ function parseRegisterMessage(
     return protocolFailure('invalid_registration', 'register.queue must be a non-empty string');
   }
 
+  const deploymentName = record['deploymentName'];
+  if (deploymentName !== undefined && !isNonEmptyString(deploymentName)) {
+    return protocolFailure(
+      'invalid_registration',
+      'register.deploymentName must be a non-empty string when present',
+    );
+  }
+
+  const buildId = record['buildId'];
+  if (buildId !== undefined && !isNonEmptyString(buildId)) {
+    return protocolFailure(
+      'invalid_registration',
+      'register.buildId must be a non-empty string when present',
+    );
+  }
+
+  const runtimeVersion = record['runtimeVersion'];
+  if (runtimeVersion !== undefined && !isNonEmptyString(runtimeVersion)) {
+    return protocolFailure(
+      'invalid_registration',
+      'register.runtimeVersion must be a non-empty string when present',
+    );
+  }
+
+  const gitSha = record['gitSha'];
+  if (gitSha !== undefined && !isNonEmptyString(gitSha)) {
+    return protocolFailure(
+      'invalid_registration',
+      'register.gitSha must be a non-empty string when present',
+    );
+  }
+
+  const startedAt = record['startedAt'];
+  if (startedAt !== undefined && (typeof startedAt !== 'number' || !Number.isFinite(startedAt))) {
+    return protocolFailure(
+      'invalid_registration',
+      'register.startedAt must be a finite number when present',
+    );
+  }
+
+  const capabilities = record['capabilities'];
+  if (capabilities !== undefined && !isRemoteWorkerCapabilities(capabilities)) {
+    return protocolFailure(
+      'invalid_registration',
+      'register.capabilities must be a JSON object when present',
+    );
+  }
+
   return {
     ok: true,
     message: {
@@ -741,6 +818,12 @@ function parseRegisterMessage(
       activities,
       ...(concurrency !== undefined ? { concurrency } : {}),
       ...(queue !== undefined ? { queue } : {}),
+      ...(deploymentName !== undefined ? { deploymentName } : {}),
+      ...(buildId !== undefined ? { buildId } : {}),
+      ...(runtimeVersion !== undefined ? { runtimeVersion } : {}),
+      ...(gitSha !== undefined ? { gitSha } : {}),
+      ...(startedAt !== undefined ? { startedAt } : {}),
+      ...(capabilities !== undefined ? { capabilities } : {}),
     },
   };
 }

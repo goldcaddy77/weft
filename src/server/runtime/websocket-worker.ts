@@ -131,6 +131,12 @@ function registerWorker(
     queue,
     activities: [...message.activities],
     concurrency: clampedConcurrency,
+    ...(message.deploymentName !== undefined ? { deploymentName: message.deploymentName } : {}),
+    ...(message.buildId !== undefined ? { buildId: message.buildId } : {}),
+    ...(message.runtimeVersion !== undefined ? { runtimeVersion: message.runtimeVersion } : {}),
+    ...(message.gitSha !== undefined ? { gitSha: message.gitSha } : {}),
+    ...(message.startedAt !== undefined ? { startedAt: message.startedAt } : {}),
+    ...(message.capabilities !== undefined ? { capabilities: message.capabilities } : {}),
   });
   context.workerSockets.set(message.workerId, ws);
   sendWorkerProtocolMessage(ws, {

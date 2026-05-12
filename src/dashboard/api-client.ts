@@ -91,6 +91,12 @@ export interface ListFilter {
 /** Routing strategy the server selects when assigning tasks to workers. */
 export type WorkerRoutingPolicy = 'least-loaded' | 'round-robin' | 'fair-share';
 
+/** Health state used by routing and drain controls for connected workers. */
+export type WorkerHealth = 'active' | 'draining' | 'drained';
+
+/** JSON-serializable capability metadata a remote worker reports at registration. */
+export type WorkerCapabilities = Record<string, unknown>;
+
 /** Scheduling strategy a task queue applies when ordering pending tasks. */
 export type TaskQueueSchedulingPolicy = 'priority' | 'fifo' | 'lifo';
 
@@ -105,11 +111,51 @@ export type WorkerSummary = {
   connectedAt: number;
   lastHeartbeatAt: number;
   heartbeatAgeMs: number;
+  startedAt: number;
+  capabilities: WorkerCapabilities;
+  health: WorkerHealth;
+  deploymentName?: string;
+  buildId?: string;
+  runtimeVersion?: string;
+  gitSha?: string;
 };
+
+/** Per-deployment aggregate reported by `GET /v1/workers`. */
+export type WorkerDeploymentSummary = {
+  deploymentName: string | null;
+  buildId: string | null;
+  runtimeVersion: string | null;
+  gitSha: string | null;
+  health: WorkerHealth;
+  workers: number;
+  activeWorkers: number;
+  drainingWorkers: number;
+  drainedWorkers: number;
+  inFlight: number;
+  oldestStartedAt: number | null;
+};
+
+/** Response from worker/deployment drain mutation endpoints. */
+export type WorkerDrainMutationResponse =
+  | {
+      target: 'worker';
+      workerId: string;
+      affectedWorkers: number;
+      inFlight: number;
+      health: WorkerHealth;
+    }
+  | {
+      target: 'deployment';
+      deploymentName: string;
+      affectedWorkers: number;
+      inFlight: number;
+      health: WorkerHealth;
+    };
 
 /** Top-level response shape for `GET /v1/workers`. */
 export type ListWorkersResponse = {
   items: WorkerSummary[];
+  deployments: WorkerDeploymentSummary[];
   routingPolicy: WorkerRoutingPolicy;
 };
 
@@ -337,6 +383,43 @@ export class ApiClient {
   /** List connected workers with capacity, heartbeat, and routing policy. */
   async listWorkers(): Promise<ListWorkersResponse> {
     return request<ListWorkersResponse>('/workers');
+  }
+
+  /** Mark one connected worker as draining. */
+  async drainWorker(workerId: string, reason?: string): Promise<WorkerDrainMutationResponse> {
+    return request<WorkerDrainMutationResponse>(`/workers/${encodeURIComponent(workerId)}/drain`, {
+      method: 'POST',
+      body: JSON.stringify(reason === undefined ? {} : { reason }),
+    });
+  }
+
+  /** Clear one worker's explicit drain marker. */
+  async clearWorkerDrain(workerId: string): Promise<WorkerDrainMutationResponse> {
+    return request<WorkerDrainMutationResponse>(`/workers/${encodeURIComponent(workerId)}/drain`, {
+      method: 'DELETE',
+    });
+  }
+
+  /** Mark every current and future worker for a deployment as draining. */
+  async drainDeployment(
+    deploymentName: string,
+    reason?: string,
+  ): Promise<WorkerDrainMutationResponse> {
+    return request<WorkerDrainMutationResponse>(
+      `/worker-deployments/${encodeURIComponent(deploymentName)}/drain`,
+      {
+        method: 'POST',
+        body: JSON.stringify(reason === undefined ? {} : { reason }),
+      },
+    );
+  }
+
+  /** Clear the deployment-level drain marker. */
+  async clearDeploymentDrain(deploymentName: string): Promise<WorkerDrainMutationResponse> {
+    return request<WorkerDrainMutationResponse>(
+      `/worker-deployments/${encodeURIComponent(deploymentName)}/drain`,
+      { method: 'DELETE' },
+    );
   }
 
   /** List per-queue health: backlog, oldest age, waiting pollers, in-flight. */

@@ -1,6 +1,11 @@
+/* oxlint-disable max-lines -- ID:worker-registry-tracks-routing-drain-and-summary-state */
 // ---------------------------------------------------------------------------
 // Server-side worker tracking and pluggable routing policies
 // ---------------------------------------------------------------------------
+
+import type { RemoteWorkerCapabilities } from './protocol.ts';
+
+export type WorkerHealth = 'active' | 'draining' | 'drained';
 
 export interface WorkerInfo {
   id: string;
@@ -10,7 +15,28 @@ export interface WorkerInfo {
   inFlight: number;
   connectedAt: number;
   lastHeartbeat: number;
+  startedAt: number;
+  capabilities: RemoteWorkerCapabilities;
+  deploymentName?: string;
+  buildId?: string;
+  runtimeVersion?: string;
+  gitSha?: string;
+  drainReason?: string;
+  drainStartedAt?: number;
 }
+
+export type WorkerRegistrationInfo = {
+  id: string;
+  queue: string;
+  activities: string[];
+  concurrency: number;
+  deploymentName?: string;
+  buildId?: string;
+  runtimeVersion?: string;
+  gitSha?: string;
+  startedAt?: number;
+  capabilities?: RemoteWorkerCapabilities;
+};
 
 /**
  * Per-worker projection reported by {@link WorkerRegistry.getWorkerSummaries}.
@@ -30,6 +56,53 @@ export type WorkerSummary = {
   connectedAt: number;
   lastHeartbeatAt: number;
   heartbeatAgeMs: number;
+  startedAt: number;
+  capabilities: RemoteWorkerCapabilities;
+  health: WorkerHealth;
+  deploymentName?: string | undefined;
+  buildId?: string | undefined;
+  runtimeVersion?: string | undefined;
+  gitSha?: string | undefined;
+};
+
+export type WorkerDeploymentSummary = {
+  deploymentName: string | null;
+  buildId: string | null;
+  runtimeVersion: string | null;
+  gitSha: string | null;
+  health: WorkerHealth;
+  workers: number;
+  activeWorkers: number;
+  drainingWorkers: number;
+  drainedWorkers: number;
+  inFlight: number;
+  oldestStartedAt: number | null;
+};
+
+export type WorkerDrainMutationResult =
+  | {
+      target: 'worker';
+      workerId: string;
+      affectedWorkers: number;
+      inFlight: number;
+      health: WorkerHealth;
+    }
+  | {
+      target: 'deployment';
+      deploymentName: string;
+      affectedWorkers: number;
+      inFlight: number;
+      health: WorkerHealth;
+    };
+
+export type WorkerDrainOptions = {
+  reason?: string;
+  updatedAt?: number;
+};
+
+type DrainRecord = {
+  reason?: string;
+  startedAt: number;
 };
 
 /**
@@ -102,6 +175,7 @@ export interface WorkerRegistryOptions {
 export class WorkerRegistry {
   #workers: Map<string, WorkerInfo>;
   #inFlightTasks: Map<string, InFlightTask>;
+  #deploymentDrainStates: Map<string, DrainRecord>;
   #policy: RoutingPolicy;
   /**
    * Rotating cursor for round-robin routing, keyed by `${queue}::${activity}`.
@@ -124,6 +198,7 @@ export class WorkerRegistry {
   constructor(options?: WorkerRegistryOptions) {
     this.#workers = new Map();
     this.#inFlightTasks = new Map();
+    this.#deploymentDrainStates = new Map();
     this.#policy = options?.policy ?? 'least-loaded';
     this.#roundRobinCursor = new Map();
     this.#fairShareCounts = new Map();
@@ -135,11 +210,20 @@ export class WorkerRegistry {
   }
 
   /** Register a worker. */
-  register(info: Omit<WorkerInfo, 'connectedAt' | 'lastHeartbeat' | 'inFlight'>): void {
+  register(info: WorkerRegistrationInfo): void {
     const now = Date.now();
 
     this.#workers.set(info.id, {
-      ...info,
+      id: info.id,
+      queue: info.queue,
+      activities: [...info.activities],
+      concurrency: info.concurrency,
+      ...(info.deploymentName !== undefined ? { deploymentName: info.deploymentName } : {}),
+      ...(info.buildId !== undefined ? { buildId: info.buildId } : {}),
+      ...(info.runtimeVersion !== undefined ? { runtimeVersion: info.runtimeVersion } : {}),
+      ...(info.gitSha !== undefined ? { gitSha: info.gitSha } : {}),
+      startedAt: info.startedAt ?? now,
+      capabilities: { ...info.capabilities },
       inFlight: 0,
       connectedAt: now,
       lastHeartbeat: now,
@@ -222,6 +306,7 @@ export class WorkerRegistry {
       if (queue !== undefined && worker.queue !== queue) continue;
       if (!worker.activities.includes(activityName)) continue;
       if (worker.inFlight >= worker.concurrency) continue;
+      if (this.#isWorkerDraining(worker)) continue;
 
       if (stickyId !== undefined && worker.id === stickyId) {
         stickyCandidate = worker;
@@ -410,6 +495,64 @@ export class WorkerRegistry {
     return [...this.#workers.values()];
   }
 
+  /** Mark one connected worker as draining so routing excludes it from new tasks. */
+  markWorkerDraining(
+    workerId: string,
+    options?: WorkerDrainOptions,
+  ): WorkerDrainMutationResult | undefined {
+    const worker = this.#workers.get(workerId);
+    if (worker === undefined) return undefined;
+
+    const record = createDrainRecord(options);
+    worker.drainStartedAt = record.startedAt;
+    if (record.reason !== undefined) {
+      worker.drainReason = record.reason;
+    } else {
+      delete worker.drainReason;
+    }
+
+    return {
+      target: 'worker',
+      workerId,
+      affectedWorkers: 1,
+      inFlight: worker.inFlight,
+      health: this.#workerHealth(worker),
+    };
+  }
+
+  /** Clear an explicit worker drain marker. Deployment-level drains can still apply. */
+  clearWorkerDrain(workerId: string): WorkerDrainMutationResult | undefined {
+    const worker = this.#workers.get(workerId);
+    if (worker === undefined) return undefined;
+
+    delete worker.drainReason;
+    delete worker.drainStartedAt;
+
+    return {
+      target: 'worker',
+      workerId,
+      affectedWorkers: 1,
+      inFlight: worker.inFlight,
+      health: this.#workerHealth(worker),
+    };
+  }
+
+  /** Mark every current and future worker with this deployment name as draining. */
+  markDeploymentDraining(
+    deploymentName: string,
+    options?: WorkerDrainOptions,
+  ): WorkerDrainMutationResult {
+    const record = createDrainRecord(options);
+    this.#deploymentDrainStates.set(deploymentName, record);
+    return this.#deploymentDrainResult(deploymentName);
+  }
+
+  /** Clear the deployment-level drain marker for matching current and future workers. */
+  clearDeploymentDrain(deploymentName: string): WorkerDrainMutationResult {
+    this.#deploymentDrainStates.delete(deploymentName);
+    return this.#deploymentDrainResult(deploymentName);
+  }
+
   /**
    * Stable, sorted-by-id snapshot of every connected worker for the public
    * `weft.workers.list` operation. The caller passes a per-request `now`
@@ -432,14 +575,100 @@ export class WorkerRegistry {
         connectedAt: worker.connectedAt,
         lastHeartbeatAt: worker.lastHeartbeat,
         heartbeatAgeMs: now - worker.lastHeartbeat,
+        startedAt: worker.startedAt,
+        capabilities: { ...worker.capabilities },
+        health: this.#workerHealth(worker),
+        ...(worker.deploymentName !== undefined ? { deploymentName: worker.deploymentName } : {}),
+        ...(worker.buildId !== undefined ? { buildId: worker.buildId } : {}),
+        ...(worker.runtimeVersion !== undefined ? { runtimeVersion: worker.runtimeVersion } : {}),
+        ...(worker.gitSha !== undefined ? { gitSha: worker.gitSha } : {}),
       });
     }
     return summaries.toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 
+  /**
+   * Deployment-group snapshot for operator views. Workers without deployment
+   * metadata are grouped together under `null` identity fields so anonymous
+   * fleets remain visible without inventing placeholder names.
+   */
+  getDeploymentSummaries(_now: number): WorkerDeploymentSummary[] {
+    const groups = new Map<string, WorkerInfo[]>();
+
+    for (const worker of this.#workers.values()) {
+      const key = deploymentIdentityKey(worker);
+      const group = groups.get(key);
+      if (group === undefined) {
+        groups.set(key, [worker]);
+      } else {
+        group.push(worker);
+      }
+    }
+
+    return [...groups.values()]
+      .map((workers) => this.#deploymentSummary(workers))
+      .toSorted(compareDeploymentSummaries);
+  }
+
   /** Get worker count. */
   get size(): number {
     return this.#workers.size;
+  }
+
+  #deploymentDrainResult(deploymentName: string): WorkerDrainMutationResult {
+    const workers = this.#workersForDeployment(deploymentName);
+    const inFlight = workers.reduce((total, worker) => total + worker.inFlight, 0);
+    return {
+      target: 'deployment',
+      deploymentName,
+      affectedWorkers: workers.length,
+      inFlight,
+      health: deploymentHealth(workers.map((worker) => this.#workerHealth(worker))),
+    };
+  }
+
+  #deploymentSummary(workers: WorkerInfo[]): WorkerDeploymentSummary {
+    const [first] = workers;
+    const healthCounts = countWorkerHealth(workers.map((worker) => this.#workerHealth(worker)));
+
+    return {
+      deploymentName: first?.deploymentName ?? null,
+      buildId: first?.buildId ?? null,
+      runtimeVersion: first?.runtimeVersion ?? null,
+      gitSha: first?.gitSha ?? null,
+      health: deploymentHealth(workers.map((worker) => this.#workerHealth(worker))),
+      workers: workers.length,
+      activeWorkers: healthCounts.active,
+      drainingWorkers: healthCounts.draining,
+      drainedWorkers: healthCounts.drained,
+      inFlight: workers.reduce((total, worker) => total + worker.inFlight, 0),
+      oldestStartedAt:
+        workers.length === 0 ? null : Math.min(...workers.map((worker) => worker.startedAt)),
+    };
+  }
+
+  #workersForDeployment(deploymentName: string): WorkerInfo[] {
+    return [...this.#workers.values()].filter((worker) => worker.deploymentName === deploymentName);
+  }
+
+  #isWorkerDraining(worker: WorkerInfo): boolean {
+    return this.#drainRecordForWorker(worker) !== undefined;
+  }
+
+  #workerHealth(worker: WorkerInfo): WorkerHealth {
+    if (!this.#isWorkerDraining(worker)) return 'active';
+    return worker.inFlight > 0 ? 'draining' : 'drained';
+  }
+
+  #drainRecordForWorker(worker: WorkerInfo): DrainRecord | undefined {
+    if (worker.drainStartedAt !== undefined) {
+      return {
+        startedAt: worker.drainStartedAt,
+        ...(worker.drainReason !== undefined ? { reason: worker.drainReason } : {}),
+      };
+    }
+    if (worker.deploymentName === undefined) return undefined;
+    return this.#deploymentDrainStates.get(worker.deploymentName);
   }
 
   /** Decrement the fair-share count for a completed or expired task. */
@@ -458,6 +687,58 @@ export class WorkerRegistry {
       workerCounts.set(task.fairShareKey, next);
     }
   }
+}
+
+function createDrainRecord(options?: WorkerDrainOptions): DrainRecord {
+  return {
+    startedAt: options?.updatedAt ?? Date.now(),
+    ...(options?.reason !== undefined ? { reason: options.reason } : {}),
+  };
+}
+
+function countWorkerHealth(healthValues: WorkerHealth[]): Record<WorkerHealth, number> {
+  return healthValues.reduce<Record<WorkerHealth, number>>(
+    (counts, health) => {
+      counts[health] += 1;
+      return counts;
+    },
+    { active: 0, draining: 0, drained: 0 },
+  );
+}
+
+function deploymentHealth(healthValues: WorkerHealth[]): WorkerHealth {
+  if (healthValues.includes('draining')) return 'draining';
+  if (healthValues.length > 0 && healthValues.every((health) => health === 'drained')) {
+    return 'drained';
+  }
+  return 'active';
+}
+
+function deploymentIdentityKey(worker: WorkerInfo): string {
+  return [
+    worker.deploymentName ?? '',
+    worker.buildId ?? '',
+    worker.runtimeVersion ?? '',
+    worker.gitSha ?? '',
+  ].join('\u{1f}');
+}
+
+function compareDeploymentSummaries(
+  left: WorkerDeploymentSummary,
+  right: WorkerDeploymentSummary,
+): number {
+  const leftKey = deploymentSummaryKey(left);
+  const rightKey = deploymentSummaryKey(right);
+  return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+}
+
+function deploymentSummaryKey(summary: WorkerDeploymentSummary): string {
+  return [
+    summary.deploymentName ?? '',
+    summary.buildId ?? '',
+    summary.runtimeVersion ?? '',
+    summary.gitSha ?? '',
+  ].join('\u{1f}');
 }
 
 /**

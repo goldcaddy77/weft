@@ -644,6 +644,12 @@ describe('worker WebSocket protocol', () => {
       activities: string[];
       concurrency?: number;
       queue?: string;
+      deploymentName?: string;
+      buildId?: string;
+      runtimeVersion?: string;
+      gitSha?: string;
+      startedAt?: number;
+      capabilities?: Record<string, unknown>;
     },
   ): Promise<void> {
     ws.send(
@@ -654,6 +660,12 @@ describe('worker WebSocket protocol', () => {
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
         queue: options.queue ?? 'default',
+        ...(options.deploymentName !== undefined ? { deploymentName: options.deploymentName } : {}),
+        ...(options.buildId !== undefined ? { buildId: options.buildId } : {}),
+        ...(options.runtimeVersion !== undefined ? { runtimeVersion: options.runtimeVersion } : {}),
+        ...(options.gitSha !== undefined ? { gitSha: options.gitSha } : {}),
+        ...(options.startedAt !== undefined ? { startedAt: options.startedAt } : {}),
+        ...(options.capabilities !== undefined ? { capabilities: options.capabilities } : {}),
       }),
     );
     await waitForRealTimersForTesting(50);
@@ -675,6 +687,37 @@ describe('worker WebSocket protocol', () => {
     expect(workers[0]?.id).toBe('w1');
     expect(workers[0]?.activities).toEqual(['charge', 'ship']);
     expect(workers[0]?.concurrency).toBe(5);
+
+    ws.close();
+    await waitForRealTimersForTesting(50);
+  });
+
+  it('records deployment identity and capabilities from worker registration', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const ws = await connectWorker(server);
+    await registerWorker(ws, {
+      workerId: 'identity-worker',
+      activities: ['charge'],
+      concurrency: 5,
+      deploymentName: 'payments',
+      buildId: 'build-2026-05-12',
+      runtimeVersion: 'bun-1.2.13',
+      gitSha: '0123456789abcdef',
+      startedAt: 1_778_608_000_000,
+      capabilities: { region: 'us-west', canary: true },
+    });
+
+    expect(server.registry.getWorker('identity-worker')).toMatchObject({
+      id: 'identity-worker',
+      deploymentName: 'payments',
+      buildId: 'build-2026-05-12',
+      runtimeVersion: 'bun-1.2.13',
+      gitSha: '0123456789abcdef',
+      startedAt: 1_778_608_000_000,
+      capabilities: { region: 'us-west', canary: true },
+    });
 
     ws.close();
     await waitForRealTimersForTesting(50);
@@ -998,6 +1041,77 @@ describe('worker WebSocket protocol', () => {
     expect(received[0]?.type).toBe('task');
     expect(received[0]?.operationId).toBe('op-1');
     expect(received[0]?.activityName).toBe('charge');
+
+    ws.close();
+    await waitForRealTimersForTesting(50);
+  });
+
+  it('routes new tasks away from draining workers while keeping in-flight tasks tracked', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const drainingSocket = await connectWorker(server);
+    const activeSocket = await connectWorker(server);
+    const receivedByActive: string[] = [];
+    activeSocket.addEventListener('message', (event) => {
+      const message = JSON.parse(String(event.data)) as { type: string; operationId?: string };
+      if (message.type === 'task' && message.operationId !== undefined) {
+        receivedByActive.push(message.operationId);
+      }
+    });
+
+    await registerWorker(drainingSocket, {
+      workerId: 'draining-worker',
+      activities: ['charge'],
+      concurrency: 5,
+    });
+    await registerWorker(activeSocket, {
+      workerId: 'active-worker',
+      activities: ['charge'],
+      concurrency: 5,
+    });
+    server.registry.assignTask('draining-worker', 'already-running', 30_000);
+
+    server.registry.markWorkerDraining('draining-worker', {
+      reason: 'rolling deploy',
+      updatedAt: 1000,
+    });
+
+    const dispatched = await server.dispatchTask({
+      operationId: 'new-work',
+      activityName: 'charge',
+      input: null,
+    });
+
+    expect(dispatched).toBe(true);
+    await waitFor(() => receivedByActive.includes('new-work'), {
+      label: 'new work routed to active worker',
+    });
+    expect(server.registry.isAssigned('already-running')).toBe(true);
+    expect(server.registry.getTask('already-running')?.workerId).toBe('draining-worker');
+    expect(server.registry.getTask('new-work')?.workerId).toBe('active-worker');
+
+    drainingSocket.close();
+    activeSocket.close();
+    await waitForRealTimersForTesting(50);
+  });
+
+  it('falls back to long-poll when every matching WebSocket worker is draining', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const ws = await connectWorker(server);
+    await registerWorker(ws, { workerId: 'drain-only-worker', activities: ['charge'] });
+    server.registry.markWorkerDraining('drain-only-worker', { updatedAt: 1000 });
+
+    const dispatched = await server.dispatchTask({
+      operationId: 'queued-after-drain',
+      activityName: 'charge',
+      input: null,
+    });
+
+    expect(dispatched).toBe(true);
+    expect(server.taskQueue.pendingCount('default')).toBe(1);
 
     ws.close();
     await waitForRealTimersForTesting(50);

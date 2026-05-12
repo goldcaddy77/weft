@@ -974,5 +974,182 @@ describe('WorkerRegistry', () => {
       summary.activities.push('mutated');
       expect(registry.getWorker('w1')!.activities).toEqual(['process', 'send']);
     });
+
+    it('includes deployment identity, capabilities, start time, and active health', () => {
+      const registry = new WorkerRegistry();
+      registry.register({
+        id: 'identity-worker',
+        queue: 'payments',
+        activities: ['charge'],
+        concurrency: 2,
+        deploymentName: 'payments',
+        buildId: 'build-1',
+        runtimeVersion: 'bun-1.2.13',
+        gitSha: '0123456789abcdef',
+        startedAt: 1_778_608_000_000,
+        capabilities: { region: 'us-west', canary: true },
+      });
+
+      expect(registry.getWorkerSummaries(1_778_608_001_000)[0]).toMatchObject({
+        id: 'identity-worker',
+        deploymentName: 'payments',
+        buildId: 'build-1',
+        runtimeVersion: 'bun-1.2.13',
+        gitSha: '0123456789abcdef',
+        startedAt: 1_778_608_000_000,
+        capabilities: { region: 'us-west', canary: true },
+        health: 'active',
+      });
+    });
+  });
+
+  describe('drain state and deployment summaries', () => {
+    it('excludes draining workers from routing without clearing in-flight tasks', () => {
+      const registry = new WorkerRegistry();
+      registry.register({
+        id: 'draining-worker',
+        queue: 'default',
+        activities: ['charge'],
+        concurrency: 3,
+        deploymentName: 'payments',
+      });
+      registry.register({
+        id: 'active-worker',
+        queue: 'default',
+        activities: ['charge'],
+        concurrency: 3,
+        deploymentName: 'payments',
+      });
+      registry.assignTask('draining-worker', 'op-inflight', 30_000);
+
+      const result = registry.markWorkerDraining('draining-worker', {
+        reason: 'rolling deploy',
+        updatedAt: 1000,
+      });
+
+      expect(result).toEqual({
+        target: 'worker',
+        workerId: 'draining-worker',
+        affectedWorkers: 1,
+        inFlight: 1,
+        health: 'draining',
+      });
+      expect(registry.isAssigned('op-inflight')).toBe(true);
+      expect(registry.findWorker('charge', { queue: 'default' })?.id).toBe('active-worker');
+      expect(
+        registry.getWorkerSummaries(2000).find((worker) => worker.id === 'draining-worker'),
+      ).toMatchObject({
+        health: 'draining',
+      });
+      expect(registry.getWorker('draining-worker')).toMatchObject({
+        drainReason: 'rolling deploy',
+        drainStartedAt: 1000,
+      });
+    });
+
+    it('reports a drained worker once drain is active and no tasks remain', () => {
+      const registry = new WorkerRegistry();
+      registry.register({
+        id: 'drained-worker',
+        queue: 'default',
+        activities: ['charge'],
+        concurrency: 1,
+      });
+
+      registry.markWorkerDraining('drained-worker', { updatedAt: 1000 });
+
+      expect(registry.getWorkerSummaries(2000)[0]).toMatchObject({
+        id: 'drained-worker',
+        health: 'drained',
+      });
+      expect(registry.getWorker('drained-worker')?.drainStartedAt).toBe(1000);
+      expect(registry.findWorker('charge', { queue: 'default' })).toBeUndefined();
+
+      registry.clearWorkerDrain('drained-worker');
+      expect(registry.getWorkerSummaries(3000)[0]?.health).toBe('active');
+      expect(registry.findWorker('charge', { queue: 'default' })?.id).toBe('drained-worker');
+    });
+
+    it('applies deployment drains to current and future workers with that deployment name', () => {
+      const registry = new WorkerRegistry();
+      registry.register({
+        id: 'current',
+        queue: 'default',
+        activities: ['charge'],
+        concurrency: 1,
+        deploymentName: 'payments',
+        buildId: 'build-1',
+      });
+
+      registry.markDeploymentDraining('payments', {
+        reason: 'bad rollout',
+        updatedAt: 1000,
+      });
+      registry.register({
+        id: 'future',
+        queue: 'default',
+        activities: ['charge'],
+        concurrency: 1,
+        deploymentName: 'payments',
+        buildId: 'build-1',
+      });
+
+      expect(registry.findWorker('charge', { queue: 'default' })).toBeUndefined();
+      expect(registry.getWorkerSummaries(2000).map((worker) => worker.health)).toEqual([
+        'drained',
+        'drained',
+      ]);
+
+      registry.clearDeploymentDrain('payments');
+      expect(registry.getWorkerSummaries(3000).map((worker) => worker.health)).toEqual([
+        'active',
+        'active',
+      ]);
+    });
+
+    it('aggregates deployment health by deployment identity', () => {
+      const registry = new WorkerRegistry();
+      registry.register({
+        id: 'active',
+        queue: 'default',
+        activities: ['charge'],
+        concurrency: 2,
+        deploymentName: 'payments',
+        buildId: 'build-1',
+        runtimeVersion: 'bun-1.2.13',
+        gitSha: 'abc',
+        startedAt: 100,
+        capabilities: { region: 'us-west' },
+      });
+      registry.register({
+        id: 'draining',
+        queue: 'default',
+        activities: ['charge'],
+        concurrency: 2,
+        deploymentName: 'payments',
+        buildId: 'build-1',
+        runtimeVersion: 'bun-1.2.13',
+        gitSha: 'abc',
+        startedAt: 200,
+      });
+      registry.assignTask('draining', 'op-1', 30_000);
+      registry.markWorkerDraining('draining', { reason: 'replace host', updatedAt: 1000 });
+
+      expect(registry.getDeploymentSummaries(2000)).toEqual([
+        expect.objectContaining({
+          deploymentName: 'payments',
+          buildId: 'build-1',
+          runtimeVersion: 'bun-1.2.13',
+          gitSha: 'abc',
+          health: 'draining',
+          workers: 2,
+          activeWorkers: 1,
+          drainingWorkers: 1,
+          drainedWorkers: 0,
+          inFlight: 1,
+          oldestStartedAt: 100,
+        }),
+      ]);
+    });
   });
 });
