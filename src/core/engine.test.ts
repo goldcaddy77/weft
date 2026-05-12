@@ -86,6 +86,14 @@ function makeDefinitionSchema<TOutput>(): DefinitionSchema<unknown, TOutput> {
 // ---------------------------------------------------------------------------
 
 describe('Engine', () => {
+  it('wraps configured storage with compression support', () => {
+    const engine = new Engine({ compression: { algorithm: 'gzip', threshold: 1 } });
+
+    expect(engine.storage.constructor.name).toBe('CompressedStorage');
+
+    engine[Symbol.dispose]();
+  });
+
   it('creates engine with no args and defaults to MemoryStorage', () => {
     const engine = new Engine();
     expect(engine).toBeInstanceOf(Engine);

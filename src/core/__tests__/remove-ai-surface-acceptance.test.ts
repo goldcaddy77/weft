@@ -50,6 +50,9 @@ describe('remove-ai-surface acceptance gates', () => {
     const { reviewId, workflowId, artifact } = pending[0]!;
     expect(workflowId).toBe(handle.id);
     expect(artifact).toEqual({ amount: 99, recipient: 'alice' });
+    if (typeof workflowId !== 'string' || typeof reviewId !== 'string') {
+      throw new Error('expected persisted review identifiers to be strings');
+    }
 
     const retrieved = await engine.getReview(workflowId, reviewId);
     expect(retrieved).not.toBeNull();
@@ -125,8 +128,7 @@ describe('remove-ai-surface acceptance gates', () => {
     const replayed = await replay.lookup(semanticHash);
 
     expect(replayed).not.toBeNull();
-    expect(replayed!.status).toBe('committed');
-    if (replayed!.status !== 'committed') {
+    if (replayed === null || replayed.status !== 'committed') {
       throw new Error('expected committed record');
     }
     expect(replayed.output).toEqual({ chargeId: 'ch-1' });
