@@ -64,6 +64,16 @@ export type EffectRecord =
  * This narrower type keeps tests honest without forcing them to construct a
  * full {@link EffectLog} instance when they only need the runtime-facing
  * methods and counter.
+ *
+ * @example
+ * ```ts
+ * import type { EffectLogLike } from 'weft';
+ *
+ * async function dedupe(log: EffectLogLike, hash: string): Promise<boolean> {
+ *   const existing = await log.lookup(hash);
+ *   return existing !== null;
+ * }
+ * ```
  */
 export type EffectLogLike = Pick<
   EffectLog,

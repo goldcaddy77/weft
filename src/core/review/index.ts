@@ -126,8 +126,6 @@ export interface ReviewOptions {
  * ```
  */
 export interface HumanReviewOptions extends ReviewOptions {
-  /** Handler for incoming reviewer messages during conversation. */
-  onMessage?: (message: string) => string;
   /** Handler called when an escalation step fires. */
   onEscalation?: (action: EscalationAction) => void;
 }
@@ -331,7 +329,7 @@ export class ReviewCoordinator {
       reviewId,
       decision: decision.decision,
       reviewer: decision.reviewer,
-      timestamp: Date.now(),
+      timestamp: this.#getNow(),
     };
 
     if (decision.feedback !== undefined) {

@@ -138,37 +138,39 @@ describe('remove-ai-surface acceptance gates', () => {
     expect(executions).toBe(1);
   });
 
-  it('computeSemanticHash is deterministic across two engine instances', async () => {
+  it('computeSemanticHash is a pure function — engine state and registration order do not perturb it', async () => {
+    // Gate 9 criterion 3 reads "across two engine instances," but the
+    // contract is stronger: computeSemanticHash takes no engine
+    // dependency at all. We instantiate two engines and register
+    // unrelated workflows on them to demonstrate that the hash is
+    // unchanged regardless of any ambient engine state.
+    const input = {
+      method: 'POST',
+      path: '/charges',
+      body: { amount: 250, recipient: 'bob', notes: ['priority'] },
+    };
+
+    const baseline = computeSemanticHash(input);
+    expect(computeSemanticHash(input)).toBe(baseline);
+
+    // Key-order independence is part of the determinism contract.
+    const reordered = {
+      body: { recipient: 'bob', notes: ['priority'], amount: 250 },
+      path: '/charges',
+      method: 'POST',
+    };
+    expect(computeSemanticHash(reordered)).toBe(baseline);
+
     const engineA = new TestEngine();
     const engineB = new TestEngine();
     try {
-      const input = {
-        method: 'POST',
-        path: '/charges',
-        body: { amount: 250, recipient: 'bob', notes: ['priority'] },
-      };
-
-      const hashFromA = computeSemanticHash(input);
-      const hashFromB = computeSemanticHash(input);
-
-      expect(hashFromA).toBe(hashFromB);
-
-      // Key-order independence is part of the determinism contract.
-      const reordered = {
-        body: { recipient: 'bob', notes: ['priority'], amount: 250 },
-        path: '/charges',
-        method: 'POST',
-      };
-      expect(computeSemanticHash(reordered)).toBe(hashFromA);
-
-      // Touching either engine before hashing must not perturb the hash.
       engineA.register('noop', async function* () {
         return 1;
       });
       engineB.register('noop', async function* () {
         return 2;
       });
-      expect(computeSemanticHash(input)).toBe(hashFromA);
+      expect(computeSemanticHash(input)).toBe(baseline);
     } finally {
       engineA[Symbol.dispose]();
       engineB[Symbol.dispose]();

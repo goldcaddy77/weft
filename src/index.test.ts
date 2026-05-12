@@ -5,7 +5,7 @@ import { Engine, MemoryStorage, VERSION, WorkflowAlreadyExistsError } from './in
 
 describe('weft', () => {
   it('exports a version string', () => {
-    expect(VERSION).toBe('0.0.1');
+    expect(VERSION).toBe('0.1.0');
   });
 
   it('exports Engine class', () => {

@@ -23,7 +23,7 @@
  * console.log(`Running Weft ${VERSION}`);
  * ```
  */
-export const VERSION = '0.0.1';
+export const VERSION = '0.1.0';
 // Core
 export {
   Engine,
@@ -359,7 +359,7 @@ export {
   EffectReplayConflictError,
   computeSemanticHash,
 } from './core/effect-log/index.ts';
-export type { EffectRecord } from './core/effect-log/index.ts';
+export type { EffectLogLike, EffectRecord } from './core/effect-log/index.ts';
 export { isJSONValue, normalizeJSONValue } from './core/json.ts';
 export type { JSONPrimitive, JSONValue } from './core/json.ts';
 
