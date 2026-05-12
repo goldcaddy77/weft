@@ -224,6 +224,7 @@ export class McpSessionManager implements AsyncDisposable {
     if (this.#sessions.size >= this.#maximumSessions) {
       throw new McpSessionLimitExceededError();
     }
+    session.touch(this.#currentTimeMilliseconds());
     this.#sessions.set(session.id, session);
     return session;
   }
@@ -252,19 +253,22 @@ export class McpSessionManager implements AsyncDisposable {
   }
 
   #notifyWorkflowResourceUpdated(workflowId: string): void {
-    this.#deleteExpiredSessions();
     const candidateUris = [
       `weft://workflows/${workflowId}/state`,
       `weft://workflows/${workflowId}/events`,
       `weft://workflows/${workflowId}/checkpoints`,
     ];
 
+    const now = this.#currentTimeMilliseconds();
     for (const session of this.#sessions.values()) {
+      if (!candidateUris.some((uri) => session.subscriptions.has(uri))) continue;
+      session.touch(now);
       for (const uri of candidateUris) {
         if (!session.subscriptions.has(uri)) continue;
         session.notify('notifications/resources/updated', { uri });
       }
     }
+    this.#deleteExpiredSessions();
   }
 
   #deleteExpiredSessions(): void {

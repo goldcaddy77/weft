@@ -2,7 +2,7 @@ import type { Engine } from '../core/engine.ts';
 import { principalFromStdioLocal } from '../server/principal.ts';
 import { dispatchMcpMessage } from './dispatcher.ts';
 import { parseMcpMessage } from './protocol.ts';
-import { McpSession, McpSessionManager } from './session.ts';
+import { McpSession, McpSessionManager, type McpSessionManagerOptions } from './session.ts';
 
 /**
  * Admission modes for local MCP stdio sessions.
@@ -39,6 +39,7 @@ export type McpStdioAdmission =
  *   output: new WritableStream<Uint8Array>(),
  *   engine,
  *   admission: { kind: 'require-one' },
+ *   sessionManagerOptions: { maximumSessions: 1 },
  * };
  * void options;
  * ```
@@ -49,6 +50,7 @@ export type McpStdioSessionOptions = {
   readonly engine: Engine;
   readonly admission: McpStdioAdmission;
   readonly maxFrameBytes?: number;
+  readonly sessionManagerOptions?: McpSessionManagerOptions;
 };
 
 /**
@@ -136,9 +138,10 @@ type StdioRuntime = {
 function createStdioRuntime(options: McpStdioSessionOptions): StdioRuntime {
   const writer = options.output.getWriter();
   const write = createSerializedWriter(writer);
-  const manager = new McpSessionManager(options.engine);
+  const manager = new McpSessionManager(options.engine, options.sessionManagerOptions);
   const session = manager.add(new McpSession('stdio-local', principalFromStdioLocal()));
   session.addTarget((message) => {
+    manager.touch(session);
     void write(JSON.stringify(message));
   });
   return {
@@ -215,6 +218,7 @@ function addPendingLine(
   pending: Set<Promise<void>>,
 ): void {
   if (line.trim().length === 0) return;
+  runtime.manager.touch(runtime.session);
   const task = handleLine(line, options.engine, runtime.session, runtime.write).finally(() => {
     pending.delete(task);
   });

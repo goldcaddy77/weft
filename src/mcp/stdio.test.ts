@@ -11,6 +11,7 @@ type ParsedLine = {
   jsonrpc: '2.0';
   id?: string | number | null;
   method?: string;
+  params?: Record<string, unknown>;
   result?: unknown;
   error?: { code: number; message: string };
 };
@@ -361,6 +362,69 @@ describe('runMcpStdioSession', () => {
     expect(toolText(callLine.result)).toMatchObject({
       result: { echoed: 'stdio' },
       workflowId: expect.any(String),
+    });
+
+    input.close();
+    const result = await session;
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('keeps resource subscriptions alive after the idle timeout when stdio is active', async () => {
+    const engine = createEngine();
+    const input = controllableInput();
+    const output = collectingOutput();
+    let now = 0;
+
+    const session = runMcpStdioSession({
+      input: input.stream,
+      output: output.stream,
+      engine,
+      admission: { kind: 'allow-unauthenticated-local-admin' },
+      sessionManagerOptions: {
+        maximumSessions: 1,
+        sessionIdleTimeoutMilliseconds: 100,
+        currentTimeMilliseconds: () => now,
+      },
+    });
+
+    input.send({
+      jsonrpc: '2.0',
+      id: 'init',
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-11-25',
+        capabilities: {},
+        clientInfo: { name: 'stdio-test', version: '1.0.0' },
+      },
+    });
+    await waitForLine(output, (line) => line.id === 'init' && line.result !== undefined);
+    input.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+
+    const handle = await engine.start(
+      'hold-for-stdio-cancel',
+      { value: 'subscription' },
+      { id: 'stdio-idle-subscription' },
+    );
+    const resourceUri = `weft://workflows/${handle.id}/state`;
+    input.send({
+      jsonrpc: '2.0',
+      id: 'subscribe',
+      method: 'resources/subscribe',
+      params: { uri: resourceUri },
+    });
+    await waitForLine(output, (line) => line.id === 'subscribe' && line.result !== undefined);
+
+    now = 150;
+    await engine.signal(handle.id, 'release', 'done');
+
+    const notification = await waitForLine(
+      output,
+      (line) =>
+        line.method === 'notifications/resources/updated' && line.params?.['uri'] === resourceUri,
+    );
+    expect(notification).toMatchObject({
+      method: 'notifications/resources/updated',
+      params: { uri: resourceUri },
     });
 
     input.close();
