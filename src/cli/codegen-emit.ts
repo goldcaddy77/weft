@@ -34,7 +34,10 @@ import {
 
 export { CodegenEmitError } from './codegen-emit-keywords.ts';
 
-/** Compare strings by codepoint order; no locale-sensitivity. */
+// Deterministic, locale-independent compare via `<`/`>` (UTF-16
+// code-unit order). Registry keys are workflow/activity identifiers
+// and never contain astral codepoints in practice, so the difference
+// from true Unicode codepoint order doesn't matter.
 function codepointCompare(a: string, b: string): number {
   if (a < b) return -1;
   if (a > b) return 1;

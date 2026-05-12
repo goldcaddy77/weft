@@ -120,10 +120,10 @@ function formatSuccess(
   activities: number,
 ): CommandOutput {
   if (options.json) {
-    const payload =
-      action === 'unchanged'
-        ? { ok: true, action, out: options.out }
-        : { ok: true, action, out: options.out, workflows, activities };
+    // Include workflow/activity counts in both `wrote` and `unchanged`
+    // payloads so machine consumers get a stable shape. The counts
+    // reflect what the snapshot contains either way.
+    const payload = { ok: true, action, out: options.out, workflows, activities };
     return { stdout: JSON.stringify(payload), exitCode: 0 };
   }
   if (action === 'unchanged') {

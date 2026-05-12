@@ -340,6 +340,10 @@ describe('executeCodegen end-to-end', () => {
     expect(repeat['ok']).toBe(true);
     expect(repeat['action']).toBe('unchanged');
     expect(repeat['out']).toBe(out);
+    // Counts are included in both `wrote` and `unchanged` payloads so
+    // machine consumers see a stable shape.
+    expect(repeat['workflows']).toBeGreaterThan(0);
+    expect(repeat['activities']).toBeGreaterThan(0);
   });
 
   it('emits {ok:false,error} on stderr with --json on failure', async () => {

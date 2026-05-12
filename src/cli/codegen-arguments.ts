@@ -15,7 +15,7 @@ const CODEGEN_DEFAULT_TIMEOUT_MS = 30_000;
 function parseCodegenTimeout(value: string | undefined): number {
   if (value === undefined) return CODEGEN_DEFAULT_TIMEOUT_MS;
   const timeoutMs = Number(value);
-  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
     throw new Error(`--timeout must be a positive integer number of milliseconds (got '${value}')`);
   }
   return timeoutMs;
