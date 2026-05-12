@@ -8,6 +8,7 @@ import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
 import type { OperationFault } from '../operation-fault.ts';
+import { principalFromApiKey } from '../principal.ts';
 import { listReviewsOperation, listReviewsRestBinding } from './list-reviews.ts';
 
 function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
@@ -16,6 +17,24 @@ function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
 }
 
 const registry = createOperationRegistry([listReviewsOperation]);
+
+function reviewsReadAuthContext() {
+  return {
+    authContext: {
+      method: 'api-key' as const,
+      principal: principalFromApiKey({ subject: 'reviews-reader', scopes: ['reviews:read'] }),
+    },
+  };
+}
+
+function workflowsReadAuthContext() {
+  return {
+    authContext: {
+      method: 'api-key' as const,
+      principal: principalFromApiKey({ subject: 'workflow-reader', scopes: ['workflows:read'] }),
+    },
+  };
+}
 
 describe('weft.reviews.list', () => {
   let engine: Engine | undefined;
@@ -45,12 +64,89 @@ describe('weft.reviews.list', () => {
       {
         operationRegistry: registry,
         restBindings: [listReviewsRestBinding],
+        ...reviewsReadAuthContext(),
       },
     );
 
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('application/json');
-    expect(await response.json()).toEqual({ items: [review] });
+    expect(await response.json()).toEqual({
+      items: [
+        {
+          status: 'pending',
+          ...review,
+        },
+      ],
+    });
+  });
+
+  it('accepts REST query filters and returns completed review entries', async () => {
+    const setup = createEngineWithStorage();
+    engine = setup.engine;
+
+    const review: ReviewRequest = {
+      reviewId: 'rev-completed',
+      workflowId: 'wf-completed',
+      artifact: { text: 'review me' },
+      reviewType: 'design',
+      reviewers: ['alice'],
+      allowPartial: false,
+      createdAt: 1_234,
+    };
+    await setup.storage.put(KEYS.review(review.workflowId, review.reviewId), encode(review));
+    await engine.submitReview(review.reviewId, {
+      decision: 'approved',
+      reviewer: 'alice',
+      workflowId: review.workflowId,
+    });
+
+    const response = await handleRequest(
+      new Request(
+        'http://localhost/v1/reviews?status=completed&workflowId=wf-completed&reviewType=design',
+        { method: 'GET' },
+      ),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: [listReviewsRestBinding],
+        ...reviewsReadAuthContext(),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      items: [
+        expect.objectContaining({
+          status: 'completed',
+          reviewId: 'rev-completed',
+          workflowId: 'wf-completed',
+          reviewType: 'design',
+          decision: 'approved',
+        }),
+      ],
+    });
+  });
+
+  it('returns 400 when the status filter is invalid', async () => {
+    const setup = createEngineWithStorage();
+    engine = setup.engine;
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/reviews?status=bogus', { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: [listReviewsRestBinding],
+        ...reviewsReadAuthContext(),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual(
+      expect.objectContaining({
+        error: expect.stringContaining('status'),
+      }),
+    );
   });
 
   it('maps EngineFailure faults to the legacy 500 response body', async () => {
@@ -75,10 +171,44 @@ describe('weft.reviews.list', () => {
       {
         operationRegistry: createOperationRegistry([failingOperation]),
         restBindings: [listReviewsRestBinding],
+        ...reviewsReadAuthContext(),
       },
     );
 
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ error: 'Internal server error' });
+  });
+
+  it('returns 401 when the caller is anonymous', async () => {
+    const setup = createEngineWithStorage();
+    engine = setup.engine;
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/reviews', { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: [listReviewsRestBinding],
+      },
+    );
+
+    expect(response.status).toBe(401);
+  });
+
+  it('returns 403 when the caller lacks reviews:read', async () => {
+    const setup = createEngineWithStorage();
+    engine = setup.engine;
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/reviews', { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: [listReviewsRestBinding],
+        ...workflowsReadAuthContext(),
+      },
+    );
+
+    expect(response.status).toBe(403);
   });
 });

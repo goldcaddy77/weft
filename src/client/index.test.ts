@@ -125,7 +125,20 @@ function createFullSurfaceResponses(
     jsonResponse({ priority: 'high' }),
     new Response(null, { status: 204 }),
     jsonResponse({ events: [{ type: 'workflow:started' }] }),
-    jsonResponse({ items: [{ reviewId: 'review-1' }] }),
+    jsonResponse({
+      items: [
+        {
+          status: 'pending',
+          reviewId: 'review-1',
+          workflowId: 'wf-review-1',
+          artifact: null,
+          reviewType: 'general',
+          reviewers: [],
+          allowPartial: false,
+          createdAt: 1,
+        },
+      ],
+    }),
     new Response(null, { status: 204 }),
     jsonResponse({
       chunks: [
@@ -217,7 +230,18 @@ async function exerciseRecoveryAndReviewRequests(httpClient: HttpClient): Promis
   expect(await httpClient.getAttributes('wf/1')).toEqual({ priority: 'high' });
   await httpClient.setAttributes('wf/1', { priority: 'critical' });
   expect(await httpClient.getEvents('wf/1')).toMatchObject([{ type: 'workflow:started' }]);
-  expect(await httpClient.listReviews()).toEqual([{ reviewId: 'review-1' }]);
+  expect(await httpClient.listReviews()).toEqual([
+    {
+      status: 'pending',
+      reviewId: 'review-1',
+      workflowId: 'wf-review-1',
+      artifact: null,
+      reviewType: 'general',
+      reviewers: [],
+      allowPartial: false,
+      createdAt: 1,
+    },
+  ]);
   await httpClient.submitReview('review-1', { decision: 'approved', reviewer: 'alex' });
   expect(await httpClient.getStreamChunks('wf/1', 'stream/key', { after: 1 })).toEqual([
     { sequence: 2, value: 'chunk-a' },
@@ -424,7 +448,7 @@ beforeAll(() => {
           method: 'api-key',
           principal: principalFromApiKey({
             subject: 'http-client-test',
-            scopes: ['quota:read', 'workflows:read', 'system:read'],
+            scopes: ['quota:read', 'reviews:read', 'system:read', 'workflows:read'],
           }),
         },
       });
@@ -1093,6 +1117,31 @@ describe('HttpClient request surface', () => {
     expect(fetchCalls[3]?.url).toBe('http://example.test/v1/workflows/wf%2F1/query/echoInput');
     expect(fetchCalls[3]?.init?.method).toBe('POST');
     expect(fetchCalls[3]?.init?.body).toBe(JSON.stringify({ input: { source: 'handle' } }));
+  });
+
+  it('encodes review list filters into the request query string', async () => {
+    const fetchCalls: Array<{ url: string; init: RequestInit | undefined }> = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      fetchCalls.push({ url: requestInputToUrl(input), init });
+      return jsonResponse({ items: [] });
+    }) as unknown as typeof fetch;
+
+    const httpClient = new HttpClient({ baseUrl: 'http://example.test' });
+    await httpClient.listReviews({
+      status: 'completed',
+      workflowId: 'wf/1',
+      reviewType: 'security review',
+    });
+
+    const listCall = fetchCalls[0];
+    expect(listCall?.init?.method).toBeUndefined();
+
+    const listUrl = new URL(listCall?.url ?? '');
+    expect(listUrl.pathname).toBe('/v1/reviews');
+    expect(listUrl.searchParams.get('status')).toBe('completed');
+    expect(listUrl.searchParams.get('workflowId')).toBe('wf/1');
+    expect(listUrl.searchParams.get('reviewType')).toBe('security review');
   });
 
   it('returns null or empty collections for missing GET resources', async () => {

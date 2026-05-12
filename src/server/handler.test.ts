@@ -8,7 +8,7 @@ import { QuotaExceededError } from '../core/tenant-quotas.ts';
 import { tenantFromInputField } from '../core/tenant.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { UpdateCoordinator, WorkflowTerminalError } from '../core/updates.ts';
-import { KEYS } from '../storage/interface.ts';
+import { encodeStorageKeyComponent, KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { getRequiredRouteParameter, handleRequest } from './handler.ts';
 import { principalFromApiKey } from './principal.ts';
@@ -31,6 +31,15 @@ function apiKeyAuth() {
     authContext: {
       method: 'api-key' as const,
       principal: principalFromApiKey({ subject: 'test', scopes: ['quota:read', 'workflows:read'] }),
+    },
+  };
+}
+
+function reviewReadApiKeyAuth() {
+  return {
+    authContext: {
+      method: 'api-key' as const,
+      principal: principalFromApiKey({ subject: 'review-reader', scopes: ['reviews:read'] }),
     },
   };
 }
@@ -2900,7 +2909,11 @@ describe('handleRequest', () => {
     it('returns empty items when no reviews exist', async () => {
       engine = createEngine();
 
-      const response = await handleRequest(request('GET', '/v1/reviews'), engine);
+      const response = await handleRequest(
+        request('GET', '/v1/reviews'),
+        engine,
+        reviewReadApiKeyAuth(),
+      );
 
       expect(response.status).toBe(200);
       const body = (await json(response)) as { items: unknown[] };
@@ -2921,16 +2934,82 @@ describe('handleRequest', () => {
         artifact: { text: 'review me' },
         reviewType: 'manual',
         reviewers: ['alice'],
+        allowPartial: false,
         createdAt: Date.now(),
       };
       await storage.put(KEYS.review('wf-1', 'rev-1'), encode(review));
 
-      const response = await handleRequest(request('GET', '/v1/reviews'), engine);
+      const response = await handleRequest(
+        request('GET', '/v1/reviews'),
+        engine,
+        reviewReadApiKeyAuth(),
+      );
 
       expect(response.status).toBe(200);
       const body = (await json(response)) as { items: Array<{ reviewId: string }> };
       expect(body.items.length).toBe(1);
       expect(body.items[0]!.reviewId).toBe('rev-1');
+    });
+
+    it('supports completed-status and workflow-id filters', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      await storage.put(
+        KEYS.review('wf-completed-filter', 'rev-completed-filter'),
+        encode({
+          reviewId: 'rev-completed-filter',
+          workflowId: 'wf-completed-filter',
+          artifact: { text: 'review me' },
+          reviewType: 'manual',
+          reviewers: ['alice'],
+          allowPartial: false,
+          createdAt: 1_234,
+        }),
+      );
+      await engine.submitReview('rev-completed-filter', {
+        decision: 'approved',
+        reviewer: 'alice',
+        workflowId: 'wf-completed-filter',
+      });
+
+      const response = await handleRequest(
+        request(
+          'GET',
+          '/v1/reviews?status=completed&workflowId=wf-completed-filter&reviewType=manual',
+        ),
+        engine,
+        reviewReadApiKeyAuth(),
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await json(response)) as {
+        items: Array<{ reviewId: string; status: string; workflowId: string }>;
+      };
+      expect(body.items).toEqual([
+        expect.objectContaining({
+          reviewId: 'rev-completed-filter',
+          status: 'completed',
+          workflowId: 'wf-completed-filter',
+        }),
+      ]);
+    });
+
+    it('returns 400 for an invalid review status filter', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(
+        request('GET', '/v1/reviews?status=not-a-status'),
+        engine,
+        reviewReadApiKeyAuth(),
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await json(response)) as { error: string };
+      expect(body.error).toContain('status');
     });
   });
 
@@ -3050,6 +3129,7 @@ describe('handleRequest', () => {
         artifact: { text: 'approve me' },
         reviewType: 'manual',
         reviewers: ['bob'],
+        allowPartial: false,
         createdAt: Date.now(),
       };
       await storage.put(KEYS.review('wf-2', 'rev-2'), encode(review));
@@ -3073,7 +3153,9 @@ describe('handleRequest', () => {
       expect(reviewAfter).toBeNull();
 
       // Verify the decision was stored
-      const decisionBytes = await storage.get('review-decision:rev-2');
+      const decisionBytes = await storage.get(
+        `review-decision:${encodeStorageKeyComponent('wf-2')}:${encodeStorageKeyComponent('rev-2')}`,
+      );
       expect(decisionBytes).not.toBeNull();
       const decisionData = decode(decisionBytes!) as { decision: string; reviewer: string };
       expect(decisionData.decision).toBe('approved');
@@ -3093,6 +3175,7 @@ describe('handleRequest', () => {
         artifact: { text: 'approve me' },
         reviewType: 'manual',
         reviewers: ['alice'],
+        allowPartial: false,
         createdAt: Date.now(),
       };
       await storage.put(KEYS.review('wf-3', 'rev-3'), encode(review));

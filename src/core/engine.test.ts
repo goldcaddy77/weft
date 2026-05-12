@@ -3868,6 +3868,9 @@ describe('Engine', () => {
       reviewId: 'rev-1',
       workflowId: 'wf-1',
       artifact: { text: 'review me' },
+      reviewType: 'manual',
+      reviewers: ['alice'],
+      allowPartial: false,
       createdAt: Date.now(),
     };
     await storage.put(KEYS.review('wf-1', 'rev-1'), encodeValue(review));
@@ -3875,6 +3878,227 @@ describe('Engine', () => {
     const reviews = await engine.listReviews();
     expect(reviews).toHaveLength(1);
     expect(reviews[0]!['reviewId']).toBe('rev-1');
+    engine[Symbol.dispose]();
+  });
+
+  it('engine.listReviews() skips malformed pending review entries instead of throwing', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    await storage.put(KEYS.review('wf-bad', 'rev-bad'), new Uint8Array([0xc1, 0xff, 0x00]));
+    await storage.put(
+      KEYS.review('wf-good', 'rev-good'),
+      encode({
+        reviewId: 'rev-good',
+        workflowId: 'wf-good',
+        artifact: { text: 'review me' },
+        reviewType: 'manual',
+        reviewers: ['alice'],
+        allowPartial: false,
+        createdAt: 7_000,
+      }),
+    );
+
+    const reviews = await engine.listReviews();
+    expect(reviews).toEqual([
+      expect.objectContaining({
+        status: 'pending',
+        reviewId: 'rev-good',
+      }),
+    ]);
+    engine[Symbol.dispose]();
+  });
+
+  it('engine.listReviews() keeps the default pending-only behavior after a review is completed', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    const { encode: encodeValue } = await import('./codec.ts');
+
+    await storage.put(
+      KEYS.review('wf-pending-default', 'rev-pending-default'),
+      encodeValue({
+        reviewId: 'rev-pending-default',
+        workflowId: 'wf-pending-default',
+        artifact: { text: 'approve me' },
+        reviewType: 'manual',
+        reviewers: ['alice'],
+        allowPartial: false,
+        createdAt: 1_000,
+      }),
+    );
+
+    await engine.submitReview('rev-pending-default', {
+      decision: 'approved',
+      reviewer: 'alice',
+      workflowId: 'wf-pending-default',
+    });
+
+    const reviews = await engine.listReviews();
+    expect(reviews).toEqual([]);
+    engine[Symbol.dispose]();
+  });
+
+  it('engine.listReviews({ status: completed }) returns completed entries with review metadata', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    const { encode: encodeValue } = await import('./codec.ts');
+
+    await storage.put(
+      KEYS.review('wf-completed', 'rev-completed'),
+      encodeValue({
+        reviewId: 'rev-completed',
+        workflowId: 'wf-completed',
+        artifact: { text: 'ship it' },
+        reviewType: 'design',
+        reviewers: ['bob'],
+        allowPartial: false,
+        createdAt: 2_000,
+      }),
+    );
+
+    await engine.submitReview('rev-completed', {
+      decision: 'approved',
+      reviewer: 'bob',
+      feedback: 'Looks good',
+      workflowId: 'wf-completed',
+    });
+
+    const reviews = await engine.listReviews({ status: 'completed' });
+    expect(reviews).toEqual([
+      expect.objectContaining({
+        status: 'completed',
+        reviewId: 'rev-completed',
+        workflowId: 'wf-completed',
+        reviewType: 'design',
+        decision: 'approved',
+        reviewer: 'bob',
+      }),
+    ]);
+    engine[Symbol.dispose]();
+  });
+
+  it('engine.listReviews({ status: completed }) keeps legacy decision-only records visible', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    await storage.put(
+      'review-decision:legacy-review',
+      encode({
+        reviewId: 'legacy-review',
+        decision: 'approved',
+        reviewer: 'legacy-bot',
+        feedback: 'stored by an older runtime',
+        timestamp: 9_000,
+      }),
+    );
+
+    const reviews = await engine.listReviews({ status: 'completed' });
+    expect(reviews).toEqual([
+      {
+        status: 'completed',
+        reviewId: 'legacy-review',
+        decision: 'approved',
+        reviewer: 'legacy-bot',
+        feedback: 'stored by an older runtime',
+        timestamp: 9_000,
+      },
+    ]);
+    engine[Symbol.dispose]();
+  });
+
+  it('engine.listReviews({ workflowId }) filters pending reviews by workflow id', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    const { encode: encodeValue } = await import('./codec.ts');
+
+    await storage.put(
+      KEYS.review('wf-match', 'rev-match'),
+      encodeValue({
+        reviewId: 'rev-match',
+        workflowId: 'wf-match',
+        artifact: { text: 'match' },
+        reviewType: 'general',
+        reviewers: ['alice'],
+        allowPartial: false,
+        createdAt: 3_000,
+      }),
+    );
+    await storage.put(
+      KEYS.review('wf-other', 'rev-other'),
+      encodeValue({
+        reviewId: 'rev-other',
+        workflowId: 'wf-other',
+        artifact: { text: 'skip' },
+        reviewType: 'general',
+        reviewers: ['bob'],
+        allowPartial: false,
+        createdAt: 4_000,
+      }),
+    );
+
+    const reviews = await engine.listReviews({ workflowId: 'wf-match' });
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]).toEqual(
+      expect.objectContaining({
+        status: 'pending',
+        reviewId: 'rev-match',
+        workflowId: 'wf-match',
+      }),
+    );
+    engine[Symbol.dispose]();
+  });
+
+  it('engine.listReviews({ status: completed, reviewType }) filters completed reviews by review type', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    const { encode: encodeValue } = await import('./codec.ts');
+
+    await storage.put(
+      KEYS.review('wf-a', 'rev-a'),
+      encodeValue({
+        reviewId: 'rev-a',
+        workflowId: 'wf-a',
+        artifact: { text: 'approve a' },
+        reviewType: 'design',
+        reviewers: ['alex'],
+        allowPartial: false,
+        createdAt: 5_000,
+      }),
+    );
+    await storage.put(
+      KEYS.review('wf-b', 'rev-b'),
+      encodeValue({
+        reviewId: 'rev-b',
+        workflowId: 'wf-b',
+        artifact: { text: 'approve b' },
+        reviewType: 'security',
+        reviewers: ['beth'],
+        allowPartial: false,
+        createdAt: 6_000,
+      }),
+    );
+
+    await engine.submitReview('rev-a', {
+      decision: 'approved',
+      reviewer: 'alex',
+      workflowId: 'wf-a',
+    });
+    await engine.submitReview('rev-b', {
+      decision: 'rejected',
+      reviewer: 'beth',
+      workflowId: 'wf-b',
+    });
+
+    const reviews = await engine.listReviews({ status: 'completed', reviewType: 'security' });
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]).toEqual(
+      expect.objectContaining({
+        status: 'completed',
+        reviewId: 'rev-b',
+        reviewType: 'security',
+        decision: 'rejected',
+      }),
+    );
     engine[Symbol.dispose]();
   });
 
@@ -3891,6 +4115,9 @@ describe('Engine', () => {
       reviewId: 'rev-submit-1',
       workflowId: 'wf-submit-1',
       artifact: { text: 'approve me' },
+      reviewType: 'manual',
+      reviewers: ['alice'],
+      allowPartial: false,
       createdAt: Date.now(),
     };
     await storage.put(KEYS.review('wf-submit-1', 'rev-submit-1'), encodeValue(review));
@@ -3906,7 +4133,9 @@ describe('Engine', () => {
     expect(reviewAfter).toBeNull();
 
     // Decision should be stored
-    const decisionBytes = await storage.get('review-decision:rev-submit-1');
+    const decisionBytes = await storage.get(
+      `review-decision:${encodeStorageKeyComponent('wf-submit-1')}:${encodeStorageKeyComponent('rev-submit-1')}`,
+    );
     expect(decisionBytes).not.toBeNull();
     const decisionData = decode(decisionBytes!) as { decision: string; reviewer: string };
     expect(decisionData.decision).toBe('approved');
@@ -3923,6 +4152,9 @@ describe('Engine', () => {
       reviewId: 'rev-scan-1',
       workflowId: 'wf-scan-1',
       artifact: { text: 'reject me' },
+      reviewType: 'manual',
+      reviewers: ['bob'],
+      allowPartial: false,
       createdAt: Date.now(),
     };
     await storage.put(KEYS.review('wf-scan-1', 'rev-scan-1'), encodeValue(review));
@@ -3934,6 +4166,33 @@ describe('Engine', () => {
 
     const reviewAfter = await storage.get(KEYS.review('wf-scan-1', 'rev-scan-1'));
     expect(reviewAfter).toBeNull();
+    engine[Symbol.dispose]();
+  });
+
+  it('engine.submitReview() skips malformed stored reviews while scanning for a match', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    await storage.put(KEYS.review('wf-bad', 'rev-bad'), new Uint8Array([0xc1, 0xff, 0x00]));
+    await storage.put(
+      KEYS.review('wf-scan-2', 'rev-scan-2'),
+      encode({
+        reviewId: 'rev-scan-2',
+        workflowId: 'wf-scan-2',
+        artifact: { text: 'approve me' },
+        reviewType: 'manual',
+        reviewers: ['bob'],
+        allowPartial: false,
+        createdAt: 8_000,
+      }),
+    );
+
+    await engine.submitReview('rev-scan-2', {
+      decision: 'approved',
+      reviewer: 'bob',
+    });
+
+    expect(await storage.get(KEYS.review('wf-scan-2', 'rev-scan-2'))).toBeNull();
     engine[Symbol.dispose]();
   });
 
@@ -3964,6 +4223,7 @@ describe('Engine', () => {
       artifact: { text: 'review me' },
       reviewType: 'code-review',
       reviewers: ['alice'],
+      allowPartial: false,
       createdAt,
     };
     await storage.put(KEYS.review('wf-event-1', 'rev-event-1'), encodeValue(review));
@@ -4001,6 +4261,7 @@ describe('Engine', () => {
       artifact: { text: 'reject me' },
       reviewType: 'general',
       reviewers: ['bob'],
+      allowPartial: false,
       createdAt,
     };
     await storage.put(KEYS.review('wf-scan-event-1', 'rev-scan-event-1'), encodeValue(review));
