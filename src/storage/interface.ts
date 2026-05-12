@@ -467,4 +467,24 @@ export const KEYS = {
   budgetCharged: (operationId: string) => `budget-charged:${operationId}`,
   toolEffect: (workflowId: string, agentId: string, semanticHash: string) =>
     `tool-effect:${encodeStorageKeyComponent(workflowId)}:${agentId}:${semanticHash}`,
+  // Visibility indexes. Sortable-padded timestamps lex-sort correctly under
+  // forward and reverse scans. See `src/core/engine/workflow-indexes.ts` for
+  // the lifecycle wiring and the per-workflow manifest contract.
+  workflowVisibilityStatus: (status: string, workflowId: string) =>
+    `wf-idx-status:${encodeStorageKeyComponent(status)}:${encodeStorageKeyComponent(workflowId)}`,
+  workflowVisibilityType: (type: string, workflowId: string) =>
+    `wf-idx-type:${encodeStorageKeyComponent(type)}:${encodeStorageKeyComponent(workflowId)}`,
+  workflowVisibilityTenant: (tenantId: string, workflowId: string) =>
+    `wf-idx-tenant:${encodeStorageKeyComponent(tenantId)}:${encodeStorageKeyComponent(workflowId)}`,
+  workflowVisibilityCreated: (createdAt: number, workflowId: string) =>
+    `wf-idx-created:${formatSortableTimestamp(createdAt)}:${encodeStorageKeyComponent(workflowId)}`,
+  workflowVisibilityUpdated: (updatedAt: number, workflowId: string) =>
+    `wf-idx-updated:${formatSortableTimestamp(updatedAt)}:${encodeStorageKeyComponent(workflowId)}`,
+  workflowVisibilityDeadline: (deadline: number, workflowId: string) =>
+    `wf-idx-deadline:${formatSortableTimestamp(deadline)}:${encodeStorageKeyComponent(workflowId)}`,
+  workflowVisibilityManifest: (workflowId: string) =>
+    `wf-idx-manifest:${encodeStorageKeyComponent(workflowId)}`,
+  workflowVisibilityMetaVersion: () => 'wf-idx-meta:version',
+  workflowVisibilityMetaBuiltAt: () => 'wf-idx-meta:built-at',
+  workflowVisibilityMetaCursor: () => 'wf-idx-meta:cursor',
 } as const;

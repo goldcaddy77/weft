@@ -66,6 +66,39 @@ describe('decodeStorageKeyComponent', () => {
   });
 });
 
+describe('encodeStorageKeyComponent prefix preservation', () => {
+  // The visibility-index design relies on prefix-preserving encoding for the
+  // `idPrefix` filter: a `wf:{enc(prefix)}` scan is sound only when
+  // encode(a + b) === encode(a) + encode(b) for any inputs drawn from the
+  // safe subset. ListFilter validation restricts idPrefix to /^[A-Za-z0-9_-]+$/,
+  // so the encoder must be both identity-on and concatenation-preserving over
+  // that subset. If this test ever fails the engine path that depends on it
+  // has to switch to a broader `wf:` scan with a post-filter — see
+  // documentation in src/core/list-filter-validation.ts.
+  const SAFE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
+
+  it('is the identity function on each character of the idPrefix safe subset', () => {
+    for (const character of SAFE_CHARS) {
+      expect(encodeStorageKeyComponent(character)).toBe(character);
+    }
+  });
+
+  it('is concatenation-preserving on safe-subset strings', () => {
+    const samples = ['abc', 'A_b-1', 'order-', '_-_', '0', SAFE_CHARS];
+    for (const a of samples) {
+      for (const b of samples) {
+        expect(encodeStorageKeyComponent(a + b)).toBe(
+          encodeStorageKeyComponent(a) + encodeStorageKeyComponent(b),
+        );
+      }
+    }
+  });
+
+  it('encodes the full safe-subset string to itself (prefix-scan soundness)', () => {
+    expect(encodeStorageKeyComponent(SAFE_CHARS)).toBe(SAFE_CHARS);
+  });
+});
+
 describe('scan utilities', () => {
   it('computes lexicographic prefix bounds and applies scan filters', () => {
     expect(resolvePrefixRangeEnd('job:')).toBe('job;');
@@ -235,5 +268,35 @@ describe('KEYS', () => {
     expect(KEYS.toolEffect(workflowId, 'agent-1', 'semantic-hash')).toBe(
       `tool-effect:${encodedWorkflowId}:agent-1:semantic-hash`,
     );
+  });
+
+  it('builds visibility-index keys with encoded dynamic segments and padded timestamps', () => {
+    const workflowId = 'workflow/id with spaces?';
+    const encodedWorkflowId = encodeStorageKeyComponent(workflowId);
+
+    expect(KEYS.workflowVisibilityStatus('running', workflowId)).toBe(
+      `wf-idx-status:running:${encodedWorkflowId}`,
+    );
+    expect(KEYS.workflowVisibilityType('order:fulfillment', workflowId)).toBe(
+      `wf-idx-type:order%3Afulfillment:${encodedWorkflowId}`,
+    );
+    expect(KEYS.workflowVisibilityTenant('tenant:1', workflowId)).toBe(
+      `wf-idx-tenant:tenant%3A1:${encodedWorkflowId}`,
+    );
+    expect(KEYS.workflowVisibilityCreated(1_700_000_000_000, workflowId)).toBe(
+      `wf-idx-created:0001700000000000:${encodedWorkflowId}`,
+    );
+    expect(KEYS.workflowVisibilityUpdated(1_700_000_000_001, workflowId)).toBe(
+      `wf-idx-updated:0001700000000001:${encodedWorkflowId}`,
+    );
+    expect(KEYS.workflowVisibilityDeadline(5_000, workflowId)).toBe(
+      `wf-idx-deadline:0000000000005000:${encodedWorkflowId}`,
+    );
+    expect(KEYS.workflowVisibilityManifest(workflowId)).toBe(
+      `wf-idx-manifest:${encodedWorkflowId}`,
+    );
+    expect(KEYS.workflowVisibilityMetaVersion()).toBe('wf-idx-meta:version');
+    expect(KEYS.workflowVisibilityMetaBuiltAt()).toBe('wf-idx-meta:built-at');
+    expect(KEYS.workflowVisibilityMetaCursor()).toBe('wf-idx-meta:cursor');
   });
 });
