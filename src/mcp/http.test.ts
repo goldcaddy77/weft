@@ -429,8 +429,14 @@ describe('MCP Streamable HTTP transport', () => {
       { tenantId: 'tenant-b', name: 'Grace' },
       { id: 'tenant-b-workflow' },
     );
+    const tenantASecond = await engine.start(
+      'greet-customer',
+      { tenantId: 'tenant-a', name: 'Katherine' },
+      { id: 'tenant-a-workflow-2' },
+    );
     await tenantA.result();
     await tenantB.result();
+    await tenantASecond.result();
 
     const token = await signJWT(
       {
@@ -492,7 +498,28 @@ describe('MCP Streamable HTTP transport', () => {
       { authorization: `Bearer ${token}` },
     );
     const listed = parseToolText(visible.result) as { items: Array<{ id: string }> };
-    expect(listed.items.map((item) => item.id)).toEqual(['tenant-a-workflow']);
+    expect(listed.items.map((item) => item.id)).toEqual([
+      'tenant-a-workflow',
+      'tenant-a-workflow-2',
+    ]);
+
+    const secondVisiblePage = await mcpJson(
+      server,
+      sessionId,
+      {
+        jsonrpc: '2.0',
+        id: 'list-page',
+        method: 'tools/call',
+        params: { name: 'list_workflows', arguments: { limit: 1, offset: 1 } },
+      },
+      { authorization: `Bearer ${token}` },
+    );
+    expect(parseToolText(secondVisiblePage.result)).toMatchObject({
+      items: [expect.objectContaining({ id: 'tenant-a-workflow-2' })],
+      total: 2,
+      offset: 1,
+      limit: 1,
+    });
 
     const denied = await mcpJson(
       server,
@@ -532,7 +559,10 @@ describe('MCP Streamable HTTP transport', () => {
       { authorization: `Bearer ${readOnlyToken}` },
     );
     expect(parseToolText(readOnlyList.result)).toMatchObject({
-      items: [expect.objectContaining({ id: 'tenant-a-workflow' })],
+      items: [
+        expect.objectContaining({ id: 'tenant-a-workflow' }),
+        expect.objectContaining({ id: 'tenant-a-workflow-2' }),
+      ],
     });
 
     const readOnlyWrite = await mcpJson(

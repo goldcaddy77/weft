@@ -292,8 +292,7 @@ function noStoreHeaders(): Record<string, string> {
 }
 
 function authRequiredFromOptions(options: McpHttpRequestOptions): boolean {
-  const value = Reflect.get(options, 'authRequired');
-  return typeof value === 'boolean' ? value : true;
+  return options.authRequired;
 }
 
 function principalFromOptions(options: McpHttpRequestOptions): Principal {

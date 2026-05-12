@@ -64,8 +64,10 @@ export async function listVisibleWorkflows(
   principal: Principal,
   filter?: ListFilter,
 ): Promise<PaginatedResult<WorkflowSummary>> {
-  const result = await engine.list(filter);
   const tenantId = principalTenantId(principal);
+  const result = await engine.list(
+    tenantId === undefined ? filter : listFilterWithoutPagination(filter),
+  );
   if (tenantId === undefined) return result;
 
   const visible: WorkflowSummary[] = [];
@@ -75,10 +77,29 @@ export async function listVisibleWorkflows(
   }
 
   return {
-    ...result,
-    items: visible,
+    items: visible.slice(resultOffset(filter), resultOffset(filter) + resultLimit(filter, visible)),
     total: visible.length,
+    offset: resultOffset(filter),
+    limit: resultLimit(filter, visible),
   };
+}
+
+function listFilterWithoutPagination(filter: ListFilter | undefined): ListFilter | undefined {
+  if (filter === undefined) return undefined;
+  const unpaginatedFilter: ListFilter = {};
+  if (filter.status !== undefined) unpaginatedFilter.status = filter.status;
+  if (filter.type !== undefined) unpaginatedFilter.type = filter.type;
+  if (filter.tags !== undefined) unpaginatedFilter.tags = filter.tags;
+  if (filter.attributes !== undefined) unpaginatedFilter.attributes = filter.attributes;
+  return unpaginatedFilter;
+}
+
+function resultOffset(filter: ListFilter | undefined): number {
+  return filter?.offset ?? 0;
+}
+
+function resultLimit(filter: ListFilter | undefined, items: readonly WorkflowSummary[]): number {
+  return filter?.limit ?? items.length;
 }
 
 /** Inject or verify the session tenant on object-shaped workflow input. */

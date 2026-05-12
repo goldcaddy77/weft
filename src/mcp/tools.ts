@@ -1,5 +1,5 @@
 import type { Engine } from '../core/engine.ts';
-import { RegistrySchemaConversionError, buildRegistrySnapshot } from '../core/registry-snapshot.ts';
+import { buildRegistrySnapshot } from '../core/registry-snapshot.ts';
 import {
   McpToolExecutionError,
   applyPrincipalTenantToInput,
@@ -64,13 +64,7 @@ export async function callMcpTool(
 
 function buildToolImplementations(engine: Engine): ToolImplementation[] {
   const tools = [...builtInTools()];
-  let snapshot: ReturnType<typeof buildRegistrySnapshot>;
-  try {
-    snapshot = buildRegistrySnapshot(engine);
-  } catch (error) {
-    if (error instanceof RegistrySchemaConversionError) throw error;
-    throw error;
-  }
+  const snapshot = buildRegistrySnapshot(engine);
 
   const usedNames = new Set(tools.map((tool) => tool.definition.name));
   for (const [workflowType, entry] of Object.entries(snapshot.workflows)) {
