@@ -324,3 +324,80 @@ interface InFlightTask {
 ```
 
 `checkExpiredTasks(now)` returns tasks whose visibility deadline has passed, suitable for reassignment.
+
+## Fleet and queue observability
+
+Two operator-facing endpoints expose the live worker fleet and the
+in-memory task queue state. Both require the `system:read` scope; tenant
+principals receive a 403. Workers and task queues are server-wide
+infrastructure, not tenant-partitioned, so there is no tenant filter to
+apply.
+
+The same operations are reachable over JSON-RPC (HTTP, WebSocket, stdio)
+as `weft.workers.list` and `weft.task.queues.list`. They take no input
+parameters.
+
+### `GET /v1/workers`
+
+Returns every connected worker with its queue assignment, advertised
+activities, concurrency, in-flight count, available capacity, connect
+time, last heartbeat, and heartbeat age. The top-level `routingPolicy`
+field reports the routing strategy the server was configured with.
+
+The server snapshots `Date.now()` exactly once per request, so every
+`heartbeatAgeMs` in the response is consistent.
+
+```ts
+type ListWorkersResponse = {
+  items: Array<{
+    id: string;
+    queue: string;
+    activities: string[];
+    concurrency: number;
+    inFlight: number;
+    availableCapacity: number; // max(0, concurrency - inFlight)
+    connectedAt: number; // epoch ms
+    lastHeartbeatAt: number; // epoch ms
+    heartbeatAgeMs: number; // now - lastHeartbeatAt at snapshot time
+  }>;
+  routingPolicy: 'least-loaded' | 'round-robin' | 'fair-share';
+};
+```
+
+Workers are sorted by `id` ascending.
+
+### `GET /v1/task-queues`
+
+Returns per-queue health. The queue set is the union of three sources:
+
+1. Queues with one or more pending tasks.
+2. Queues with one or more parked long-poll waiters.
+3. Queues that have at least one connected worker (so an idle queue with
+   capacity but no work still appears).
+
+`inFlight` is summed across the workers currently assigned to that
+queue. `connectedWorkers` counts workers whose `queue` matches.
+
+```ts
+type ListTaskQueuesResponse = {
+  items: Array<{
+    queue: string;
+    backlog: number; // pending tasks
+    oldestEnqueuedAt: number | null; // epoch ms, null if backlog == 0
+    oldestQueuedAgeMs: number | null;
+    waitingPollers: number;
+    schedulingPolicy: 'priority' | 'fifo' | 'lifo';
+    inFlight: number;
+    connectedWorkers: number;
+  }>;
+};
+```
+
+Queues are sorted by `queue` ascending.
+
+### Dashboard view
+
+The bundled dashboard ships a "Workers" page at `/ui/workers` that
+renders both responses side-by-side and polls every five seconds.
+Polling pauses while the tab is hidden and resumes when it becomes
+visible again.
