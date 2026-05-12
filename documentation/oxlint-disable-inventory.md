@@ -307,6 +307,20 @@ naming the alternative that was rejected.
 - **Symbol**: `list`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
+## `core-engine-matches-list-filter-complexity`
+
+- **File**: `src/core/engine/state-utilities.ts`
+- **Rule**: `complexity`
+- **Symbol**: `matchesListFilter`
+- **Reason**: Single defensive post-filter for the workflow visibility surface — each branch maps to one indexed filter dimension (status, type, tenant, idPrefix, createdAt, updatedAt, executionDeadline, failureCategory). Splitting the function would scatter the per-dimension contract that the index helpers and tests assert against a single point of truth.
+
+## `core-engine-resolve-list-candidate-ids`
+
+- **File**: `src/core/engine/listing.ts`
+- **Rule**: `complexity`
+- **Symbol**: `resolveListCandidateIds`
+- **Reason**: Single dispatcher that fans every supported ListFilter dimension out to its visibility-index query helper, then intersects the resulting sets with the existing tag/attribute resolution. Each branch is a one-liner mapping one filter field to one query — splitting them would only move the same branching one frame down the stack and obscure the watermark short-circuit.
+
 ## `core-engine-matches-schedule-filter-complexity`
 
 - **File**: `src/core/engine/index.ts`

@@ -8,6 +8,7 @@ import type {
   ScheduleFilter,
   ScheduleState,
   ScheduleSummary,
+  TimeRange,
   WorkflowState,
   WorkflowSummary,
 } from '../types.ts';
@@ -251,6 +252,7 @@ export function intersectIdentifierSets(idSets: Set<string>[]): Set<string> | nu
   return intersected;
 }
 
+// oxlint-disable-next-line complexity -- ID:core-engine-matches-list-filter-complexity
 export function matchesListFilter(
   state: WorkflowState,
   filter: ListFilter | undefined,
@@ -272,7 +274,60 @@ export function matchesListFilter(
     return false;
   }
 
-  return filter?.type === undefined || state.type === filter.type;
+  if (filter?.type !== undefined && state.type !== filter.type) {
+    return false;
+  }
+
+  if (filter?.idPrefix !== undefined && !state.id.startsWith(filter.idPrefix)) {
+    return false;
+  }
+
+  if (filter?.tenantId !== undefined) {
+    const tenantIds = Array.isArray(filter.tenantId) ? filter.tenantId : [filter.tenantId];
+    if (state.tenant === undefined || !tenantIds.includes(state.tenant.id)) {
+      return false;
+    }
+  }
+
+  if (filter?.createdAt !== undefined && !timestampInRange(state.createdAt, filter.createdAt)) {
+    return false;
+  }
+
+  if (filter?.updatedAt !== undefined && !timestampInRange(state.updatedAt, filter.updatedAt)) {
+    return false;
+  }
+
+  if (filter?.executionDeadline !== undefined) {
+    if (
+      state.executionDeadline === undefined ||
+      !timestampInRange(state.executionDeadline, filter.executionDeadline)
+    ) {
+      return false;
+    }
+  }
+
+  if (filter?.failureCategory !== undefined) {
+    const categories = Array.isArray(filter.failureCategory)
+      ? filter.failureCategory
+      : [filter.failureCategory];
+    if (
+      state.failureCategory === undefined ||
+      state.failureCategory === null ||
+      !categories.includes(state.failureCategory)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function timestampInRange(value: number, range: TimeRange): boolean {
+  if (range.gte !== undefined && value < range.gte) return false;
+  if (range.gt !== undefined && value <= range.gt) return false;
+  if (range.lte !== undefined && value > range.lte) return false;
+  if (range.lt !== undefined && value >= range.lt) return false;
+  return true;
 }
 
 /**
