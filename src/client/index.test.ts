@@ -1119,6 +1119,31 @@ describe('HttpClient request surface', () => {
     expect(fetchCalls[3]?.init?.body).toBe(JSON.stringify({ input: { source: 'handle' } }));
   });
 
+  it('encodes review list filters into the request query string', async () => {
+    const fetchCalls: Array<{ url: string; init: RequestInit | undefined }> = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      fetchCalls.push({ url: requestInputToUrl(input), init });
+      return jsonResponse({ items: [] });
+    }) as unknown as typeof fetch;
+
+    const httpClient = new HttpClient({ baseUrl: 'http://example.test' });
+    await httpClient.listReviews({
+      status: 'completed',
+      workflowId: 'wf/1',
+      reviewType: 'security review',
+    });
+
+    const listCall = fetchCalls[0];
+    expect(listCall?.init?.method).toBeUndefined();
+
+    const listUrl = new URL(listCall?.url ?? '');
+    expect(listUrl.pathname).toBe('/v1/reviews');
+    expect(listUrl.searchParams.get('status')).toBe('completed');
+    expect(listUrl.searchParams.get('workflowId')).toBe('wf/1');
+    expect(listUrl.searchParams.get('reviewType')).toBe('security review');
+  });
+
   it('returns null or empty collections for missing GET resources', async () => {
     const responses = [
       new Response(JSON.stringify({ error: 'missing' }), { status: 404 }),

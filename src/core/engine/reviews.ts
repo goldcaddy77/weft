@@ -1,6 +1,5 @@
 import type { BatchOperation } from '../../storage/interface.ts';
 import { KEYS, encodeStorageKeyComponent } from '../../storage/interface.ts';
-import { encode } from '../codec.ts';
 import { ReviewCompletedEvent, ReviewRequestedEvent } from '../review/events.ts';
 import {
   ReviewTimeoutError,
@@ -17,13 +16,13 @@ import type {
   ReviewListFilter,
   SubmitReviewOptions,
 } from '../types.ts';
-import type { EngineInternals } from './internals.ts';
 import {
-  parseCompletedReviewEntry,
-  parseStoredReviewRequest,
-  toCompletedReviewEntry,
-  toPendingReviewEntry,
-} from './review-list-entries.ts';
+  deleteCompletedReviewsForWorkflow,
+  listCompletedReviewsFromStorage,
+  persistCompletedReviewRecord,
+} from './completed-review-storage.ts';
+import type { EngineInternals } from './internals.ts';
+import { parseStoredReviewRequest, toPendingReviewEntry } from './review-list-entries.ts';
 import { trackWaiterKey, untrackWaiterKey } from './signals.ts';
 
 type ReviewOperationOutcome = { ok: true; value: HumanReviewResult } | { ok: false; error: Error };
@@ -48,7 +47,7 @@ function reviewScanPrefix(filter: ReviewListFilter): string {
 }
 
 function matchesReviewFilter(
-  review: Pick<ReviewRequest, 'workflowId' | 'reviewType'>,
+  review: Pick<CompletedReviewEntry, 'workflowId' | 'reviewType'>,
   filter: ReviewListFilter,
 ): boolean {
   if (filter.workflowId !== undefined && review.workflowId !== filter.workflowId) {
@@ -78,20 +77,23 @@ async function listPendingReviews(
   return reviews;
 }
 
-async function listCompletedReviews(
+async function dispatchCompletedReview(
   internals: EngineInternals,
-  filter: ReviewListFilter,
-): Promise<CompletedReviewEntry[]> {
-  const reviews: CompletedReviewEntry[] = [];
-
-  for await (const [, value] of internals.storage.scan('review-decision:')) {
-    const completedReview = parseCompletedReviewEntry(value);
-    if (completedReview !== null && matchesReviewFilter(completedReview, filter)) {
-      reviews.push(completedReview);
-    }
-  }
-
-  return reviews;
+  reviewKey: string,
+  reviewData: ReviewRequest,
+  decisionResult: HumanReviewResult,
+  dispatchEvent: (event: Event) => boolean,
+): Promise<void> {
+  await persistCompletedReviewRecord(internals.storage, reviewKey, reviewData, decisionResult);
+  dispatchEvent(
+    new ReviewCompletedEvent(
+      reviewData.workflowId,
+      reviewData.reviewId,
+      decisionResult.decision,
+      decisionResult.reviewer,
+      decisionResult.timestamp - reviewData.createdAt,
+    ),
+  );
 }
 
 /** List pending reviews by default, or completed reviews when explicitly requested. */
@@ -100,7 +102,7 @@ export async function listReviews(
   filter: ReviewListFilter = {},
 ): Promise<ReviewListEntry[]> {
   if (filter.status === 'completed') {
-    return listCompletedReviews(internals, filter);
+    return listCompletedReviewsFromStorage(internals.storage, filter);
   }
 
   return listPendingReviews(internals, filter);
@@ -177,17 +179,12 @@ export async function submitReview(
     decisionResult.sectionDecisions = sectionDecisions;
   }
 
-  const completedReview = toCompletedReviewEntry(reviewData, decisionResult);
-
-  await internals.storage.batch([
-    { type: 'put', key: `review-decision:${reviewId}`, value: encode(completedReview) },
-    { type: 'delete', key: reviewKey },
-  ]);
-
-  // Dispatch ReviewCompletedEvent
-  const duration = now - reviewData.createdAt;
-  callbacks.dispatchEvent(
-    new ReviewCompletedEvent(resolvedWorkflowId ?? '', reviewId, decision, reviewer, duration),
+  await dispatchCompletedReview(
+    internals,
+    reviewKey,
+    reviewData,
+    decisionResult,
+    callbacks.dispatchEvent,
   );
 
   // Wake the waiting workflow by resolving its review waiter
@@ -218,7 +215,7 @@ export async function handleReviewEscalationTimer(
   options: HumanReviewOptions,
   resolve: (result: ReviewOperationOutcome) => void,
   entry: { id: string; workflowId: string },
-  callbacks: Pick<ReviewOperationCallbacks, 'failWorkflow'>,
+  callbacks: Pick<ReviewOperationCallbacks, 'dispatchEvent' | 'failWorkflow'>,
 ): Promise<boolean> {
   if (
     !entry.id.startsWith(`review-escalation:${reviewId}:`) &&
@@ -268,7 +265,13 @@ export async function handleReviewEscalationTimer(
     timestamp: internals.options.getNow(),
   };
 
-  await internals.storage.delete(KEYS.review(workflowId, reviewId));
+  await dispatchCompletedReview(
+    internals,
+    KEYS.review(workflowId, reviewId),
+    reviewRequest,
+    autoResult,
+    callbacks.dispatchEvent,
+  );
   resolve({ ok: true, value: autoResult });
   return true;
 }
@@ -307,18 +310,22 @@ export async function cleanupReviews(
   internals: EngineInternals,
   workflowId: string,
 ): Promise<void> {
-  const prefix = `review:${encodeStorageKeyComponent(workflowId)}:`;
-  if (internals.storage.deletePrefix) {
-    await internals.storage.deletePrefix(prefix);
-    return;
-  }
+  const pendingPrefix = `review:${encodeStorageKeyComponent(workflowId)}:`;
   const deleteOperations: BatchOperation[] = [];
-  for await (const [key] of internals.storage.scan(prefix)) {
-    deleteOperations.push({ type: 'delete', key });
+
+  if (internals.storage.deletePrefix) {
+    await internals.storage.deletePrefix(pendingPrefix);
+  } else {
+    for await (const [key] of internals.storage.scan(pendingPrefix)) {
+      deleteOperations.push({ type: 'delete', key });
+    }
   }
+
   if (deleteOperations.length > 0) {
     await internals.storage.batch(deleteOperations);
   }
+
+  await deleteCompletedReviewsForWorkflow(internals.storage, workflowId);
 }
 
 /**

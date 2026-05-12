@@ -111,8 +111,9 @@ export interface PendingReviewEntry extends ReviewRequest {
 /**
  * Completed review entry returned by `engine.listReviews(filter?)`.
  *
- * Combines the original request metadata with the persisted reviewer decision
- * so operators can filter completed reviews without losing workflow context.
+ * New completed review records include the original request metadata plus the
+ * persisted reviewer decision. Historical decision-only records that predate
+ * enriched persistence remain listable, but can omit request metadata fields.
  *
  * @example
  * ```ts
@@ -134,15 +135,24 @@ export interface PendingReviewEntry extends ReviewRequest {
  * void entry;
  * ```
  */
-export interface CompletedReviewEntry extends ReviewRequest, CompletedReviewDecision {
+export interface CompletedReviewEntry extends CompletedReviewDecision {
   status: 'completed';
+  workflowId?: string;
+  artifact?: unknown;
+  reviewType?: string;
+  reviewers?: string[];
+  allowPartial?: boolean;
+  timeout?: number;
+  webhookUrl?: string;
+  createdAt?: number;
 }
 
 /**
  * Discriminated union returned by `engine.listReviews(filter?)`.
  *
  * Use `status` to branch between pending request metadata and completed
- * decision metadata.
+ * decision metadata. Historical completed records can omit request metadata
+ * that was never stored by older runtimes.
  *
  * @example
  * ```ts

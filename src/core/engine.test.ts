@@ -3977,6 +3977,35 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('engine.listReviews({ status: completed }) keeps legacy decision-only records visible', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    await storage.put(
+      'review-decision:legacy-review',
+      encode({
+        reviewId: 'legacy-review',
+        decision: 'approved',
+        reviewer: 'legacy-bot',
+        feedback: 'stored by an older runtime',
+        timestamp: 9_000,
+      }),
+    );
+
+    const reviews = await engine.listReviews({ status: 'completed' });
+    expect(reviews).toEqual([
+      {
+        status: 'completed',
+        reviewId: 'legacy-review',
+        decision: 'approved',
+        reviewer: 'legacy-bot',
+        feedback: 'stored by an older runtime',
+        timestamp: 9_000,
+      },
+    ]);
+    engine[Symbol.dispose]();
+  });
+
   it('engine.listReviews({ workflowId }) filters pending reviews by workflow id', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
@@ -4104,7 +4133,9 @@ describe('Engine', () => {
     expect(reviewAfter).toBeNull();
 
     // Decision should be stored
-    const decisionBytes = await storage.get('review-decision:rev-submit-1');
+    const decisionBytes = await storage.get(
+      `review-decision:${encodeStorageKeyComponent('wf-submit-1')}:${encodeStorageKeyComponent('rev-submit-1')}`,
+    );
     expect(decisionBytes).not.toBeNull();
     const decisionData = decode(decisionBytes!) as { decision: string; reviewer: string };
     expect(decisionData.decision).toBe('approved');

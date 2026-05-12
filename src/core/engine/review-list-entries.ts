@@ -34,8 +34,36 @@ const persistedCompletedReviewEntrySchema = z.object({
   timestamp: z.number(),
 });
 
+const legacyCompletedReviewEntrySchema = z.object({
+  reviewId: z.string(),
+  workflowId: z.string().optional(),
+  artifact: z.unknown().optional(),
+  reviewType: z.string().optional(),
+  reviewers: z.array(z.string()).optional(),
+  allowPartial: z.boolean().optional(),
+  timeout: z.number().optional(),
+  webhookUrl: z.string().optional(),
+  createdAt: z.number().optional(),
+  decision: z.enum(['approved', 'rejected', 'needs-changes']),
+  reviewer: z.string(),
+  feedback: z.string().optional(),
+  sectionDecisions: z.record(z.string(), z.enum(['approved', 'rejected'])).optional(),
+  timestamp: z.number(),
+});
+
 type StoredReviewRequest = z.infer<typeof storedReviewRequestSchema>;
 type PersistedCompletedReviewEntry = z.infer<typeof persistedCompletedReviewEntrySchema>;
+type LegacyCompletedReviewEntry = z.infer<typeof legacyCompletedReviewEntrySchema>;
+
+function assignWhenDefined<T extends object, K extends keyof T>(
+  target: T,
+  key: K,
+  value: T[K] | undefined,
+): void {
+  if (value !== undefined) {
+    target[key] = value;
+  }
+}
 
 export function toPendingReviewEntry(review: ReviewRequest): PendingReviewEntry {
   return {
@@ -55,13 +83,8 @@ function normalizeStoredReviewRequest(review: StoredReviewRequest): ReviewReques
     createdAt: review.createdAt,
   };
 
-  if (review.timeout !== undefined) {
-    normalizedReview.timeout = review.timeout;
-  }
-
-  if (review.webhookUrl !== undefined) {
-    normalizedReview.webhookUrl = review.webhookUrl;
-  }
+  assignWhenDefined(normalizedReview, 'timeout', review.timeout);
+  assignWhenDefined(normalizedReview, 'webhookUrl', review.webhookUrl);
 
   return normalizedReview;
 }
@@ -100,21 +123,10 @@ export function toCompletedReviewEntry(
     timestamp: decisionResult.timestamp,
   };
 
-  if (review.timeout !== undefined) {
-    completedReview.timeout = review.timeout;
-  }
-
-  if (review.webhookUrl !== undefined) {
-    completedReview.webhookUrl = review.webhookUrl;
-  }
-
-  if (decisionResult.feedback !== undefined) {
-    completedReview.feedback = decisionResult.feedback;
-  }
-
-  if (decisionResult.sectionDecisions !== undefined) {
-    completedReview.sectionDecisions = decisionResult.sectionDecisions;
-  }
+  assignWhenDefined(completedReview, 'timeout', review.timeout);
+  assignWhenDefined(completedReview, 'webhookUrl', review.webhookUrl);
+  assignWhenDefined(completedReview, 'feedback', decisionResult.feedback);
+  assignWhenDefined(completedReview, 'sectionDecisions', decisionResult.sectionDecisions);
 
   return completedReview;
 }
@@ -136,21 +148,35 @@ function normalizeCompletedReviewEntry(
     timestamp: persistedReview.timestamp,
   };
 
-  if (persistedReview.timeout !== undefined) {
-    completedReview.timeout = persistedReview.timeout;
-  }
+  assignWhenDefined(completedReview, 'timeout', persistedReview.timeout);
+  assignWhenDefined(completedReview, 'webhookUrl', persistedReview.webhookUrl);
+  assignWhenDefined(completedReview, 'feedback', persistedReview.feedback);
+  assignWhenDefined(completedReview, 'sectionDecisions', persistedReview.sectionDecisions);
 
-  if (persistedReview.webhookUrl !== undefined) {
-    completedReview.webhookUrl = persistedReview.webhookUrl;
-  }
+  return completedReview;
+}
 
-  if (persistedReview.feedback !== undefined) {
-    completedReview.feedback = persistedReview.feedback;
-  }
+function normalizeLegacyCompletedReviewEntry(
+  persistedReview: LegacyCompletedReviewEntry,
+): CompletedReviewEntry {
+  const completedReview: CompletedReviewEntry = {
+    status: 'completed',
+    reviewId: persistedReview.reviewId,
+    decision: persistedReview.decision,
+    reviewer: persistedReview.reviewer,
+    timestamp: persistedReview.timestamp,
+  };
 
-  if (persistedReview.sectionDecisions !== undefined) {
-    completedReview.sectionDecisions = persistedReview.sectionDecisions;
-  }
+  assignWhenDefined(completedReview, 'workflowId', persistedReview.workflowId);
+  assignWhenDefined(completedReview, 'artifact', persistedReview.artifact);
+  assignWhenDefined(completedReview, 'reviewType', persistedReview.reviewType);
+  assignWhenDefined(completedReview, 'reviewers', persistedReview.reviewers);
+  assignWhenDefined(completedReview, 'allowPartial', persistedReview.allowPartial);
+  assignWhenDefined(completedReview, 'timeout', persistedReview.timeout);
+  assignWhenDefined(completedReview, 'webhookUrl', persistedReview.webhookUrl);
+  assignWhenDefined(completedReview, 'createdAt', persistedReview.createdAt);
+  assignWhenDefined(completedReview, 'feedback', persistedReview.feedback);
+  assignWhenDefined(completedReview, 'sectionDecisions', persistedReview.sectionDecisions);
 
   return completedReview;
 }
@@ -166,7 +192,12 @@ export function parseCompletedReviewEntry(value: Uint8Array): CompletedReviewEnt
   const parsedReview = persistedCompletedReviewEntrySchema.safeParse(decodedValue);
 
   if (!parsedReview.success) {
-    return null;
+    const parsedLegacyReview = legacyCompletedReviewEntrySchema.safeParse(decodedValue);
+    if (!parsedLegacyReview.success) {
+      return null;
+    }
+
+    return normalizeLegacyCompletedReviewEntry(parsedLegacyReview.data);
   }
 
   return normalizeCompletedReviewEntry(parsedReview.data);

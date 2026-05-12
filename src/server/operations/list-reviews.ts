@@ -26,6 +26,14 @@ const pendingReviewEntrySchema = z.object({
 });
 const completedReviewEntrySchema = pendingReviewEntrySchema.extend({
   status: z.literal('completed'),
+  workflowId: z.string().optional(),
+  artifact: z.unknown().optional(),
+  reviewType: z.string().optional(),
+  reviewers: z.array(z.string()).optional(),
+  allowPartial: z.boolean().optional(),
+  timeout: z.number().optional(),
+  webhookUrl: z.string().optional(),
+  createdAt: z.number().optional(),
   decision: z.enum(['approved', 'rejected', 'needs-changes']),
   reviewer: z.string(),
   feedback: z.string().optional(),

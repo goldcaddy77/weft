@@ -226,7 +226,7 @@ PATCH body: `{ "attributes": { "key": "value" } }`.
 - `workflowId=<workflow-id>`
 - `reviewType=<review-type>`
 
-Each response item includes a `status` discriminator. Pending entries expose the original review request metadata; completed entries include that request metadata plus the persisted reviewer decision.
+Each response item includes a `status` discriminator. Pending entries expose the original review request metadata. Completed entries include the persisted reviewer decision and, for newly persisted records, the original request metadata as optional fields. Historical decision-only records can still be listed, but may omit request metadata that older runtimes never stored.
 
 When server authentication is enabled, `GET /v1/reviews` requires the `reviews:read` scope.
 
