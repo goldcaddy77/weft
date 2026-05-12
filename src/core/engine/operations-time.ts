@@ -7,6 +7,7 @@ import { buildTimerBatchOperations, normalizeStorageTimestamp } from '../schedul
 import type { Checkpoint, Duration, StartOptions, TimerEntry, WorkflowState } from '../types.ts';
 import type { WorkflowVersionTuple } from '../workflow-version-tuple.ts';
 import type { EngineInternals } from './internals.ts';
+import { buildWorkflowVisibilityIndexTransition } from './workflow-indexes.ts';
 
 type RegistrationEntry =
   EngineInternals['registrations'] extends Map<string, infer Entry> ? Entry : never;
@@ -192,6 +193,8 @@ export async function startDelayedWorkflow(
           key: KEYS.workflow(entry.workflowId),
           value: encode(nextRunningState),
         },
+        ...buildWorkflowVisibilityIndexTransition(entry.workflowId, latestState, nextRunningState)
+          .batchOps,
       ];
       if (executionDeadline !== undefined) {
         operations.push(

@@ -38,6 +38,7 @@ import {
   summarizeTimelineValue,
   workflowFeedListenerKey,
 } from './state-utilities.ts';
+import { buildWorkflowVisibilityIndexTransition } from './workflow-indexes.ts';
 
 export type TerminationCallbacks = {
   dispatchEvent: (event: Event) => void;
@@ -457,9 +458,15 @@ export async function completeWorkflow(
         updatedAt: now,
         ...(terminalCleanupToken !== undefined ? { terminalCleanupToken } : {}),
       };
+      const visibilityIndexOperations = buildWorkflowVisibilityIndexTransition(
+        workflowId,
+        state,
+        updatedState,
+      ).batchOps;
       const completionOperations: BatchOperation[] = [
         ...buildTerminalWorkflowIndexOperations(state, updatedState),
         { type: 'put', key: KEYS.workflow(workflowId), value: encode(updatedState) },
+        ...visibilityIndexOperations,
       ];
       const pendingTimelineOperation = buildPendingTimelineOperation(internals, workflowId);
       if (pendingTimelineOperation) {

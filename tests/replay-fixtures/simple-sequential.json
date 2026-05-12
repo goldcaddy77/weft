@@ -40,6 +40,11 @@
   "storage": {
     "ev:wf-simple-sequential:0000000000": "h6R0eXBls3dvcmtmbG93OmNoZWNrcG9pbnSqd29ya2Zsb3dJZLR3Zi1zaW1wbGUtc2VxdWVudGlhbKhzZXF1ZW5jZQCocHJldkhhc2iwMDAwMDAwMDAwMDAwMDAwMKdwYXlsb2FkgaRzdGVwAal0aW1lc3RhbXAArHZlcnNpb25UdXBsZYGvd29ya2Zsb3dWZXJzaW9uoTE=",
     "ev:wf-simple-sequential:head": "gqhzZXF1ZW5jZQCobGFzdEhhc2iwZjU1OTAxNjgzNTU1YzI0OQ==",
+    "wf-idx-created:0000000000000000:wf-simple-sequential": "",
+    "wf-idx-manifest:wf-simple-sequential": "gqd2ZXJzaW9uAaRrZXlzlNk0d2YtaWR4LWNyZWF0ZWQ6MDAwMDAwMDAwMDAwMDAwMDp3Zi1zaW1wbGUtc2VxdWVudGlhbNksd2YtaWR4LXN0YXR1czpjb21wbGV0ZWQ6d2Ytc2ltcGxlLXNlcXVlbnRpYWzZMndmLWlkeC10eXBlOnNpbXBsZS1zZXF1ZW50aWFsOndmLXNpbXBsZS1zZXF1ZW50aWFs2TR3Zi1pZHgtdXBkYXRlZDowMDAwMDAwMDAwMDAwMDAwOndmLXNpbXBsZS1zZXF1ZW50aWFs",
+    "wf-idx-status:completed:wf-simple-sequential": "",
+    "wf-idx-type:simple-sequential:wf-simple-sequential": "",
+    "wf-idx-updated:0000000000000000:wf-simple-sequential": "",
     "wf-terminal:0000000000000000:wf-simple-sequential": "",
     "wf:wf-simple-sequential": "iqJpZLR3Zi1zaW1wbGUtc2VxdWVudGlhbKR0eXBlsXNpbXBsZS1zZXF1ZW50aWFspnN0YXR1c6ljb21wbGV0ZWSlaW5wdXSlaGVsbG+ndmVyc2lvbqExtWV4ZWN1dGlvblN0YXRlT3duZXJJZLR3Zi1zaW1wbGUtc2VxdWVudGlhbKljcmVhdGVkQXQAqXN0YXJ0ZWRBdACpdXBkYXRlZEF0AKZyZXN1bHSvcHJvY2Vzc2VkOmhlbGxv",
     "wf:wf-simple-sequential:ckpt": "iap3b3JrZmxvd0lktHdmLXNpbXBsZS1zZXF1ZW50aWFspHN0ZXABpmxvY2Fsc4CyYWNjdW11bGF0ZWRSZXN1bHRzkK5wZW5kaW5nU2lnbmFsc5Cwc2VhcmNoQXR0cmlidXRlc4CndmVyc2lvbqExrXNjaGVtYVZlcnNpb24CqWNyZWF0ZWRBdAA=",
