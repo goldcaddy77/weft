@@ -40,6 +40,11 @@
   "storage": {
     "ev:wf-race-takes-first:0000000000": "h6R0eXBls3dvcmtmbG93OmNoZWNrcG9pbnSqd29ya2Zsb3dJZLN3Zi1yYWNlLXRha2VzLWZpcnN0qHNlcXVlbmNlAKhwcmV2SGFzaLAwMDAwMDAwMDAwMDAwMDAwp3BheWxvYWSBpHN0ZXABqXRpbWVzdGFtcACsdmVyc2lvblR1cGxlga93b3JrZmxvd1ZlcnNpb26hMQ==",
     "ev:wf-race-takes-first:head": "gqhzZXF1ZW5jZQCobGFzdEhhc2iwOTAxODNlOWJhMjljMWRlMw==",
+    "wf-idx-created:0000000000000000:wf-race-takes-first": "",
+    "wf-idx-manifest:wf-race-takes-first": "gqd2ZXJzaW9uAaRrZXlzlNkzd2YtaWR4LWNyZWF0ZWQ6MDAwMDAwMDAwMDAwMDAwMDp3Zi1yYWNlLXRha2VzLWZpcnN02St3Zi1pZHgtc3RhdHVzOmNvbXBsZXRlZDp3Zi1yYWNlLXRha2VzLWZpcnN02TB3Zi1pZHgtdHlwZTpyYWNlLXRha2VzLWZpcnN0OndmLXJhY2UtdGFrZXMtZmlyc3TZM3dmLWlkeC11cGRhdGVkOjAwMDAwMDAwMDAwMDAwMDA6d2YtcmFjZS10YWtlcy1maXJzdA==",
+    "wf-idx-status:completed:wf-race-takes-first": "",
+    "wf-idx-type:race-takes-first:wf-race-takes-first": "",
+    "wf-idx-updated:0000000000000000:wf-race-takes-first": "",
     "wf-terminal:0000000000000000:wf-race-takes-first": "",
     "wf:wf-race-takes-first": "iqJpZLN3Zi1yYWNlLXRha2VzLWZpcnN0pHR5cGWwcmFjZS10YWtlcy1maXJzdKZzdGF0dXOpY29tcGxldGVkpWlucHV0wKd2ZXJzaW9uoTG1ZXhlY3V0aW9uU3RhdGVPd25lcklks3dmLXJhY2UtdGFrZXMtZmlyc3SpY3JlYXRlZEF0AKlzdGFydGVkQXQAqXVwZGF0ZWRBdACmcmVzdWx0pGZhc3Q=",
     "wf:wf-race-takes-first:ckpt": "iap3b3JrZmxvd0lks3dmLXJhY2UtdGFrZXMtZmlyc3Skc3RlcAGmbG9jYWxzgLJhY2N1bXVsYXRlZFJlc3VsdHOQrnBlbmRpbmdTaWduYWxzkLBzZWFyY2hBdHRyaWJ1dGVzgKd2ZXJzaW9uoTGtc2NoZW1hVmVyc2lvbgKpY3JlYXRlZEF0AA==",

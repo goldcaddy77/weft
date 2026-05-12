@@ -65,6 +65,10 @@ import {
   loadWorkflowState,
 } from './storage-io.ts';
 import { decodeWorkflowState } from './validation.ts';
+import {
+  buildWorkflowVisibilityIndexOperations,
+  buildWorkflowVisibilityIndexTransition,
+} from './workflow-indexes.ts';
 
 type RegistrationEntry =
   EngineInternals['registrations'] extends Map<string, infer Entry> ? Entry : never;
@@ -759,14 +763,20 @@ export async function prepareResumeState(
   );
 
   if (preparedExecutionState.shouldPersistPreparedState) {
-    await internals.storage.batch(
-      buildVersionUpdateOperations(
+    const versionVisibilityOperations = buildWorkflowVisibilityIndexTransition(
+      workflowId,
+      state,
+      preparedExecutionState.state,
+    ).batchOps;
+    await internals.storage.batch([
+      ...buildVersionUpdateOperations(
         workflowId,
         serializeCheckpoint(preparedExecutionState.checkpoint),
         preparedExecutionState.versionTuple.workflowVersion,
         encode(preparedExecutionState.state),
       ),
-    );
+      ...versionVisibilityOperations,
+    ]);
   }
 
   return {
@@ -903,6 +913,11 @@ export function buildStartBatchOperations(
   additionalOperations: BatchOperation[] | undefined,
   callbacks: LifecycleCallbacks,
 ): BatchOperation[] {
+  const visibilityIndexOperations = buildWorkflowVisibilityIndexOperations(
+    workflowId,
+    null,
+    state,
+  ).batchOps;
   const operations: BatchOperation[] = [
     { type: 'put', key: KEYS.workflow(workflowId), value: encode(state) },
     {
@@ -910,6 +925,7 @@ export function buildStartBatchOperations(
       key: KEYS.checkpoint(workflowId),
       value: serializeCheckpoint(checkpoint),
     },
+    ...visibilityIndexOperations,
     ...buildWorkflowTagIndexOperations(workflowId, undefined, state.tags),
     ...buildInitialSearchAttributeOperations(
       _internals,
@@ -1181,6 +1197,7 @@ export function buildForkBatchOperations(
       key: KEYS.checkpoint(workflowId),
       value: serializeCheckpoint(checkpoint),
     },
+    ...buildWorkflowVisibilityIndexOperations(workflowId, null, state).batchOps,
   ];
 
   if (Object.keys(checkpoint.searchAttributes).length > 0) {

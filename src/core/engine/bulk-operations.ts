@@ -37,6 +37,7 @@ import {
   isTerminalWorkflowStatus,
   resolveRetentionForStatus,
 } from './validation.ts';
+import { buildWorkflowVisibilityIndexTransition } from './workflow-indexes.ts';
 
 export const TERMINAL_CLEANUP_DELAY_MS = 60_000;
 
@@ -461,6 +462,9 @@ async function purgeWorkflow(
   }
 
   for (const key of deleteKeys) deleteOperations.push({ type: 'delete', key });
+  deleteOperations.push(
+    ...buildWorkflowVisibilityIndexTransition(workflowId, state, null).batchOps,
+  );
   await internals.storage.batch(deleteOperations);
   internals.checkpoints.delete(workflowId);
   internals.heartbeatDetails.delete(workflowId);

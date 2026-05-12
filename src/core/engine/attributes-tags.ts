@@ -24,6 +24,7 @@ import {
   isTerminalWorkflowStatus,
   normalizeBulkFilterNumber,
 } from './validation.ts';
+import { buildWorkflowVisibilityIndexTransition } from './workflow-indexes.ts';
 import { streamMatchingWorkflowStates } from './workflow-state-stream.ts';
 
 const EMPTY_STORAGE_VALUE = new Uint8Array(0);
@@ -156,6 +157,7 @@ export async function updateWorkflowState(
       [
         ...buildTerminalWorkflowIndexOperations(state, updated),
         { type: 'put', key: KEYS.workflow(workflowId), value: encode(updated) },
+        ...buildWorkflowVisibilityIndexTransition(workflowId, state, updated).batchOps,
         ...additionalOperations,
       ],
       commitOptions,
@@ -222,6 +224,7 @@ export async function mutateWorkflowTags(
     await internals.storage.batch([
       ...buildTerminalWorkflowIndexOperations(state, updatedState),
       { type: 'put', key: KEYS.workflow(workflowId), value: encode(updatedState) },
+      ...buildWorkflowVisibilityIndexTransition(workflowId, state, updatedState).batchOps,
       ...buildWorkflowTagIndexOperations(workflowId, currentTags, nextTags),
     ]);
 

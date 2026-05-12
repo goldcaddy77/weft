@@ -43,6 +43,11 @@
   "storage": {
     "ev:wf-two-parallel:0000000000": "h6R0eXBls3dvcmtmbG93OmNoZWNrcG9pbnSqd29ya2Zsb3dJZK93Zi10d28tcGFyYWxsZWyoc2VxdWVuY2UAqHByZXZIYXNosDAwMDAwMDAwMDAwMDAwMDCncGF5bG9hZIGkc3RlcAGpdGltZXN0YW1wAKx2ZXJzaW9uVHVwbGWBr3dvcmtmbG93VmVyc2lvbqEx",
     "ev:wf-two-parallel:head": "gqhzZXF1ZW5jZQCobGFzdEhhc2iwMjI1ODRkNGIwMzdkM2Q2Ng==",
+    "wf-idx-created:0000000000000000:wf-two-parallel": "",
+    "wf-idx-manifest:wf-two-parallel": "gqd2ZXJzaW9uAaRrZXlzlNkvd2YtaWR4LWNyZWF0ZWQ6MDAwMDAwMDAwMDAwMDAwMDp3Zi10d28tcGFyYWxsZWzZJ3dmLWlkeC1zdGF0dXM6Y29tcGxldGVkOndmLXR3by1wYXJhbGxlbNkod2YtaWR4LXR5cGU6dHdvLXBhcmFsbGVsOndmLXR3by1wYXJhbGxlbNkvd2YtaWR4LXVwZGF0ZWQ6MDAwMDAwMDAwMDAwMDAwMDp3Zi10d28tcGFyYWxsZWw=",
+    "wf-idx-status:completed:wf-two-parallel": "",
+    "wf-idx-type:two-parallel:wf-two-parallel": "",
+    "wf-idx-updated:0000000000000000:wf-two-parallel": "",
     "wf-terminal:0000000000000000:wf-two-parallel": "",
     "wf:wf-two-parallel": "iqJpZK93Zi10d28tcGFyYWxsZWykdHlwZax0d28tcGFyYWxsZWymc3RhdHVzqWNvbXBsZXRlZKVpbnB1dKRkYXRhp3ZlcnNpb26hMbVleGVjdXRpb25TdGF0ZU93bmVySWSvd2YtdHdvLXBhcmFsbGVsqWNyZWF0ZWRBdACpc3RhcnRlZEF0AKl1cGRhdGVkQXQApnJlc3VsdIKhYalsZWZ0OmRhdGGhYqpyaWdodDpkYXRh",
     "wf:wf-two-parallel:ckpt": "iap3b3JrZmxvd0lkr3dmLXR3by1wYXJhbGxlbKRzdGVwAaZsb2NhbHOAsmFjY3VtdWxhdGVkUmVzdWx0c5CucGVuZGluZ1NpZ25hbHOQsHNlYXJjaEF0dHJpYnV0ZXOAp3ZlcnNpb26hMa1zY2hlbWFWZXJzaW9uAqljcmVhdGVkQXQA",
