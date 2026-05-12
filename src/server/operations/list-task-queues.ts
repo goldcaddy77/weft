@@ -217,5 +217,3 @@ export function createListTaskQueuesRestBinding(): UnknownRestBinding {
     shapeFault: shapeOperationFaultAsJson,
   };
 }
-
-export const listTaskQueuesRestBinding = createListTaskQueuesRestBinding();

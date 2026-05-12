@@ -128,5 +128,3 @@ export function createListWorkersRestBinding(): UnknownRestBinding {
     shapeFault: shapeOperationFaultAsJson,
   };
 }
-
-export const listWorkersRestBinding = createListWorkersRestBinding();
