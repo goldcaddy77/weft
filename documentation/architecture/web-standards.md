@@ -24,14 +24,14 @@ Here's how the layers break down.
 │   WebSocket          │   WebSocket (to remote server)       │
 ├──────────────────────┴──────────────────────────────────────┤
 │                   Wire Protocol                             │
-│           REST + SSE + JSON-RPC (HTTP / WebSocket / stdio)  │
+│    REST + SSE + JSON-RPC (HTTP / WebSocket / stdio) + MCP   │
 │        JSON (wire) / MessagePack (checkpoint storage)       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 The engine row is the key. Everything there is a web standard that works in any JavaScript runtime. The server and browser rows are where platform-specific implementations live---but they implement the same interfaces.
 
-The wire protocol uses JSON over HTTP, WebSocket, and stdio transports. MessagePack is the default codec for checkpoint storage, not an alternative HTTP body format.
+The wire protocol uses JSON over HTTP, WebSocket, stdio, and MCP transports. MessagePack is the default codec for checkpoint storage, not an alternative HTTP body format.
 
 ## The primitive mapping
 

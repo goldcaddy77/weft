@@ -1,0 +1,316 @@
+import type { Engine } from '../core/engine.ts';
+import { anonymousPrincipal, type Principal } from '../server/principal.ts';
+import { dispatchMcpMessage } from './dispatcher.ts';
+import {
+  accepts,
+  DEFAULT_MCP_MAX_BODY_BYTES,
+  isJsonContentType,
+  MCP_PROTOCOL_VERSION,
+  parseMcpMessage,
+  type McpResponse,
+} from './protocol.ts';
+import { McpSessionManager, type McpSession } from './session.ts';
+
+/**
+ * Options for handling one Streamable HTTP MCP request.
+ *
+ * @example
+ * ```ts
+ * import { createMcpSessionManager, type McpHttpRequestOptions } from 'weft/mcp';
+ * import { Engine, MemoryStorage } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * await using engine = new Engine({ storage });
+ * await using sessionManager = createMcpSessionManager(engine);
+ *
+ * const request = new Request('http://localhost/mcp', { method: 'GET' });
+ * const options: McpHttpRequestOptions = {
+ *   request,
+ *   engine,
+ *   sessionManager,
+ *   authRequired: false,
+ * };
+ * void options;
+ * ```
+ */
+export type McpHttpRequestOptions = {
+  readonly request: Request;
+  readonly engine: Engine;
+  readonly sessionManager: McpSessionManager;
+  readonly principal?: Principal;
+  readonly authRequired: boolean;
+  readonly maxBodyBytes?: number;
+  readonly publicOrigin?: string;
+  readonly trustedHosts?: ReadonlyArray<string>;
+};
+
+class BodyTooLargeError extends Error {
+  constructor() {
+    super('body too large');
+    this.name = 'BodyTooLargeError';
+  }
+}
+
+/**
+ * Handle one MCP Streamable HTTP request.
+ *
+ * Most applications should use `serve({ engine })`, which mounts `/mcp`
+ * automatically. Use this helper when embedding the MCP transport in a custom
+ * Bun server.
+ *
+ * @example
+ * ```ts
+ * import { createMcpSessionManager, handleMcpHttpRequest } from 'weft/mcp';
+ * import { Engine, MemoryStorage } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * await using engine = new Engine({ storage });
+ * await using sessionManager = createMcpSessionManager(engine);
+ *
+ * Bun.serve({
+ *   fetch(request) {
+ *     return handleMcpHttpRequest({
+ *       request,
+ *       engine,
+ *       sessionManager,
+ *       authRequired: false,
+ *     });
+ *   },
+ * });
+ * ```
+ */
+export async function handleMcpHttpRequest(options: McpHttpRequestOptions): Promise<Response> {
+  const originFailure = validateOrigin(options.request, options.publicOrigin, options.trustedHosts);
+  if (originFailure !== null) return originFailure;
+
+  switch (options.request.method) {
+    case 'POST':
+      return handleMcpPost(options);
+    case 'GET':
+      return handleMcpGet(options);
+    case 'DELETE':
+      return handleMcpDelete(options);
+    default:
+      return new Response('Method Not Allowed', {
+        status: 405,
+        headers: { allow: 'POST, GET, DELETE' },
+      });
+  }
+}
+
+async function handleMcpPost(options: McpHttpRequestOptions): Promise<Response> {
+  const headerFailure = validatePostHeaders(options.request);
+  if (headerFailure !== null) return headerFailure;
+
+  const parsed = await readMcpJsonBody(options);
+  if (parsed instanceof Response) return parsed;
+  if (!parsed.ok) {
+    return Response.json(
+      {
+        jsonrpc: '2.0',
+        id: null,
+        error: { code: -32700, message: 'Parse error' },
+      },
+      { status: 200, headers: noStoreHeaders() },
+    );
+  }
+
+  const sessionResolution = resolvePostSession(options, methodName(parsed.value));
+  if (sessionResolution instanceof Response) return sessionResolution;
+  const { session, createdSession } = sessionResolution;
+
+  const result = await dispatchMcpMessage(parsed.value, {
+    engine: options.engine,
+    session,
+    principal: session.principal,
+    authRequired: authRequiredFromOptions(options),
+  });
+
+  if (result.kind === 'accepted') {
+    return new Response(null, {
+      status: 202,
+      headers: maybeSessionHeaders(session, createdSession),
+    });
+  }
+
+  return Response.json(result.response, {
+    status: 200,
+    headers: maybeSessionHeaders(session, createdSession),
+  });
+}
+
+function validatePostHeaders(request: Request): Response | null {
+  if (!accepts(request.headers.get('accept'), 'application/json')) {
+    return new Response('Not Acceptable', { status: 406 });
+  }
+  if (!isJsonContentType(request.headers.get('content-type') ?? '')) {
+    return new Response('Unsupported Media Type', { status: 415 });
+  }
+  return null;
+}
+
+async function readMcpJsonBody(
+  options: McpHttpRequestOptions,
+): Promise<ReturnType<typeof parseMcpMessage> | Response> {
+  const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MCP_MAX_BODY_BYTES;
+  try {
+    const bytes = await readBodyBounded(options.request, maxBodyBytes);
+    return parseMcpMessage(new TextDecoder().decode(bytes));
+  } catch (error) {
+    return new Response(error instanceof BodyTooLargeError ? 'Payload Too Large' : 'Bad Request', {
+      status: error instanceof BodyTooLargeError ? 413 : 400,
+    });
+  }
+}
+
+function resolvePostSession(
+  options: McpHttpRequestOptions,
+  method: string | undefined,
+): { readonly session: McpSession; readonly createdSession: boolean } | Response {
+  const sessionHeader = sessionIdFromHeaders(options.request.headers);
+  if (method === 'initialize' && sessionHeader === null) {
+    return {
+      session: options.sessionManager.create(options.principal ?? anonymousPrincipal()),
+      createdSession: true,
+    };
+  }
+
+  const versionFailure = validateProtocolVersion(options.request.headers);
+  if (versionFailure !== null) return versionFailure;
+  if (sessionHeader === null) return new Response('Missing Mcp-Session-Id', { status: 400 });
+  const session = options.sessionManager.get(sessionHeader);
+  if (session === undefined) return new Response('MCP session not found', { status: 404 });
+  return { session, createdSession: false };
+}
+
+function handleMcpGet(options: McpHttpRequestOptions): Response {
+  if (!accepts(options.request.headers.get('accept'), 'text/event-stream')) {
+    return new Response('Not Acceptable', { status: 406 });
+  }
+  const versionFailure = validateProtocolVersion(options.request.headers);
+  if (versionFailure !== null) return versionFailure;
+  const sessionId = sessionIdFromHeaders(options.request.headers);
+  if (sessionId === null) return new Response('Missing Mcp-Session-Id', { status: 400 });
+  const session = options.sessionManager.get(sessionId);
+  if (session === undefined) return new Response('MCP session not found', { status: 404 });
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const encoder = new TextEncoder();
+      const write = (message: McpResponse | Record<string, unknown>) => {
+        controller.enqueue(encoder.encode(`event: message\ndata: ${JSON.stringify(message)}\n\n`));
+      };
+      controller.enqueue(encoder.encode(': connected\n\n'));
+      const remove = session.addTarget(write);
+      options.request.signal.addEventListener(
+        'abort',
+        () => {
+          remove();
+          try {
+            controller.close();
+          } catch {
+            // The client may already have closed the stream.
+          }
+        },
+        { once: true },
+      );
+    },
+  });
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      ...noStoreHeaders(),
+      'content-type': 'text/event-stream',
+      'Mcp-Session-Id': session.id,
+    },
+  });
+}
+
+function handleMcpDelete(options: McpHttpRequestOptions): Response {
+  const sessionId = sessionIdFromHeaders(options.request.headers);
+  if (sessionId === null) return new Response('Missing Mcp-Session-Id', { status: 400 });
+  options.sessionManager.delete(sessionId);
+  return new Response(null, { status: 204, headers: noStoreHeaders() });
+}
+
+function methodName(value: unknown): string | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const method = (value as Record<string, unknown>)['method'];
+  return typeof method === 'string' ? method : undefined;
+}
+
+function sessionIdFromHeaders(headers: Headers): string | null {
+  return headers.get('Mcp-Session-Id') ?? headers.get('MCP-Session-Id');
+}
+
+function validateProtocolVersion(headers: Headers): Response | null {
+  const version = headers.get('Mcp-Protocol-Version') ?? headers.get('MCP-Protocol-Version');
+  if (version === null) return null;
+  if (version === MCP_PROTOCOL_VERSION) return null;
+  return new Response('Unsupported MCP protocol version', { status: 400 });
+}
+
+function maybeSessionHeaders(session: McpSession, includeSession: boolean): HeadersInit {
+  const headers = noStoreHeaders();
+  if (includeSession) headers['Mcp-Session-Id'] = session.id;
+  return headers;
+}
+
+function noStoreHeaders(): Record<string, string> {
+  return { 'cache-control': 'no-store' };
+}
+
+function authRequiredFromOptions(options: McpHttpRequestOptions): boolean {
+  const value = Reflect.get(options, 'authRequired');
+  return typeof value === 'boolean' ? value : true;
+}
+
+async function readBodyBounded(request: Request, maxBytes: number): Promise<Uint8Array> {
+  const body = request.body;
+  if (body === null) return new Uint8Array();
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) break;
+      total += result.value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new BodyTooLargeError();
+      }
+      chunks.push(result.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bodyBytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bodyBytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bodyBytes;
+}
+
+function validateOrigin(
+  request: Request,
+  publicOrigin?: string,
+  trustedHosts?: ReadonlyArray<string>,
+): Response | null {
+  const origin = request.headers.get('origin');
+  if (origin === null) return null;
+  let originUrl: URL;
+  try {
+    originUrl = new URL(origin);
+  } catch {
+    return new Response('Forbidden', { status: 403 });
+  }
+
+  if (publicOrigin !== undefined && origin === publicOrigin) return null;
+  if (trustedHosts?.includes(originUrl.host)) return null;
+  if (originUrl.host === new URL(request.url).host) return null;
+  return new Response('Forbidden', { status: 403 });
+}

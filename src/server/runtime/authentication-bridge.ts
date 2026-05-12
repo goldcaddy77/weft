@@ -2,11 +2,12 @@ import type { ServerWebSocket } from 'bun';
 
 import { decode } from '../../core/codec.ts';
 import type { Engine } from '../../core/engine.ts';
+import { handleMcpHttpRequest } from '../../mcp/http.ts';
 import type { MetricsCollector, PrometheusExporter } from '../../observability/metrics.ts';
 import { KEYS } from '../../storage/interface.ts';
 import type { AuthConfig, AuthContext } from '../authentication.ts';
 import type { HandlerOptions } from '../handler.ts';
-import { handleRequest } from '../handler.ts';
+import { authContextToPrincipal, handleRequest } from '../handler.ts';
 import { handleJsonRpcHttpRequestSafely } from '../json-rpc-transport-helpers.ts';
 import {
   closeJsonRpcWebSocketSession,
@@ -113,6 +114,20 @@ export async function handleServerFetchRequest(
   );
   if (websocketResponse !== null) {
     return websocketResponse;
+  }
+
+  if (url.pathname === '/mcp') {
+    return handleMcpHttpRequest({
+      request,
+      engine: options.engine,
+      sessionManager: context.mcpSessionManager,
+      authRequired: context.authenticatorPromise !== null,
+      ...(authentication.authContext !== undefined
+        ? { principal: authContextToPrincipal(authentication.authContext) }
+        : {}),
+      ...(options.publicOrigin !== undefined ? { publicOrigin: options.publicOrigin } : {}),
+      ...(options.trustedHosts !== undefined ? { trustedHosts: options.trustedHosts } : {}),
+    });
   }
 
   const taskPollResponse = await handleTaskPollRequest(context, options, request, url);
