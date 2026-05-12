@@ -70,7 +70,7 @@ describe('operation coverage regressions', () => {
   it('covers the bulk filter invalid-params wrapper', () => {
     expect(() => parseRequiredBulkListFilter({ filter: {} })).toThrow(
       invalidParamsFault(
-        'Field "filter" must include at least one of status, type, tags, or attributes',
+        'Field "filter" must include at least one of status, type, tags, attributes, tenantId, idPrefix (≥3 chars), or failureCategory paired with status',
       ).message,
     );
   });

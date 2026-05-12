@@ -1,11 +1,19 @@
 import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
+import { WorkflowListScanCapExceededError } from '../../core/engine/workflow-indexes.ts';
+import {
+  ListFilterValidationError,
+  normalizeListFilter,
+} from '../../core/list-filter-validation.ts';
 import { coerceStartWorkflowTags } from '../../core/start-workflow-validation.ts';
 import type {
+  FailureCategory,
   ListFilter,
+  ListOptions,
   PaginatedResult,
   SearchAttributeValue,
+  TimeRange,
   WorkflowStatus,
   WorkflowSummary,
 } from '../../core/types.ts';
@@ -16,6 +24,7 @@ import type { UnknownRestBinding } from '../rest-bindings.ts';
 import { jsonErrorResponse, shapeRestFault } from './operation-helpers.ts';
 
 const workflowStatusSchema = z.custom<WorkflowStatus>((value) => typeof value === 'string');
+const failureCategorySchema = z.custom<FailureCategory>((value) => typeof value === 'string');
 const searchAttributeValueSchema = z.custom<SearchAttributeValue>((value) => {
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     return true;
@@ -31,6 +40,12 @@ const attributeFilterSchema = z.object({
   gte: searchAttributeValueSchema.optional(),
   lte: searchAttributeValueSchema.optional(),
 });
+const timeRangeSchema = z.object({
+  gte: z.number().optional(),
+  gt: z.number().optional(),
+  lte: z.number().optional(),
+  lt: z.number().optional(),
+});
 
 const listWorkflowsInput = z.object({
   status: z.union([workflowStatusSchema, z.array(workflowStatusSchema)]).optional(),
@@ -39,6 +54,13 @@ const listWorkflowsInput = z.object({
   attributes: z.array(attributeFilterSchema).optional(),
   limit: z.number().int().min(1).max(1000).optional(),
   offset: z.number().int().min(0).optional(),
+  idPrefix: z.string().optional(),
+  createdAt: timeRangeSchema.optional(),
+  updatedAt: timeRangeSchema.optional(),
+  executionDeadline: timeRangeSchema.optional(),
+  tenantId: z.union([z.string(), z.array(z.string())]).optional(),
+  failureCategory: z.union([failureCategorySchema, z.array(failureCategorySchema)]).optional(),
+  include: z.array(z.literal('failureCategory')).optional(),
 });
 const listWorkflowsOutput = z.unknown();
 
@@ -69,32 +91,44 @@ export const listWorkflowsOperation = defineOperation<ListWorkflowsInput, ListWo
       try {
         validatedTags = coerceStartWorkflowTags(input.tags, 'tags');
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        const fault: OperationFault = {
-          code: 'Unprocessable',
-          message,
-          data: { reason: message },
-        };
-        throw fault;
+        throw toUnprocessable(error);
       }
     }
 
-    // `ListWorkflowsInput` is structurally identical to `ListFilter`
-    // (see `core/types.ts`) — every field name and shape matches.
-    // The cast is a Zod-inference / hand-written-interface bridge:
-    // `z.infer` produces a structural type that TypeScript treats as
-    // distinct from `ListFilter` even though every member aligns.
-    // If `ListFilter` ever gains a field, the schema must add the
-    // matching shape; the unit tests for this operation cover the
-    // request-to-engine.list round-trip end-to-end so a real drift
-    // would surface immediately.
-    const filter: ListFilter = {
-      ...(input as ListFilter),
-      ...(validatedTags !== undefined ? { tags: validatedTags } : {}),
+    const { include, ...filterInput } = input;
+
+    let filter: ListFilter;
+    try {
+      filter = normalizeListFilter({
+        ...filterInput,
+        ...(validatedTags !== undefined ? { tags: validatedTags } : {}),
+      });
+    } catch (error) {
+      if (error instanceof ListFilterValidationError) throw toUnprocessable(error);
+      throw error;
+    }
+
+    // ListOptions opt-ins (currently only `includeFailureCategory`)
+    // ride alongside the filter. Default off to keep per-summary cost
+    // unchanged for callers that never ask.
+    const _options: ListOptions = {
+      ...(include?.includes('failureCategory') && { includeFailureCategory: true }),
     };
-    return await e.list(filter);
+    void _options;
+
+    try {
+      return await e.list(filter);
+    } catch (error) {
+      if (error instanceof WorkflowListScanCapExceededError) throw toUnprocessable(error);
+      throw error;
+    }
   },
 });
+
+function toUnprocessable(error: unknown): OperationFault {
+  const message = error instanceof Error ? error.message : String(error);
+  return { code: 'Unprocessable', message, data: { reason: message } };
+}
 
 // oxlint-disable-next-line complexity -- ID:server-operations-list-workflows-extract-list-workflows-input-complexity
 function extractListWorkflowsInput(request: Request): ListWorkflowsInput {
@@ -151,7 +185,61 @@ function extractListWorkflowsInput(request: Request): ListWorkflowsInput {
     }));
   }
 
+  const idPrefix = url.searchParams.get('id_prefix');
+  if (idPrefix !== null) {
+    filter.idPrefix = idPrefix;
+  }
+
+  const tenantIds = url.searchParams.getAll('tenant_id');
+  if (tenantIds.length === 1) {
+    filter.tenantId = tenantIds[0]!;
+  } else if (tenantIds.length > 1) {
+    filter.tenantId = tenantIds;
+  }
+
+  const failureCategories = url.searchParams.getAll('failure_category') as FailureCategory[];
+  if (failureCategories.length === 1) {
+    filter.failureCategory = failureCategories[0]!;
+  } else if (failureCategories.length > 1) {
+    filter.failureCategory = failureCategories;
+  }
+
+  const createdAt = extractTimeRange(url.searchParams, 'created_at');
+  if (createdAt !== undefined) filter.createdAt = createdAt;
+  const updatedAt = extractTimeRange(url.searchParams, 'updated_at');
+  if (updatedAt !== undefined) filter.updatedAt = updatedAt;
+  const executionDeadline = extractTimeRange(url.searchParams, 'execution_deadline');
+  if (executionDeadline !== undefined) filter.executionDeadline = executionDeadline;
+
+  const include = url.searchParams.getAll('include');
+  if (include.includes('failureCategory')) {
+    filter.include = ['failureCategory'];
+  }
+
   return filter;
+}
+
+/**
+ * Parse one of the three `*_at` time-range filters from the query
+ * string. The four bounds map to `{prefix}_gte`, `{prefix}_gt`,
+ * `{prefix}_lte`, `{prefix}_lt`. Returns `undefined` when none of the
+ * bounds were specified so the omitted-vs-empty distinction is preserved
+ * for the downstream `normalizeListFilter` validation.
+ */
+function extractTimeRange(
+  params: URLSearchParams,
+  prefix: 'created_at' | 'updated_at' | 'execution_deadline',
+): TimeRange | undefined {
+  const range: TimeRange = {};
+  const gte = params.get(`${prefix}_gte`);
+  if (gte !== null && Number.isFinite(Number(gte))) range.gte = Number(gte);
+  const gt = params.get(`${prefix}_gt`);
+  if (gt !== null && Number.isFinite(Number(gt))) range.gt = Number(gt);
+  const lte = params.get(`${prefix}_lte`);
+  if (lte !== null && Number.isFinite(Number(lte))) range.lte = Number(lte);
+  const lt = params.get(`${prefix}_lt`);
+  if (lt !== null && Number.isFinite(Number(lt))) range.lt = Number(lt);
+  return Object.keys(range).length > 0 ? range : undefined;
 }
 
 function shapeListWorkflowsSuccess(result: ListWorkflowsOutput): Response {
