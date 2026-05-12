@@ -366,6 +366,46 @@ describe('worker drain operations', () => {
     expect(result.fault.code).toBe('Forbidden');
   });
 
+  it('rejects unused resume reasons over JSON-RPC', async () => {
+    engine = createEngine();
+    const workerRegistry = new WorkerRegistry();
+    workerRegistry.register({
+      id: 'worker-1',
+      queue: 'default',
+      activities: ['charge'],
+      concurrency: 2,
+      deploymentName: 'payments',
+    });
+    workerRegistry.markWorkerDraining('worker-1', { updatedAt: 1000 });
+    workerRegistry.markDeploymentDraining('payments', { updatedAt: 1000 });
+
+    const principal = principalFromApiKey({ subject: 'test', scopes: ['system:admin'] });
+    const registry = createOperationRegistry([
+      createClearWorkerDrainOperation({ workerRegistry }),
+      createClearDeploymentDrainOperation({ workerRegistry }),
+    ]);
+
+    const workerResult = await executeOperation(
+      'weft.workers.resume',
+      { workerId: 'worker-1', reason: 'unused' },
+      { principal, engine, transport: 'jsonRpcStdio', registry },
+    );
+    const deploymentResult = await executeOperation(
+      'weft.worker.deployments.resume',
+      { deploymentName: 'payments', reason: 'unused' },
+      { principal, engine, transport: 'jsonRpcStdio', registry },
+    );
+
+    expect(workerResult.ok).toBe(false);
+    if (workerResult.ok) throw new Error('expected worker resume rejection');
+    expect(workerResult.fault.code).toBe('InvalidParams');
+    expect(deploymentResult.ok).toBe(false);
+    if (deploymentResult.ok) throw new Error('expected deployment resume rejection');
+    expect(deploymentResult.fault.code).toBe('InvalidParams');
+    expect(workerRegistry.getWorker('worker-1')?.drainStartedAt).toBe(1000);
+    expect(workerRegistry.getWorkerSummaries(2000)[0]?.health).toBe('drained');
+  });
+
   it('rejects malformed worker drain JSON before mutating drain state', async () => {
     engine = createEngine();
     const workerRegistry = new WorkerRegistry();

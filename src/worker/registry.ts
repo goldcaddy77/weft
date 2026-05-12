@@ -717,12 +717,19 @@ function deploymentHealth(healthValues: WorkerHealth[], drainActive = false): Wo
   return 'active';
 }
 
-function deploymentIdentityKey(worker: WorkerInfo): string {
+type WorkerDeploymentIdentity = {
+  deploymentName?: string | null;
+  buildId?: string | null;
+  runtimeVersion?: string | null;
+  gitSha?: string | null;
+};
+
+function deploymentIdentityKey(identity: WorkerDeploymentIdentity): string {
   return [
-    worker.deploymentName ?? '',
-    worker.buildId ?? '',
-    worker.runtimeVersion ?? '',
-    worker.gitSha ?? '',
+    identity.deploymentName ?? '',
+    identity.buildId ?? '',
+    identity.runtimeVersion ?? '',
+    identity.gitSha ?? '',
   ].join('\u{1f}');
 }
 
@@ -730,18 +737,9 @@ function compareDeploymentSummaries(
   left: WorkerDeploymentSummary,
   right: WorkerDeploymentSummary,
 ): number {
-  const leftKey = deploymentSummaryKey(left);
-  const rightKey = deploymentSummaryKey(right);
+  const leftKey = deploymentIdentityKey(left);
+  const rightKey = deploymentIdentityKey(right);
   return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
-}
-
-function deploymentSummaryKey(summary: WorkerDeploymentSummary): string {
-  return [
-    summary.deploymentName ?? '',
-    summary.buildId ?? '',
-    summary.runtimeVersion ?? '',
-    summary.gitSha ?? '',
-  ].join('\u{1f}');
 }
 
 /**

@@ -25,9 +25,17 @@ const workerDrainInput = z.object({
   reason: drainReasonSchema,
 });
 
+const workerDrainClearInput = z.object({
+  workerId: z.string().min(1),
+});
+
 const deploymentDrainInput = z.object({
   deploymentName: z.string().min(1),
   reason: drainReasonSchema,
+});
+
+const deploymentDrainClearInput = z.object({
+  deploymentName: z.string().min(1),
 });
 
 const workerDrainResultSchema = z.object({
@@ -52,7 +60,9 @@ const workerDrainOutput = z.discriminatedUnion('target', [
 ]) satisfies z.ZodType<WorkerDrainMutationResult>;
 
 export type WorkerDrainInput = z.infer<typeof workerDrainInput>;
+export type WorkerDrainClearInput = z.infer<typeof workerDrainClearInput>;
 export type DeploymentDrainInput = z.infer<typeof deploymentDrainInput>;
+export type DeploymentDrainClearInput = z.infer<typeof deploymentDrainClearInput>;
 export type WorkerDrainOutput = WorkerDrainMutationResult;
 
 type WorkerDrainOperationOptions = {
@@ -94,12 +104,12 @@ export function createDrainWorkerOperation(options?: WorkerDrainOperationOptions
 
 export function createClearWorkerDrainOperation(options?: WorkerDrainOperationOptions) {
   const registry = options?.workerRegistry;
-  return defineOperation<WorkerDrainInput, WorkerDrainOutput>({
+  return defineOperation<WorkerDrainClearInput, WorkerDrainOutput>({
     name: 'weft.workers.resume',
     mcpExposable: false,
     summary: 'Clear a connected worker drain marker',
     tags: ['System'],
-    inputSchema: workerDrainInput,
+    inputSchema: workerDrainClearInput,
     outputSchema: workerDrainOutput,
     access: adminAccess,
     producibleFaults: ['NotFound'],
@@ -141,12 +151,12 @@ export function createDrainDeploymentOperation(options?: WorkerDrainOperationOpt
 
 export function createClearDeploymentDrainOperation(options?: WorkerDrainOperationOptions) {
   const registry = options?.workerRegistry;
-  return defineOperation<DeploymentDrainInput, WorkerDrainOutput>({
+  return defineOperation<DeploymentDrainClearInput, WorkerDrainOutput>({
     name: 'weft.worker.deployments.resume',
     mcpExposable: false,
     summary: 'Clear a worker deployment drain marker',
     tags: ['System'],
-    inputSchema: deploymentDrainInput,
+    inputSchema: deploymentDrainClearInput,
     outputSchema: workerDrainOutput,
     access: adminAccess,
     discoverable: true,
