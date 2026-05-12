@@ -22,6 +22,7 @@ import { handleRequest } from '../handler.ts';
 import { createOperationRegistry, executeOperation } from '../operation-catalog.ts';
 import { principalFromApiKey, principalFromJwtClaims } from '../principal.ts';
 import { createLiveOperationRegistry } from '../rest-bindings.ts';
+import { TaskQueue } from '../task-queue.ts';
 import {
   createListWorkersOperation,
   createListWorkersRestBinding,
@@ -137,6 +138,7 @@ describe('weft.workers.list — REST GET /v1/workers', () => {
   it('rejects unauthenticated callers with 401', async () => {
     engine = createEngine();
     const workerRegistry = new WorkerRegistry();
+    const taskQueue = new TaskQueue();
 
     const result = await executeOperation(
       'weft.workers.list',
@@ -145,7 +147,7 @@ describe('weft.workers.list — REST GET /v1/workers', () => {
         principal: { method: 'unauthenticated' },
         engine,
         transport: 'jsonRpcStdio',
-        registry: createLiveOperationRegistry({ workerRegistry, taskQueue: undefined! }),
+        registry: createLiveOperationRegistry({ workerRegistry, taskQueue }),
       },
     );
 
@@ -157,6 +159,7 @@ describe('weft.workers.list — REST GET /v1/workers', () => {
   it('rejects callers without system:read with 403', async () => {
     engine = createEngine();
     const workerRegistry = new WorkerRegistry();
+    const taskQueue = new TaskQueue();
 
     const result = await executeOperation(
       'weft.workers.list',
@@ -165,7 +168,7 @@ describe('weft.workers.list — REST GET /v1/workers', () => {
         principal: principalFromJwtClaims({ sub: 'user', scope: 'workflows:read' }),
         engine,
         transport: 'jsonRpcStdio',
-        registry: createLiveOperationRegistry({ workerRegistry, taskQueue: undefined! }),
+        registry: createLiveOperationRegistry({ workerRegistry, taskQueue }),
       },
     );
 

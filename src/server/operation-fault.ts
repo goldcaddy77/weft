@@ -131,6 +131,48 @@ export const FAULT_CODE_TO_HTTP_STATUS: Readonly<Record<FaultCode, number>> = Ob
 });
 
 /**
+ * Format an `InvalidParams` fault as a single human-readable error string
+ * suitable for the body of a JSON response. Joins each Zod issue as
+ * `path: message` (or just `message` at the root) with `; ` separators.
+ */
+export function formatInvalidParamsMessage(
+  fault: Extract<OperationFault, { code: 'InvalidParams' }>,
+): string {
+  return fault.data.issues
+    .map((issue) => {
+      const path = issue.path.join('.');
+      return path.length > 0 ? `${path}: ${issue.message}` : issue.message;
+    })
+    .join('; ');
+}
+
+/**
+ * Map an `OperationFault` to a JSON `Response` with an `{ error }` body.
+ * Treats `InvalidParams` as 400 with a flattened issues message, masks
+ * `EngineFailure` as `Internal server error` at 500, and uses
+ * {@link FAULT_CODE_TO_HTTP_STATUS} for every other code. Used by REST
+ * bindings that serve a single resource and want a uniform error shape.
+ */
+export function shapeOperationFaultAsJson(fault: OperationFault): Response {
+  if (fault.code === 'InvalidParams') {
+    return new Response(JSON.stringify({ error: formatInvalidParamsMessage(fault) }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  if (fault.code === 'EngineFailure') {
+    return new Response(JSON.stringify({ error: 'Internal server error' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  return new Response(JSON.stringify({ error: fault.message }), {
+    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+/**
  * JSON-RPC error code for each fault. Reserved codes (-32700..-32603) keep
  * the spec meanings (`InvalidParams`, `MethodNotFound`); Weft domain codes
  * live in -32010..-32099 documented per design decision 4.

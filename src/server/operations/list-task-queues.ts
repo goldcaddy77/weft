@@ -24,7 +24,7 @@
 import { z } from 'zod';
 
 import type { WorkerRegistry, WorkerSummary } from '../../worker/registry.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import { shapeOperationFaultAsJson } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 import type { SchedulingPolicy, TaskQueue, TaskQueueSummary } from '../task-queue.ts';
@@ -33,7 +33,7 @@ const listTaskQueuesInput = z.object({});
 
 const schedulingPolicySchema = z.enum(['priority', 'fifo', 'lifo']) as z.ZodType<SchedulingPolicy>;
 
-export interface TaskQueueHealth {
+export type TaskQueueHealth = {
   queue: string;
   backlog: number;
   oldestEnqueuedAt: number | null;
@@ -42,7 +42,7 @@ export interface TaskQueueHealth {
   schedulingPolicy: SchedulingPolicy;
   inFlight: number;
   connectedWorkers: number;
-}
+};
 
 const taskQueueHealthSchema = z.object({
   queue: z.string(),
@@ -57,18 +57,18 @@ const taskQueueHealthSchema = z.object({
 
 const listTaskQueuesOutput = z.object({
   items: z.array(taskQueueHealthSchema),
-});
+}) satisfies z.ZodType<ListTaskQueuesOutput>;
 
 export type ListTaskQueuesInput = z.infer<typeof listTaskQueuesInput>;
-export interface ListTaskQueuesOutput {
+export type ListTaskQueuesOutput = {
   items: TaskQueueHealth[];
-}
+};
 
-interface ListTaskQueuesOptions {
+type ListTaskQueuesOptions = {
   workerRegistry?: WorkerRegistry;
   taskQueue?: TaskQueue;
   clock?: () => number;
-}
+};
 
 /**
  * Build the `weft.task.queues.list` operation, optionally bound to a live
@@ -88,7 +88,7 @@ export function createListTaskQueuesOperation(options?: ListTaskQueuesOptions) {
     summary: 'List task queues with backlog, waiting pollers, and per-queue saturation',
     tags: ['System'],
     inputSchema: listTaskQueuesInput,
-    outputSchema: listTaskQueuesOutput as z.ZodType<ListTaskQueuesOutput>,
+    outputSchema: listTaskQueuesOutput,
     access: { kind: 'scoped', scopes: { kind: 'anyOf', scopes: ['system:read'] } },
     discoverable: true,
     transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
@@ -114,17 +114,17 @@ export function createListTaskQueuesOperation(options?: ListTaskQueuesOptions) {
   });
 }
 
-interface MergeArgs {
+type MergeArgs = {
   now: number;
   workerSummaries: WorkerSummary[];
-  queueEntries: ReturnType<TaskQueue['getQueueSummaries']>;
+  queueEntries: TaskQueueSummary[];
   schedulingPolicy: SchedulingPolicy;
-}
+};
 
-interface WorkerLoad {
+type WorkerLoad = {
   inFlight: number;
   connectedWorkers: number;
-}
+};
 
 function tallyWorkerLoad(workerSummaries: WorkerSummary[]): Map<string, WorkerLoad> {
   const perWorkerQueue = new Map<string, WorkerLoad>();
@@ -199,36 +199,6 @@ export function mergeQueueHealth(args: MergeArgs): TaskQueueHealth[] {
 /** Default discovery-only operation; live servers use `createListTaskQueuesOperation(...)`. */
 export const listTaskQueuesOperation = createListTaskQueuesOperation();
 
-function formatInvalidParamsMessage(
-  fault: Extract<OperationFault, { code: 'InvalidParams' }>,
-): string {
-  return fault.data.issues
-    .map((issue) => {
-      const path = issue.path.join('.');
-      return path.length > 0 ? `${path}: ${issue.message}` : issue.message;
-    })
-    .join('; ');
-}
-
-function shapeListTaskQueuesFault(fault: OperationFault): Response {
-  if (fault.code === 'InvalidParams') {
-    return new Response(JSON.stringify({ error: formatInvalidParamsMessage(fault) }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  if (fault.code === 'EngineFailure') {
-    return new Response(JSON.stringify({ error: 'Internal server error' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  return new Response(JSON.stringify({ error: fault.message }), {
-    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
-
 /** Build the REST binding for `weft.task.queues.list`. */
 export function createListTaskQueuesRestBinding(): UnknownRestBinding {
   return {
@@ -244,7 +214,7 @@ export function createListTaskQueuesRestBinding(): UnknownRestBinding {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       }),
-    shapeFault: shapeListTaskQueuesFault,
+    shapeFault: shapeOperationFaultAsJson,
   };
 }
 

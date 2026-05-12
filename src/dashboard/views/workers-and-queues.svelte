@@ -159,7 +159,7 @@
     {:else}
       <div class="table-wrapper">
         <table class="data-table">
-          <caption class="visually-hidden">Connected workers</caption>
+          <caption class="sr-only">Connected workers</caption>
           <thead>
             <tr>
               <th scope="col">Worker ID</th>
@@ -191,10 +191,11 @@
                     <span
                       class="capacity-bar"
                       role="meter"
-                      aria-label={`Capacity used: ${worker.inFlight} of ${worker.concurrency}`}
+                      aria-label={`In-flight tasks for ${worker.id}`}
                       aria-valuemin="0"
                       aria-valuemax="100"
                       aria-valuenow={ratioPercent}
+                      aria-valuetext={`${worker.inFlight} of ${worker.concurrency} slots in use (${ratioPercent}%)`}
                       style:--capacity-fill={`${ratioPercent}%`}
                     ></span>
                     <span class="capacity-text" aria-hidden="true"
@@ -226,7 +227,7 @@
     {:else}
       <div class="table-wrapper">
         <table class="data-table">
-          <caption class="visually-hidden">Task queues</caption>
+          <caption class="sr-only">Task queues</caption>
           <thead>
             <tr>
               <th scope="col">Queue</th>
@@ -258,18 +259,6 @@
 </Page>
 
 <style>
-  .visually-hidden {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
-
   .table-wrapper {
     width: 100%;
     overflow-x: auto;

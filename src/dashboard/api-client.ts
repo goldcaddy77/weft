@@ -95,7 +95,7 @@ export type WorkerRoutingPolicy = 'least-loaded' | 'round-robin' | 'fair-share';
 export type TaskQueueSchedulingPolicy = 'priority' | 'fifo' | 'lifo';
 
 /** A single connected worker as reported by `GET /v1/workers`. */
-export interface WorkerSummary {
+export type WorkerSummary = {
   id: string;
   queue: string;
   activities: string[];
@@ -105,16 +105,16 @@ export interface WorkerSummary {
   connectedAt: number;
   lastHeartbeatAt: number;
   heartbeatAgeMs: number;
-}
+};
 
 /** Top-level response shape for `GET /v1/workers`. */
-export interface ListWorkersResponse {
+export type ListWorkersResponse = {
   items: WorkerSummary[];
   routingPolicy: WorkerRoutingPolicy;
-}
+};
 
 /** Per-queue health as reported by `GET /v1/task-queues`. */
-export interface TaskQueueHealth {
+export type TaskQueueHealth = {
   queue: string;
   backlog: number;
   oldestEnqueuedAt: number | null;
@@ -123,12 +123,12 @@ export interface TaskQueueHealth {
   schedulingPolicy: TaskQueueSchedulingPolicy;
   inFlight: number;
   connectedWorkers: number;
-}
+};
 
 /** Top-level response shape for `GET /v1/task-queues`. */
-export interface ListTaskQueuesResponse {
+export type ListTaskQueuesResponse = {
   items: TaskQueueHealth[];
-}
+};
 
 export type {
   ScheduleFilter,

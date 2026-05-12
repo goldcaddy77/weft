@@ -20,7 +20,7 @@ export interface WorkerInfo {
  * operation uses for queue-age math, so a single response is internally
  * consistent across both data sources.
  */
-export interface WorkerSummary {
+export type WorkerSummary = {
   id: string;
   queue: string;
   activities: string[];
@@ -30,7 +30,7 @@ export interface WorkerSummary {
   connectedAt: number;
   lastHeartbeatAt: number;
   heartbeatAgeMs: number;
-}
+};
 
 /**
  * Strategy used by {@link WorkerRegistry.findWorker} to pick among eligible workers.

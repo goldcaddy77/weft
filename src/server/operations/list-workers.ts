@@ -25,7 +25,7 @@
 import { z } from 'zod';
 
 import type { RoutingPolicy, WorkerRegistry, WorkerSummary } from '../../worker/registry.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import { shapeOperationFaultAsJson } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 
@@ -52,18 +52,18 @@ const workerSummarySchema = z.object({
 const listWorkersOutput = z.object({
   items: z.array(workerSummarySchema),
   routingPolicy: routingPolicySchema,
-});
+}) satisfies z.ZodType<ListWorkersOutput>;
 
 export type ListWorkersInput = z.infer<typeof listWorkersInput>;
-export interface ListWorkersOutput {
+export type ListWorkersOutput = {
   items: WorkerSummary[];
   routingPolicy: RoutingPolicy;
-}
+};
 
-interface ListWorkersOptions {
+type ListWorkersOptions = {
   workerRegistry?: WorkerRegistry;
   clock?: () => number;
-}
+};
 
 /**
  * Build the `weft.workers.list` operation, optionally bound to a live
@@ -83,7 +83,7 @@ export function createListWorkersOperation(options?: ListWorkersOptions) {
     summary: 'List connected workers, their advertised activities, and saturation',
     tags: ['System'],
     inputSchema: listWorkersInput,
-    outputSchema: listWorkersOutput as z.ZodType<ListWorkersOutput>,
+    outputSchema: listWorkersOutput,
     access: { kind: 'scoped', scopes: { kind: 'anyOf', scopes: ['system:read'] } },
     discoverable: true,
     transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
@@ -106,36 +106,6 @@ export function createListWorkersOperation(options?: ListWorkersOptions) {
 /** Default discovery-only operation; live servers use `createListWorkersOperation(...)`. */
 export const listWorkersOperation = createListWorkersOperation();
 
-function formatInvalidParamsMessage(
-  fault: Extract<OperationFault, { code: 'InvalidParams' }>,
-): string {
-  return fault.data.issues
-    .map((issue) => {
-      const path = issue.path.join('.');
-      return path.length > 0 ? `${path}: ${issue.message}` : issue.message;
-    })
-    .join('; ');
-}
-
-function shapeListWorkersFault(fault: OperationFault): Response {
-  if (fault.code === 'InvalidParams') {
-    return new Response(JSON.stringify({ error: formatInvalidParamsMessage(fault) }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  if (fault.code === 'EngineFailure') {
-    return new Response(JSON.stringify({ error: 'Internal server error' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  return new Response(JSON.stringify({ error: fault.message }), {
-    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
-
 /**
  * Build the REST binding for `weft.workers.list`. The binding is metadata
  * only; the live `WorkerRegistry` is wired into the operation, not the
@@ -155,7 +125,7 @@ export function createListWorkersRestBinding(): UnknownRestBinding {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       }),
-    shapeFault: shapeListWorkersFault,
+    shapeFault: shapeOperationFaultAsJson,
   };
 }
 

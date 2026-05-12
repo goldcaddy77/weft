@@ -66,7 +66,7 @@ export type SchedulingPolicy = 'priority' | 'fifo' | 'lifo';
  * pending task (or `null` when the queue has no pending tasks). Age in
  * milliseconds is derived by the caller against a single per-request `now`.
  */
-export interface TaskQueueSummary {
+export type TaskQueueSummary = {
   /** Queue name. */
   queue: string;
   /** Pending (unclaimed) task count. */
@@ -82,7 +82,7 @@ export interface TaskQueueSummary {
   waitingPollers: number;
   /** Scheduling policy in effect for the queue. */
   schedulingPolicy: SchedulingPolicy;
-}
+};
 
 /** Configuration options for {@link TaskQueue}. */
 export type TaskQueueOptions = {

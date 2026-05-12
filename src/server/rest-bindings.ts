@@ -295,12 +295,12 @@ export function createLiveRestBindings(): ReadonlyArray<UnknownRestBinding> {
  * surface, but their `invoke` paths throw if reached — no discovery-only
  * registry is ever used to serve real requests.
  */
-interface LiveOperationRegistryOptions {
+type LiveOperationRegistryOptions = {
   metricsCollector?: MetricsCollector;
   workerRegistry?: WorkerRegistry;
   taskQueue?: TaskQueue;
   clock?: () => number;
-}
+};
 
 function buildSystemMetricsOperation(options: LiveOperationRegistryOptions) {
   return options.metricsCollector === undefined
