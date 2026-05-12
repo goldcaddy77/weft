@@ -15,24 +15,10 @@ import {
   validateAttributeValueSizes,
 } from './attributes-tags.ts';
 import type { EngineInternals } from './internals.ts';
-import {
-  intersectIdentifierSets,
-  matchesListFilter,
-  paginateWorkflowSummaries,
-} from './state-utilities.ts';
+import { resolveListCandidateIds } from './list-candidate-resolution.ts';
+import { matchesListFilter, paginateWorkflowSummaries } from './state-utilities.ts';
 import { decodeWorkflowState, normalizeBulkFilterNumber } from './validation.ts';
-import {
-  MAX_LIST_SCAN_ROWS,
-  WorkflowListScanCapExceededError,
-  getWorkflowVisibilityWatermark,
-} from './workflow-indexes.ts';
-import {
-  queryWorkflowIdPrefixCandidates,
-  queryWorkflowStatusIndex,
-  queryWorkflowTenantIndex,
-  queryWorkflowTimeRangeIndex,
-  queryWorkflowTypeIndex,
-} from './workflow-visibility-queries.ts';
+import { MAX_LIST_SCAN_ROWS, WorkflowListScanCapExceededError } from './workflow-indexes.ts';
 
 export const BULK_OPERATION_BATCH_SIZE = 1000;
 
@@ -113,71 +99,6 @@ function sortSummariesByCreatedAtDescending(items: WorkflowSummary[]): WorkflowS
     if (left.id > right.id) return 1;
     return 0;
   });
-}
-
-/**
- * Resolve the candidate workflow-id set for a list query, layering the new
- * visibility indexes on top of the existing tag/attribute resolution when
- * the watermark is current. Returns `null` when nothing narrows the set —
- * the caller falls back to a full `wf:` prefix scan with post-filtering.
- */
-// oxlint-disable-next-line complexity -- ID:core-engine-resolve-list-candidate-ids
-async function resolveListCandidateIds(
-  internals: EngineInternals,
-  filter: ListFilter | undefined,
-  normalizedTagFilters: readonly string[] | undefined,
-): Promise<Set<string> | null> {
-  const baseConstrainedIds = await resolveConstrainedIds(internals, filter, normalizedTagFilters);
-
-  const watermark = await getWorkflowVisibilityWatermark(internals.storage);
-  if (watermark === 'stale') {
-    // idPrefix is independent of the watermark — primary-key scan is always available.
-    if (filter?.idPrefix !== undefined) {
-      const candidates = await queryWorkflowIdPrefixCandidates(internals.storage, filter.idPrefix);
-      return baseConstrainedIds === null
-        ? candidates
-        : intersectIdentifierSets([baseConstrainedIds, candidates]);
-    }
-    return baseConstrainedIds;
-  }
-
-  const visibilityQueries: Array<Promise<Set<string>>> = [];
-
-  if (filter?.status !== undefined) {
-    const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
-    visibilityQueries.push(queryWorkflowStatusIndex(internals.storage, statuses));
-  }
-  if (filter?.type !== undefined) {
-    visibilityQueries.push(queryWorkflowTypeIndex(internals.storage, filter.type));
-  }
-  if (filter?.tenantId !== undefined) {
-    visibilityQueries.push(queryWorkflowTenantIndex(internals.storage, filter.tenantId));
-  }
-  if (filter?.createdAt !== undefined) {
-    visibilityQueries.push(
-      queryWorkflowTimeRangeIndex(internals.storage, 'created', filter.createdAt),
-    );
-  }
-  if (filter?.updatedAt !== undefined) {
-    visibilityQueries.push(
-      queryWorkflowTimeRangeIndex(internals.storage, 'updated', filter.updatedAt),
-    );
-  }
-  if (filter?.executionDeadline !== undefined) {
-    visibilityQueries.push(
-      queryWorkflowTimeRangeIndex(internals.storage, 'deadline', filter.executionDeadline),
-    );
-  }
-  if (filter?.idPrefix !== undefined) {
-    visibilityQueries.push(queryWorkflowIdPrefixCandidates(internals.storage, filter.idPrefix));
-  }
-
-  if (visibilityQueries.length === 0) return baseConstrainedIds;
-
-  const visibilitySets = await Promise.all(visibilityQueries);
-  const allSets =
-    baseConstrainedIds === null ? visibilitySets : [baseConstrainedIds, ...visibilitySets];
-  return intersectIdentifierSets(allSets);
 }
 
 /** Stream decoded workflow states that match a list filter. */

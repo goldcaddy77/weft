@@ -16,6 +16,10 @@ import {
   addWorkflowTagsRestBinding,
 } from './operations/add-workflow-tags.ts';
 import {
+  aggregateWorkflowsOperation,
+  aggregateWorkflowsRestBinding,
+} from './operations/aggregate-workflows.ts';
+import {
   bulkCancelWorkflowsOperation,
   bulkCancelWorkflowsRestBinding,
 } from './operations/bulk-cancel-workflows.ts';
@@ -195,6 +199,7 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
   startWorkflowRestBinding,
   recoverAllRestBinding,
   listWorkflowsRestBinding,
+  aggregateWorkflowsRestBinding,
   purgeWorkflowsRestBinding,
   bulkCancelWorkflowsRestBinding,
   bulkSignalWorkflowsRestBinding,
@@ -273,6 +278,7 @@ export function createLiveOperationRegistry(options?: {
     startWorkflowOperation,
     recoverAllOperation,
     listWorkflowsOperation,
+    aggregateWorkflowsOperation,
     purgeWorkflowsOperation,
     bulkCancelWorkflowsOperation,
     bulkSignalWorkflowsOperation,

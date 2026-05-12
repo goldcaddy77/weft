@@ -80,6 +80,11 @@ import {
 import type { TimerEntry } from '../types/checkpoint.ts';
 import { UpdateCoordinator } from '../updates.ts';
 import { WorkerExecutionStrategy } from '../worker-execution-strategy.ts';
+import {
+  aggregate as aggregateWorkflows,
+  type AggregateOptions,
+  type AggregateResult,
+} from './aggregate.ts';
 import { broadcast as broadcastFromInternals, type BroadcastCallbacks } from './broadcast.ts';
 import {
   cancelAll as cancelAllWorkflows,
@@ -954,6 +959,12 @@ export class Engine<
     const TAttributeKeys extends readonly AttributeFilterKey[] = readonly AttributeFilterKey[],
   >(filter?: TypedListFilter<TAttributeKeys>): Promise<PaginatedResult<WorkflowSummary>> {
     return listWorkflows(getInternals(this), filter);
+  }
+  async aggregate(
+    filter: ListFilter | undefined,
+    options: AggregateOptions,
+  ): Promise<AggregateResult> {
+    return aggregateWorkflows(getInternals(this), filter, options);
   }
   getRetentionOverview(): RetentionOverview {
     return getRetentionOverviewSnapshot(getInternals(this), (type) =>
