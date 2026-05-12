@@ -1,11 +1,57 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
 
+import { MemoryStorage } from '../../storage/memory.ts';
+import { encode } from '../codec.ts';
 import type { ContextOperationRequest } from '../context.ts';
 import type { EngineInternals } from './internals.ts';
-import { processParallelOperation, processRunAllOperation } from './operations-coordination.ts';
+import {
+  executeRunAllOperationResult,
+  processParallelOperation,
+  processRunAllOperation,
+  processWaitSignalOperation,
+} from './operations-coordination.ts';
 
 function createWorkerModeInternals(): EngineInternals {
   return { inlineStrategy: null } as unknown as EngineInternals;
+}
+
+function createSignalInternals(storage = new MemoryStorage()): EngineInternals {
+  return {
+    abortController: new AbortController(),
+    inlineStrategy: null,
+    signalWaiters: new Map<string, () => void>(),
+    signalWaitersByWorkflow: new Map(),
+    storage,
+  } as unknown as EngineInternals;
+}
+
+class WaiterTrackingMap extends Map<string, () => void> {
+  readonly registration = Promise.withResolvers<void>();
+  #resolved = false;
+
+  override set(key: string, value: () => void) {
+    if (!this.#resolved) {
+      this.#resolved = true;
+      this.registration.resolve();
+    }
+    return super.set(key, value);
+  }
+}
+
+function createSequencedStorage(entriesByScan: Array<Array<[string, Uint8Array]>>) {
+  let scanIndex = 0;
+
+  return {
+    async delete() {},
+    scan() {
+      const entries = entriesByScan[scanIndex++] ?? [];
+      return (async function* () {
+        for (const entry of entries) {
+          yield entry;
+        }
+      })();
+    },
+  };
 }
 
 describe('partial-failure preservation worker-mode boundary', () => {
@@ -86,5 +132,169 @@ describe('partial-failure preservation worker-mode boundary', () => {
     expect((captured as Error).message).toContain(
       'ctx.runAll partial-failure preservation is not supported in worker execution mode',
     );
+  });
+
+  it('cleans up a wait-signal waiter when cancellation lands after waiter registration', async () => {
+    const abortController = new AbortController();
+    class AbortOnSetMap extends Map<string, () => void> {
+      override set(key: string, value: () => void) {
+        abortController.abort();
+        return super.set(key, value);
+      }
+    }
+
+    const internals = {
+      ...createSignalInternals(createSequencedStorage([[], []]) as never),
+      abortController,
+      signalWaiters: new AbortOnSetMap(),
+      signalWaitersByWorkflow: new Map(),
+    } as unknown as EngineInternals;
+
+    await processWaitSignalOperation(
+      internals,
+      'workflow-id',
+      {
+        type: 'wait-signal',
+        operationId: 'wait:0',
+        signalName: 'release',
+      },
+      {
+        completeOperation: () => {
+          throw new Error('should not complete');
+        },
+      },
+    );
+
+    expect(internals.signalWaiters.size).toBe(0);
+    expect(internals.signalWaitersByWorkflow.size).toBe(0);
+  });
+
+  it('delivers a buffered signal discovered after waiter registration', async () => {
+    const payload = { ok: true };
+    const internals = createSignalInternals(
+      createSequencedStorage([
+        [
+          /* first scan empty */
+        ],
+        [['sig:key', encode(payload)]],
+      ]) as never,
+    );
+    const completed = mock(() => {});
+
+    await processWaitSignalOperation(
+      internals,
+      'workflow-id',
+      {
+        type: 'wait-signal',
+        operationId: 'wait:1',
+        signalName: 'release',
+      },
+      {
+        completeOperation: completed,
+      },
+    );
+
+    expect(completed).toHaveBeenCalledWith('workflow-id', payload);
+    expect(internals.signalWaiters.size).toBe(0);
+    expect(internals.signalWaitersByWorkflow.size).toBe(0);
+  });
+
+  it('exits wait-signal cleanly when cancellation happens while awaiting the waiter promise', async () => {
+    const signalWaiters = new WaiterTrackingMap();
+    const internals = {
+      ...createSignalInternals(createSequencedStorage([[], []]) as never),
+      signalWaiters,
+    } as unknown as EngineInternals;
+
+    const waitPromise = processWaitSignalOperation(
+      internals,
+      'workflow-id',
+      {
+        type: 'wait-signal',
+        operationId: 'wait:2',
+        signalName: 'release',
+      },
+      {
+        completeOperation: () => {
+          throw new Error('should not complete');
+        },
+      },
+    );
+
+    await signalWaiters.registration.promise;
+    const resolve = internals.signalWaiters.get('workflow-id:release');
+    if (!resolve) {
+      throw new Error('expected signal waiter to be registered');
+    }
+    internals.abortController.abort();
+    resolve();
+
+    await waitPromise;
+  });
+
+  it('routes non-speculative run-all branches through direct activity invocation', async () => {
+    const result = await executeRunAllOperationResult(
+      createWorkerModeInternals(),
+      'workflow-id',
+      {
+        type: 'run-all',
+        operationId: 'run-all:direct',
+        step: 0,
+        branches: {
+          first: [
+            (input: unknown) => {
+              return { echoed: input };
+            },
+            'payload',
+          ],
+        },
+      },
+      {
+        getActivityOperationCallbacks: () => {
+          throw new Error(
+            'activity callbacks should not be used without speculative activity metadata',
+          );
+        },
+      },
+      undefined,
+    );
+
+    expect(result).toEqual({ first: { echoed: 'payload' } });
+  });
+
+  it('reuses resumed run-all branches by name before dispatching the remaining branches', async () => {
+    const operation: Extract<ContextOperationRequest, { type: 'run-all' }> = {
+      type: 'run-all',
+      operationId: 'run-all:resumed',
+      step: 4,
+      resumedCacheEntry: {
+        type: 'parallel-operation-cache-entry',
+        __weftParallelOperationCache: true,
+        formatVersion: 2,
+        variant: 'run-all',
+        branchNames: ['cached', 'fresh'],
+        subOperationCount: 2,
+        branches: [
+          { status: 'fulfilled', value: 'cached result', operationId: 'cached-op' },
+          { status: 'pending', operationId: 'fresh-op' },
+        ],
+      },
+      branches: {
+        cached: [async () => 'should not run'],
+        fresh: [async () => 'fresh result'],
+      },
+    };
+
+    let captured: Record<string, unknown> | undefined;
+    await processRunAllOperation(createWorkerModeInternals(), 'workflow-id', operation, {
+      runOperationWithResult: async (_workflowId, _operation, execute) => {
+        captured = (await execute()) as Record<string, unknown>;
+      },
+    });
+
+    expect(captured).toEqual({
+      cached: 'cached result',
+      fresh: 'fresh result',
+    });
   });
 });

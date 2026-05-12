@@ -285,10 +285,7 @@ function mergeRunAllSlots(
     if (resumed?.status === 'fulfilled') {
       return resumed;
     }
-    const outcome = outcomesByName.get(name);
-    if (outcome === undefined) {
-      return { status: 'pending', operationId };
-    }
+    const outcome = outcomesByName.get(name)!;
     if (outcome.status === 'fulfilled') {
       return { status: 'fulfilled', value: outcome.value, operationId };
     }

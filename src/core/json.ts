@@ -137,9 +137,6 @@ function isJSONObject(
 }
 
 function fallbackJSONValue(value: unknown): JSONValue {
-  if (value instanceof Error) {
-    return { name: value.name, message: value.message };
-  }
   if (typeof value === 'bigint') {
     return value.toString();
   }
