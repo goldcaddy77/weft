@@ -10,6 +10,7 @@
  */
 
 import type { MetricsCollector } from '../observability/metrics.ts';
+import type { WorkerRegistry } from '../worker/registry.ts';
 import { createOperationRegistry, type OperationRegistry } from './operation-catalog.ts';
 import {
   addWorkflowTagsOperation,
@@ -95,6 +96,16 @@ import {
 } from './operations/list-checkpoints.ts';
 import { listReviewsOperation, listReviewsRestBinding } from './operations/list-reviews.ts';
 import { listSchedulesOperation, listSchedulesRestBinding } from './operations/list-schedules.ts';
+import {
+  createListTaskQueuesOperation,
+  createListTaskQueuesRestBinding,
+  listTaskQueuesOperation,
+} from './operations/list-task-queues.ts';
+import {
+  createListWorkersOperation,
+  createListWorkersRestBinding,
+  listWorkersOperation,
+} from './operations/list-workers.ts';
 import { listWorkflowsOperation, listWorkflowsRestBinding } from './operations/list-workflows.ts';
 import { pauseScheduleOperation, pauseScheduleRestBinding } from './operations/pause-schedule.ts';
 import {
@@ -168,6 +179,7 @@ import {
 } from './operations/update-workflow.ts';
 import { workflowEventsSubscriptionOperation } from './operations/workflow-events-subscription.ts';
 import type { RestBinding } from './rest-binding.ts';
+import type { TaskQueue } from './task-queue.ts';
 
 /**
  * The router stores heterogeneous bindings whose `Input`/`Output` pairs
@@ -246,11 +258,18 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
 
 /**
  * Build the full REST binding set for a server instance. Appends the
- * `weft.system.metrics` binding. The metrics collector is wired into
- * the operation (not the binding) via `createLiveOperationRegistry`.
+ * `weft.system.metrics`, `weft.workers.list`, and `weft.task.queues.list`
+ * bindings. Each takes no per-server data on the binding side; the
+ * runtime dependencies (metrics collector, worker registry, task queue)
+ * are wired into the operations through {@link createLiveOperationRegistry}.
  */
 export function createLiveRestBindings(): ReadonlyArray<UnknownRestBinding> {
-  return [...REST_BINDINGS, createGetSystemMetricsRestBinding()];
+  return [
+    ...REST_BINDINGS,
+    createGetSystemMetricsRestBinding(),
+    createListWorkersRestBinding(),
+    createListTaskQueuesRestBinding(),
+  ];
 }
 
 /**
@@ -265,10 +284,53 @@ export function createLiveRestBindings(): ReadonlyArray<UnknownRestBinding> {
  */
 /**
  * Create the live operation registry for a server instance.
+ *
+ * Live `serve()` passes `workerRegistry` and `taskQueue` so the
+ * infrastructure-observability operations (`weft.workers.list`,
+ * `weft.task.queues.list`) bind their `invoke` to real server state.
+ *
+ * Callers that build the registry for **discovery only**
+ * (`openapi.ts`, `asyncapi.ts`) omit both. The operations are still
+ * registered with full metadata so the catalog matches the live wire
+ * surface, but their `invoke` paths throw if reached — no discovery-only
+ * registry is ever used to serve real requests.
  */
-export function createLiveOperationRegistry(options?: {
+type LiveOperationRegistryOptions = {
   metricsCollector?: MetricsCollector;
-}): OperationRegistry {
+  workerRegistry?: WorkerRegistry;
+  taskQueue?: TaskQueue;
+  clock?: () => number;
+};
+
+function buildSystemMetricsOperation(options: LiveOperationRegistryOptions) {
+  return options.metricsCollector === undefined
+    ? getSystemMetricsOperation
+    : createGetSystemMetricsOperation({ metricsCollector: options.metricsCollector });
+}
+
+function buildListWorkersOperationForRegistry(options: LiveOperationRegistryOptions) {
+  if (options.workerRegistry === undefined) return listWorkersOperation;
+  return createListWorkersOperation({
+    workerRegistry: options.workerRegistry,
+    ...(options.clock !== undefined ? { clock: options.clock } : {}),
+  });
+}
+
+function buildListTaskQueuesOperationForRegistry(options: LiveOperationRegistryOptions) {
+  if (options.workerRegistry === undefined || options.taskQueue === undefined) {
+    return listTaskQueuesOperation;
+  }
+  return createListTaskQueuesOperation({
+    workerRegistry: options.workerRegistry,
+    taskQueue: options.taskQueue,
+    ...(options.clock !== undefined ? { clock: options.clock } : {}),
+  });
+}
+
+export function createLiveOperationRegistry(
+  options?: LiveOperationRegistryOptions,
+): OperationRegistry {
+  const resolved: LiveOperationRegistryOptions = options ?? {};
   return createOperationRegistry([
     startWorkflowOperation,
     recoverAllOperation,
@@ -320,8 +382,8 @@ export function createLiveOperationRegistry(options?: {
     storageScanOperation,
     storageBatchOperation,
     storageConditionalBatchOperation,
-    options?.metricsCollector === undefined
-      ? getSystemMetricsOperation
-      : createGetSystemMetricsOperation({ metricsCollector: options.metricsCollector }),
+    buildSystemMetricsOperation(resolved),
+    buildListWorkersOperationForRegistry(resolved),
+    buildListTaskQueuesOperationForRegistry(resolved),
   ]);
 }

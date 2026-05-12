@@ -679,4 +679,96 @@ describe('TaskQueue', () => {
       expect(result1?.operationId).toBe('high-prio');
     });
   });
+
+  describe('enqueue timestamp default', () => {
+    it('defaults enqueuedAt to the current wall clock when the caller omits it', () => {
+      const queue = new TaskQueue();
+      const task = makeTask({ operationId: 'op-no-ts' });
+      expect(task.enqueuedAt).toBeUndefined();
+
+      const before = Date.now();
+      queue.enqueue('default', task);
+      const after = Date.now();
+
+      expect(task.enqueuedAt).toBeGreaterThanOrEqual(before);
+      expect(task.enqueuedAt).toBeLessThanOrEqual(after);
+    });
+
+    it('preserves a caller-supplied enqueuedAt instead of overwriting it', () => {
+      const queue = new TaskQueue();
+      const task: PendingTask = {
+        ...makeTask({ operationId: 'op-pinned' }),
+        enqueuedAt: 12345,
+      };
+
+      queue.enqueue('default', task);
+
+      expect(task.enqueuedAt).toBe(12345);
+    });
+  });
+
+  describe('getQueueSummaries', () => {
+    function pinnedTask(operationId: string, enqueuedAt: number): PendingTask {
+      return { ...makeTask({ operationId }), enqueuedAt };
+    }
+
+    it('reports backlog and oldest enqueue time per pending queue, sorted by name', () => {
+      const queue = new TaskQueue();
+      queue.enqueue('alpha', pinnedTask('a1', 1000));
+      queue.enqueue('alpha', pinnedTask('a2', 500));
+      queue.enqueue('zebra', pinnedTask('z1', 2000));
+
+      const summaries = queue.getQueueSummaries();
+
+      expect(summaries.map((s) => s.queue)).toEqual(['alpha', 'zebra']);
+      expect(summaries[0]).toEqual({
+        queue: 'alpha',
+        backlog: 2,
+        oldestEnqueuedAt: 500,
+        waitingPollers: 0,
+        schedulingPolicy: 'priority',
+      });
+      expect(summaries[1]).toEqual({
+        queue: 'zebra',
+        backlog: 1,
+        oldestEnqueuedAt: 2000,
+        waitingPollers: 0,
+        schedulingPolicy: 'priority',
+      });
+    });
+
+    it('includes queues with only waiting pollers, with backlog 0 and null oldestEnqueuedAt', async () => {
+      const queue = new TaskQueue();
+      const controller = new AbortController();
+      const pollPromise = queue.poll('idle-queue', ['never-matches'], 30_000, controller.signal);
+
+      // Yield once so the poll registers as a waiter.
+      await Promise.resolve();
+
+      const summaries = queue.getQueueSummaries();
+      const entry = summaries.find((s) => s.queue === 'idle-queue');
+      expect(entry).toEqual({
+        queue: 'idle-queue',
+        backlog: 0,
+        oldestEnqueuedAt: null,
+        waitingPollers: 1,
+        schedulingPolicy: 'priority',
+      });
+
+      controller.abort();
+      await pollPromise;
+    });
+
+    it('returns an empty array when neither pending tasks nor waiters exist', () => {
+      const queue = new TaskQueue();
+      expect(queue.getQueueSummaries()).toEqual([]);
+    });
+
+    it('carries the configured schedulingPolicy through each summary', () => {
+      const queue = new TaskQueue({ schedulingPolicy: 'fifo' });
+      queue.enqueue('alpha', makeTask({ operationId: 'a1' }));
+      const summaries = queue.getQueueSummaries();
+      expect(summaries[0]?.schedulingPolicy).toBe('fifo');
+    });
+  });
 });

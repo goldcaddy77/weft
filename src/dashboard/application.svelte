@@ -3,7 +3,7 @@
 
   import { ApiClient } from './api-client.ts';
   import type { Toast } from './toast-context.ts';
-  import { moon, sun, activity, inbox } from './icons.ts';
+  import { moon, sun, activity, cpu, inbox } from './icons.ts';
   import { matchRoute, navigate, route } from './router.svelte.ts';
   import NavigationBar from './components/navigation-bar.svelte';
   import NavigationItem from './components/navigation-item.svelte';
@@ -11,6 +11,7 @@
   import WorkflowDetail from './views/workflow-detail.svelte';
   import HumanReviewQueue from './views/human-review-queue.svelte';
   import NotFound from './views/not-found.svelte';
+  import WorkersAndQueues from './views/workers-and-queues.svelte';
 
   // ---------------------------------------------------------------------------
   // Context providers
@@ -99,6 +100,14 @@
         {@html inbox(16)}
         Reviews
       </NavigationItem>
+      <NavigationItem
+        href="/ui/workers"
+        active={currentMatch.view === 'workers-and-queues'}
+        onclick={(event: MouseEvent) => handleNavigationClick(event, '/ui/workers')}
+      >
+        {@html cpu(16)}
+        Workers
+      </NavigationItem>
 
       {#snippet end()}
         <button class="theme-toggle" onclick={toggleTheme} aria-label="Toggle theme">
@@ -120,6 +129,8 @@
       <WorkflowDetail id={currentMatch.params['id'] ?? ''} />
     {:else if currentMatch.view === 'human-review-queue'}
       <HumanReviewQueue />
+    {:else if currentMatch.view === 'workers-and-queues'}
+      <WorkersAndQueues />
     {:else}
       <NotFound />
     {/if}

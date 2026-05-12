@@ -413,4 +413,79 @@ describe('ApiClient', () => {
       }),
     ]);
   });
+
+  it('fetches connected workers from GET /v1/workers with the routing policy', async () => {
+    const requestedUrls: string[] = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = requestInputToUrl(input);
+      requestedUrls.push(url);
+
+      if (url === '/v1/workers') {
+        return Response.json({
+          items: [
+            {
+              id: 'worker-1',
+              queue: 'default',
+              activities: ['process'],
+              concurrency: 4,
+              inFlight: 1,
+              availableCapacity: 3,
+              connectedAt: 1_000,
+              lastHeartbeatAt: 2_000,
+              heartbeatAgeMs: 500,
+            },
+          ],
+          routingPolicy: 'least-loaded',
+        });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as typeof fetch;
+
+    const client = new ApiClient();
+    const response = await client.listWorkers();
+
+    expect(requestedUrls).toEqual(['/v1/workers']);
+    expect(response.routingPolicy).toBe('least-loaded');
+    expect(response.items).toEqual([
+      expect.objectContaining({ id: 'worker-1', availableCapacity: 3, heartbeatAgeMs: 500 }),
+    ]);
+  });
+
+  it('fetches per-queue health from GET /v1/task-queues', async () => {
+    const requestedUrls: string[] = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = requestInputToUrl(input);
+      requestedUrls.push(url);
+
+      if (url === '/v1/task-queues') {
+        return Response.json({
+          items: [
+            {
+              queue: 'queue-a',
+              backlog: 2,
+              oldestEnqueuedAt: 100,
+              oldestQueuedAgeMs: 900,
+              waitingPollers: 0,
+              schedulingPolicy: 'priority',
+              inFlight: 1,
+              connectedWorkers: 1,
+            },
+          ],
+        });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as typeof fetch;
+
+    const client = new ApiClient();
+    const response = await client.listTaskQueues();
+
+    expect(requestedUrls).toEqual(['/v1/task-queues']);
+    expect(response.items).toEqual([
+      expect.objectContaining({ queue: 'queue-a', backlog: 2, oldestQueuedAgeMs: 900 }),
+    ]);
+  });
 });

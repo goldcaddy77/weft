@@ -3,6 +3,7 @@
   import type { HTMLAttributes } from 'svelte/elements';
 
   export type AlertVariant = 'info' | 'success' | 'warning' | 'danger';
+  export type AlertLive = 'polite' | 'assertive' | 'off';
 
   export type AlertProps = HTMLAttributes<HTMLDivElement> & {
     variant?: AlertVariant;
@@ -11,6 +12,13 @@
     children?: Snippet;
     dismissible?: boolean;
     onDismiss?: () => void;
+    /**
+     * `aria-live` priority. Defaults to `'assertive'` for `danger` and
+     * `'warning'` variants (real problems that need immediate announcement),
+     * and `'polite'` for `info` and `success`. Pass an explicit value to
+     * override; pass `'off'` to silence the live region entirely.
+     */
+    live?: AlertLive;
   };
 </script>
 
@@ -25,8 +33,14 @@
     children,
     dismissible = false,
     onDismiss,
+    live,
     ...rest
   }: AlertProps = $props();
+
+  const ariaLive = $derived<AlertLive>(
+    live ?? (variant === 'danger' || variant === 'warning' ? 'assertive' : 'polite'),
+  );
+  const role = $derived(ariaLive === 'assertive' ? 'alert' : ariaLive === 'polite' ? 'status' : undefined);
 
   let visible = $state(true);
 
@@ -40,9 +54,10 @@
   <div
     class={cn('alert', className)}
     data-variant={variant}
-    role="alert"
-    aria-live="polite"
     {...rest}
+    {role}
+    aria-live={ariaLive}
+    aria-atomic="true"
   >
     <div class="alert-icon" aria-hidden="true">
       {#if variant === 'info'}
