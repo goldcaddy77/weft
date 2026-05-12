@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines -- ID:server-index-serve-orchestration */
 /**
  * Bun.serve() wrapper with WebSocket support, dashboard UI, and clean shutdown.
  *
@@ -297,7 +298,7 @@ export function serve(options: ServeOptions): WeftServer {
   // with HMR in dev mode and cached assets in production mode.
   const dashboard = options.dashboard ?? null;
   const eventFeedBackend = createEngineEventFeedBackend(options.engine);
-  const registry = new WorkerRegistry(
+  const workerRegistry = new WorkerRegistry(
     options.routingPolicy !== undefined ? { policy: options.routingPolicy } : undefined,
   );
   const taskQueue = new TaskQueue(
@@ -306,7 +307,7 @@ export function serve(options: ServeOptions): WeftServer {
       : undefined,
   );
   const context: ServerContext = {
-    registry,
+    registry: workerRegistry,
     taskQueue,
     workerSockets: new Map(),
     streamSockets: new Map(),
@@ -315,11 +316,13 @@ export function serve(options: ServeOptions): WeftServer {
     operationToWorkflow: new Map(),
     pendingTimers: new Set(),
     deadlineTracker: new DeadlineTracker(),
-    liveOperationRegistry: createLiveOperationRegistry(
-      options.metricsCollector !== undefined
-        ? { metricsCollector: options.metricsCollector, taskDiagnostics: { registry, taskQueue } }
-        : { taskDiagnostics: { registry, taskQueue } },
-    ),
+    liveOperationRegistry: createLiveOperationRegistry({
+      workerRegistry,
+      taskQueue,
+      ...(options.metricsCollector !== undefined
+        ? { metricsCollector: options.metricsCollector }
+        : {}),
+    }),
     liveRestBindings: createLiveRestBindings(),
     supportedAuthenticationSchemes: deriveSupportedOpenApiSecuritySchemes(options.auth),
     eventFeedBackend,

@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines -- ID:server-task-queue-includes-snapshot-projection */
 // ---------------------------------------------------------------------------
 // In-memory task queue for HTTP long-poll workers
 // ---------------------------------------------------------------------------
@@ -61,6 +62,30 @@ type CompletionCallback = (result: TaskResult) => void;
  *   trade-off explicit.
  */
 export type SchedulingPolicy = 'priority' | 'fifo' | 'lifo';
+
+/**
+ * Per-queue snapshot reported by {@link TaskQueue.getQueueSummaries}.
+ * Wall-clock-free: `oldestEnqueuedAt` is the raw `enqueuedAt` of the oldest
+ * pending task (or `null` when the queue has no pending tasks). Age in
+ * milliseconds is derived by the caller against a single per-request `now`.
+ */
+export type TaskQueueSummary = {
+  /** Queue name. */
+  queue: string;
+  /** Pending (unclaimed) task count. */
+  backlog: number;
+  /**
+   * Epoch milliseconds when the oldest pending task was enqueued, or `null`
+   * when the queue has no pending tasks (or — defensively — when no pending
+   * task carries an `enqueuedAt`, which should not happen after enqueue
+   * defaults it).
+   */
+  oldestEnqueuedAt: number | null;
+  /** Active long-poll waiters parked on this queue. */
+  waitingPollers: number;
+  /** Scheduling policy in effect for the queue. */
+  schedulingPolicy: SchedulingPolicy;
+};
 
 /** Configuration options for {@link TaskQueue}. */
 export type TaskQueueOptions = {
@@ -365,6 +390,60 @@ export class TaskQueue {
   /** Peek the ordered pending tasks for a queue without dequeuing. Test helper. */
   peekPending(queue: string): PendingTask[] {
     return [...(this.#pending.get(queue) ?? [])];
+  }
+
+  /**
+   * Per-queue snapshot used by `weft.task.queues.list`. Returns one entry per
+   * queue name appearing in either `#pending` or `#waiters`, sorted by queue
+   * name ascending so REST/JSON-RPC responses are stable. The worker-queue
+   * union (idle queues with connected workers but no pending tasks and no
+   * waiters) is layered in by the operation, not here — `TaskQueue` knows
+   * only about its own state.
+   *
+   * `oldestEnqueuedAt` reports the minimum `enqueuedAt` across the pending
+   * tasks in a queue, or `null` when the queue has no pending tasks. The
+   * value is wall-clock epoch milliseconds; age computation belongs to the
+   * caller so this method stays clock-free.
+   */
+  getQueueSummaries(): TaskQueueSummary[] {
+    const summaries = new Map<string, TaskQueueSummary>();
+
+    for (const [queue, tasks] of this.#pending) {
+      let oldestEnqueuedAt: number | null = null;
+      for (const task of tasks) {
+        const enqueuedAt = task.enqueuedAt;
+        if (enqueuedAt === undefined) continue;
+        if (oldestEnqueuedAt === null || enqueuedAt < oldestEnqueuedAt) {
+          oldestEnqueuedAt = enqueuedAt;
+        }
+      }
+      summaries.set(queue, {
+        queue,
+        backlog: tasks.length,
+        oldestEnqueuedAt,
+        waitingPollers: 0,
+        schedulingPolicy: this.#schedulingPolicy,
+      });
+    }
+
+    for (const [queue, waiters] of this.#waiters) {
+      const existing = summaries.get(queue);
+      if (existing === undefined) {
+        summaries.set(queue, {
+          queue,
+          backlog: 0,
+          oldestEnqueuedAt: null,
+          waitingPollers: waiters.length,
+          schedulingPolicy: this.#schedulingPolicy,
+        });
+      } else {
+        existing.waitingPollers = waiters.length;
+      }
+    }
+
+    return [...summaries.values()].toSorted((a, b) =>
+      a.queue < b.queue ? -1 : a.queue > b.queue ? 1 : 0,
+    );
   }
 
   /** Remove and return pending tasks older than `maxAge` milliseconds. */

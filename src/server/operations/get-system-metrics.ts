@@ -20,7 +20,7 @@
 import { z } from 'zod';
 
 import type { MetricsCollector, MetricsSnapshot } from '../../observability/metrics.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import { shapeOperationFaultAsJson } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 
@@ -59,31 +59,6 @@ export function createGetSystemMetricsOperation(options?: { metricsCollector?: M
 
 export const getSystemMetricsOperation = createGetSystemMetricsOperation();
 
-function shapeGetSystemMetricsFault(fault: OperationFault): Response {
-  if (fault.code === 'Unauthorized') {
-    return new Response(JSON.stringify({ error: fault.message }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  if (fault.code === 'Forbidden') {
-    return new Response(JSON.stringify({ error: fault.message }), {
-      status: 403,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  if (fault.code === 'EngineFailure') {
-    return new Response(JSON.stringify({ error: 'Internal server error' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  return new Response(JSON.stringify({ error: fault.message }), {
-    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
-
 /**
  * Factory for the `weft.system.metrics` REST binding.
  *
@@ -106,6 +81,6 @@ export function createGetSystemMetricsRestBinding(): UnknownRestBinding {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       }),
-    shapeFault: shapeGetSystemMetricsFault,
+    shapeFault: shapeOperationFaultAsJson,
   };
 }
