@@ -353,7 +353,7 @@ const decision =
 
 **Review state is durable.** The review request is stored at `review:{workflowId}:{reviewId}` in storage. If the process crashes while waiting for human review, recovery loads the pending review and continues waiting. The reviewer's partial conversation history is preserved in the checkpoint.
 
-**Dashboard integration.** Pending reviews are listed at `GET /v1/reviews?status=pending` and displayed in the built-in dashboard. Reviewers can approve, reject, comment, or provide section-level feedback directly from the UI. The `POST /v1/workflows/:id/review/:reviewId` endpoint accepts the review decision.
+**Dashboard integration.** Pending reviews are listed at `GET /v1/reviews?status=pending` and displayed in the built-in dashboard. Reviewers can approve, reject, comment, or provide section-level feedback directly from the UI. `GET /v1/reviews` also accepts `workflowId` and `reviewType` filters, and `POST /v1/reviews/:reviewId/decision` accepts the review decision.
 
 **Going further: review notifications.** The `notify` field supports webhooks (Slack, PagerDuty, any HTTP endpoint) and email. Notifications are fire-and-forget `fetch()` calls with configurable retry. The engine does not depend on notification delivery — the review is always accessible via the dashboard and API regardless of whether the notification was received.
 

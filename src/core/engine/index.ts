@@ -50,6 +50,8 @@ import {
   type RegisteredActivityFunction,
   type RegisteredWorkflowDefinition,
   type RetentionOverview,
+  type ReviewListEntry,
+  type ReviewListFilter,
   type ScheduleAccessOptions,
   type ScheduleDefinition,
   type ScheduleFilter,
@@ -1261,8 +1263,8 @@ export class Engine<
   async replayTo(workflowId: string, step: number): Promise<WorkflowReplay | null> {
     return replayWorkflowToCheckpoint(getInternals(this), workflowId, step);
   }
-  async listReviews(): Promise<Array<Record<string, unknown>>> {
-    return listReviewsFromInternals(getInternals(this));
+  async listReviews(filter?: ReviewListFilter): Promise<ReviewListEntry[]> {
+    return listReviewsFromInternals(getInternals(this), filter);
   }
   async getReview(workflowId: string, reviewId: string): Promise<ReviewRequest | null> {
     return getReviewFromInternals(getInternals(this), workflowId, reviewId);

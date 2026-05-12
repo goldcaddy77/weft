@@ -23,6 +23,8 @@ import type {
   PurgeResult,
   QueryDefinition,
   RetentionOverview,
+  ReviewListEntry,
+  ReviewListFilter,
   ScheduleFilter,
   ScheduleOptions,
   ScheduleSummary,
@@ -343,8 +345,8 @@ export class LocalClient implements WeftClient {
     return this.#engine.replayTo(id, step);
   }
 
-  async listReviews(): Promise<Array<Record<string, unknown>>> {
-    return this.#engine.listReviews();
+  async listReviews(filter?: ReviewListFilter): Promise<ReviewListEntry[]> {
+    return this.#engine.listReviews(filter);
   }
 
   async submitReview(reviewId: string, options: SubmitReviewOptions): Promise<void> {

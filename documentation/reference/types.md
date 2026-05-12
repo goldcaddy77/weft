@@ -304,6 +304,52 @@ declare module 'weft' {
 }
 ```
 
+### `ReviewStatus`
+
+```ts partial
+type ReviewStatus = 'pending' | 'completed';
+```
+
+### `ReviewListFilter`
+
+Optional filter accepted by `engine.listReviews(filter?)` and the `/v1/reviews` transport surface.
+
+```ts partial
+interface ReviewListFilter {
+  status?: ReviewStatus;
+  workflowId?: string;
+  reviewType?: string;
+}
+```
+
+### `ReviewListEntry`
+
+Discriminated union returned by `engine.listReviews(filter?)`.
+
+```ts partial
+type ReviewListEntry = PendingReviewEntry | CompletedReviewEntry;
+
+interface PendingReviewEntry extends ReviewRequest {
+  status: 'pending';
+}
+
+interface CompletedReviewEntry extends ReviewDecision {
+  status: 'completed';
+  workflowId?: string;
+  artifact?: unknown;
+  reviewType?: string;
+  reviewers?: string[];
+  allowPartial?: boolean;
+  timeout?: number;
+  webhookUrl?: string;
+  createdAt?: number;
+}
+```
+
+New completed review entries include the original request metadata above. Historical
+decision-only records created before enriched persistence can still be listed,
+but may omit those optional request fields.
+
 ### `Duration`
 
 A number (milliseconds) or a human-readable string like `'5s'`, `'2m'`, `'1h'`.

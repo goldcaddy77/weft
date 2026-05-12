@@ -683,7 +683,18 @@ describe('LocalClient delegation surface', () => {
         accumulatedResults: [[0, 'value']],
         events: [{ type: 'workflow:checkpoint', timestamp: 1, data: { step: 1 } }],
       })),
-      listReviews: mock(async () => [{ reviewId: 'review-1' }]),
+      listReviews: mock(async () => [
+        {
+          status: 'pending',
+          reviewId: 'review-1',
+          workflowId: 'wf-review-1',
+          artifact: null,
+          reviewType: 'general',
+          reviewers: [],
+          allowPartial: false,
+          createdAt: 1,
+        },
+      ]),
       submitReview: mock(async () => undefined),
       getStreamChunks: mock(async () => [
         { sequence: 2, value: 'chunk-a' },
@@ -769,7 +780,18 @@ describe('LocalClient delegation surface', () => {
     expect(await client.replayTo('delegated-workflow', 1)).toMatchObject({
       checkpoint: { step: 1, version: '1.0.0' },
     });
-    expect(await client.listReviews()).toEqual([{ reviewId: 'review-1' }]);
+    expect(await client.listReviews()).toEqual([
+      {
+        status: 'pending',
+        reviewId: 'review-1',
+        workflowId: 'wf-review-1',
+        artifact: null,
+        reviewType: 'general',
+        reviewers: [],
+        allowPartial: false,
+        createdAt: 1,
+      },
+    ]);
     await client.submitReview('review-1', { decision: 'approved', reviewer: 'alex' });
     expect(await client.getStreamChunks('delegated-workflow', 'stream-key', { after: 1 })).toEqual([
       { sequence: 2, value: 'chunk-a' },

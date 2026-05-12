@@ -1,31 +1,90 @@
 import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
+import type { ReviewListEntry, ReviewListFilter, ReviewStatus } from '../../core/types.ts';
 import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 
-const listReviewsInput = z.object({});
-const listReviewsOutput = z.unknown();
+const reviewStatusSchema = z.enum(['pending', 'completed']) as z.ZodType<ReviewStatus>;
+const listReviewsInput = z.object({
+  status: reviewStatusSchema.optional(),
+  workflowId: z.string().min(1).optional(),
+  reviewType: z.string().min(1).optional(),
+});
+const pendingReviewEntrySchema = z.object({
+  status: z.literal('pending'),
+  reviewId: z.string(),
+  workflowId: z.string(),
+  artifact: z.unknown(),
+  reviewType: z.string(),
+  reviewers: z.array(z.string()),
+  allowPartial: z.boolean(),
+  timeout: z.number().optional(),
+  webhookUrl: z.string().optional(),
+  createdAt: z.number(),
+});
+const completedReviewEntrySchema = pendingReviewEntrySchema.extend({
+  status: z.literal('completed'),
+  workflowId: z.string().optional(),
+  artifact: z.unknown().optional(),
+  reviewType: z.string().optional(),
+  reviewers: z.array(z.string()).optional(),
+  allowPartial: z.boolean().optional(),
+  timeout: z.number().optional(),
+  webhookUrl: z.string().optional(),
+  createdAt: z.number().optional(),
+  decision: z.enum(['approved', 'rejected', 'needs-changes']),
+  reviewer: z.string(),
+  feedback: z.string().optional(),
+  sectionDecisions: z.record(z.string(), z.enum(['approved', 'rejected'])).optional(),
+  timestamp: z.number(),
+});
+const reviewListEntrySchema = z.union([pendingReviewEntrySchema, completedReviewEntrySchema]);
+const listReviewsOutput = z.object({
+  items: z.array(reviewListEntrySchema),
+});
 
 export type ListReviewsInput = z.infer<typeof listReviewsInput>;
-export type ListReviewsOutput = { items: Array<Record<string, unknown>> };
+export type ListReviewsOutput = { items: ReviewListEntry[] };
 
 export const listReviewsOperation = defineOperation<ListReviewsInput, ListReviewsOutput>({
   name: 'weft.reviews.list',
   mcpExposable: false,
-  summary: 'List pending human review requests',
+  summary: 'List human review requests',
   tags: ['Reviews'],
   inputSchema: listReviewsInput,
   outputSchema: listReviewsOutput as z.ZodType<ListReviewsOutput>,
-  access: { kind: 'public' },
+  access: { kind: 'scoped', scopes: { kind: 'anyOf', scopes: ['reviews:read'] } },
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
-  invoke: async ({ engine }): Promise<ListReviewsOutput> => {
+  invoke: async ({ input, engine }): Promise<ListReviewsOutput> => {
     const e = engine as Engine;
-    return { items: await e.listReviews() };
+    return { items: await e.listReviews(input as ReviewListFilter) };
   },
 });
+
+function extractListReviewsInput(request: Request): ListReviewsInput {
+  const url = new URL(request.url);
+  const filter: ListReviewsInput = {};
+
+  const status = url.searchParams.get('status');
+  if (status !== null) {
+    filter.status = status as ReviewStatus;
+  }
+
+  const workflowId = url.searchParams.get('workflowId');
+  if (workflowId !== null) {
+    filter.workflowId = workflowId;
+  }
+
+  const reviewType = url.searchParams.get('reviewType');
+  if (reviewType !== null) {
+    filter.reviewType = reviewType;
+  }
+
+  return filter;
+}
 
 function shapeListReviewsSuccess(result: ListReviewsOutput): Response {
   return new Response(JSON.stringify(result), {
@@ -34,7 +93,25 @@ function shapeListReviewsSuccess(result: ListReviewsOutput): Response {
   });
 }
 
+function formatInvalidParamsMessage(
+  fault: Extract<OperationFault, { code: 'InvalidParams' }>,
+): string {
+  return fault.data.issues
+    .map((issue) => {
+      const path = issue.path.join('.');
+      return path.length > 0 ? `${path}: ${issue.message}` : issue.message;
+    })
+    .join('; ');
+}
+
 function shapeListReviewsFault(fault: OperationFault): Response {
+  if (fault.code === 'InvalidParams') {
+    return new Response(JSON.stringify({ error: formatInvalidParamsMessage(fault) }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   if (fault.code === 'EngineFailure') {
     return new Response(JSON.stringify({ error: 'Internal server error' }), {
       status: 500,
@@ -53,8 +130,12 @@ export const listReviewsRestBinding: UnknownRestBinding = {
   path: '/v1/reviews',
   pathParamNames: [],
   operationName: 'weft.reviews.list',
-  inputSources: {},
-  extractInput: async () => ({}),
+  inputSources: {
+    status: { kind: 'query', queryParam: 'status' },
+    workflowId: { kind: 'query', queryParam: 'workflowId' },
+    reviewType: { kind: 'query', queryParam: 'reviewType' },
+  },
+  extractInput: async (request) => extractListReviewsInput(request),
   success: { kind: 'json', status: 200 },
   shapeSuccess: (output: ListReviewsOutput) => shapeListReviewsSuccess(output),
   shapeFault: shapeListReviewsFault,

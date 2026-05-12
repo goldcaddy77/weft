@@ -525,6 +525,41 @@ describe('G4: Escalation with timeout chains', () => {
       feedback: 'timeout',
     });
   });
+
+  it('persists auto-approved reviews while the workflow keeps running', async () => {
+    engine = new TestEngine({ startTime: 1000 });
+
+    engine.register('auto-approve-persisted-workflow', async function* (ctx: WorkflowContext) {
+      const c = ctx;
+      const decision = yield* c.review({
+        artifact: 'urgent report',
+        reviewers: ['alice'],
+        escalation: [{ after: 5000, action: 'auto-approve', auditReason: 'timeout' }],
+      });
+
+      yield* c.sleep(60_000);
+      return decision;
+    });
+
+    const handle = await engine.start('auto-approve-persisted-workflow', null);
+    await flush();
+    await engine.advanceTime(6000);
+    await flush();
+
+    const reviews = await engine.listReviews({ status: 'completed', workflowId: handle.id });
+    expect(reviews).toEqual([
+      expect.objectContaining({
+        status: 'completed',
+        workflowId: handle.id,
+        reviewer: 'system',
+        feedback: 'timeout',
+        decision: 'approved',
+      }),
+    ]);
+
+    await engine.cancel(handle.id);
+    await flush();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -822,6 +857,8 @@ describe('G8: Review cleanup + timeout error', () => {
     await flush();
     await handle.result();
     await flush();
+    await engine.advanceTime(120_000);
+    await flush();
 
     // Verify review entries cleaned up after workflow completes
     let reviewCountAfter = 0;
@@ -829,6 +866,12 @@ describe('G8: Review cleanup + timeout error', () => {
       reviewCountAfter++;
     }
     expect(reviewCountAfter).toBe(0);
+
+    let completedReviewCountAfter = 0;
+    for await (const [_key] of engine.storage.scan('review-decision:')) {
+      completedReviewCountAfter++;
+    }
+    expect(completedReviewCountAfter).toBe(0);
   });
 
   it('throws ReviewTimeoutError when no reviewer responds within timeout', async () => {
