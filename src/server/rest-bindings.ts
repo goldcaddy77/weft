@@ -326,7 +326,6 @@ export function createLiveOperationRegistry(options?: {
       : createGetTaskDiagnosticsOperation({
           registry: options.taskDiagnostics.registry,
           taskQueue: options.taskDiagnostics.taskQueue,
-          metricsCollector: options.metricsCollector,
         }),
     // Wave 1 — previously legacy direct handlers
     listSchedulesOperation,

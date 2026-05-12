@@ -321,7 +321,6 @@ function applyPreviousLifecycleFields(
   if (previous === undefined || previous === null) return;
   record.lastDispatchedAt ??= previous.lastDispatchedAt;
   record.startedAt ??= previous.startedAt;
-  record.lastHeartbeatAt ??= previous.lastHeartbeatAt;
   record.lastRequeueReason ??= previous.lastRequeueReason;
 }
 
@@ -337,6 +336,25 @@ export function calculateExecutionLatencyMs(
   const startedAt = record.startedAt ?? record.lastDispatchedAt;
   if (startedAt === undefined) return undefined;
   return Math.max(0, completedAt - startedAt);
+}
+
+export function calculateHeartbeatAgeMs(
+  record: TaskLifecycleFields & { deadline?: number | undefined },
+  currentTime: number,
+): number | undefined {
+  const heartbeatReference =
+    record.lastHeartbeatAt ?? record.startedAt ?? record.lastDispatchedAt ?? record.deadline;
+  if (heartbeatReference === undefined) return undefined;
+  return Math.max(0, currentTime - heartbeatReference);
+}
+
+export function isHeartbeatStale(
+  record: TaskLifecycleFields & { deadline?: number | undefined },
+  currentTime: number,
+  staleAfterMs: number,
+): boolean {
+  const heartbeatAgeMs = calculateHeartbeatAgeMs(record, currentTime);
+  return heartbeatAgeMs !== undefined && heartbeatAgeMs >= staleAfterMs;
 }
 
 // ---------------------------------------------------------------------------

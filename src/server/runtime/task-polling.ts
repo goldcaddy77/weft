@@ -15,6 +15,7 @@ import {
 
 const TASK_POLL_RE = /^\/v1\/tasks\/([\w-]+)$/;
 const TASK_RESULT_RE = /^\/v1\/tasks\/([\w-]+)\/result$/;
+const TASK_DIAGNOSTICS_PATH = '/v1/tasks/diagnostics';
 
 const MAX_POLL_TIMEOUT = 60_000;
 const DEFAULT_POLL_TIMEOUT = 30_000;
@@ -48,25 +49,24 @@ export function createLongPollInflightRecord(queue: string, task: PendingTask): 
     lastQueuedAt: task.lastQueuedAt ?? task.enqueuedAt ?? now,
     lastDispatchedAt: now,
     startedAt: now,
-    lastHeartbeatAt: task.lastHeartbeatAt,
     retryCount: task.retryCount ?? Math.max(0, (task.attempt ?? 1) - 1),
     requeueCount: task.requeueCount ?? 0,
     lastRequeueReason: task.lastRequeueReason,
   };
 }
 
-export function markTaskClaimedByLongPollWorker(
+export async function markTaskClaimedByLongPollWorker(
   context: ServerContext,
   options: ServeOptions,
   queue: string,
   task: PendingTask,
-): void {
+): Promise<void> {
   const inflightRecord = createLongPollInflightRecord(queue, task);
   context.deadlineTracker.add({
     operationId: task.operationId,
     deadline: inflightRecord.deadline,
   });
-  void transitionQueuedToInflight(options.engine.storage, task.operationId, inflightRecord);
+  await transitionQueuedToInflight(options.engine.storage, task.operationId, inflightRecord);
   recordTaskQueueLatencyMetric(options.metricsCollector, inflightRecord);
   recordTaskBacklogMetric(options.metricsCollector, context.taskQueue);
 }
@@ -78,6 +78,10 @@ export async function handleTaskPollRequest(
   url: URL,
 ): Promise<Response | null> {
   if (request.method !== 'GET') {
+    return null;
+  }
+
+  if (url.pathname === TASK_DIAGNOSTICS_PATH) {
     return null;
   }
 
@@ -103,7 +107,7 @@ export async function handleTaskPollRequest(
 
   const task = await context.taskQueue.poll(queue, activities, timeout);
   if (task !== null) {
-    markTaskClaimedByLongPollWorker(context, options, queue, task);
+    await markTaskClaimedByLongPollWorker(context, options, queue, task);
     return Response.json(task);
   }
 
@@ -153,7 +157,7 @@ export async function handleTaskResultRequest(
 
   context.deadlineTracker.remove(operationId);
   const resolvedStatus = status === 'failed' ? 'failed' : ('completed' as const);
-  void (async () => {
+  try {
     const inflightRecord = await readInflightRecord(options.engine.storage, operationId);
     const resolvedAt = Date.now();
     await transitionInflightToResolved(options.engine.storage, operationId, resolvedStatus, {
@@ -164,12 +168,12 @@ export async function handleTaskResultRequest(
     if (inflightRecord !== null) {
       recordTaskExecutionLatencyMetric(options.metricsCollector, inflightRecord, resolvedAt);
     }
-  })().catch((error) => {
+  } catch (error) {
     console.error(
       `[weft] Failed to transition task "${operationId}" to resolved — inflight record may leak:`,
       error,
     );
-  });
+  }
 
   return Response.json({ ok: true });
 }

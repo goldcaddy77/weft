@@ -9,8 +9,10 @@ import { transitionInflightToQueued, transitionInflightToResolved } from '../tas
 import type { ServerContext } from './context.ts';
 import { dispatchTaskImpl, scheduleDelayedDispatch } from './task-dispatch.ts';
 import {
+  isTaskHeartbeatStaleForMetrics,
   recordTaskRequeueMetric,
   recordTaskRetryMetric,
+  recordTaskStaleHeartbeatMetric,
   recordWorkerCapacitySaturationMetric,
 } from './task-metrics.ts';
 import { isInflightRecord } from './websocket-worker.ts';
@@ -97,7 +99,6 @@ function createRequeuedRecord(
     firstQueuedAt: record.firstQueuedAt,
     lastDispatchedAt: record.lastDispatchedAt,
     startedAt: record.startedAt,
-    lastHeartbeatAt: record.lastHeartbeatAt,
     retryCount: nextRetryCount,
     requeueCount: (record.requeueCount ?? 0) + 1,
     lastRequeueReason: reason,
@@ -219,10 +220,12 @@ export async function reconcileOrphanedRecords(
   context.reconciliationRunning = true;
   try {
     const now = Date.now();
+    let staleHeartbeatCount = 0;
     for await (const [, value] of options.engine.storage.scan('op:inflight:')) {
       try {
         const decoded = decode(value);
         if (!isInflightRecord(decoded)) continue;
+        if (isTaskHeartbeatStaleForMetrics(decoded, now)) staleHeartbeatCount += 1;
 
         if (decoded.deadline > now) {
           // Still valid — ensure it is tracked in the heap so the fast path
@@ -257,6 +260,7 @@ export async function reconcileOrphanedRecords(
         console.error('[weft] Failed to reconcile inflight record — skipping:', error);
       }
     }
+    recordTaskStaleHeartbeatMetric(options.metricsCollector, staleHeartbeatCount);
   } catch (error) {
     console.error('[weft] Reconciliation scanner error:', error);
   } finally {

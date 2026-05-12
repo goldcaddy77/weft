@@ -13,13 +13,13 @@ import { z } from 'zod';
 
 import { decode } from '../../core/codec.ts';
 import type { Engine } from '../../core/engine.ts';
-import { METRICS, type MetricsCollector } from '../../observability/metrics.ts';
 import type { WorkerRegistry } from '../../worker/registry.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 import type { TaskQueue } from '../task-queue.ts';
 import {
   calculateExecutionLatencyMs,
+  calculateHeartbeatAgeMs,
   calculateQueueLatencyMs,
   isInflightRecord,
   isQueuedRecord,
@@ -37,6 +37,50 @@ const DEFAULT_RETRY_STORM_MINIMUM_ATTEMPTS = 3;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 
+const taskDiagnosticKindSchema = z.enum([
+  'stuck-queued',
+  'stale-inflight',
+  'retry-storm',
+  'all-workers-at-capacity',
+]);
+
+const taskDiagnosticItemSchema = z
+  .object({
+    kind: taskDiagnosticKindSchema,
+    state: z.enum(['queued', 'inflight', 'resolved', 'capacity']),
+    operationId: z.string().optional(),
+    workflowId: z.string().optional(),
+    activityName: z.string().optional(),
+    queue: z.string().optional(),
+    workerId: z.string().optional(),
+    retryCount: z.number().int().nonnegative(),
+    requeueCount: z.number().int().nonnegative(),
+    queueLatencyMs: z.number().nonnegative().optional(),
+    executionLatencyMs: z.number().nonnegative().optional(),
+    heartbeatAgeMs: z.number().nonnegative().optional(),
+    lastRequeueReason: z.enum(['visibility-timeout', 'worker-disconnect']).optional(),
+    resolutionReason: z.string().optional(),
+    evidence: z.array(z.string()),
+  })
+  .strict();
+
+const taskDiagnosticsSummarySchema = z
+  .object({
+    stuckQueued: z.number().int().nonnegative(),
+    staleInflight: z.number().int().nonnegative(),
+    retryStorms: z.number().int().nonnegative(),
+    allWorkersAtCapacity: z.number().int().nonnegative(),
+  })
+  .strict();
+
+const getTaskDiagnosticsOutput = z
+  .object({
+    items: z.array(taskDiagnosticItemSchema),
+    summary: taskDiagnosticsSummarySchema,
+    limit: z.number().int().min(1).max(MAX_LIMIT),
+  })
+  .strict();
+
 const getTaskDiagnosticsInput = z.object({
   operationId: z.string().min(1).optional(),
   workflowId: z.string().min(1).optional(),
@@ -47,50 +91,19 @@ const getTaskDiagnosticsInput = z.object({
   limit: z.number().int().min(1).max(MAX_LIMIT).default(DEFAULT_LIMIT),
 });
 
-const getTaskDiagnosticsOutput = z.unknown();
-
 export type GetTaskDiagnosticsInput = z.infer<typeof getTaskDiagnosticsInput>;
 
-export type TaskDiagnosticKind =
-  | 'stuck-queued'
-  | 'stale-inflight'
-  | 'retry-storm'
-  | 'all-workers-at-capacity';
+export type TaskDiagnosticKind = z.infer<typeof taskDiagnosticKindSchema>;
 
-export interface TaskDiagnosticItem {
-  kind: TaskDiagnosticKind;
-  state: TaskState | 'capacity';
-  operationId?: string | undefined;
-  workflowId?: string | undefined;
-  activityName?: string | undefined;
-  queue?: string | undefined;
-  workerId?: string | undefined;
-  retryCount: number;
-  requeueCount: number;
-  queueLatencyMs?: number | undefined;
-  executionLatencyMs?: number | undefined;
-  heartbeatAgeMs?: number | undefined;
-  resolutionReason?: string | undefined;
-  evidence: string[];
-}
+export type TaskDiagnosticItem = z.infer<typeof taskDiagnosticItemSchema>;
 
-export interface TaskDiagnosticsSummary {
-  stuckQueued: number;
-  staleInflight: number;
-  retryStorms: number;
-  allWorkersAtCapacity: number;
-}
+export type TaskDiagnosticsSummary = z.infer<typeof taskDiagnosticsSummarySchema>;
 
-export interface GetTaskDiagnosticsOutput {
-  items: TaskDiagnosticItem[];
-  summary: TaskDiagnosticsSummary;
-  limit: number;
-}
+export type GetTaskDiagnosticsOutput = z.infer<typeof getTaskDiagnosticsOutput>;
 
 interface GetTaskDiagnosticsOptions {
   registry?: WorkerRegistry | undefined;
   taskQueue?: TaskQueue | undefined;
-  metricsCollector?: MetricsCollector | undefined;
   now?: (() => number) | undefined;
 }
 
@@ -103,7 +116,7 @@ export function createGetTaskDiagnosticsOperation(options: GetTaskDiagnosticsOpt
     summary: 'Get bounded task latency and stuck-work diagnostics',
     tags: ['Observability'],
     inputSchema: getTaskDiagnosticsInput,
-    outputSchema: getTaskDiagnosticsOutput as z.ZodType<GetTaskDiagnosticsOutput>,
+    outputSchema: getTaskDiagnosticsOutput,
     access: {
       kind: 'scoped',
       scopes: { kind: 'anyOf', scopes: ['system:read'] },
@@ -114,19 +127,13 @@ export function createGetTaskDiagnosticsOperation(options: GetTaskDiagnosticsOpt
     unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
     invoke: async ({ input, engine }): Promise<GetTaskDiagnosticsOutput> => {
       const currentTime = options.now?.() ?? Date.now();
-      const result = await collectTaskDiagnostics({
+      return collectTaskDiagnostics({
         engine: engine as Engine,
         input,
         currentTime,
         registry: options.registry,
         taskQueue: options.taskQueue,
       });
-
-      options.metricsCollector?.gauge(
-        METRICS.taskStaleHeartbeats.name,
-        result.summary.staleInflight,
-      );
-      return result;
     },
   });
 }
@@ -237,6 +244,7 @@ function addQueuedDiagnostics(
       retryCount: record.retryCount ?? Math.max(0, (record.attempt ?? 1) - 1),
       requeueCount: record.requeueCount ?? 0,
       queueLatencyMs,
+      lastRequeueReason: record.lastRequeueReason,
       evidence: [
         `Task has waited ${queueLatencyMs}ms in queue "${record.queue}" without a worker claim`,
       ],
@@ -252,9 +260,7 @@ function addInflightDiagnostics(
   currentTime: number,
   addItem: (item: TaskDiagnosticItem) => void,
 ): void {
-  const heartbeatReference =
-    record.lastHeartbeatAt ?? record.startedAt ?? record.lastDispatchedAt ?? record.deadline;
-  const heartbeatAgeMs = Math.max(0, currentTime - heartbeatReference);
+  const heartbeatAgeMs = calculateHeartbeatAgeMs(record, currentTime) ?? 0;
   if (heartbeatAgeMs >= input.staleHeartbeatAfterMs) {
     addItem({
       kind: 'stale-inflight',
@@ -269,6 +275,7 @@ function addInflightDiagnostics(
       queueLatencyMs: calculateQueueLatencyMs(record),
       executionLatencyMs: calculateExecutionLatencyMs(record, currentTime),
       heartbeatAgeMs,
+      lastRequeueReason: record.lastRequeueReason,
       evidence: [
         `Worker "${record.workerId}" has not sent a heartbeat for ${heartbeatAgeMs}ms on queue "${record.queue}"`,
       ],
@@ -307,6 +314,7 @@ function addRetryStormDiagnostic(
     queueLatencyMs: calculateQueueLatencyMs(record),
     executionLatencyMs:
       'resolvedAt' in record ? calculateExecutionLatencyMs(record, record.resolvedAt) : undefined,
+    lastRequeueReason: record.lastRequeueReason,
     resolutionReason: 'resolutionReason' in record ? record.resolutionReason : undefined,
     evidence: [
       `Task has ${retryCount} retries and ${requeueCount} requeues, meeting retry storm threshold ${input.retryStormMinimumAttempts}`,
@@ -357,7 +365,9 @@ function selectCapacityDiagnosticQueues(
   workersByQueue: ReadonlyMap<string, ReturnType<WorkerRegistry['getAll']>>,
 ): string[] {
   if (input.queue !== undefined) return [input.queue];
-  return queues.size > 0 ? [...queues] : [...workersByQueue.keys()];
+  if (queues.size > 0) return [...queues];
+  if (input.operationId !== undefined || input.workflowId !== undefined) return [];
+  return [...workersByQueue.keys()];
 }
 
 function buildCapacityDiagnostic(

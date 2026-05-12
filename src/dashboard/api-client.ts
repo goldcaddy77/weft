@@ -138,6 +138,7 @@ export interface TaskDiagnosticItem {
   queueLatencyMs?: number;
   executionLatencyMs?: number;
   heartbeatAgeMs?: number;
+  lastRequeueReason?: 'visibility-timeout' | 'worker-disconnect';
   resolutionReason?: string;
   evidence: string[];
 }

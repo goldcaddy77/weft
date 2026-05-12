@@ -267,6 +267,7 @@ describe('state transitions', () => {
         lastQueuedAt: firstQueuedAt,
         lastDispatchedAt: 1_100,
         startedAt: 1_120,
+        lastHeartbeatAt: 1_180,
         retryCount: 0,
         requeueCount: 0,
       }),
@@ -296,6 +297,7 @@ describe('state transitions', () => {
     expect(queued.lastQueuedAt).toBe(1_300);
     expect(queued.lastDispatchedAt).toBe(1_100);
     expect(queued.startedAt).toBe(1_120);
+    expect(queued.lastHeartbeatAt).toBeUndefined();
     expect(queued.retryCount).toBe(1);
     expect(queued.requeueCount).toBe(1);
     expect(queued.lastRequeueReason).toBe('visibility-timeout');
@@ -330,6 +332,7 @@ describe('state transitions', () => {
     expect(resolved.lastDispatchedAt).toBe(1_500);
     expect(resolved.startedAt).toBe(1_520);
     expect(resolved.completedAt).toBe(1_900);
+    expect(resolved.lastHeartbeatAt).toBeUndefined();
     expect(resolved.retryCount).toBe(1);
     expect(resolved.requeueCount).toBe(1);
     expect(resolved.resolutionReason).toBe('completed');

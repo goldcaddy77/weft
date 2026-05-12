@@ -4,9 +4,12 @@ import type { TaskQueue } from '../task-queue.ts';
 import {
   calculateExecutionLatencyMs,
   calculateQueueLatencyMs,
+  isHeartbeatStale,
   type InflightRecord,
   type ResolvedRecord,
 } from '../task-state.ts';
+
+const DEFAULT_STALE_HEARTBEAT_METRIC_AFTER_MS = 60_000;
 
 export function recordTaskBacklogMetric(
   metricsCollector: MetricsCollector | undefined,
@@ -48,6 +51,21 @@ export function recordTaskRequeueMetric(
   count: number = 1,
 ): void {
   metricsCollector?.increment(METRICS.taskRequeues.name, count);
+}
+
+export function isTaskHeartbeatStaleForMetrics(
+  record: InflightRecord,
+  currentTime: number,
+  staleAfterMs: number = DEFAULT_STALE_HEARTBEAT_METRIC_AFTER_MS,
+): boolean {
+  return isHeartbeatStale(record, currentTime, staleAfterMs);
+}
+
+export function recordTaskStaleHeartbeatMetric(
+  metricsCollector: MetricsCollector | undefined,
+  count: number,
+): void {
+  metricsCollector?.gauge(METRICS.taskStaleHeartbeats.name, count);
 }
 
 export function recordWorkerCapacitySaturationMetric(
