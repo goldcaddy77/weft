@@ -84,16 +84,14 @@ export async function driveSpeculativeGenerator(
   speculativeState: SpeculativeExecutionState,
   callbacks: Pick<SpeculateOperationCallbacks, 'executeSubOperation'>,
 ): Promise<unknown> {
-  let lastResult: unknown = undefined;
-  let errorToThrow: Error | undefined;
-
-  while (true) {
+  const advance = async (
+    lastResult: unknown,
+    errorToThrow: Error | undefined,
+  ): Promise<unknown> => {
     const iterationResult =
       errorToThrow === undefined
         ? await generator.next(lastResult)
         : await generator.throw(errorToThrow);
-
-    errorToThrow = undefined;
 
     if (iterationResult.done) {
       return iterationResult.value;
@@ -101,14 +99,17 @@ export async function driveSpeculativeGenerator(
 
     const nextOperation = iterationResult.value;
     try {
-      lastResult = await callbacks.executeSubOperation(
+      const nextResult = await callbacks.executeSubOperation(
         workflowId,
         nextOperation,
         undefined,
         speculativeState,
       );
+      return advance(nextResult, undefined);
     } catch (error) {
-      errorToThrow = error instanceof Error ? error : new Error(String(error));
+      return advance(lastResult, error instanceof Error ? error : new Error(String(error)));
     }
-  }
+  };
+
+  return advance(undefined, undefined);
 }
