@@ -154,6 +154,42 @@ describe('jsonSchemaToTypeScript combinators', () => {
     ).toBe('(string | null)');
   });
 
+  it('handles nullable objects with shape siblings without poisoning the null branch', () => {
+    // Common pattern from Zod's `z.object({...}).nullable()`. The
+    // null branch must not be poisoned by `properties`/`required`/
+    // `additionalProperties` being "unexpected primitive siblings".
+    expect(
+      jsonSchemaToTypeScript({
+        type: ['object', 'null'],
+        properties: { a: { type: 'string' } },
+        required: ['a'],
+        additionalProperties: false,
+      }),
+    ).toBe('({ "a": string; } | null)');
+  });
+
+  it('handles nullable arrays with items without poisoning the null branch', () => {
+    expect(
+      jsonSchemaToTypeScript({
+        type: ['array', 'null'],
+        items: { type: 'string' },
+      }),
+    ).toBe('(Array<string> | null)');
+  });
+
+  it('strips object-only keywords from non-object branches when expanding type arrays', () => {
+    // `properties` on a `string`/`null` branch is irrelevant; we
+    // should still get a clean union.
+    expect(
+      jsonSchemaToTypeScript({
+        type: ['object', 'string'],
+        properties: { a: { type: 'string' } },
+        required: ['a'],
+        additionalProperties: false,
+      }),
+    ).toBe('({ "a": string; } | string)');
+  });
+
   it('degrades empty type-as-array to unknown', () => {
     expect(jsonSchemaToTypeScript({ type: [] })).toBe('unknown');
   });

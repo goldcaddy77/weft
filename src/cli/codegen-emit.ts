@@ -128,6 +128,34 @@ function tryEnumOrConst(node: Record<string, unknown>): string | undefined {
   return enumLiteralsToTypeScript(node['enum'] as unknown[]);
 }
 
+// Keywords that only apply when the value has a specific shape.
+// When expanding `type: [...]` into per-branch dispatches, strip
+// keywords irrelevant to the branch's type so common patterns like
+// `{ type: ['object', 'null'], properties: { … } }` don't poison
+// the null branch with "unexpected siblings" and degrade to
+// `unknown`.
+const OBJECT_ONLY_KEYWORDS = ['properties', 'required', 'additionalProperties'] as const;
+const ARRAY_ONLY_KEYWORDS = ['items', 'prefixItems', 'additionalItems'] as const;
+
+function projectNodeForTypeBranch(
+  node: Record<string, unknown>,
+  branchType: string,
+): Record<string, unknown> {
+  const projected: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node)) {
+    if (key === 'type') continue;
+    if (branchType !== 'object' && (OBJECT_ONLY_KEYWORDS as readonly string[]).includes(key)) {
+      continue;
+    }
+    if (branchType !== 'array' && (ARRAY_ONLY_KEYWORDS as readonly string[]).includes(key)) {
+      continue;
+    }
+    projected[key] = value;
+  }
+  projected['type'] = branchType;
+  return projected;
+}
+
 function expandTypeArray(
   node: Record<string, unknown>,
   typeKeyword: unknown[],
@@ -136,9 +164,10 @@ function expandTypeArray(
   // `type: ['string', 'null']` flattens to a union of the per-type
   // results so callers get `(string | null)` rather than `unknown`.
   if (typeKeyword.length === 0) return 'unknown';
-  const branches = typeKeyword.map((branchType) =>
-    jsonSchemaToTypeScriptAtDepth({ ...node, type: branchType }, depth + 1),
-  );
+  const branches = typeKeyword.map((branchType) => {
+    if (typeof branchType !== 'string') return 'unknown';
+    return jsonSchemaToTypeScriptAtDepth(projectNodeForTypeBranch(node, branchType), depth + 1);
+  });
   if (branches.length === 1) return branches[0]!;
   return `(${branches.join(' | ')})`;
 }
