@@ -48,27 +48,70 @@ function dispatchToMockWorker(worker: MockWorker, type: string, event: Event): v
 }
 
 function createMockPool(workers: MockWorker[]): WorkerPool {
-  let acquireIndex = 0;
+  const available = [...workers];
+  const pending: Array<(worker: Worker) => void> = [];
+  const specificPending = new Map<MockWorker, Array<(worker: Worker) => void>>();
   const released: MockWorker[] = [];
 
   return {
     acquire: mock(async () => {
-      if (acquireIndex < workers.length) {
-        return workers[acquireIndex++] as unknown as Worker;
+      const worker = available.shift();
+      if (worker) {
+        return worker as unknown as Worker;
       }
-      throw new Error('No more workers');
+      if (workers.length === 0) {
+        throw new Error('No more workers');
+      }
+      return new Promise<Worker>((resolve) => {
+        pending.push(resolve);
+      });
+    }),
+    acquireSpecificWorker: mock(async (worker: Worker) => {
+      const mockWorker = worker as unknown as MockWorker;
+      if (!workers.includes(mockWorker)) {
+        throw new Error('Worker does not belong to this WorkerPool');
+      }
+
+      const availableIndex = available.indexOf(mockWorker);
+      if (availableIndex >= 0) {
+        available.splice(availableIndex, 1);
+        return worker;
+      }
+
+      return new Promise<Worker>((resolve) => {
+        const waiters = specificPending.get(mockWorker) ?? [];
+        waiters.push(resolve);
+        specificPending.set(mockWorker, waiters);
+      });
     }),
     release: mock((worker: Worker) => {
-      released.push(worker as unknown as MockWorker);
+      const mockWorker = worker as unknown as MockWorker;
+      released.push(mockWorker);
+      const specificWaiters = specificPending.get(mockWorker);
+      if (specificWaiters && specificWaiters.length > 0) {
+        const nextSpecificWaiter = specificWaiters.shift();
+        if (specificWaiters.length === 0) {
+          specificPending.delete(mockWorker);
+        }
+        nextSpecificWaiter?.(worker);
+        return;
+      }
+
+      const next = pending.shift();
+      if (next) {
+        next(worker);
+        return;
+      }
+      available.push(mockWorker);
     }),
     get availableCount() {
-      return 0;
+      return available.length;
     },
     get totalCount() {
       return workers.length;
     },
     get pendingCount() {
-      return 0;
+      return pending.length;
     },
     [Symbol.dispose]() {},
     async [Symbol.asyncDispose]() {},
@@ -350,6 +393,226 @@ describe('WorkerExecutionStrategy', () => {
       expect(message).toEqual(checkpointMessage);
     });
 
+    it('releases the worker when a workflow parks on a signal checkpoint', async () => {
+      setup();
+
+      strategy.startWorkflow({
+        workflowId: 'wf-park',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+
+      await sleepForTesting(10);
+
+      const worker = firstWorker();
+      const checkpointMessage: WorkerOutboundMessage = {
+        type: 'checkpoint',
+        workflowId: 'wf-park',
+        checkpoint: new ArrayBuffer(0),
+        operationRequest: {
+          id: 'op-wait',
+          workflowId: 'wf-park',
+          kind: 'signal-wait',
+          queue: 'default',
+          attempt: 1,
+          retryPolicy: {
+            maxAttempts: 1,
+            initialBackoff: 0,
+            backoffMultiplier: 1,
+            maxBackoff: 0,
+          },
+          scheduledAt: Date.now(),
+          signalName: 'llm-resume',
+        },
+      };
+
+      dispatchToMockWorker(
+        worker,
+        'message',
+        new MessageEvent('message', { data: checkpointMessage }),
+      );
+
+      expect(messages).toEqual([checkpointMessage]);
+      expect(mockPool.release).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the worker assigned when checkpoint handling fails before parking', async () => {
+      setup();
+      strategy.onMessage(async () => {
+        throw new Error('checkpoint persistence failed');
+      });
+
+      strategy.startWorkflow({
+        workflowId: 'wf-handler-fails',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+
+      await sleepForTesting(10);
+
+      const worker = firstWorker();
+      dispatchToMockWorker(
+        worker,
+        'message',
+        new MessageEvent('message', {
+          data: {
+            type: 'checkpoint',
+            workflowId: 'wf-handler-fails',
+            checkpoint: new ArrayBuffer(0),
+            operationRequest: {
+              type: 'wait-signal',
+              operationId: 'op-wait',
+              signalName: 'llm-resume',
+            },
+          } satisfies WorkerOutboundMessage,
+        }),
+      );
+
+      await sleepForTesting(10);
+
+      expect(mockPool.release).not.toHaveBeenCalled();
+      expect(worker.postMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets a second workflow use a concurrency-one worker while the first workflow is parked', async () => {
+      setup();
+
+      strategy.startWorkflow({
+        workflowId: 'wf-parked',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+
+      await sleepForTesting(10);
+
+      const worker = firstWorker();
+      dispatchToMockWorker(
+        worker,
+        'message',
+        new MessageEvent('message', {
+          data: {
+            type: 'checkpoint',
+            workflowId: 'wf-parked',
+            checkpoint: new ArrayBuffer(0),
+            operationRequest: {
+              type: 'wait-signal',
+              operationId: 'op-wait',
+              signalName: 'llm-resume',
+            },
+          } satisfies WorkerOutboundMessage,
+        }),
+      );
+
+      strategy.startWorkflow({
+        workflowId: 'wf-second',
+        workflowType: 'test',
+        input: 'second',
+        checkpoint: new ArrayBuffer(0),
+      });
+
+      await sleepForTesting(10);
+
+      expect(worker.postMessage).toHaveBeenCalledTimes(2);
+      expect(worker.postMessage.mock.calls[1]?.[0]).toMatchObject({
+        type: 'run',
+        workflowId: 'wf-second',
+        input: 'second',
+      });
+
+      dispatchToMockWorker(
+        worker,
+        'message',
+        new MessageEvent('message', {
+          data: {
+            type: 'completed',
+            workflowId: 'wf-second',
+            result: 'second done',
+          } satisfies WorkerOutboundMessage,
+        }),
+      );
+
+      strategy.resumeWorkflow({
+        workflowId: 'wf-parked',
+        checkpoint: new ArrayBuffer(4),
+        operationResult: { status: 'completed', value: 'resume payload' },
+      });
+
+      await sleepForTesting(10);
+
+      expect(worker.postMessage).toHaveBeenCalledTimes(3);
+      expect(worker.postMessage.mock.calls[2]?.[0]).toMatchObject({
+        type: 'resume',
+        workflowId: 'wf-parked',
+        operationResult: { status: 'completed', value: 'resume payload' },
+      });
+
+      dispatchToMockWorker(
+        worker,
+        'message',
+        new MessageEvent('message', {
+          data: {
+            type: 'completed',
+            workflowId: 'wf-parked',
+            result: 'first done',
+          } satisfies WorkerOutboundMessage,
+        }),
+      );
+
+      expect(
+        messages.filter(
+          (message) => message.type === 'completed' && message.workflowId === 'wf-parked',
+        ),
+      ).toHaveLength(1);
+    });
+
+    it('reacquires the parked worker even when another idle worker is available first', async () => {
+      setup(2);
+
+      strategy.startWorkflow({
+        workflowId: 'wf-parked',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+
+      await sleepForTesting(10);
+
+      const parkedWorker = firstWorker();
+      dispatchToMockWorker(
+        parkedWorker,
+        'message',
+        new MessageEvent('message', {
+          data: {
+            type: 'checkpoint',
+            workflowId: 'wf-parked',
+            checkpoint: new ArrayBuffer(0),
+            operationRequest: {
+              type: 'wait-signal',
+              operationId: 'op-wait',
+              signalName: 'llm-resume',
+            },
+          } satisfies WorkerOutboundMessage,
+        }),
+      );
+
+      strategy.resumeWorkflow({
+        workflowId: 'wf-parked',
+        checkpoint: new ArrayBuffer(4),
+        operationResult: { status: 'completed', value: 'resume payload' },
+      });
+
+      await sleepForTesting(10);
+
+      expect(parkedWorker.postMessage.mock.calls.at(-1)?.[0]).toMatchObject({
+        type: 'resume',
+        workflowId: 'wf-parked',
+      });
+      expect(mockWorkers[1]?.postMessage).not.toHaveBeenCalled();
+    });
+
     it('releases the worker on completed messages', async () => {
       setup();
 
@@ -588,6 +851,56 @@ describe('WorkerExecutionStrategy', () => {
       // Should not throw
       strategy.cancelWorkflow('wf-nonexistent');
     });
+
+    it('cancels a parked workflow and prevents later resume attempts', async () => {
+      setup();
+
+      strategy.startWorkflow({
+        workflowId: 'wf-parked-cancel',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+
+      await sleepForTesting(10);
+
+      const worker = firstWorker();
+      dispatchToMockWorker(
+        worker,
+        'message',
+        new MessageEvent('message', {
+          data: {
+            type: 'checkpoint',
+            workflowId: 'wf-parked-cancel',
+            checkpoint: new ArrayBuffer(0),
+            operationRequest: {
+              type: 'wait-signal',
+              operationId: 'op-wait',
+              signalName: 'llm-resume',
+            },
+          } satisfies WorkerOutboundMessage,
+        }),
+      );
+
+      strategy.cancelWorkflow('wf-parked-cancel');
+      await sleepForTesting(10);
+
+      expect(worker.postMessage.mock.calls.at(-1)?.[0]).toEqual({
+        type: 'cancel',
+        workflowId: 'wf-parked-cancel',
+      });
+
+      strategy.resumeWorkflow({
+        workflowId: 'wf-parked-cancel',
+        checkpoint: new ArrayBuffer(0),
+        operationResult: { status: 'completed', value: null },
+      });
+
+      expect(messages.at(-1)).toMatchObject({
+        type: 'failed',
+        workflowId: 'wf-parked-cancel',
+      });
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -697,6 +1010,50 @@ describe('WorkerExecutionStrategy', () => {
       await strategy[Symbol.asyncDispose]();
 
       expect(poolAsyncDispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears parked workflows during synchronous disposal', async () => {
+      setup();
+      const poolDispose = mock(() => {});
+      mockPool[Symbol.dispose] = poolDispose;
+
+      strategy.startWorkflow({
+        workflowId: 'wf-parked-dispose',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+
+      await sleepForTesting(10);
+
+      const acquireMock = mockPool.acquire as unknown as ReturnType<typeof mock>;
+      const acquireCallsBeforeDispose = acquireMock.mock.calls.length;
+      dispatchToMockWorker(
+        firstWorker(),
+        'message',
+        new MessageEvent('message', {
+          data: {
+            type: 'checkpoint',
+            workflowId: 'wf-parked-dispose',
+            checkpoint: new ArrayBuffer(0),
+            operationRequest: {
+              type: 'wait-signal',
+              operationId: 'op-wait',
+              signalName: 'llm-resume',
+            },
+          } satisfies WorkerOutboundMessage,
+        }),
+      );
+
+      strategy[Symbol.dispose]();
+      strategy.resumeWorkflow({
+        workflowId: 'wf-parked-dispose',
+        checkpoint: new ArrayBuffer(0),
+        operationResult: { status: 'completed', value: null },
+      });
+
+      expect(poolDispose).toHaveBeenCalledTimes(1);
+      expect(mockPool.acquire).toHaveBeenCalledTimes(acquireCallsBeforeDispose);
     });
   });
 });

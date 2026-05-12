@@ -25,18 +25,26 @@ interface WorkerListeners {
 export class WorkerExecutionStrategy implements ExecutionStrategy {
   readonly #pool: WorkerPool;
   readonly #workersByWorkflowId: Map<string, Worker>;
-  readonly #workerListeners: Map<string, WorkerListeners>;
+  readonly #parkedWorkersByWorkflowId: Map<string, Worker>;
+  readonly #activeWorkflowIdByWorker: Map<Worker, string>;
+  readonly #workerListeners: Map<Worker, WorkerListeners>;
   readonly #broadcastChannel: BroadcastChannel | null;
   readonly #broadcastListener: ((event: MessageEvent) => void) | null;
+  readonly #resumedDuringCheckpointHandling: Set<string>;
   #messageHandler: ((message: WorkerOutboundMessage) => void | Promise<void>) | null;
+  #disposed: boolean;
 
   constructor(pool: WorkerPool, options?: { broadcastEvents?: boolean }) {
     this.#pool = pool;
     this.#workersByWorkflowId = new Map();
+    this.#parkedWorkersByWorkflowId = new Map();
+    this.#activeWorkflowIdByWorker = new Map();
     this.#workerListeners = new Map();
+    this.#resumedDuringCheckpointHandling = new Set();
     this.#messageHandler = null;
     this.#broadcastChannel = null;
     this.#broadcastListener = null;
+    this.#disposed = false;
 
     if (options?.broadcastEvents) {
       try {
@@ -105,15 +113,35 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     operationResult: OperationOutcome;
   }): void {
     const worker = this.#workersByWorkflowId.get(parameters.workflowId);
-    if (!worker) {
+    if (worker) {
+      this.#resumedDuringCheckpointHandling.add(parameters.workflowId);
+      this.#postResumeMessage(worker, parameters);
+      return;
+    }
+
+    const parkedWorker = this.#parkedWorkersByWorkflowId.get(parameters.workflowId);
+    if (parkedWorker) {
+      void this.#resumeParkedWorkflow(parameters, parkedWorker);
+      return;
+    }
+
+    if (!this.#disposed) {
       this.#emit({
         type: 'failed',
         workflowId: parameters.workflowId,
         error: `No worker assigned for workflow: ${parameters.workflowId}`,
       });
-      return;
     }
+  }
 
+  #postResumeMessage(
+    worker: Worker,
+    parameters: {
+      workflowId: string;
+      checkpoint: ArrayBuffer;
+      operationResult: OperationOutcome;
+    },
+  ): void {
     const message: WorkerInboundMessage = {
       type: 'resume',
       workflowId: parameters.workflowId,
@@ -130,15 +158,22 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
 
   cancelWorkflow(workflowId: string): void {
     const worker = this.#workersByWorkflowId.get(workflowId);
-    if (!worker) return;
+    if (worker) {
+      const message: WorkerInboundMessage = {
+        type: 'cancel',
+        workflowId,
+      };
 
-    const message: WorkerInboundMessage = {
-      type: 'cancel',
-      workflowId,
-    };
+      worker.postMessage(message);
+      this.#releaseActiveWorker(workflowId);
+      return;
+    }
 
-    worker.postMessage(message);
-    this.#releaseWorker(workflowId);
+    const parkedWorker = this.#parkedWorkersByWorkflowId.get(workflowId);
+    if (!parkedWorker) return;
+
+    this.#parkedWorkersByWorkflowId.delete(workflowId);
+    void this.#cancelParkedWorkflow(workflowId, parkedWorker);
   }
 
   // -------------------------------------------------------------------------
@@ -157,6 +192,8 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
 
   /** Shared cleanup for both sync and async disposal paths. */
   #teardown(): void {
+    this.#disposed = true;
+
     if (this.#broadcastChannel) {
       if (this.#broadcastListener) {
         this.#broadcastChannel.removeEventListener('message', this.#broadcastListener);
@@ -167,9 +204,13 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     // Release all active workers back to the pool before disposing
     const activeWorkflowIds = Array.from(this.#workersByWorkflowId.keys());
     for (const workflowId of activeWorkflowIds) {
-      this.#releaseWorker(workflowId);
+      this.#releaseActiveWorker(workflowId);
     }
 
+    this.#parkedWorkersByWorkflowId.clear();
+    this.#activeWorkflowIdByWorker.clear();
+    this.#workerListeners.clear();
+    this.#resumedDuringCheckpointHandling.clear();
     this.#messageHandler = null;
   }
 
@@ -184,20 +225,9 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     try {
       const worker = await this.#pool.acquire();
       this.#workersByWorkflowId.set(workflowId, worker);
+      this.#activeWorkflowIdByWorker.set(worker, workflowId);
 
-      // Wire up message handling for this worker using addEventListener
-      const listeners: WorkerListeners = {
-        message: (event: MessageEvent<WorkerOutboundMessage>) => {
-          this.#handleWorkerMessage(workflowId, event.data);
-        },
-        error: (errorEvent: ErrorEvent) => {
-          this.#handleWorkerError(workflowId, errorEvent);
-        },
-      };
-
-      this.#workerListeners.set(workflowId, listeners);
-      worker.addEventListener('message', listeners.message as EventListener);
-      worker.addEventListener('error', listeners.error as EventListener);
+      this.#attachWorkerListeners(worker);
 
       // Send the run message with checkpoint as Transferable.
       // Extract the underlying ArrayBuffer since only ArrayBuffer objects
@@ -216,54 +246,201 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     }
   }
 
-  #handleWorkerMessage(workflowId: string, message: WorkerOutboundMessage): void {
-    // Forward the message to the engine
-    this.#emit(message);
+  async #resumeParkedWorkflow(
+    parameters: {
+      workflowId: string;
+      checkpoint: ArrayBuffer;
+      operationResult: OperationOutcome;
+    },
+    parkedWorker: Worker,
+  ): Promise<void> {
+    try {
+      const worker = await this.#pool.acquireSpecificWorker(parkedWorker);
 
-    // On terminal messages, release the worker back to the pool
-    if (message.type === 'completed' || message.type === 'failed') {
-      this.#releaseWorker(workflowId);
+      if (this.#disposed || this.#parkedWorkersByWorkflowId.get(parameters.workflowId) !== worker) {
+        this.#pool.release(worker);
+        return;
+      }
+
+      this.#parkedWorkersByWorkflowId.delete(parameters.workflowId);
+      this.#workersByWorkflowId.set(parameters.workflowId, worker);
+      this.#activeWorkflowIdByWorker.set(worker, parameters.workflowId);
+      this.#attachWorkerListeners(worker);
+      this.#postResumeMessage(worker, parameters);
+    } catch (error) {
+      if (!this.#disposed) {
+        this.#emit({
+          type: 'failed',
+          workflowId: parameters.workflowId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
-  #handleWorkerError(workflowId: string, errorEvent: ErrorEvent): void {
-    const worker = this.#workersByWorkflowId.get(workflowId);
-    if (!worker) return; // Already cleaned up by a racing completion
+  async #cancelParkedWorkflow(workflowId: string, parkedWorker: Worker): Promise<void> {
+    try {
+      const worker = await this.#pool.acquireSpecificWorker(parkedWorker);
 
-    this.#emit({
-      type: 'failed',
-      workflowId,
-      error: `Worker crashed: ${errorEvent.message ?? 'unknown error'}`,
-    });
+      worker.postMessage({ type: 'cancel', workflowId } satisfies WorkerInboundMessage);
+      this.#detachWorkerListenersIfIdle(worker);
+      this.#pool.release(worker);
+    } catch {
+      // Cancellation is best-effort once the engine-side parked marker has
+      // been cleared. A disposed or crashed pool must not keep the workflow
+      // mapped as parked.
+    }
+  }
 
-    // Remove from maps first to prevent racing with #handleWorkerMessage
-    this.#workersByWorkflowId.delete(workflowId);
-    const listeners = this.#workerListeners.get(workflowId);
+  async #handleWorkerMessage(worker: Worker, message: WorkerOutboundMessage): Promise<void> {
+    // Forward the message to the engine
+    this.#resumedDuringCheckpointHandling.delete(message.workflowId);
+    let handlerFailed = false;
+    try {
+      const emitResult = this.#messageHandler?.(message);
+      if (emitResult instanceof Promise) {
+        await emitResult;
+      }
+    } catch {
+      handlerFailed = true;
+    }
+
+    // On terminal messages, release the worker back to the pool
+    if (message.type === 'completed' || message.type === 'failed') {
+      this.#parkedWorkersByWorkflowId.delete(message.workflowId);
+      this.#releaseActiveWorker(message.workflowId);
+      this.#detachWorkerListenersIfIdle(worker);
+      return;
+    }
+
+    if (handlerFailed) {
+      return;
+    }
+
+    if (
+      message.type === 'checkpoint' &&
+      this.#isParkableWaitSignalCheckpoint(message) &&
+      !this.#resumedDuringCheckpointHandling.has(message.workflowId)
+    ) {
+      this.#parkActiveWorkflow(message.workflowId, worker);
+    }
+  }
+
+  #handleWorkerError(worker: Worker, errorEvent: ErrorEvent): void {
+    const workflowIds = this.#workflowIdsForWorker(worker);
+    if (workflowIds.length === 0) return; // Already cleaned up by a racing completion
+
+    for (const workflowId of workflowIds) {
+      this.#emit({
+        type: 'failed',
+        workflowId,
+        error: `Worker crashed: ${errorEvent.message ?? 'unknown error'}`,
+      });
+
+      this.#workersByWorkflowId.delete(workflowId);
+      this.#parkedWorkersByWorkflowId.delete(workflowId);
+    }
+
+    this.#activeWorkflowIdByWorker.delete(worker);
+    const listeners = this.#workerListeners.get(worker);
     if (listeners) {
       worker.removeEventListener('message', listeners.message as EventListener);
       worker.removeEventListener('error', listeners.error as EventListener);
-      this.#workerListeners.delete(workflowId);
+      this.#workerListeners.delete(worker);
     }
 
     // Terminate the crashed worker (do not return to pool)
     worker.terminate();
   }
 
-  #releaseWorker(workflowId: string): void {
+  #releaseActiveWorker(workflowId: string): void {
     const worker = this.#workersByWorkflowId.get(workflowId);
     if (worker) {
       this.#workersByWorkflowId.delete(workflowId);
+      this.#activeWorkflowIdByWorker.delete(worker);
 
-      // Remove event listeners before returning to pool
-      const listeners = this.#workerListeners.get(workflowId);
-      if (listeners) {
-        worker.removeEventListener('message', listeners.message as EventListener);
-        worker.removeEventListener('error', listeners.error as EventListener);
-        this.#workerListeners.delete(workflowId);
-      }
+      this.#detachWorkerListenersIfIdle(worker);
 
       this.#pool.release(worker);
     }
+  }
+
+  #parkActiveWorkflow(workflowId: string, worker: Worker): void {
+    if (this.#workersByWorkflowId.get(workflowId) !== worker) {
+      return;
+    }
+
+    this.#workersByWorkflowId.delete(workflowId);
+    this.#activeWorkflowIdByWorker.delete(worker);
+    this.#parkedWorkersByWorkflowId.set(workflowId, worker);
+    this.#pool.release(worker);
+  }
+
+  #attachWorkerListeners(worker: Worker): void {
+    if (this.#workerListeners.has(worker)) {
+      return;
+    }
+
+    const listeners: WorkerListeners = {
+      message: (event: MessageEvent<WorkerOutboundMessage>) => {
+        void this.#handleWorkerMessage(worker, event.data).catch(() => {});
+      },
+      error: (errorEvent: ErrorEvent) => {
+        this.#handleWorkerError(worker, errorEvent);
+      },
+    };
+
+    this.#workerListeners.set(worker, listeners);
+    worker.addEventListener('message', listeners.message as EventListener);
+    worker.addEventListener('error', listeners.error as EventListener);
+  }
+
+  #detachWorkerListenersIfIdle(worker: Worker): void {
+    if (this.#activeWorkflowIdByWorker.has(worker)) {
+      return;
+    }
+    if (this.#workflowHasParkedWorker(worker)) {
+      return;
+    }
+
+    const listeners = this.#workerListeners.get(worker);
+    if (!listeners) {
+      return;
+    }
+
+    worker.removeEventListener('message', listeners.message as EventListener);
+    worker.removeEventListener('error', listeners.error as EventListener);
+    this.#workerListeners.delete(worker);
+  }
+
+  #workflowHasParkedWorker(worker: Worker): boolean {
+    for (const parkedWorker of this.#parkedWorkersByWorkflowId.values()) {
+      if (parkedWorker === worker) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  #workflowIdsForWorker(worker: Worker): string[] {
+    const workflowIds: string[] = [];
+    const activeWorkflowId = this.#activeWorkflowIdByWorker.get(worker);
+    if (activeWorkflowId) {
+      workflowIds.push(activeWorkflowId);
+    }
+    for (const [workflowId, parkedWorker] of this.#parkedWorkersByWorkflowId) {
+      if (parkedWorker === worker) {
+        workflowIds.push(workflowId);
+      }
+    }
+    return workflowIds;
+  }
+
+  #isParkableWaitSignalCheckpoint(
+    message: Extract<WorkerOutboundMessage, { type: 'checkpoint' }>,
+  ): boolean {
+    const operationRequest = message.operationRequest as Record<string, unknown>;
+    return operationRequest['type'] === 'wait-signal' || operationRequest['kind'] === 'signal-wait';
   }
 
   // -------------------------------------------------------------------------
@@ -276,6 +453,12 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
       const worker = this.#workersByWorkflowId.get(data['workflowId']);
       if (worker) {
         worker.postMessage(data);
+        return;
+      }
+
+      const parkedWorker = this.#parkedWorkersByWorkflowId.get(data['workflowId']);
+      if (parkedWorker) {
+        parkedWorker.postMessage(data);
       }
     }
   }

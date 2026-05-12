@@ -54,6 +54,7 @@ export class WorkerPool implements Disposable, AsyncDisposable {
   #workers: Set<Worker>;
   #available: Worker[];
   #queue: Array<{ resolve: (worker: Worker) => void }>;
+  #specificWorkerQueue: Map<Worker, Array<{ resolve: (worker: Worker) => void }>>;
   #concurrency: number;
   #workerUrl: string | URL;
   #smol: boolean;
@@ -64,6 +65,7 @@ export class WorkerPool implements Disposable, AsyncDisposable {
     this.#workers = new Set();
     this.#available = [];
     this.#queue = [];
+    this.#specificWorkerQueue = new Map();
     this.#concurrency = options.concurrency;
     this.#workerUrl = options.workerUrl;
     this.#smol = options.smol ?? false;
@@ -95,11 +97,50 @@ export class WorkerPool implements Disposable, AsyncDisposable {
     });
   }
 
+  /**
+   * Acquire a specific worker once it is released back to the pool.
+   *
+   * This is intentionally narrower than `acquire()`: it preserves worker-local
+   * generator state for parked workflow execution without reserving unrelated
+   * idle workers while the target worker is still busy.
+   */
+  async acquireSpecificWorker(worker: Worker): Promise<Worker> {
+    if (this.#disposed) {
+      throw new Error('WorkerPool has been disposed');
+    }
+
+    if (!this.#workers.has(worker)) {
+      throw new Error('Worker does not belong to this WorkerPool');
+    }
+
+    const availableIndex = this.#available.indexOf(worker);
+    if (availableIndex >= 0) {
+      this.#available.splice(availableIndex, 1);
+      return worker;
+    }
+
+    return new Promise<Worker>((resolve) => {
+      const waiters = this.#specificWorkerQueue.get(worker) ?? [];
+      waiters.push({ resolve });
+      this.#specificWorkerQueue.set(worker, waiters);
+    });
+  }
+
   /** Release a worker back to the pool. */
   release(worker: Worker): void {
     // During graceful shutdown, accept releases so we can track when all
     // in-flight workers have been returned, then terminate.
     if (this.#disposed && !this.#asyncDisposeResolve) {
+      return;
+    }
+
+    const specificPending = this.#specificWorkerQueue.get(worker);
+    if (specificPending && specificPending.length > 0) {
+      const pending = specificPending.shift()!;
+      if (specificPending.length === 0) {
+        this.#specificWorkerQueue.delete(worker);
+      }
+      pending.resolve(worker);
       return;
     }
 
@@ -153,6 +194,7 @@ export class WorkerPool implements Disposable, AsyncDisposable {
 
     // Drain any pending acquire requests so they don't hold references.
     this.#queue.length = 0;
+    this.#specificWorkerQueue.clear();
 
     // If all workers are available (none in-flight), terminate immediately.
     if (this.#available.length === this.#workers.size) {
@@ -185,6 +227,8 @@ export class WorkerPool implements Disposable, AsyncDisposable {
     }
     this.#workers.clear();
     this.#available.length = 0;
+    this.#queue.length = 0;
+    this.#specificWorkerQueue.clear();
   }
 
   #checkAsyncDispose(): void {
