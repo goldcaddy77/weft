@@ -38,6 +38,15 @@ describe('textValueStore (MemoryStorage)', () => {
     expect(await store.get('emoji')).toBe('hello 🌍 🇺🇸 👨‍👩‍👧');
   });
 
+  it('round-trips a leading BOM (U+FEFF) without dropping it', async () => {
+    await using base = new MemoryStorage();
+    const store = textValueStore(base);
+
+    const withBom = '﻿hello';
+    await store.set('bom', withBom);
+    expect(await store.get('bom')).toBe(withBom);
+  });
+
   it('round-trips the empty string distinguishably from null', async () => {
     await using base = new MemoryStorage();
     const store = textValueStore(base);

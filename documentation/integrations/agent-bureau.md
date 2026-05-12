@@ -42,10 +42,13 @@ In practice this only matters when the same key namespace is shared between code
 `list(prefix)` materializes every matching key into a single array. It's exactly what Agent Bureau expects, and fine for the small, bounded namespaces it uses (sessions, identities, skill manifests, scheduler state). For very large prefixes, prefer the underlying Weft API:
 
 ```ts
+import { MemoryStorage } from 'weft';
 import { storageKeys } from 'weft/storage/interface';
 
+await using weftStorage = new MemoryStorage();
 for await (const key of storageKeys(weftStorage, 'big-prefix:')) {
   // streaming
+  void key;
 }
 ```
 
