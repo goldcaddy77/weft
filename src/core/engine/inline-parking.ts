@@ -200,6 +200,20 @@ export async function handleStrategyMessage(
         break;
       }
 
+      if (operation.type === 'wait-signal' && internals.inlineStrategy === null) {
+        void callbacks.processOperation(message.workflowId, operation).catch((error: unknown) => {
+          const failedError = error instanceof Error ? error : new Error(String(error));
+          return failWorkflowFromTermination(
+            internals,
+            message.workflowId,
+            failedError,
+            callbacks.createTerminationCallbacks(),
+            'system',
+          );
+        });
+        break;
+      }
+
       // Translate the operation request: worker protocol uses `kind` while the
       // engine uses `type`. Inline strategy already emits ContextOperationRequest.
       await callbacks.processOperation(message.workflowId, operation);

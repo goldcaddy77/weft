@@ -207,6 +207,7 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
       this.#releaseActiveWorker(workflowId);
     }
 
+    this.#detachAllWorkerListeners();
     this.#parkedWorkersByWorkflowId.clear();
     this.#activeWorkflowIdByWorker.clear();
     this.#workerListeners.clear();
@@ -349,8 +350,9 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
       this.#workerListeners.delete(worker);
     }
 
-    // Terminate the crashed worker (do not return to pool)
-    worker.terminate();
+    // Discard the crashed worker so the pool cannot hand the terminated
+    // instance out to another workflow.
+    this.#pool.discard(worker);
   }
 
   #releaseActiveWorker(workflowId: string): void {
@@ -413,6 +415,13 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     this.#workerListeners.delete(worker);
   }
 
+  #detachAllWorkerListeners(): void {
+    for (const [worker, listeners] of this.#workerListeners) {
+      worker.removeEventListener('message', listeners.message as EventListener);
+      worker.removeEventListener('error', listeners.error as EventListener);
+    }
+  }
+
   #workflowHasParkedWorker(worker: Worker): boolean {
     for (const parkedWorker of this.#parkedWorkersByWorkflowId.values()) {
       if (parkedWorker === worker) {
@@ -451,14 +460,9 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     // Forward signal-related messages to the appropriate worker
     if (data['type'] === 'signal:received' && typeof data['workflowId'] === 'string') {
       const worker = this.#workersByWorkflowId.get(data['workflowId']);
-      if (worker) {
-        worker.postMessage(data);
-        return;
-      }
-
-      const parkedWorker = this.#parkedWorkersByWorkflowId.get(data['workflowId']);
-      if (parkedWorker) {
-        parkedWorker.postMessage(data);
+      const targetWorker = worker ?? this.#parkedWorkersByWorkflowId.get(data['workflowId']);
+      if (targetWorker) {
+        targetWorker.postMessage(data);
       }
     }
   }

@@ -219,13 +219,16 @@ describe('WorkerPool', () => {
       pool = new WorkerPool({ concurrency: 1, workerUrl });
 
       const worker = await pool.acquire();
-      pool.acquire(); // queued
-      pool.acquire(); // queued
+      const firstQueuedAcquire = pool.acquire();
+      const secondQueuedAcquire = pool.acquire();
 
       expect(pool.pendingCount).toBe(2);
 
-      // Clean up: release to drain the queue
       pool.release(worker);
+      const firstQueuedWorker = await firstQueuedAcquire;
+      pool.release(firstQueuedWorker);
+      const secondQueuedWorker = await secondQueuedAcquire;
+      pool.release(secondQueuedWorker);
     });
   });
 
@@ -317,10 +320,12 @@ describe('WorkerPool', () => {
         return worker;
       });
       const genericAcquire = pool.acquire();
+      expect(pool.pendingCount).toBe(2);
 
       pool.release(otherWorker);
       const genericWorker = await genericAcquire;
       expect(genericWorker).toBe(otherWorker);
+      expect(pool.pendingCount).toBe(1);
 
       await sleepForTesting(0);
       expect(specificAcquireResolved).toBe(false);
@@ -351,6 +356,74 @@ describe('WorkerPool', () => {
       } finally {
         otherPool[Symbol.dispose]();
       }
+    });
+
+    it('rejects pending specific requests when the pool is disposed', async () => {
+      pool = new WorkerPool({ concurrency: 1, workerUrl });
+
+      const worker = await pool.acquire();
+      const specificAcquire = pool.acquireSpecificWorker(worker);
+      expect(pool.pendingCount).toBe(1);
+
+      pool[Symbol.dispose]();
+
+      await expect(specificAcquire).rejects.toThrow('WorkerPool has been disposed');
+      expect(pool.pendingCount).toBe(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // discard
+  // ---------------------------------------------------------------------------
+
+  describe('discard', () => {
+    it('removes an available worker so acquire creates a replacement', async () => {
+      pool = new WorkerPool({ concurrency: 1, workerUrl });
+
+      const worker = await pool.acquire();
+      pool.release(worker);
+      expect(pool.availableCount).toBe(1);
+      expect(pool.totalCount).toBe(1);
+
+      pool.discard(worker);
+      expect(pool.availableCount).toBe(0);
+      expect(pool.totalCount).toBe(0);
+
+      const replacementWorker = await pool.acquire();
+      expect(replacementWorker).not.toBe(worker);
+      expect(pool.totalCount).toBe(1);
+
+      pool.release(replacementWorker);
+    });
+
+    it('rejects pending requests for the discarded worker', async () => {
+      pool = new WorkerPool({ concurrency: 1, workerUrl });
+
+      const worker = await pool.acquire();
+      const specificAcquire = pool.acquireSpecificWorker(worker);
+      expect(pool.pendingCount).toBe(1);
+
+      pool.discard(worker);
+
+      await expect(specificAcquire).rejects.toThrow('Worker was discarded from this WorkerPool');
+      expect(pool.pendingCount).toBe(0);
+    });
+
+    it('creates a replacement for generic waiters after discarding an in-use worker', async () => {
+      pool = new WorkerPool({ concurrency: 1, workerUrl });
+
+      const worker = await pool.acquire();
+      const genericAcquire = pool.acquire();
+      expect(pool.pendingCount).toBe(1);
+
+      pool.discard(worker);
+
+      const replacementWorker = await genericAcquire;
+      expect(replacementWorker).not.toBe(worker);
+      expect(pool.totalCount).toBe(1);
+      expect(pool.pendingCount).toBe(0);
+
+      pool.release(replacementWorker);
     });
   });
 

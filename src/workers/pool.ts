@@ -25,6 +25,11 @@ export interface WorkerPoolOptions {
   smol?: boolean;
 }
 
+type PendingWorkerRequest = {
+  resolve: (worker: Worker) => void;
+  reject: (error: Error) => void;
+};
+
 /**
  * Bounded pool of Web Workers with acquire/release lifecycle management.
  *
@@ -53,8 +58,8 @@ export interface WorkerPoolOptions {
 export class WorkerPool implements Disposable, AsyncDisposable {
   #workers: Set<Worker>;
   #available: Worker[];
-  #queue: Array<{ resolve: (worker: Worker) => void }>;
-  #specificWorkerQueue: Map<Worker, Array<{ resolve: (worker: Worker) => void }>>;
+  #queue: PendingWorkerRequest[];
+  #specificWorkerQueue: Map<Worker, PendingWorkerRequest[]>;
   #concurrency: number;
   #workerUrl: string | URL;
   #smol: boolean;
@@ -92,8 +97,8 @@ export class WorkerPool implements Disposable, AsyncDisposable {
     }
 
     // Otherwise, queue the request and wait.
-    return new Promise<Worker>((resolve) => {
-      this.#queue.push({ resolve });
+    return new Promise<Worker>((resolve, reject) => {
+      this.#queue.push({ resolve, reject });
     });
   }
 
@@ -119,11 +124,32 @@ export class WorkerPool implements Disposable, AsyncDisposable {
       return worker;
     }
 
-    return new Promise<Worker>((resolve) => {
+    return new Promise<Worker>((resolve, reject) => {
       const waiters = this.#specificWorkerQueue.get(worker) ?? [];
-      waiters.push({ resolve });
+      waiters.push({ resolve, reject });
       this.#specificWorkerQueue.set(worker, waiters);
     });
+  }
+
+  /**
+   * Remove a failed worker from the pool without returning it to the available
+   * set. Pending requests for that exact worker fail; generic waiters may get
+   * a replacement worker if the pool still has capacity.
+   */
+  discard(worker: Worker): void {
+    if (!this.#workers.has(worker)) {
+      return;
+    }
+
+    this.#workers.delete(worker);
+    this.#removeAvailableWorker(worker);
+    this.#rejectSpecificWorkerWaiters(
+      worker,
+      new Error('Worker was discarded from this WorkerPool'),
+    );
+    worker.terminate();
+    this.#drainGenericQueue();
+    this.#checkAsyncDispose();
   }
 
   /** Release a worker back to the pool. */
@@ -153,6 +179,7 @@ export class WorkerPool implements Disposable, AsyncDisposable {
 
     // Return the worker to the available pool.
     this.#available.push(worker);
+    this.#drainGenericQueue();
 
     // If we're waiting for async dispose and all workers are now available,
     // resolve the dispose promise.
@@ -171,7 +198,11 @@ export class WorkerPool implements Disposable, AsyncDisposable {
 
   /** Get the number of pending acquire requests. */
   get pendingCount(): number {
-    return this.#queue.length;
+    let specificPendingCount = 0;
+    for (const waiters of this.#specificWorkerQueue.values()) {
+      specificPendingCount += waiters.length;
+    }
+    return this.#queue.length + specificPendingCount;
   }
 
   /** Immediate termination. */
@@ -192,9 +223,7 @@ export class WorkerPool implements Disposable, AsyncDisposable {
 
     this.#disposed = true;
 
-    // Drain any pending acquire requests so they don't hold references.
-    this.#queue.length = 0;
-    this.#specificWorkerQueue.clear();
+    this.#rejectAllWaiters(new Error('WorkerPool has been disposed'));
 
     // If all workers are available (none in-flight), terminate immediately.
     if (this.#available.length === this.#workers.size) {
@@ -222,6 +251,7 @@ export class WorkerPool implements Disposable, AsyncDisposable {
   }
 
   #terminateAll(): void {
+    this.#rejectAllWaiters(new Error('WorkerPool has been disposed'));
     for (const worker of this.#workers) {
       worker.terminate();
     }
@@ -229,6 +259,60 @@ export class WorkerPool implements Disposable, AsyncDisposable {
     this.#available.length = 0;
     this.#queue.length = 0;
     this.#specificWorkerQueue.clear();
+  }
+
+  #removeAvailableWorker(worker: Worker): void {
+    const availableIndex = this.#available.indexOf(worker);
+    if (availableIndex >= 0) {
+      this.#available.splice(availableIndex, 1);
+    }
+  }
+
+  #rejectSpecificWorkerWaiters(worker: Worker, error: Error): void {
+    const waiters = this.#specificWorkerQueue.get(worker);
+    if (!waiters) {
+      return;
+    }
+
+    this.#specificWorkerQueue.delete(worker);
+    for (const waiter of waiters) {
+      waiter.reject(error);
+    }
+  }
+
+  #rejectAllWaiters(error: Error): void {
+    const genericWaiters = this.#queue.splice(0);
+    for (const waiter of genericWaiters) {
+      waiter.reject(error);
+    }
+
+    for (const waiters of this.#specificWorkerQueue.values()) {
+      for (const waiter of waiters) {
+        waiter.reject(error);
+      }
+    }
+    this.#specificWorkerQueue.clear();
+  }
+
+  #drainGenericQueue(): void {
+    if (this.#disposed) {
+      return;
+    }
+
+    while (this.#queue.length > 0) {
+      const available = this.#available.shift();
+      if (available) {
+        this.#queue.shift()?.resolve(available);
+        continue;
+      }
+
+      if (this.#workers.size < this.#concurrency) {
+        this.#queue.shift()?.resolve(this.#createWorker());
+        continue;
+      }
+
+      return;
+    }
   }
 
   #checkAsyncDispose(): void {

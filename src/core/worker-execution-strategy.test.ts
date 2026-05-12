@@ -104,6 +104,15 @@ function createMockPool(workers: MockWorker[]): WorkerPool {
       }
       available.push(mockWorker);
     }),
+    discard: mock((worker: Worker) => {
+      const mockWorker = worker as unknown as MockWorker;
+      const availableIndex = available.indexOf(mockWorker);
+      if (availableIndex >= 0) {
+        available.splice(availableIndex, 1);
+      }
+      specificPending.delete(mockWorker);
+      mockWorker.terminate();
+    }),
     get availableCount() {
       return available.length;
     },
@@ -316,6 +325,82 @@ describe('WorkerExecutionStrategy', () => {
         expect(worker.postMessage.mock.calls.at(-1)?.[0]).toEqual({
           type: 'signal:received',
           workflowId: 'wf-broadcast',
+          signalName: 'ready',
+        });
+      } finally {
+        globalThis.BroadcastChannel = originalBroadcastChannel;
+      }
+    });
+
+    it('forwards signal:received messages from BroadcastChannel to a parked worker', async () => {
+      const originalBroadcastChannel = globalThis.BroadcastChannel;
+      let broadcastListener: ((event: MessageEvent) => void) | undefined;
+
+      class MockBroadcastChannel {
+        addEventListener(_type: string, listener: (event: MessageEvent) => void): void {
+          broadcastListener = listener;
+        }
+
+        removeEventListener(): void {}
+
+        close(): void {}
+      }
+
+      globalThis.BroadcastChannel = MockBroadcastChannel as unknown as typeof BroadcastChannel;
+
+      try {
+        setup();
+        strategy[Symbol.dispose]();
+        strategy = new WorkerExecutionStrategy(mockPool, { broadcastEvents: true });
+        messages = [];
+        strategy.onMessage((message) => {
+          messages.push(message);
+        });
+
+        strategy.startWorkflow({
+          workflowId: 'wf-parked-broadcast',
+          workflowType: 'test',
+          input: null,
+          checkpoint: new ArrayBuffer(0),
+        });
+
+        await sleepForTesting(10);
+
+        const worker = firstWorker();
+        dispatchToMockWorker(
+          worker,
+          'message',
+          new MessageEvent('message', {
+            data: {
+              type: 'checkpoint',
+              workflowId: 'wf-parked-broadcast',
+              checkpoint: new ArrayBuffer(0),
+              operationRequest: {
+                type: 'wait-signal',
+                operationId: 'op-wait',
+                signalName: 'ready',
+              },
+            } satisfies WorkerOutboundMessage,
+          }),
+        );
+
+        const callsBefore = worker.postMessage.mock.calls.length;
+        expect(broadcastListener).toBeDefined();
+
+        broadcastListener!(
+          new MessageEvent('message', {
+            data: {
+              type: 'signal:received',
+              workflowId: 'wf-parked-broadcast',
+              signalName: 'ready',
+            },
+          }),
+        );
+
+        expect(worker.postMessage.mock.calls.length).toBe(callsBefore + 1);
+        expect(worker.postMessage.mock.calls.at(-1)?.[0]).toEqual({
+          type: 'signal:received',
+          workflowId: 'wf-parked-broadcast',
           signalName: 'ready',
         });
       } finally {
@@ -984,6 +1069,7 @@ describe('WorkerExecutionStrategy', () => {
 
       // Worker should NOT be released back to pool (it crashed)
       expect(mockPool.release).not.toHaveBeenCalled();
+      expect(mockPool.discard).toHaveBeenCalledWith(worker);
     });
   });
 

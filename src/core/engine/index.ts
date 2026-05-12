@@ -1297,6 +1297,11 @@ export class Engine<
     internals.alertManager?.[Symbol.dispose]();
     internals.alertManager = null;
     internals.abortController.abort();
+    for (const resolveSignalWaiter of internals.signalWaiters.values()) {
+      resolveSignalWaiter();
+    }
+    internals.signalWaiters.clear();
+    internals.signalWaitersByWorkflow.clear();
     disposeQueuedInlineWorkflowStarts(internals);
     internals.scheduler[Symbol.dispose]();
     internals.strategy[Symbol.dispose]();
