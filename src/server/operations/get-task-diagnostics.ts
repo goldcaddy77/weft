@@ -37,6 +37,7 @@ const DEFAULT_STALE_HEARTBEAT_AFTER_MS = 60_000;
 const DEFAULT_RETRY_STORM_MINIMUM_ATTEMPTS = 3;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
+const RESOLVED_HISTORY_SCAN_LIMIT = 1_000;
 
 const taskDiagnosticKindSchema = z.enum([
   'stuck-queued',
@@ -231,11 +232,11 @@ async function* scanResolvedRecords(
     return;
   }
 
-  // Resolved task records are historical and can grow without bound. Unlike
-  // queued and inflight records, they are not active work, so diagnostics only
-  // samples a caller-bounded window for historical retry-storm evidence.
+  // Resolved task records are historical and can grow without bound. Scan a
+  // fixed recent-history window rather than coupling that window to the result
+  // item limit, because filters are applied after storage reads.
   for await (const [, value] of engine.storage.scan('op:resolved:', {
-    limit: input.limit,
+    limit: RESOLVED_HISTORY_SCAN_LIMIT,
     reverse: true,
   })) {
     const decoded = decode(value);

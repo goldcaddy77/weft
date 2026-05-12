@@ -241,7 +241,7 @@ export async function readInflightRecord(
   return isInflightRecord(decoded) ? decoded : null;
 }
 
-export function normalizeQueuedRecordLifecycle(
+function normalizeQueuedRecordLifecycle(
   record: QueuedRecord,
   previous?: InflightRecord | null,
 ): QueuedRecord {
@@ -256,7 +256,7 @@ export function normalizeQueuedRecordLifecycle(
   return normalized;
 }
 
-export function normalizeInflightRecordLifecycle(
+function normalizeInflightRecordLifecycle(
   record: InflightRecord,
   previous?: QueuedRecord | null,
   now: number = Date.now(),

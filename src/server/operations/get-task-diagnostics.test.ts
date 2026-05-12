@@ -223,15 +223,15 @@ describe('weft.tasks.diagnostics', () => {
     expect(diagnostics.limit).toBe(2);
   });
 
-  it('bounds resolved history scans to the requested diagnostic limit', async () => {
+  it('bounds resolved history scans independently from the result item limit', async () => {
     const storage = new ScanCountingStorage();
     const engine = createEngine(storage);
     const registry = new WorkerRegistry();
     const taskQueue = new TaskQueue();
 
-    for (let index = 0; index < 5; index += 1) {
+    for (let index = 0; index < 1_005; index += 1) {
       const record: ResolvedRecord = {
-        operationId: `resolved-retry-${index}`,
+        operationId: `resolved-retry-${String(index).padStart(4, '0')}`,
         workflowId: 'workflow-history',
         activityName: 'charge',
         queue: 'default',
@@ -257,9 +257,67 @@ describe('weft.tasks.diagnostics', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected diagnostics result');
     const diagnostics = result.value as GetTaskDiagnosticsOutput;
-    expect(storage.scannedEntryCount('op:resolved:')).toBe(2);
-    expect(diagnostics.summary.retryStorms).toBe(2);
+    expect(storage.scannedEntryCount('op:resolved:')).toBe(1_000);
+    expect(diagnostics.summary.retryStorms).toBe(1_000);
     expect(diagnostics.items).toHaveLength(2);
+  });
+
+  it('counts filtered resolved retry storms beyond the returned item limit', async () => {
+    const storage = new ScanCountingStorage();
+    const engine = createEngine(storage);
+    const registry = new WorkerRegistry();
+    const taskQueue = new TaskQueue();
+
+    for (let index = 0; index < 3; index += 1) {
+      const record: ResolvedRecord = {
+        operationId: `z-unrelated-${index}`,
+        workflowId: 'other-workflow',
+        activityName: 'charge',
+        queue: 'default',
+        status: 'failed',
+        resolvedAt: 9_000 + index,
+        retryCount: 3,
+        requeueCount: 3,
+        resolutionReason: 'max-attempts-exceeded',
+      };
+      await storage.put(KEYS.operationResolved(record.operationId), encode(record));
+    }
+
+    for (let index = 0; index < 2; index += 1) {
+      const record: ResolvedRecord = {
+        operationId: `a-matching-${index}`,
+        workflowId: 'target-workflow',
+        activityName: 'charge',
+        queue: 'default',
+        status: 'failed',
+        resolvedAt: 8_000 + index,
+        retryCount: 3,
+        requeueCount: 3,
+        resolutionReason: 'max-attempts-exceeded',
+      };
+      await storage.put(KEYS.operationResolved(record.operationId), encode(record));
+    }
+
+    const result = await runDiagnostics({
+      engine,
+      registry,
+      taskQueue,
+      input: {
+        workflowId: 'target-workflow',
+        retryStormMinimumAttempts: 3,
+        limit: 2,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected diagnostics result');
+    const diagnostics = result.value as GetTaskDiagnosticsOutput;
+    expect(storage.scannedEntryCount('op:resolved:')).toBe(5);
+    expect(diagnostics.summary.retryStorms).toBe(2);
+    expect(diagnostics.items.map((item) => item.operationId)).toEqual([
+      'a-matching-1',
+      'a-matching-0',
+    ]);
   });
 
   it('requires system read scope', async () => {
