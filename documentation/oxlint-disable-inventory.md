@@ -307,6 +307,13 @@ naming the alternative that was rejected.
 - **Symbol**: `list`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
+## `core-bulk-workflow-filter-has-scoped-complexity`
+
+- **File**: `src/core/bulk-workflow-filter.ts`
+- **Rule**: `complexity`
+- **Symbol**: `hasScopedBulkWorkflowFilter`
+- **Reason**: Single safety gate that enumerates every valid bulk scope (status, type, tags, attributes, tenantId, idPrefix length floor). Each branch is a one-liner mapping one filter dimension to "would this narrow the bulk operation enough to be safe?" — splitting the function would fragment the per-dimension contract that the tests assert against a single point of truth.
+
 ## `core-engine-aggregate-complexity`
 
 - **File**: `src/core/engine/aggregate.ts`
