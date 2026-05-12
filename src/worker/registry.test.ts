@@ -1107,6 +1107,31 @@ describe('WorkerRegistry', () => {
       ]);
     });
 
+    it('reports pre-drained deployments without connected workers as drained', () => {
+      const registry = new WorkerRegistry();
+
+      const drainedResult = registry.markDeploymentDraining('payments', {
+        reason: 'pause before rollout',
+        updatedAt: 1000,
+      });
+
+      expect(drainedResult).toEqual({
+        target: 'deployment',
+        deploymentName: 'payments',
+        affectedWorkers: 0,
+        inFlight: 0,
+        health: 'drained',
+      });
+
+      expect(registry.clearDeploymentDrain('payments')).toEqual({
+        target: 'deployment',
+        deploymentName: 'payments',
+        affectedWorkers: 0,
+        inFlight: 0,
+        health: 'active',
+      });
+    });
+
     it('aggregates deployment health by deployment identity', () => {
       const registry = new WorkerRegistry();
       registry.register({

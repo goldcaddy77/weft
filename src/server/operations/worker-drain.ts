@@ -180,11 +180,6 @@ export function createClearDeploymentDrainRestBinding(): UnknownRestBinding {
   return createDeploymentDrainRestBinding('DELETE', 'weft.worker.deployments.resume');
 }
 
-export const drainWorkerRestBinding = createDrainWorkerRestBinding();
-export const clearWorkerDrainRestBinding = createClearWorkerDrainRestBinding();
-export const drainDeploymentRestBinding = createDrainDeploymentRestBinding();
-export const clearDeploymentDrainRestBinding = createClearDeploymentDrainRestBinding();
-
 function createWorkerDrainRestBinding(method: 'POST' | 'DELETE', operationName: string) {
   return {
     method,

@@ -618,25 +618,27 @@ export class WorkerRegistry {
   #deploymentDrainResult(deploymentName: string): WorkerDrainMutationResult {
     const workers = this.#workersForDeployment(deploymentName);
     const inFlight = workers.reduce((total, worker) => total + worker.inFlight, 0);
+    const healthValues = workers.map((worker) => this.#workerHealth(worker));
     return {
       target: 'deployment',
       deploymentName,
       affectedWorkers: workers.length,
       inFlight,
-      health: deploymentHealth(workers.map((worker) => this.#workerHealth(worker))),
+      health: deploymentHealth(healthValues, this.#deploymentDrainStates.has(deploymentName)),
     };
   }
 
   #deploymentSummary(workers: WorkerInfo[]): WorkerDeploymentSummary {
     const [first] = workers;
-    const healthCounts = countWorkerHealth(workers.map((worker) => this.#workerHealth(worker)));
+    const healthValues = workers.map((worker) => this.#workerHealth(worker));
+    const healthCounts = countWorkerHealth(healthValues);
 
     return {
       deploymentName: first?.deploymentName ?? null,
       buildId: first?.buildId ?? null,
       runtimeVersion: first?.runtimeVersion ?? null,
       gitSha: first?.gitSha ?? null,
-      health: deploymentHealth(workers.map((worker) => this.#workerHealth(worker))),
+      health: deploymentHealth(healthValues),
       workers: workers.length,
       activeWorkers: healthCounts.active,
       drainingWorkers: healthCounts.draining,
@@ -706,9 +708,10 @@ function countWorkerHealth(healthValues: WorkerHealth[]): Record<WorkerHealth, n
   );
 }
 
-function deploymentHealth(healthValues: WorkerHealth[]): WorkerHealth {
+function deploymentHealth(healthValues: WorkerHealth[], drainActive = false): WorkerHealth {
   if (healthValues.includes('draining')) return 'draining';
-  if (healthValues.length > 0 && healthValues.every((health) => health === 'drained')) {
+  if (healthValues.length === 0) return drainActive ? 'drained' : 'active';
+  if (healthValues.every((health) => health === 'drained')) {
     return 'drained';
   }
   return 'active';
