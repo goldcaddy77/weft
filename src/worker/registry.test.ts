@@ -919,4 +919,60 @@ describe('WorkerRegistry', () => {
       expect(registry.getWorker('w1')!.inFlight).toBe(0);
     });
   });
+
+  describe('getWorkerSummaries', () => {
+    it('returns a stable, sorted-by-id snapshot with derived ages and capacity', () => {
+      const registry = new WorkerRegistry();
+      registry.register({ id: 'charlie', queue: 'default', activities: ['a'], concurrency: 3 });
+      registry.register({ id: 'alpha', queue: 'mail', activities: ['send'], concurrency: 2 });
+      registry.register({ id: 'bravo', queue: 'default', activities: ['a', 'b'], concurrency: 4 });
+
+      // Pin lastHeartbeat to known values so the test asserts exact math
+      // rather than wall-clock proximity.
+      registry.getWorker('alpha')!.lastHeartbeat = 1000;
+      registry.getWorker('bravo')!.lastHeartbeat = 2000;
+      registry.getWorker('charlie')!.lastHeartbeat = 3000;
+
+      registry.assignTask('bravo', 'op-1', 30_000);
+      registry.assignTask('bravo', 'op-2', 30_000);
+
+      const summaries = registry.getWorkerSummaries(5000);
+
+      expect(summaries.map((w) => w.id)).toEqual(['alpha', 'bravo', 'charlie']);
+      expect(summaries[1]!).toMatchObject({
+        id: 'bravo',
+        queue: 'default',
+        concurrency: 4,
+        inFlight: 2,
+        availableCapacity: 2,
+        lastHeartbeatAt: 2000,
+        heartbeatAgeMs: 3000,
+      });
+      expect(summaries[0]!.availableCapacity).toBe(2);
+      expect(summaries[2]!.heartbeatAgeMs).toBe(2000);
+    });
+
+    it('clamps availableCapacity at zero when inFlight exceeds concurrency', () => {
+      const registry = new WorkerRegistry();
+      registry.register({ id: 'w1', queue: 'q', activities: ['a'], concurrency: 1 });
+      // Simulate the rare in-flight-overflow case without using internal APIs:
+      // bumping `inFlight` past `concurrency` only happens under bugs, but the
+      // derivation must still be defensive.
+      registry.getWorker('w1')!.inFlight = 5;
+
+      const summary = registry.getWorkerSummaries(0)[0]!;
+      expect(summary.inFlight).toBe(5);
+      expect(summary.availableCapacity).toBe(0);
+    });
+
+    it('returns activities as a defensive copy', () => {
+      const registry = new WorkerRegistry();
+      const activities = ['process', 'send'];
+      registry.register({ id: 'w1', queue: 'q', activities, concurrency: 1 });
+
+      const summary = registry.getWorkerSummaries(0)[0]!;
+      summary.activities.push('mutated');
+      expect(registry.getWorker('w1')!.activities).toEqual(['process', 'send']);
+    });
+  });
 });
