@@ -258,7 +258,7 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
 
 /**
  * Build the full REST binding set for a server instance. Appends the
- * `weft.system.metrics`, `weft.workers.list`, and `weft.taskQueues.list`
+ * `weft.system.metrics`, `weft.workers.list`, and `weft.task.queues.list`
  * bindings. Each takes no per-server data on the binding side; the
  * runtime dependencies (metrics collector, worker registry, task queue)
  * are wired into the operations through {@link createLiveOperationRegistry}.
@@ -287,7 +287,7 @@ export function createLiveRestBindings(): ReadonlyArray<UnknownRestBinding> {
  *
  * Live `serve()` passes `workerRegistry` and `taskQueue` so the
  * infrastructure-observability operations (`weft.workers.list`,
- * `weft.taskQueues.list`) bind their `invoke` to real server state.
+ * `weft.task.queues.list`) bind their `invoke` to real server state.
  *
  * Callers that build the registry for **discovery only**
  * (`openapi.ts`, `asyncapi.ts`) omit both. The operations are still

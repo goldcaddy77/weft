@@ -381,7 +381,7 @@ export class TaskQueue {
   }
 
   /**
-   * Per-queue snapshot used by `weft.taskQueues.list`. Returns one entry per
+   * Per-queue snapshot used by `weft.task.queues.list`. Returns one entry per
    * queue name appearing in either `#pending` or `#waiters`, sorted by queue
    * name ascending so REST/JSON-RPC responses are stable. The worker-queue
    * union (idle queues with connected workers but no pending tasks and no

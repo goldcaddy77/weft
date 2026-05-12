@@ -40,6 +40,7 @@
   const ariaLive = $derived<AlertLive>(
     live ?? (variant === 'danger' || variant === 'warning' ? 'assertive' : 'polite'),
   );
+  const role = $derived(ariaLive === 'assertive' ? 'alert' : ariaLive === 'polite' ? 'status' : undefined);
 
   let visible = $state(true);
 
@@ -53,8 +54,9 @@
   <div
     class={cn('alert', className)}
     data-variant={variant}
-    role="alert"
+    {role}
     aria-live={ariaLive}
+    aria-atomic="true"
     {...rest}
   >
     <div class="alert-icon" aria-hidden="true">

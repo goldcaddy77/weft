@@ -333,9 +333,13 @@ principals receive a 403. Workers and task queues are server-wide
 infrastructure, not tenant-partitioned, so there is no tenant filter to
 apply.
 
-The same operations are reachable over JSON-RPC (HTTP, WebSocket, stdio)
-as `weft.workers.list` and `weft.task.queues.list`. They take no input
-parameters.
+The same operations are reachable over
+[JSON-RPC](https://www.jsonrpc.org/specification)
+([HTTP](https://developer.mozilla.org/en-US/docs/Web/HTTP),
+[WebSocket](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API),
+[stdio](https://en.wikipedia.org/wiki/Standard_streams)) as
+[`weft.workers.list`](#get-v1workers) and
+[`weft.task.queues.list`](#get-v1task-queues). They take no input parameters.
 
 ### `GET /v1/workers`
 

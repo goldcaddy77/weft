@@ -15,7 +15,7 @@ export interface WorkerInfo {
 /**
  * Per-worker projection reported by {@link WorkerRegistry.getWorkerSummaries}.
  * Derived view used by the public `weft.workers.list` operation and joined
- * into `weft.taskQueues.list` to compute per-queue in-flight totals. The
+ * into `weft.task.queues.list` to compute per-queue in-flight totals. The
  * `now` parameter passed to `getWorkerSummaries` is the same `now` the
  * operation uses for queue-age math, so a single response is internally
  * consistent across both data sources.

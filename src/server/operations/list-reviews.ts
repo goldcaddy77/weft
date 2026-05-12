@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
 import type { ReviewListEntry, ReviewListFilter, ReviewStatus } from '../../core/types.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import { shapeOperationFaultAsJson } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 
@@ -93,38 +93,6 @@ function shapeListReviewsSuccess(result: ListReviewsOutput): Response {
   });
 }
 
-function formatInvalidParamsMessage(
-  fault: Extract<OperationFault, { code: 'InvalidParams' }>,
-): string {
-  return fault.data.issues
-    .map((issue) => {
-      const path = issue.path.join('.');
-      return path.length > 0 ? `${path}: ${issue.message}` : issue.message;
-    })
-    .join('; ');
-}
-
-function shapeListReviewsFault(fault: OperationFault): Response {
-  if (fault.code === 'InvalidParams') {
-    return new Response(JSON.stringify({ error: formatInvalidParamsMessage(fault) }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  if (fault.code === 'EngineFailure') {
-    return new Response(JSON.stringify({ error: 'Internal server error' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  return new Response(JSON.stringify({ error: fault.message }), {
-    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
-
 export const listReviewsRestBinding: UnknownRestBinding = {
   method: 'GET',
   path: '/v1/reviews',
@@ -138,5 +106,5 @@ export const listReviewsRestBinding: UnknownRestBinding = {
   extractInput: async (request) => extractListReviewsInput(request),
   success: { kind: 'json', status: 200 },
   shapeSuccess: (output: ListReviewsOutput) => shapeListReviewsSuccess(output),
-  shapeFault: shapeListReviewsFault,
+  shapeFault: shapeOperationFaultAsJson,
 };
