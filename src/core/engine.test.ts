@@ -1214,6 +1214,26 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('list() orders summaries by createdAt descending with id tiebreaker', async () => {
+    let now = 1_700_000_000_000;
+    const engine = new Engine({ getNow: () => now });
+    engine.register('orderable', async function* () {
+      return 'ok';
+    });
+
+    now = 1_000;
+    const first = await engine.start('orderable', null, { id: 'wf-zzz' });
+    now = 2_000;
+    const second = await engine.start('orderable', null, { id: 'wf-aaa' });
+    now = 2_000;
+    const third = await engine.start('orderable', null, { id: 'wf-bbb' });
+    await Promise.all([first.result(), second.result(), third.result()]);
+
+    const result = await engine.list();
+    expect(result.items.map((item) => item.id)).toEqual(['wf-aaa', 'wf-bbb', 'wf-zzz']);
+    engine[Symbol.dispose]();
+  });
+
   it('list() filters by status', async () => {
     const engine = new Engine();
     engine.register('filterable', async function* () {

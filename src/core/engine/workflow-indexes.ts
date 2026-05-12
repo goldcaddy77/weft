@@ -24,6 +24,32 @@ import type { WorkflowState } from '../types.ts';
 export const WORKFLOW_VISIBILITY_INDEX_VERSION = 1;
 
 /**
+ * Hard cap on the number of candidate workflow ids the engine will
+ * materialize for a single `list` or `aggregate` query. Exceeding the cap
+ * raises a {@link WorkflowListScanCapExceededError} — the operator should
+ * narrow the filter or run the visibility-index backfill so a narrower
+ * scan applies.
+ */
+export const MAX_LIST_SCAN_ROWS = 1_000_000;
+
+/**
+ * Thrown when `list`/`aggregate` would materialize more candidates than
+ * {@link MAX_LIST_SCAN_ROWS} allows. Transport layers map this to an
+ * `Unprocessable` fault.
+ */
+export class WorkflowListScanCapExceededError extends Error {
+  readonly cap: number;
+
+  constructor(cap: number) {
+    super(
+      `Listing workflows would exceed the scan cap of ${cap}. Narrow the filter or run the visibility-index backfill.`,
+    );
+    this.name = 'WorkflowListScanCapExceededError';
+    this.cap = cap;
+  }
+}
+
+/**
  * Per-workflow manifest payload — the exact set of visibility-index keys
  * this workflow occupies right now. Decoded from the
  * `wf-idx-manifest:{id}` storage entry.
@@ -199,6 +225,32 @@ export async function loadWorkflowVisibilityManifest(
 ): Promise<WorkflowVisibilityManifest | null> {
   const bytes = await storage.get(KEYS.workflowVisibilityManifest(workflowId));
   return decodeWorkflowVisibilityManifest(bytes);
+}
+
+/**
+ * Watermark recorded by the backfill once every workflow has a manifest at
+ * the current schema version. `engine.list()` and `engine.aggregate()` only
+ * consult the new `wf-idx-*` rows when the watermark is `current`.
+ */
+export type WorkflowVisibilityWatermark = 'current' | 'stale';
+
+/**
+ * Read the visibility-index watermark. Returns `'current'` when the
+ * persisted version is at or above {@link WORKFLOW_VISIBILITY_INDEX_VERSION}.
+ */
+export async function getWorkflowVisibilityWatermark(
+  storage: Storage,
+): Promise<WorkflowVisibilityWatermark> {
+  const bytes = await storage.get(KEYS.workflowVisibilityMetaVersion());
+  if (!bytes) return 'stale';
+  let payload: unknown;
+  try {
+    payload = decode(bytes);
+  } catch {
+    return 'stale';
+  }
+  if (typeof payload !== 'number') return 'stale';
+  return payload >= WORKFLOW_VISIBILITY_INDEX_VERSION ? 'current' : 'stale';
 }
 
 /**

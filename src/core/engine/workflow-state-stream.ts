@@ -100,7 +100,7 @@ async function loadMatchingWorkflowState(
 
 /** Resolve the indexed workflow IDs implied by tag and search-attribute filters. */
 // oxlint-disable-next-line complexity -- ID:core-engine-resolve-constrained-ids-complexity
-async function resolveConstrainedIds(
+export async function resolveConstrainedIds(
   internals: EngineInternals,
   filter: ListFilter | undefined,
   normalizedTagFilters: readonly string[] | undefined,
@@ -220,7 +220,7 @@ async function queryTagIndex(internals: EngineInternals, tag: string): Promise<S
   return ids;
 }
 
-function isTopLevelWorkflowStateKey(key: string): boolean {
+export function isTopLevelWorkflowStateKey(key: string): boolean {
   const idPart = key.slice(3);
   return !idPart.includes(':');
 }

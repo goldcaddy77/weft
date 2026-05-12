@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import { KEYS } from '../../storage/interface.ts';
+import { MemoryStorage } from '../../storage/memory.ts';
 import { decode, encode } from '../codec.ts';
 import type { WorkflowState } from '../types.ts';
 
@@ -10,6 +11,7 @@ import {
   buildWorkflowVisibilityIndexTransition,
   decodeWorkflowVisibilityManifest,
   deriveWorkflowVisibilityIndexKeys,
+  getWorkflowVisibilityWatermark,
   type WorkflowVisibilityManifest,
 } from './workflow-indexes.ts';
 
@@ -259,5 +261,36 @@ describe('decodeWorkflowVisibilityManifest', () => {
     expect(decodeWorkflowVisibilityManifest(encode({ version: 1, keys: 'oops' }))).toBeNull();
     expect(decodeWorkflowVisibilityManifest(encode({ version: 1, keys: [1, 2] }))).toBeNull();
     expect(decodeWorkflowVisibilityManifest(encode(null))).toBeNull();
+  });
+});
+
+describe('getWorkflowVisibilityWatermark', () => {
+  it('returns "stale" when no version watermark is present', async () => {
+    await using storage = new MemoryStorage();
+    expect(await getWorkflowVisibilityWatermark(storage)).toBe('stale');
+  });
+
+  it('returns "stale" when the persisted version is below the current schema', async () => {
+    await using storage = new MemoryStorage();
+    await storage.put(
+      KEYS.workflowVisibilityMetaVersion(),
+      encode(WORKFLOW_VISIBILITY_INDEX_VERSION - 1),
+    );
+    expect(await getWorkflowVisibilityWatermark(storage)).toBe('stale');
+  });
+
+  it('returns "current" when the persisted version matches', async () => {
+    await using storage = new MemoryStorage();
+    await storage.put(
+      KEYS.workflowVisibilityMetaVersion(),
+      encode(WORKFLOW_VISIBILITY_INDEX_VERSION),
+    );
+    expect(await getWorkflowVisibilityWatermark(storage)).toBe('current');
+  });
+
+  it('returns "stale" when the watermark payload is malformed', async () => {
+    await using storage = new MemoryStorage();
+    await storage.put(KEYS.workflowVisibilityMetaVersion(), encode('not-a-number'));
+    expect(await getWorkflowVisibilityWatermark(storage)).toBe('stale');
   });
 });
