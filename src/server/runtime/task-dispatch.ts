@@ -139,7 +139,9 @@ export async function dispatchTaskImpl(
         existingQueuedRecord,
         now,
       );
-      await transitionQueuedToInflight(options.engine.storage, task.operationId, inflightRecord);
+      await transitionQueuedToInflight(options.engine.storage, task.operationId, inflightRecord, {
+        queuedRecord: existingQueuedRecord,
+      });
       recordTaskQueueLatencyMetric(options.metricsCollector, inflightRecord);
       recordWorkerCapacitySaturationMetric(options.metricsCollector, context.registry);
 

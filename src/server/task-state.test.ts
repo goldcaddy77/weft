@@ -50,6 +50,19 @@ function makeInflightRecord(overrides: Partial<InflightRecord> = {}): InflightRe
   };
 }
 
+class GetCountingStorage extends MemoryStorage {
+  readonly getCounts = new Map<string, number>();
+
+  override async get(key: string): Promise<Uint8Array | null> {
+    this.getCounts.set(key, (this.getCounts.get(key) ?? 0) + 1);
+    return super.get(key);
+  }
+
+  getCount(key: string): number {
+    return this.getCounts.get(key) ?? 0;
+  }
+}
+
 function createEngine(storage?: MemoryStorage): Engine {
   const s = storage ?? new MemoryStorage();
   const engine = new Engine({ storage: s });
@@ -170,6 +183,29 @@ describe('state transitions', () => {
     expect(await storage.get(KEYS.operationQueued('op-1'))).toBeNull();
     expect(await storage.get(KEYS.operationInflight('op-1'))).not.toBeNull();
     expect(await getExclusiveTaskState(storage, 'op-1')).toBe('inflight');
+  });
+
+  it('uses a provided queued record without rereading storage', async () => {
+    const storage = new GetCountingStorage();
+    const queuedRecord = makeQueuedRecord({
+      firstQueuedAt: 1_000,
+      lastQueuedAt: 1_000,
+      retryCount: 2,
+      requeueCount: 1,
+    });
+    await markQueued(storage, queuedRecord);
+
+    await transitionQueuedToInflight(storage, 'op-1', makeInflightRecord(), {
+      queuedRecord,
+    });
+
+    expect(storage.getCount(KEYS.operationQueued('op-1'))).toBe(0);
+    const inflightRecord = decode(
+      (await storage.get(KEYS.operationInflight('op-1')))!,
+    ) as InflightRecord;
+    expect(inflightRecord.firstQueuedAt).toBe(1_000);
+    expect(inflightRecord.retryCount).toBe(2);
+    expect(inflightRecord.requeueCount).toBe(1);
   });
 
   it('inflight → resolved is atomic (inflight key deleted, resolved key written)', async () => {

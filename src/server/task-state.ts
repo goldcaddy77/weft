@@ -369,13 +369,21 @@ export async function markQueued(storage: Storage, record: QueuedRecord): Promis
   );
 }
 
+type TransitionQueuedToInflightOptions = {
+  readonly queuedRecord?: QueuedRecord | null;
+};
+
 /** Atomically transition a task from queued → inflight. */
 export async function transitionQueuedToInflight(
   storage: Storage,
   operationId: string,
   inflightRecord: InflightRecord,
+  options: TransitionQueuedToInflightOptions = {},
 ): Promise<void> {
-  const queuedRecord = await readQueuedRecord(storage, operationId);
+  const queuedRecord =
+    options.queuedRecord === undefined
+      ? await readQueuedRecord(storage, operationId)
+      : options.queuedRecord;
   const normalizedInflightRecord = normalizeInflightRecordLifecycle(inflightRecord, queuedRecord);
 
   await storage.batch([
