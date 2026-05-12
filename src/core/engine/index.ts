@@ -1001,11 +1001,6 @@ export class Engine<
   async signalAll(
     filter: ListFilter,
     name: string,
-    options: BulkSignalAllDryRunOptions,
-  ): Promise<BulkOperationDryRunResult>;
-  async signalAll(
-    filter: ListFilter,
-    name: string,
     payload: unknown,
     options: BulkSignalAllCommitOptions,
   ): Promise<BulkSignalResult>;
@@ -1021,14 +1016,8 @@ export class Engine<
     payloadOrOptions?: unknown,
     options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
   ): Promise<BulkSignalResult | BulkOperationDryRunResult> {
-    if (options === undefined && isBulkSignalAllDryRunOptions(payloadOrOptions)) {
-      return signalAllWorkflows(getInternals(this), filter, name, undefined, payloadOrOptions);
-    }
     if (options === undefined) {
       return signalAllWorkflows(getInternals(this), filter, name, payloadOrOptions);
-    }
-    if (options.dryRun === true) {
-      return signalAllWorkflows(getInternals(this), filter, name, payloadOrOptions, options);
     }
     return signalAllWorkflows(getInternals(this), filter, name, payloadOrOptions, options);
   }
@@ -1494,12 +1483,4 @@ export class Engine<
       this.#createTimeOperationCallbacks(),
     );
   }
-}
-
-function isBulkSignalAllDryRunOptions(value: unknown): value is BulkSignalAllDryRunOptions {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    (value as { readonly dryRun?: unknown }).dryRun === true
-  );
 }

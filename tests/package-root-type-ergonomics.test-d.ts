@@ -72,6 +72,7 @@ async function verifyPackageRootBulkSignalTyping(): Promise<void> {
   const noPayloadPreview: BulkOperationDryRunResult = await engine.signalAll(
     { tags: ['nightly'] },
     'continue',
+    undefined,
     { dryRun: true },
   );
   const preview: BulkOperationDryRunResult = await engine.signalAll(

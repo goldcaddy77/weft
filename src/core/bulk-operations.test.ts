@@ -449,6 +449,7 @@ describe('bulk workflow operations', () => {
 
     try {
       const payload = {
+        dryRun: true,
         requestId: 'payload-request-id',
         confirmationToken: 'payload-confirmation-token',
       };
