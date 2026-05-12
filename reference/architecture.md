@@ -2638,15 +2638,18 @@ const server = serve({
       return Response.json(cost);
     },
 
-    'GET /v1/reviews': async (_req) => {
-      // Note: listReviews() does not yet accept a filter argument; status filtering is planned
-      const reviews = await engine.listReviews();
+    'GET /v1/reviews': async (req) => {
+      const reviews = await engine.listReviews({
+        status: req.query.status,
+        workflowId: req.query.workflowId,
+        reviewType: req.query.reviewType,
+      });
       return Response.json(reviews);
     },
 
     'GET /v1/workflows/:id/review/:reviewId': async (req) => {
       // getReview() lives on HumanReviewCoordinator, not Engine directly
-      const reviews = await engine.listReviews();
+      const reviews = await engine.listReviews({ workflowId: req.params.id });
       const review = reviews.find(
         (r) => r.reviewId === req.params.reviewId && r.workflowId === req.params.id,
       );

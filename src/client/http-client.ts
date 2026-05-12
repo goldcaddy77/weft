@@ -15,6 +15,8 @@ import type {
   PurgeResult,
   QueryDefinition,
   RetentionOverview,
+  ReviewListEntry,
+  ReviewListFilter,
   ScheduleFilter,
   ScheduleOptions,
   ScheduleSummary,
@@ -37,7 +39,7 @@ import { HttpClientError, request, type HttpClientOptions } from './http-request
 import { HttpScheduleHandle } from './http-schedule-handle.ts';
 import type { ClientHandle, ClientScheduleHandle, UpdateResult, WeftClient } from './interface.ts';
 import { buildScheduleListSearchParams } from './schedule-list-search-params.ts';
-import { buildWorkflowListSearchParams } from './search-params.ts';
+import { buildReviewListSearchParams, buildWorkflowListSearchParams } from './search-params.ts';
 import { buildStartBody } from './start-body.ts';
 
 /**
@@ -362,12 +364,10 @@ export class HttpClient implements WeftClient {
     );
   }
 
-  async listReviews(): Promise<Array<Record<string, unknown>>> {
-    const response = await request<{ items: Array<Record<string, unknown>> }>(
-      this.baseUrl,
-      '/reviews',
-      this.headers,
-    );
+  async listReviews(filter?: ReviewListFilter): Promise<ReviewListEntry[]> {
+    const search = buildReviewListSearchParams(filter).toString();
+    const path = search.length > 0 ? `/reviews?${search}` : '/reviews';
+    const response = await request<{ items: ReviewListEntry[] }>(this.baseUrl, path, this.headers);
     return response.items;
   }
 

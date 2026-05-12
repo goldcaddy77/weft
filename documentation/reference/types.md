@@ -304,6 +304,40 @@ declare module 'weft' {
 }
 ```
 
+### `ReviewStatus`
+
+```ts partial
+type ReviewStatus = 'pending' | 'completed';
+```
+
+### `ReviewListFilter`
+
+Optional filter accepted by `engine.listReviews(filter?)` and the `/v1/reviews` transport surface.
+
+```ts partial
+interface ReviewListFilter {
+  status?: ReviewStatus;
+  workflowId?: string;
+  reviewType?: string;
+}
+```
+
+### `ReviewListEntry`
+
+Discriminated union returned by `engine.listReviews(filter?)`.
+
+```ts partial
+type ReviewListEntry = PendingReviewEntry | CompletedReviewEntry;
+
+interface PendingReviewEntry extends ReviewRequest {
+  status: 'pending';
+}
+
+interface CompletedReviewEntry extends ReviewRequest, ReviewDecision {
+  status: 'completed';
+}
+```
+
 ### `Duration`
 
 A number (milliseconds) or a human-readable string like `'5s'`, `'2m'`, `'1h'`.

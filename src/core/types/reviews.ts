@@ -1,3 +1,5 @@
+import type { ReviewDecision as CompletedReviewDecision, ReviewRequest } from '../review/index.ts';
+
 // ---------------------------------------------------------------------------
 // Review decision types (for engine.submitReview)
 // ---------------------------------------------------------------------------
@@ -39,6 +41,122 @@ export interface SubmitReviewOptions {
   /** When provided, enables O(1) direct key lookup instead of scanning. */
   workflowId?: string;
 }
+
+/**
+ * Status values returned by `engine.listReviews(filter?)`.
+ *
+ * Pending entries represent outstanding review requests; completed entries
+ * combine the original review metadata with the persisted reviewer decision.
+ *
+ * @example
+ * ```ts
+ * import type { ReviewStatus } from 'weft';
+ *
+ * const status: ReviewStatus = 'pending';
+ * void status;
+ * ```
+ */
+export type ReviewStatus = 'pending' | 'completed';
+
+/**
+ * Filter accepted by `engine.listReviews(filter?)` and the `/v1/reviews`
+ * transport surfaces.
+ *
+ * Omitting `status` preserves the legacy pending-only behavior.
+ *
+ * @example
+ * ```ts
+ * import type { ReviewListFilter } from 'weft';
+ *
+ * const filter: ReviewListFilter = {
+ *   status: 'completed',
+ *   workflowId: 'wf-123',
+ *   reviewType: 'security',
+ * };
+ * void filter;
+ * ```
+ */
+export interface ReviewListFilter {
+  status?: ReviewStatus;
+  workflowId?: string;
+  reviewType?: string;
+}
+
+/**
+ * Pending review entry returned by `engine.listReviews(filter?)`.
+ *
+ * Mirrors the durable review request plus a discriminating `status` field.
+ *
+ * @example
+ * ```ts
+ * import type { PendingReviewEntry } from 'weft';
+ *
+ * const entry: PendingReviewEntry = {
+ *   status: 'pending',
+ *   reviewId: 'review-1',
+ *   workflowId: 'wf-1',
+ *   artifact: { text: 'Please approve' },
+ *   reviewType: 'content',
+ *   reviewers: ['alice@example.com'],
+ *   allowPartial: false,
+ *   createdAt: Date.now(),
+ * };
+ * void entry;
+ * ```
+ */
+export interface PendingReviewEntry extends ReviewRequest {
+  status: 'pending';
+}
+
+/**
+ * Completed review entry returned by `engine.listReviews(filter?)`.
+ *
+ * Combines the original request metadata with the persisted reviewer decision
+ * so operators can filter completed reviews without losing workflow context.
+ *
+ * @example
+ * ```ts
+ * import type { CompletedReviewEntry } from 'weft';
+ *
+ * const entry: CompletedReviewEntry = {
+ *   status: 'completed',
+ *   reviewId: 'review-1',
+ *   workflowId: 'wf-1',
+ *   artifact: { text: 'Please approve' },
+ *   reviewType: 'content',
+ *   reviewers: ['alice@example.com'],
+ *   allowPartial: false,
+ *   createdAt: Date.now() - 5_000,
+ *   decision: 'approved',
+ *   reviewer: 'alice@example.com',
+ *   timestamp: Date.now(),
+ * };
+ * void entry;
+ * ```
+ */
+export interface CompletedReviewEntry extends ReviewRequest, CompletedReviewDecision {
+  status: 'completed';
+}
+
+/**
+ * Discriminated union returned by `engine.listReviews(filter?)`.
+ *
+ * Use `status` to branch between pending request metadata and completed
+ * decision metadata.
+ *
+ * @example
+ * ```ts
+ * import type { ReviewListEntry } from 'weft';
+ *
+ * function summarize(entry: ReviewListEntry): string {
+ *   return entry.status === 'completed'
+ *     ? `${entry.reviewType}: ${entry.decision}`
+ *     : `${entry.reviewType}: pending`;
+ * }
+ * void summarize;
+ * ```
+ */
+export type ReviewListEntry = PendingReviewEntry | CompletedReviewEntry;
 
 // ---------------------------------------------------------------------------
 // Coordinated update result (for engine.submitCoordinatedUpdate)

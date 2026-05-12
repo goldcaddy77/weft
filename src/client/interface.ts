@@ -21,6 +21,8 @@ import type {
   PurgeResult,
   QueryDefinition,
   RetentionOverview,
+  ReviewListEntry,
+  ReviewListFilter,
   ScheduleFilter,
   ScheduleOptions,
   ScheduleSummary,
@@ -291,8 +293,8 @@ export interface WeftClient {
   /** Reconstruct workflow state at a historical checkpoint step. */
   replayTo(id: string, step: number): Promise<WorkflowReplay | null>;
 
-  /** List pending human review requests. */
-  listReviews(): Promise<Array<Record<string, unknown>>>;
+  /** List human review requests, optionally filtering by status or workflow metadata. */
+  listReviews(filter?: ReviewListFilter): Promise<ReviewListEntry[]>;
 
   /** Submit a decision for a pending review. */
   submitReview(reviewId: string, options: SubmitReviewOptions): Promise<void>;

@@ -1,4 +1,4 @@
-import { searchAttributeName, type ListFilter } from '../core/types.ts';
+import { searchAttributeName, type ListFilter, type ReviewListFilter } from '../core/types.ts';
 
 function appendStatusFilters(params: URLSearchParams, status: ListFilter['status']): void {
   if (status === undefined) {
@@ -65,6 +65,22 @@ export function buildWorkflowListSearchParams(filter?: ListFilter): URLSearchPar
     params.set('offset', String(filter.offset));
   }
   appendAttributeFilters(params, filter?.attributes);
+
+  return params;
+}
+
+export function buildReviewListSearchParams(filter?: ReviewListFilter): URLSearchParams {
+  const params = new URLSearchParams();
+
+  if (filter?.status !== undefined) {
+    params.set('status', filter.status);
+  }
+  if (filter?.workflowId !== undefined) {
+    params.set('workflowId', filter.workflowId);
+  }
+  if (filter?.reviewType !== undefined) {
+    params.set('reviewType', filter.reviewType);
+  }
 
   return params;
 }

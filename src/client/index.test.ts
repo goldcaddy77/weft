@@ -125,7 +125,20 @@ function createFullSurfaceResponses(
     jsonResponse({ priority: 'high' }),
     new Response(null, { status: 204 }),
     jsonResponse({ events: [{ type: 'workflow:started' }] }),
-    jsonResponse({ items: [{ reviewId: 'review-1' }] }),
+    jsonResponse({
+      items: [
+        {
+          status: 'pending',
+          reviewId: 'review-1',
+          workflowId: 'wf-review-1',
+          artifact: null,
+          reviewType: 'general',
+          reviewers: [],
+          allowPartial: false,
+          createdAt: 1,
+        },
+      ],
+    }),
     new Response(null, { status: 204 }),
     jsonResponse({
       chunks: [
@@ -217,7 +230,18 @@ async function exerciseRecoveryAndReviewRequests(httpClient: HttpClient): Promis
   expect(await httpClient.getAttributes('wf/1')).toEqual({ priority: 'high' });
   await httpClient.setAttributes('wf/1', { priority: 'critical' });
   expect(await httpClient.getEvents('wf/1')).toMatchObject([{ type: 'workflow:started' }]);
-  expect(await httpClient.listReviews()).toEqual([{ reviewId: 'review-1' }]);
+  expect(await httpClient.listReviews()).toEqual([
+    {
+      status: 'pending',
+      reviewId: 'review-1',
+      workflowId: 'wf-review-1',
+      artifact: null,
+      reviewType: 'general',
+      reviewers: [],
+      allowPartial: false,
+      createdAt: 1,
+    },
+  ]);
   await httpClient.submitReview('review-1', { decision: 'approved', reviewer: 'alex' });
   expect(await httpClient.getStreamChunks('wf/1', 'stream/key', { after: 1 })).toEqual([
     { sequence: 2, value: 'chunk-a' },
@@ -424,7 +448,7 @@ beforeAll(() => {
           method: 'api-key',
           principal: principalFromApiKey({
             subject: 'http-client-test',
-            scopes: ['quota:read', 'workflows:read', 'system:read'],
+            scopes: ['quota:read', 'reviews:read', 'system:read', 'workflows:read'],
           }),
         },
       });

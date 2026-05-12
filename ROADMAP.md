@@ -68,19 +68,6 @@ These items are still present in `reference/architecture.md` and are not complet
   - `reference/IMPORTANT.md` and `documentation/architecture/performance.md` record the latest measured ratio and link to the benchmark command.
   - Verification passes with `bun run lint`, `bun run typecheck`, `bun run benchmark:temporal-workflow-starts` in an environment with Temporal available, and `bun run verify:documentation`.
 
-- [ ] **Add filterable human-review listing.**
-
-  **Where:** `src/core/engine/reviews.ts`, `src/core/engine/index.ts`, `src/server/operations/list-reviews.ts`, `src/server/handler.test.ts`, and `documentation/reference/api-server.md`.
-
-  The architecture route sketch notes that `listReviews()` does not yet accept a filter argument and that status filtering is planned. The current engine method and `GET /v1/reviews` operation list pending review entries only and accept no filters.
-
-  **Acceptance criteria:**
-  - `engine.listReviews(filter?)` accepts a typed filter with at least `status`, `workflowId`, and `reviewType` fields.
-  - `GET /v1/reviews` and the JSON-RPC `weft.reviews.list` operation accept the same filter shape through validated transport inputs.
-  - Pending and completed review entries are distinguishable by status without changing existing pending-review behavior.
-  - Tests cover empty results, pending status filtering, completed status filtering, workflow-id filtering, review-type filtering, and invalid filter diagnostics.
-  - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/server/operations/list-reviews.test.ts src/server/handler.test.ts src/core/engine.test.ts`, and `bun run verify:documentation`.
-
 ## 3. Production Visibility and Fleet Tooling
 
 Weft already has the production primitives operators need to build on: events, metrics, workflow timelines, search attributes, worker registries, task queues, bulk operations, schedules, retention controls, and a built-in dashboard. The remaining gap is turning those primitives into a robust operator control plane for live workflow fleets and remote workers.

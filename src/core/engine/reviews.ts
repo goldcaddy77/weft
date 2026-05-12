@@ -1,6 +1,6 @@
 import type { BatchOperation } from '../../storage/interface.ts';
 import { KEYS, encodeStorageKeyComponent } from '../../storage/interface.ts';
-import { decode, encode } from '../codec.ts';
+import { encode } from '../codec.ts';
 import { ReviewCompletedEvent, ReviewRequestedEvent } from '../review/events.ts';
 import {
   ReviewTimeoutError,
@@ -9,8 +9,21 @@ import {
   type ReviewOptions,
   type ReviewRequest,
 } from '../review/index.ts';
-import type { OperationOutcome, SubmitReviewOptions } from '../types.ts';
+import type {
+  CompletedReviewEntry,
+  OperationOutcome,
+  PendingReviewEntry,
+  ReviewListEntry,
+  ReviewListFilter,
+  SubmitReviewOptions,
+} from '../types.ts';
 import type { EngineInternals } from './internals.ts';
+import {
+  parseCompletedReviewEntry,
+  parseStoredReviewRequest,
+  toCompletedReviewEntry,
+  toPendingReviewEntry,
+} from './review-list-entries.ts';
 import { trackWaiterKey, untrackWaiterKey } from './signals.ts';
 
 type ReviewOperationOutcome = { ok: true; value: HumanReviewResult } | { ok: false; error: Error };
@@ -26,17 +39,71 @@ export type ReviewOperationCallbacks = {
   ensureTerminalCleanupTracked: (workflowId: string) => Promise<void>;
 };
 
-/** List all pending reviews. */
-export async function listReviews(
-  internals: EngineInternals,
-): Promise<Array<Record<string, unknown>>> {
-  const reviews: Array<Record<string, unknown>> = [];
+function reviewScanPrefix(filter: ReviewListFilter): string {
+  if (filter.workflowId === undefined) {
+    return 'review:';
+  }
 
-  for await (const [, value] of internals.storage.scan('review:')) {
-    reviews.push(decode(value) as Record<string, unknown>);
+  return `review:${encodeStorageKeyComponent(filter.workflowId)}:`;
+}
+
+function matchesReviewFilter(
+  review: Pick<ReviewRequest, 'workflowId' | 'reviewType'>,
+  filter: ReviewListFilter,
+): boolean {
+  if (filter.workflowId !== undefined && review.workflowId !== filter.workflowId) {
+    return false;
+  }
+
+  if (filter.reviewType !== undefined && review.reviewType !== filter.reviewType) {
+    return false;
+  }
+
+  return true;
+}
+
+async function listPendingReviews(
+  internals: EngineInternals,
+  filter: ReviewListFilter,
+): Promise<PendingReviewEntry[]> {
+  const reviews: PendingReviewEntry[] = [];
+
+  for await (const [, value] of internals.storage.scan(reviewScanPrefix(filter))) {
+    const review = parseStoredReviewRequest(value);
+    if (review !== null && matchesReviewFilter(review, filter)) {
+      reviews.push(toPendingReviewEntry(review));
+    }
   }
 
   return reviews;
+}
+
+async function listCompletedReviews(
+  internals: EngineInternals,
+  filter: ReviewListFilter,
+): Promise<CompletedReviewEntry[]> {
+  const reviews: CompletedReviewEntry[] = [];
+
+  for await (const [, value] of internals.storage.scan('review-decision:')) {
+    const completedReview = parseCompletedReviewEntry(value);
+    if (completedReview !== null && matchesReviewFilter(completedReview, filter)) {
+      reviews.push(completedReview);
+    }
+  }
+
+  return reviews;
+}
+
+/** List pending reviews by default, or completed reviews when explicitly requested. */
+export async function listReviews(
+  internals: EngineInternals,
+  filter: ReviewListFilter = {},
+): Promise<ReviewListEntry[]> {
+  if (filter.status === 'completed') {
+    return listCompletedReviews(internals, filter);
+  }
+
+  return listPendingReviews(internals, filter);
 }
 
 /** Retrieve a specific review by workflowId and reviewId. */
@@ -72,12 +139,12 @@ export async function submitReview(
     const existing = await internals.storage.get(directKey);
     if (existing !== null) {
       reviewKey = directKey;
-      reviewData = decode(existing) as ReviewRequest;
+      reviewData = parseStoredReviewRequest(existing) ?? undefined;
     }
   } else {
     for await (const [key, value] of internals.storage.scan('review:')) {
-      const review = decode(value) as ReviewRequest & Record<string, unknown>;
-      if (review['reviewId'] === reviewId) {
+      const review = parseStoredReviewRequest(value);
+      if (review !== null && review.reviewId === reviewId) {
         reviewKey = key;
         reviewData = review;
         resolvedWorkflowId = review.workflowId;
@@ -88,6 +155,10 @@ export async function submitReview(
 
   if (reviewKey === null) {
     throw new Error(`Review "${reviewId}" not found`);
+  }
+
+  if (reviewData === undefined) {
+    throw new Error(`Review "${reviewId}" could not be loaded`);
   }
 
   const now = internals.options.getNow();
@@ -106,13 +177,15 @@ export async function submitReview(
     decisionResult.sectionDecisions = sectionDecisions;
   }
 
+  const completedReview = toCompletedReviewEntry(reviewData, decisionResult);
+
   await internals.storage.batch([
-    { type: 'put', key: `review-decision:${reviewId}`, value: encode(decisionResult) },
+    { type: 'put', key: `review-decision:${reviewId}`, value: encode(completedReview) },
     { type: 'delete', key: reviewKey },
   ]);
 
   // Dispatch ReviewCompletedEvent
-  const duration = reviewData ? now - reviewData.createdAt : 0;
+  const duration = now - reviewData.createdAt;
   callbacks.dispatchEvent(
     new ReviewCompletedEvent(resolvedWorkflowId ?? '', reviewId, decision, reviewer, duration),
   );

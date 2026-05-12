@@ -13,6 +13,7 @@ import { Engine } from '../core/engine.ts';
 import { ReviewCoordinator } from '../core/review/index.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { handleRequest } from '../server/handler.ts';
+import { principalFromApiKey } from '../server/principal.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { HttpClient } from './index.ts';
 import type { WeftClient } from './interface.ts';
@@ -94,6 +95,30 @@ function agentFeatureTests(getClient: () => WeftClient, getEngine: () => Engine,
       const after = await client.listReviews();
       const stillThere = after.find((r) => r['reviewId'] === review.reviewId);
       expect(stillThere).toBeUndefined();
+    });
+
+    it('listReviews can request completed reviews via a status filter', async () => {
+      const client = getClient();
+      const engine = getEngine();
+
+      const coordinator = new ReviewCoordinator(engine.storage);
+      const review = await coordinator.createReview(`${label}-completed-wf`, {
+        artifact: 'some artifact',
+        reviewType: 'security',
+        reviewers: ['casey@example.com'],
+      });
+
+      await client.submitReview(review.reviewId, {
+        decision: 'approved',
+        reviewer: 'casey@example.com',
+        workflowId: `${label}-completed-wf`,
+      });
+
+      const completed = await client.listReviews({ status: 'completed' });
+      const found = completed.find((entry) => entry['reviewId'] === review.reviewId);
+      expect(found).toBeDefined();
+      expect(found!['status']).toBe('completed');
+      expect(found!['reviewType']).toBe('security');
     });
   });
 
@@ -192,7 +217,15 @@ describe('Agent feature parity: HttpClient (server mode)', () => {
     server = Bun.serve({
       port: 0,
       async fetch(request) {
-        return handleRequest(request, engine);
+        return handleRequest(request, engine, {
+          authContext: {
+            method: 'api-key',
+            principal: principalFromApiKey({
+              subject: 'agent-feature-parity',
+              scopes: ['reviews:read'],
+            }),
+          },
+        });
       },
     });
 

@@ -215,10 +215,20 @@ PATCH body: `{ "attributes": { "key": "value" } }`.
 
 ### Reviews
 
-| Method | Path                                  | Description                         |
-| ------ | ------------------------------------- | ----------------------------------- |
-| `GET`  | `/v1/workflows/:id/reviews`           | List pending reviews for a workflow |
-| `POST` | `/v1/workflows/:id/reviews/:reviewId` | Submit a review decision            |
+| Method | Path                             | Description                                   |
+| ------ | -------------------------------- | --------------------------------------------- |
+| `GET`  | `/v1/reviews`                    | List human reviews, optionally with filters   |
+| `POST` | `/v1/reviews/:reviewId/decision` | Submit a review decision for a pending review |
+
+`GET /v1/reviews` defaults to pending reviews only. Optional query parameters:
+
+- `status=pending|completed`
+- `workflowId=<workflow-id>`
+- `reviewType=<review-type>`
+
+Each response item includes a `status` discriminator. Pending entries expose the original review request metadata; completed entries include that request metadata plus the persisted reviewer decision.
+
+When server authentication is enabled, `GET /v1/reviews` requires the `reviews:read` scope.
 
 ### Discovery
 
