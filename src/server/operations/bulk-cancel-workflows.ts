@@ -1,27 +1,33 @@
 import { z } from 'zod';
 
 import { assertScopedBulkWorkflowFilter } from '../../core/bulk-workflow-filter.ts';
-import type { Engine } from '../../core/engine.ts';
+import { BulkOperationConfirmationError, type Engine } from '../../core/engine.ts';
 import { coerceStartWorkflowTags } from '../../core/start-workflow-validation.ts';
-import type { BulkCancelResult } from '../../core/types.ts';
+import type { BulkCancelResult, BulkOperationDryRunResult } from '../../core/types.ts';
 import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 import {
   bulkListFilterInputSchema,
+  bulkOperationControlInputSchema,
+  bulkOperationOptionsFromInput,
+  bulkOperatorAccessPolicy,
   engineFailureFault,
   faultMessage,
   invalidParamsFault,
   listFilterFromBulkInput,
   parseBulkListFilterFromBody,
+  parseBulkOperationControlFromBody,
   readOptionalJsonBody,
   type BulkListFilterInput,
+  type BulkOperationControlInput,
 } from './bulk-filter-helpers.ts';
 
+const bulkCancelWorkflowsInput = bulkListFilterInputSchema.merge(bulkOperationControlInputSchema);
 const bulkCancelWorkflowsOutput = z.unknown();
 
-export type BulkCancelWorkflowsInput = BulkListFilterInput;
-export type BulkCancelWorkflowsOutput = BulkCancelResult;
+export type BulkCancelWorkflowsInput = BulkListFilterInput & BulkOperationControlInput;
+export type BulkCancelWorkflowsOutput = BulkCancelResult | BulkOperationDryRunResult;
 
 export const bulkCancelWorkflowsOperation = defineOperation<
   BulkCancelWorkflowsInput,
@@ -31,12 +37,12 @@ export const bulkCancelWorkflowsOperation = defineOperation<
   mcpExposable: false,
   summary: 'Cancel workflows in bulk',
   tags: ['Workflows'],
-  inputSchema: bulkListFilterInputSchema,
+  inputSchema: bulkCancelWorkflowsInput,
   outputSchema: bulkCancelWorkflowsOutput as z.ZodType<BulkCancelWorkflowsOutput>,
-  access: { kind: 'public' },
+  access: bulkOperatorAccessPolicy,
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
-  invoke: async ({ input, engine }): Promise<BulkCancelWorkflowsOutput> => {
+  invoke: async ({ input, engine, principal }): Promise<BulkCancelWorkflowsOutput> => {
     const e = engine as Engine;
 
     let validatedTags: string[] | undefined;
@@ -59,9 +65,17 @@ export const bulkCancelWorkflowsOperation = defineOperation<
       throw invalidParamsFault(faultMessage(error));
     }
 
+    const operationOptions = bulkOperationOptionsFromInput(input, principal);
+
     try {
-      return await e.cancelAll(filter);
+      if (operationOptions.dryRun === true) {
+        return await e.cancelAll(filter, operationOptions);
+      }
+      return await e.cancelAll(filter, operationOptions);
     } catch (error) {
+      if (error instanceof BulkOperationConfirmationError) {
+        throw invalidParamsFault(error.message);
+      }
       throw engineFailureFault(faultMessage(error));
     }
   },
@@ -96,7 +110,10 @@ export const bulkCancelWorkflowsRestBinding: UnknownRestBinding = {
     const raw = await readOptionalJsonBody(request);
 
     try {
-      return { ...parseBulkListFilterFromBody(raw) };
+      return {
+        ...parseBulkListFilterFromBody(raw),
+        ...parseBulkOperationControlFromBody(raw),
+      };
     } catch (error) {
       throw invalidParamsFault(faultMessage(error));
     }

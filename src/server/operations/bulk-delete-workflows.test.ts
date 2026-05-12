@@ -75,16 +75,81 @@ describe('weft.workflows.bulk.delete', () => {
     await firstHandle.result();
     await secondHandle.result();
 
+    const previewResponse = await handleRequest(
+      request({
+        filter: { tags: ['selected'] },
+        dryRun: true,
+        requestId: 'bulk-delete-request',
+      }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: bindings,
+      },
+    );
+
+    expect(previewResponse.status).toBe(200);
+    const preview = await previewResponse.json();
+    expect(preview).toEqual(
+      expect.objectContaining({
+        dryRun: true,
+        action: 'delete',
+        matched: 2,
+        requestId: 'bulk-delete-request',
+        confirmationToken: expect.stringMatching(/^bulk:/),
+      }),
+    );
+    expect(await engine.get('bulk-delete-selected-a')).not.toBeNull();
+    expect(await engine.get('bulk-delete-selected-b')).not.toBeNull();
+
+    const response = await handleRequest(
+      request({
+        filter: { tags: ['selected'] },
+        confirmationToken: preview.confirmationToken,
+        requestId: 'bulk-delete-request',
+      }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: bindings,
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('application/json');
+    expect(await response.json()).toEqual({
+      deleted: 2,
+      auditEvent: expect.objectContaining({
+        type: 'bulk-operation:audit',
+        action: 'delete',
+        affectedCount: 2,
+        requestId: 'bulk-delete-request',
+      }),
+    });
+    expect(await engine.get('bulk-delete-selected-a')).toBeNull();
+    expect(await engine.get('bulk-delete-selected-b')).toBeNull();
+  });
+
+  it('requires a confirmation token before deleting matching terminal workflows', async () => {
+    const engine = createEngine();
+
+    const handle = await engine.start('echo', 'first', {
+      id: 'bulk-delete-token-required',
+      tags: ['selected'],
+    });
+    await handle.result();
+
     const response = await handleRequest(request({ filter: { tags: ['selected'] } }), engine, {
       operationRegistry: registry,
       restBindings: bindings,
     });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
     expect(response.headers.get('content-type')).toBe('application/json');
-    expect(await response.json()).toEqual({ deleted: 2 });
-    expect(await engine.get('bulk-delete-selected-a')).toBeNull();
-    expect(await engine.get('bulk-delete-selected-b')).toBeNull();
+    expect(await response.json()).toEqual({
+      error: 'Field "confirmationToken" is required after a dry run',
+    });
+    expect(await engine.get('bulk-delete-token-required')).not.toBeNull();
   });
 
   it('returns 422 when the filter matches non-terminal workflows', async () => {
@@ -102,10 +167,14 @@ describe('weft.workflows.bulk.delete', () => {
     });
     await waitForStatus(engine, 'bulk-delete-running', 'running');
 
-    const response = await handleRequest(request({ filter: { tags: ['mixed'] } }), engine, {
-      operationRegistry: registry,
-      restBindings: bindings,
-    });
+    const response = await handleRequest(
+      request({ filter: { tags: ['mixed'] }, dryRun: true }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: bindings,
+      },
+    );
 
     expect(response.status).toBe(422);
     expect(response.headers.get('content-type')).toBe('application/json');

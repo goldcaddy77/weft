@@ -9,7 +9,7 @@ import {
 } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { BULK_WORKFLOW_FILTER_ERROR_MESSAGE } from './bulk-workflow-filter.ts';
-import { encode } from './codec.ts';
+import { decode, encode } from './codec.ts';
 import { BulkDeleteRequiresTerminalWorkflowsError, Engine } from './engine.ts';
 import { cancelAll } from './engine/bulk-operations.ts';
 import type { WorkflowContext, WorkflowState } from './types.ts';
@@ -813,6 +813,167 @@ describe('bulk workflow operations', () => {
 
       expect(result.cancelled).toBe(1_005);
       expect(storage.firstMutationSeenAfterScanningCount).toBe(1_005);
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('previews bulk cancellation without mutating matching workflows', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    engine.register('wait-for-signal', waitForSignalWorkflow);
+
+    try {
+      await engine.start('wait-for-signal', 'first', {
+        id: 'bulk-preview-selected-a',
+        tags: ['preview'],
+      });
+      await engine.start('wait-for-signal', 'second', {
+        id: 'bulk-preview-selected-b',
+        tags: ['preview'],
+      });
+      await waitForWorkflowStatusCount(engine, 'running', 2, 10_000);
+
+      const preview = await engine.cancelAll(
+        { tags: ['preview'] },
+        { dryRun: true, requestId: 'bulk-preview-request' },
+      );
+
+      expect(preview).toEqual(
+        expect.objectContaining({
+          dryRun: true,
+          action: 'cancel',
+          matched: 2,
+          requestId: 'bulk-preview-request',
+          sampleWorkflowIds: ['bulk-preview-selected-a', 'bulk-preview-selected-b'],
+          confirmationToken: expect.stringMatching(/^bulk:/),
+        }),
+      );
+      expect(preview.scope).toEqual(
+        expect.objectContaining({
+          matched: 2,
+          statuses: ['running'],
+          workflowTypes: ['wait-for-signal'],
+          tenantIds: [],
+        }),
+      );
+      const firstPreviewedWorkflow = await engine.get('bulk-preview-selected-a');
+      const secondPreviewedWorkflow = await engine.get('bulk-preview-selected-b');
+      const firstPreviewedWorkflowStatus = firstPreviewedWorkflow?.status;
+      const secondPreviewedWorkflowStatus = secondPreviewedWorkflow?.status;
+      if (firstPreviewedWorkflowStatus === undefined) {
+        throw new Error('Expected first previewed workflow to remain in storage');
+      }
+      if (secondPreviewedWorkflowStatus === undefined) {
+        throw new Error('Expected second previewed workflow to remain in storage');
+      }
+      expect(['pending', 'running']).toContain(firstPreviewedWorkflowStatus);
+      expect(['pending', 'running']).toContain(secondPreviewedWorkflowStatus);
+
+      await engine.cancel('bulk-preview-selected-a');
+      await engine.cancel('bulk-preview-selected-b');
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('rejects stale bulk confirmation tokens when the matched workflow set changes', async () => {
+    const now = 1_000;
+    const engine = new Engine({ getNow: () => now });
+    engine.register('echo', echoWorkflow);
+
+    try {
+      await engine.start('echo', 'first', {
+        id: 'bulk-stale-selected-a',
+        tags: ['stale-token'],
+        startAt: now + 60_000,
+      });
+
+      const preview = await engine.cancelAll({ tags: ['stale-token'] }, { dryRun: true });
+
+      await engine.start('echo', 'second', {
+        id: 'bulk-stale-selected-b',
+        tags: ['stale-token'],
+        startAt: now + 60_000,
+      });
+
+      await expect(
+        engine.cancelAll(
+          { tags: ['stale-token'] },
+          { confirmationToken: preview.confirmationToken },
+        ),
+      ).rejects.toThrow('Bulk confirmation token does not match the current dry-run scope');
+      const firstStaleWorkflow = await engine.get('bulk-stale-selected-a');
+      const secondStaleWorkflow = await engine.get('bulk-stale-selected-b');
+      expect(firstStaleWorkflow?.status).toBe('pending');
+      expect(secondStaleWorkflow?.status).toBe('pending');
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('persists durable audit records for committed bulk actions', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage, getNow: () => 42_000 });
+    engine.register('wait-for-signal', waitForSignalWorkflow);
+
+    try {
+      await engine.start('wait-for-signal', 'first', {
+        id: 'bulk-audit-selected-a',
+        tags: ['audit'],
+      });
+      await engine.start('wait-for-signal', 'second', {
+        id: 'bulk-audit-selected-b',
+        tags: ['audit'],
+      });
+      await waitForWorkflowStatusCount(engine, 'running', 2, 10_000);
+
+      const preview = await engine.cancelAll(
+        { tags: ['audit'] },
+        { dryRun: true, requestId: 'bulk-audit-request' },
+      );
+      const result = await engine.cancelAll(
+        { tags: ['audit'] },
+        {
+          confirmationToken: preview.confirmationToken,
+          principal: {
+            method: 'api-key',
+            subject: 'operator-1',
+            tenantId: 'tenant-1',
+          },
+          requestId: 'bulk-audit-request',
+        },
+      );
+
+      expect(result.cancelled).toBe(2);
+      expect(result.auditEvent).toEqual(
+        expect.objectContaining({
+          type: 'bulk-operation:audit',
+          action: 'cancel',
+          affectedCount: 2,
+          requestId: 'bulk-audit-request',
+          principal: {
+            method: 'api-key',
+            subject: 'operator-1',
+            tenantId: 'tenant-1',
+          },
+          sampleWorkflowIds: ['bulk-audit-selected-a', 'bulk-audit-selected-b'],
+        }),
+      );
+
+      const storedAuditRecords = [];
+      for await (const [, value] of storage.scan(KEYS.bulkOperationAuditPrefix())) {
+        storedAuditRecords.push(decode(value));
+      }
+
+      expect(storedAuditRecords).toEqual([
+        expect.objectContaining({
+          type: 'bulk-operation:audit',
+          action: 'cancel',
+          affectedCount: 2,
+          requestId: 'bulk-audit-request',
+        }),
+      ]);
     } finally {
       await engine[Symbol.asyncDispose]();
     }

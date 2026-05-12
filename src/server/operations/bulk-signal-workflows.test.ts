@@ -81,11 +81,41 @@ describe('weft.workflows.bulk.signal', () => {
       waitForStatus(engine, otherHandle.id, 'running'),
     ]);
 
+    const previewResponse = await handleRequest(
+      request({
+        filter: { tags: ['selected'] },
+        name: 'continue',
+        payload: 'released',
+        dryRun: true,
+        requestId: 'bulk-signal-request',
+      }),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(previewResponse.status).toBe(200);
+    const preview = await previewResponse.json();
+    expect(preview).toEqual(
+      expect.objectContaining({
+        dryRun: true,
+        action: 'signal',
+        matched: 2,
+        requestId: 'bulk-signal-request',
+        confirmationToken: expect.stringMatching(/^bulk:/),
+      }),
+    );
+    const firstPreviewedWorkflow = await engine.get(firstHandle.id);
+    const secondPreviewedWorkflow = await engine.get(secondHandle.id);
+    expect(firstPreviewedWorkflow?.status).toBe('running');
+    expect(secondPreviewedWorkflow?.status).toBe('running');
+
     const response = await handleRequest(
       request({
         filter: { tags: ['selected'] },
         name: 'continue',
         payload: 'released',
+        confirmationToken: preview.confirmationToken,
+        requestId: 'bulk-signal-request',
       }),
       engine,
       { operationRegistry: registry, restBindings: bindings },
@@ -93,7 +123,16 @@ describe('weft.workflows.bulk.signal', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('application/json');
-    expect(await response.json()).toEqual({ signalled: 2, failed: 0 });
+    expect(await response.json()).toEqual({
+      signalled: 2,
+      failed: 0,
+      auditEvent: expect.objectContaining({
+        type: 'bulk-operation:audit',
+        action: 'signal',
+        affectedCount: 2,
+        requestId: 'bulk-signal-request',
+      }),
+    });
     await expect(firstHandle.result()).resolves.toBe('first:released');
     await expect(secondHandle.result()).resolves.toBe('second:released');
     const untouchedState = await engine.get(otherHandle.id);

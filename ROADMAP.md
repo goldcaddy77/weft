@@ -113,7 +113,7 @@ The shape should stay Weft-native rather than copying Temporal feature names. Us
   - Dashboard diagnostics link from a workflow/activity to the relevant queue, worker, retry, and heartbeat evidence.
   - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/server/task-state.test.ts src/server/index.test.ts src/server/operations/get-system-metrics.test.ts src/dashboard/utilities/workflow-detail-timeline.test.ts`, and `bun run verify:documentation`.
 
-- [ ] **Add safe operator bulk actions with dry-run previews.**
+- [x] **Add safe operator bulk actions with dry-run previews.**
 
   **Where:** `src/core/engine/bulk-operations.ts`, `src/server/operations/bulk-*.ts`, workflow event/audit plumbing, dashboard bulk-action flows, and `documentation/reference/api-server.md`.
 

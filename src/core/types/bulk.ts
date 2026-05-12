@@ -1,4 +1,243 @@
-import type { WorkflowId } from './identity.ts';
+import type { WorkflowId, WorkflowStatus } from './identity.ts';
+import type { SearchAttributeValue } from './search-attributes.ts';
+
+/**
+ * Bulk workflow action names used in previews, confirmations, and audit
+ * records.
+ *
+ * @example
+ * ```ts
+ * import type { BulkOperationAction } from 'weft';
+ *
+ * const action: BulkOperationAction = 'cancel';
+ * void action;
+ * ```
+ */
+export type BulkOperationAction =
+  | 'cancel'
+  | 'signal'
+  | 'delete'
+  | 'tag:add'
+  | 'tag:remove'
+  | 'recover';
+
+/**
+ * Credential-safe caller summary recorded on bulk audit events. Claims,
+ * bearer tokens, API keys, and other credentials are intentionally absent.
+ *
+ * @example
+ * ```ts
+ * import type { BulkOperationPrincipal } from 'weft';
+ *
+ * const principal: BulkOperationPrincipal = {
+ *   method: 'api-key',
+ *   subject: 'operator@example.com',
+ *   tenantId: 'acme',
+ * };
+ * void principal;
+ * ```
+ */
+export type BulkOperationPrincipal = {
+  method: string;
+  subject?: string;
+  tenantId?: string;
+};
+
+/**
+ * Canonical filter summary used when deriving bulk confirmation tokens.
+ *
+ * @example
+ * ```ts
+ * import type { BulkOperationFilterSummary } from 'weft';
+ *
+ * const filter: BulkOperationFilterSummary = {
+ *   status: ['running', 'pending'],
+ *   type: 'checkout',
+ *   tags: ['nightly'],
+ * };
+ * void filter;
+ * ```
+ */
+export type BulkOperationFilterSummary = {
+  status?: WorkflowStatus | WorkflowStatus[];
+  type?: string;
+  tags?: string[];
+  attributes?: Array<{
+    key: string;
+    value?: SearchAttributeValue;
+    gt?: SearchAttributeValue;
+    lt?: SearchAttributeValue;
+    gte?: SearchAttributeValue;
+    lte?: SearchAttributeValue;
+  }>;
+  limit?: number;
+  offset?: number;
+};
+
+/**
+ * Scope summary returned by dry-run previews and persisted in audit records.
+ *
+ * @example
+ * ```ts
+ * import type { BulkOperationScopeSummary } from 'weft';
+ *
+ * const scope: BulkOperationScopeSummary = {
+ *   matched: 2,
+ *   filter: { status: 'running' },
+ *   statuses: ['running'],
+ *   workflowTypes: ['checkout'],
+ *   tenantIds: ['acme'],
+ *   sampleWorkflowIds: ['wf-1', 'wf-2'],
+ *   sampleLimit: 20,
+ * };
+ * void scope;
+ * ```
+ */
+export type BulkOperationScopeSummary = {
+  matched: number;
+  filter: BulkOperationFilterSummary;
+  statuses: WorkflowStatus[];
+  workflowTypes: string[];
+  tenantIds: string[];
+  sampleWorkflowIds: WorkflowId[];
+  sampleLimit: number;
+};
+
+/**
+ * Dry-run result shared by bulk workflow operations.
+ *
+ * @example
+ * ```ts
+ * import type { BulkOperationDryRunResult } from 'weft';
+ *
+ * const preview: BulkOperationDryRunResult = {
+ *   dryRun: true,
+ *   action: 'cancel',
+ *   matched: 1,
+ *   requestId: 'ops-123',
+ *   scope: {
+ *     matched: 1,
+ *     filter: { status: 'running' },
+ *     statuses: ['running'],
+ *     workflowTypes: ['checkout'],
+ *     tenantIds: [],
+ *     sampleWorkflowIds: ['wf-1'],
+ *     sampleLimit: 20,
+ *   },
+ *   sampleWorkflowIds: ['wf-1'],
+ *   confirmationToken: 'bulk:token',
+ *   confirmationTokenVersion: 1,
+ * };
+ * void preview;
+ * ```
+ */
+export type BulkOperationDryRunResult = {
+  dryRun: true;
+  action: BulkOperationAction;
+  matched: number;
+  requestId: string;
+  scope: BulkOperationScopeSummary;
+  sampleWorkflowIds: WorkflowId[];
+  confirmationToken: string;
+  confirmationTokenVersion: 1;
+};
+
+/**
+ * Options for a dry-run bulk operation preview.
+ *
+ * @example
+ * ```ts
+ * import type { BulkOperationDryRunOptions } from 'weft';
+ *
+ * const options: BulkOperationDryRunOptions = {
+ *   dryRun: true,
+ *   requestId: 'ops-123',
+ * };
+ * void options;
+ * ```
+ */
+export type BulkOperationDryRunOptions = {
+  dryRun: true;
+  requestId?: string;
+  principal?: BulkOperationPrincipal;
+};
+
+/**
+ * Options for a committed bulk operation.
+ *
+ * @example
+ * ```ts
+ * import type { BulkOperationCommitOptions } from 'weft';
+ *
+ * const options: BulkOperationCommitOptions = {
+ *   confirmationToken: 'bulk:token-from-preview',
+ *   requestId: 'ops-123',
+ * };
+ * void options;
+ * ```
+ */
+export type BulkOperationCommitOptions = {
+  dryRun?: false;
+  confirmationToken?: string;
+  requestId?: string;
+  principal?: BulkOperationPrincipal;
+};
+
+/**
+ * Options accepted by bulk workflow operations.
+ *
+ * @example
+ * ```ts
+ * import type { BulkOperationOptions } from 'weft';
+ *
+ * const options: BulkOperationOptions = { dryRun: true };
+ * void options;
+ * ```
+ */
+export type BulkOperationOptions = BulkOperationDryRunOptions | BulkOperationCommitOptions;
+
+/**
+ * Durable audit record persisted after a committed bulk operation succeeds.
+ *
+ * @example
+ * ```ts
+ * import type { BulkOperationAuditEvent } from 'weft';
+ *
+ * const event: BulkOperationAuditEvent = {
+ *   type: 'bulk-operation:audit',
+ *   action: 'cancel',
+ *   requestId: 'ops-123',
+ *   timestamp: Date.now(),
+ *   principal: { method: 'api-key', subject: 'operator@example.com' },
+ *   filterSummary: { status: 'running' },
+ *   scope: {
+ *     matched: 1,
+ *     filter: { status: 'running' },
+ *     statuses: ['running'],
+ *     workflowTypes: ['checkout'],
+ *     tenantIds: ['acme'],
+ *     sampleWorkflowIds: ['wf-1'],
+ *     sampleLimit: 20,
+ *   },
+ *   affectedCount: 1,
+ *   sampleWorkflowIds: ['wf-1'],
+ *   confirmationToken: 'bulk:token',
+ * };
+ * void event;
+ * ```
+ */
+export type BulkOperationAuditEvent = {
+  type: 'bulk-operation:audit';
+  action: BulkOperationAction;
+  requestId: string;
+  timestamp: number;
+  principal: BulkOperationPrincipal;
+  filterSummary: BulkOperationFilterSummary;
+  scope: BulkOperationScopeSummary;
+  affectedCount: number;
+  sampleWorkflowIds: WorkflowId[];
+  confirmationToken: string;
+};
 
 /**
  * Per-workflow error entry in bulk operation results. `id` identifies the
@@ -18,6 +257,7 @@ export type BulkCancelResult = {
   cancelled: number;
   failed: number;
   errors: BulkOperationError[];
+  auditEvent?: BulkOperationAuditEvent;
 };
 
 /**
@@ -27,6 +267,7 @@ export type BulkCancelResult = {
 export type BulkSignalResult = {
   signalled: number;
   failed: number;
+  auditEvent?: BulkOperationAuditEvent;
 };
 
 /**
@@ -35,6 +276,7 @@ export type BulkSignalResult = {
  */
 export type BulkDeleteResult = {
   deleted: number;
+  auditEvent?: BulkOperationAuditEvent;
 };
 
 /**
@@ -43,6 +285,7 @@ export type BulkDeleteResult = {
  */
 export type BulkTagResult = {
   modified: number;
+  auditEvent?: BulkOperationAuditEvent;
 };
 
 /**

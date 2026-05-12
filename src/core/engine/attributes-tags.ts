@@ -375,9 +375,10 @@ export async function bulkMutateWorkflowTags(
   filter: ListFilter,
   tags: string[],
   mode: 'add' | 'remove',
+  workflowIds?: readonly string[],
 ): Promise<BulkTagResult> {
   assertScopedBulkWorkflowFilter(filter);
-  const workflowIdsToMutate = await snapshotMatchingWorkflowIds(internals, filter);
+  const workflowIdsToMutate = workflowIds ?? (await snapshotMatchingWorkflowIds(internals, filter));
 
   let modified = 0;
   for (const workflowId of workflowIdsToMutate) {

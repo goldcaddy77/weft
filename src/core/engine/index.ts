@@ -30,6 +30,9 @@ import {
   type AttributeFilterKey,
   type BulkCancelResult,
   type BulkDeleteResult,
+  type BulkOperationCommitOptions,
+  type BulkOperationDryRunOptions,
+  type BulkOperationDryRunResult,
   type BulkSignalResult,
   type BulkTagResult,
   type CheckpointState,
@@ -216,6 +219,7 @@ export type {
 } from './engine-internal-types.ts';
 export {
   BulkDeleteRequiresTerminalWorkflowsError,
+  BulkOperationConfirmationError,
   EngineCreateNameMismatchError,
   WorkflowAlreadyExistsError,
   WorkflowNotFoundError,
@@ -969,26 +973,122 @@ export class Engine<
       ),
     );
   }
-  async cancelAll(filter: ListFilter): Promise<BulkCancelResult> {
-    return cancelAllWorkflows(getInternals(this), filter);
+  async cancelAll(
+    filter: ListFilter,
+    options: BulkOperationDryRunOptions,
+  ): Promise<BulkOperationDryRunResult>;
+  async cancelAll(
+    filter: ListFilter,
+    options?: BulkOperationCommitOptions,
+  ): Promise<BulkCancelResult>;
+  async cancelAll(
+    filter: ListFilter,
+    options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
+  ): Promise<BulkCancelResult | BulkOperationDryRunResult> {
+    if (options?.dryRun === true) {
+      return cancelAllWorkflows(getInternals(this), filter, options);
+    }
+    return cancelAllWorkflows(getInternals(this), filter, options);
   }
-  async signalAll(filter: ListFilter, name: string, payload?: unknown): Promise<BulkSignalResult> {
-    return signalAllWorkflows(getInternals(this), filter, name, payload);
+  async signalAll(
+    filter: ListFilter,
+    name: string,
+    payload: unknown,
+    options: BulkOperationDryRunOptions,
+  ): Promise<BulkOperationDryRunResult>;
+  async signalAll(
+    filter: ListFilter,
+    name: string,
+    payload?: unknown,
+    options?: BulkOperationCommitOptions,
+  ): Promise<BulkSignalResult>;
+  async signalAll(
+    filter: ListFilter,
+    name: string,
+    payload?: unknown,
+    options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
+  ): Promise<BulkSignalResult | BulkOperationDryRunResult> {
+    if (options?.dryRun === true) {
+      return signalAllWorkflows(getInternals(this), filter, name, payload, options);
+    }
+    return signalAllWorkflows(getInternals(this), filter, name, payload, options);
   }
-  async deleteAll(filter: ListFilter): Promise<BulkDeleteResult> {
-    return deleteAllWorkflows(getInternals(this), filter, (workflowId) =>
-      cleanupWaitersFromTermination(
+  async deleteAll(
+    filter: ListFilter,
+    options: BulkOperationDryRunOptions,
+  ): Promise<BulkOperationDryRunResult>;
+  async deleteAll(
+    filter: ListFilter,
+    options?: BulkOperationCommitOptions,
+  ): Promise<BulkDeleteResult>;
+  async deleteAll(
+    filter: ListFilter,
+    options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
+  ): Promise<BulkDeleteResult | BulkOperationDryRunResult> {
+    if (options?.dryRun === true) {
+      return deleteAllWorkflows(
         getInternals(this),
-        workflowId,
-        this.#createTerminationCallbacks(),
-      ),
+        filter,
+        (workflowId) =>
+          cleanupWaitersFromTermination(
+            getInternals(this),
+            workflowId,
+            this.#createTerminationCallbacks(),
+          ),
+        options,
+      );
+    }
+    return deleteAllWorkflows(
+      getInternals(this),
+      filter,
+      (workflowId) =>
+        cleanupWaitersFromTermination(
+          getInternals(this),
+          workflowId,
+          this.#createTerminationCallbacks(),
+        ),
+      options,
     );
   }
-  async tagAll(filter: ListFilter, tags: string[]): Promise<BulkTagResult> {
-    return tagAllWorkflows(getInternals(this), filter, tags);
+  async tagAll(
+    filter: ListFilter,
+    tags: string[],
+    options: BulkOperationDryRunOptions,
+  ): Promise<BulkOperationDryRunResult>;
+  async tagAll(
+    filter: ListFilter,
+    tags: string[],
+    options?: BulkOperationCommitOptions,
+  ): Promise<BulkTagResult>;
+  async tagAll(
+    filter: ListFilter,
+    tags: string[],
+    options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
+  ): Promise<BulkTagResult | BulkOperationDryRunResult> {
+    if (options?.dryRun === true) {
+      return tagAllWorkflows(getInternals(this), filter, tags, options);
+    }
+    return tagAllWorkflows(getInternals(this), filter, tags, options);
   }
-  async untagAll(filter: ListFilter, tags: string[]): Promise<BulkTagResult> {
-    return untagAllWorkflows(getInternals(this), filter, tags);
+  async untagAll(
+    filter: ListFilter,
+    tags: string[],
+    options: BulkOperationDryRunOptions,
+  ): Promise<BulkOperationDryRunResult>;
+  async untagAll(
+    filter: ListFilter,
+    tags: string[],
+    options?: BulkOperationCommitOptions,
+  ): Promise<BulkTagResult>;
+  async untagAll(
+    filter: ListFilter,
+    tags: string[],
+    options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
+  ): Promise<BulkTagResult | BulkOperationDryRunResult> {
+    if (options?.dryRun === true) {
+      return untagAllWorkflows(getInternals(this), filter, tags, options);
+    }
+    return untagAllWorkflows(getInternals(this), filter, tags, options);
   }
   async schedule<TInput>(
     definition: ScheduleDefinition<TInput>,

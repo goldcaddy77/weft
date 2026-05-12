@@ -3,6 +3,9 @@
 
   import type {
     ApiClient,
+    BulkOperationDryRunResult,
+    BulkTagMutationOperation,
+    ListFilter,
     RetentionOverview,
     ScheduleSummary,
     TenantQuotaMetricUsage,
@@ -10,13 +13,14 @@
     WorkflowStatus,
     WorkflowSummary,
   } from '../api-client.ts';
-  import { activity, filter, refreshCw, search } from '../icons.ts';
+  import { activity, ban, check, refreshCw, search } from '../icons.ts';
   import Alert from '../components/alert.svelte';
   import Input from '../components/input.svelte';
   import Page from '../components/page.svelte';
   import Button from '../components/button.svelte';
   import Card from '../components/card.svelte';
   import DataList from '../components/data-list.svelte';
+  import Select from '../components/select.svelte';
   import Skeleton from '../components/skeleton.svelte';
   import EmptyState from '../components/empty-state.svelte';
   import WorkflowTableRow from '../fragments/workflow-table-row.svelte';
@@ -57,6 +61,20 @@
   let tenantQuotaUsage = $state.raw<TenantQuotaUsage | null>(null);
   let tenantQuotaLoading = $state(false);
   let tenantQuotaError: string | null = $state(null);
+  type BulkWorkflowAction = 'cancel' | 'signal' | 'delete' | 'tag:add' | 'tag:remove';
+  type BulkSignalPayloadParseResult =
+    | { ok: true; value: unknown }
+    | { ok: false; message: string };
+  let bulkAction: BulkWorkflowAction = $state('cancel');
+  let bulkTagInput = $state('');
+  let bulkSignalNameInput = $state('');
+  let bulkSignalPayloadInput = $state('');
+  let bulkPreview: BulkOperationDryRunResult | null = $state.raw(null);
+  let bulkPreviewRequestId: string | null = $state(null);
+  let bulkPreviewLoading = $state(false);
+  let bulkCommitLoading = $state(false);
+  let bulkActionError: string | null = $state(null);
+  let bulkActionMessage: string | null = $state(null);
 
   // ---------------------------------------------------------------------------
   // Fetching
@@ -163,6 +181,18 @@
     });
   }
 
+  function resetBulkPreview(): void {
+    bulkPreview = null;
+    bulkPreviewRequestId = null;
+    bulkActionError = null;
+    bulkActionMessage = null;
+  }
+
+  function resetFiltersAndBulkPreview(): void {
+    currentOffset = 0;
+    resetBulkPreview();
+  }
+
   function formatTenantQuotaLimit(metric: TenantQuotaMetricUsage): string {
     return metric.limit === null ? 'No limit' : String(metric.limit);
   }
@@ -175,6 +205,159 @@
   function toggleTagFilter(tag: string): void {
     selectedTags = toggleWorkflowTagSelection(selectedTags, tag);
     currentOffset = 0;
+    resetBulkPreview();
+  }
+
+  const bulkFilter = $derived.by((): ListFilter => {
+    const filter: ListFilter = {};
+    if (statusFilter !== 'all') filter.status = statusFilter;
+    const normalizedType = typeFilter.trim();
+    if (normalizedType.length > 0) filter.type = normalizedType;
+    if (selectedTags.length > 0) filter.tags = [...selectedTags];
+    return filter;
+  });
+
+  const bulkFilterIsScoped = $derived(
+    bulkFilter.status !== undefined ||
+      bulkFilter.type !== undefined ||
+      (bulkFilter.tags?.length ?? 0) > 0,
+  );
+  const bulkTags = $derived.by(() =>
+    bulkTagInput
+      .split(',')
+      .map((tag) => tag.trim())
+      .filter((tag) => tag.length > 0),
+  );
+  const bulkSignalName = $derived(bulkSignalNameInput.trim());
+  const bulkSignalPayloadParseResult = $derived.by((): BulkSignalPayloadParseResult => {
+    const payload = bulkSignalPayloadInput.trim();
+    if (payload.length === 0) return { ok: true, value: undefined };
+
+    try {
+      return { ok: true, value: JSON.parse(payload) as unknown };
+    } catch {
+      return { ok: false, message: 'Signal payload must be valid JSON.' };
+    }
+  });
+  const bulkActionNeedsTags = $derived(bulkAction === 'tag:add' || bulkAction === 'tag:remove');
+  const bulkActionNeedsSignal = $derived(bulkAction === 'signal');
+  const canPreviewBulkAction = $derived(
+    bulkFilterIsScoped &&
+      (!bulkActionNeedsTags || bulkTags.length > 0) &&
+      (!bulkActionNeedsSignal ||
+        (bulkSignalName.length > 0 && bulkSignalPayloadParseResult.ok)),
+  );
+  const BULK_ACTION_OPTIONS: Array<{ value: BulkWorkflowAction; label: string }> = [
+    { value: 'cancel', label: 'Cancel' },
+    { value: 'signal', label: 'Signal' },
+    { value: 'delete', label: 'Delete' },
+    { value: 'tag:add', label: 'Add Tags' },
+    { value: 'tag:remove', label: 'Remove Tags' },
+  ];
+  const bulkSignalPayloadPlaceholder = '{"approved":true}';
+  const bulkActionLabel = $derived(
+    BULK_ACTION_OPTIONS.find((option) => option.value === bulkAction)?.label ?? 'Bulk action',
+  );
+
+  function createBulkRequestId(action: BulkWorkflowAction): string {
+    return `dashboard:${action}:${Date.now().toString(36)}`;
+  }
+
+  async function handleBulkPreview(): Promise<void> {
+    if (!canPreviewBulkAction || bulkPreviewLoading) return;
+
+    const requestId = createBulkRequestId(bulkAction);
+    bulkPreviewLoading = true;
+    bulkActionError = null;
+    bulkActionMessage = null;
+
+    try {
+      if (bulkAction === 'cancel') {
+        bulkPreview = await apiClient.previewBulkCancelWorkflows(bulkFilter, requestId);
+      } else if (bulkAction === 'signal') {
+        if (!bulkSignalPayloadParseResult.ok) {
+          bulkActionError = bulkSignalPayloadParseResult.message;
+          return;
+        }
+        bulkPreview = await apiClient.previewBulkSignalWorkflows(
+          bulkFilter,
+          bulkSignalName,
+          bulkSignalPayloadParseResult.value,
+          requestId,
+        );
+      } else if (bulkAction === 'delete') {
+        bulkPreview = await apiClient.previewBulkDeleteWorkflows(bulkFilter, requestId);
+      } else {
+        const operation: BulkTagMutationOperation = bulkAction === 'tag:add' ? 'add' : 'remove';
+        bulkPreview = await apiClient.previewBulkTagWorkflows(
+          bulkFilter,
+          bulkTags,
+          operation,
+          requestId,
+        );
+      }
+      bulkPreviewRequestId = requestId;
+    } catch (previewError) {
+      bulkActionError = previewError instanceof Error ? previewError.message : String(previewError);
+      bulkPreview = null;
+      bulkPreviewRequestId = null;
+    } finally {
+      bulkPreviewLoading = false;
+    }
+  }
+
+  async function handleBulkCommit(): Promise<void> {
+    if (bulkPreview === null || bulkPreviewRequestId === null || bulkCommitLoading) return;
+
+    bulkCommitLoading = true;
+    bulkActionError = null;
+    try {
+      if (bulkAction === 'cancel') {
+        const result = await apiClient.commitBulkCancelWorkflows(
+          bulkFilter,
+          bulkPreview.confirmationToken,
+          bulkPreviewRequestId,
+        );
+        bulkActionMessage = `Cancelled ${result.cancelled} workflow${result.cancelled === 1 ? '' : 's'}.`;
+      } else if (bulkAction === 'signal') {
+        if (!bulkSignalPayloadParseResult.ok) {
+          bulkActionError = bulkSignalPayloadParseResult.message;
+          return;
+        }
+        const result = await apiClient.commitBulkSignalWorkflows(
+          bulkFilter,
+          bulkSignalName,
+          bulkSignalPayloadParseResult.value,
+          bulkPreview.confirmationToken,
+          bulkPreviewRequestId,
+        );
+        bulkActionMessage = `Signalled ${result.signalled} workflow${result.signalled === 1 ? '' : 's'}.`;
+      } else if (bulkAction === 'delete') {
+        const result = await apiClient.commitBulkDeleteWorkflows(
+          bulkFilter,
+          bulkPreview.confirmationToken,
+          bulkPreviewRequestId,
+        );
+        bulkActionMessage = `Deleted ${result.deleted} workflow${result.deleted === 1 ? '' : 's'}.`;
+      } else {
+        const operation: BulkTagMutationOperation = bulkAction === 'tag:add' ? 'add' : 'remove';
+        const result = await apiClient.commitBulkTagWorkflows(
+          bulkFilter,
+          bulkTags,
+          operation,
+          bulkPreview.confirmationToken,
+          bulkPreviewRequestId,
+        );
+        bulkActionMessage = `Updated tags on ${result.modified} workflow${result.modified === 1 ? '' : 's'}.`;
+      }
+      bulkPreview = null;
+      bulkPreviewRequestId = null;
+      handleRefresh();
+    } catch (commitError) {
+      bulkActionError = commitError instanceof Error ? commitError.message : String(commitError);
+    } finally {
+      bulkCommitLoading = false;
+    }
   }
 
   async function handleTenantQuotaSubmit(event: SubmitEvent): Promise<void> {
@@ -212,6 +395,7 @@
     { value: 'cancelled', label: 'Cancelled' },
     { value: 'timed-out', label: 'Timed Out' },
   ];
+
 </script>
 
 <Page title="Workflows">
@@ -221,11 +405,25 @@
 
   <div class="workflow-list-filters">
     <div class="workflow-list-filter-group">
-      <span class="workflow-list-filter-icon" aria-hidden="true">{@html filter(14)}</span>
+      <span class="workflow-list-filter-icon" aria-hidden="true">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+        </svg>
+      </span>
       <select
         class="control"
         bind:value={statusFilter}
-        onchange={() => { currentOffset = 0; }}
+        onchange={resetFiltersAndBulkPreview}
       >
         {#each STATUS_OPTIONS as option (option.value)}
           <option value={option.value}>{option.label}</option>
@@ -233,13 +431,28 @@
       </select>
     </div>
     <div class="workflow-list-filter-group">
-      <span class="workflow-list-filter-icon" aria-hidden="true">{@html search(14)}</span>
+      <span class="workflow-list-filter-icon" aria-hidden="true">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+      </span>
       <input
         class="control"
         type="text"
         placeholder="Filter by type..."
         bind:value={typeFilter}
-        oninput={() => { currentOffset = 0; }}
+        oninput={resetFiltersAndBulkPreview}
       />
     </div>
   </div>
@@ -360,6 +573,152 @@
         </div>
       </div>
     {/if}
+  </Card>
+
+  <Card
+    title="Bulk actions"
+    subtitle={bulkFilterIsScoped ? `${total} workflow${total === 1 ? '' : 's'} in current scope` : 'Scope required'}
+    icon={ban(14)}
+  >
+    <div class="bulk-actions">
+      <div class="bulk-action-controls">
+        <Select
+          id="bulk-action"
+          label="Action"
+          bind:value={bulkAction}
+          onchange={resetBulkPreview}
+        >
+          {#each BULK_ACTION_OPTIONS as option (option.value)}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </Select>
+
+        {#if bulkActionNeedsSignal}
+          <Input
+            id="bulk-signal-name"
+            label="Signal"
+            placeholder="approve"
+            bind:value={bulkSignalNameInput}
+            oninput={resetBulkPreview}
+          />
+          <Input
+            id="bulk-signal-payload"
+            label="Payload JSON"
+            placeholder={bulkSignalPayloadPlaceholder}
+            bind:value={bulkSignalPayloadInput}
+            oninput={resetBulkPreview}
+          />
+        {/if}
+
+        {#if bulkActionNeedsTags}
+          <Input
+            id="bulk-action-tags"
+            label="Tags"
+            placeholder="nightly, archived"
+            bind:value={bulkTagInput}
+            oninput={resetBulkPreview}
+          />
+        {/if}
+
+        <div class="bulk-action-buttons">
+          <Button
+            variant="secondary"
+            size="md"
+            icon={search(14)}
+            label="Preview"
+            disabled={!canPreviewBulkAction}
+            loading={bulkPreviewLoading}
+            onclick={handleBulkPreview}
+          />
+          <Button
+            variant={bulkAction === 'delete' || bulkAction === 'cancel' ? 'danger' : 'primary'}
+            size="md"
+            icon={check(14)}
+            label="Confirm"
+            disabled={bulkPreview === null}
+            loading={bulkCommitLoading}
+            onclick={handleBulkCommit}
+          />
+        </div>
+      </div>
+
+      {#if bulkActionError}
+        <Alert
+          variant="danger"
+          title="Bulk action failed"
+          description={bulkActionError}
+        />
+      {/if}
+
+      {#if bulkActionNeedsSignal && !bulkSignalPayloadParseResult.ok}
+        <Alert
+          variant="warning"
+          title="Invalid signal payload"
+          description={bulkSignalPayloadParseResult.message}
+        />
+      {/if}
+
+      {#if bulkActionMessage}
+        <Alert
+          variant="success"
+          title="Bulk action committed"
+          description={bulkActionMessage}
+        />
+      {/if}
+
+      {#if bulkPreview}
+        <div class="bulk-preview" aria-live="polite">
+          <div class="bulk-preview-header">
+            <div>
+              <span class="bulk-preview-label">{bulkActionLabel}</span>
+              <strong>{bulkPreview.matched}</strong>
+            </div>
+            <span class="bulk-preview-token">{bulkPreview.requestId}</span>
+          </div>
+
+          <div class="bulk-preview-grid">
+            <div>
+              <span>Status</span>
+              <strong>{bulkPreview.scope.statuses.join(', ') || 'Any'}</strong>
+            </div>
+            <div>
+              <span>Types</span>
+              <strong>{bulkPreview.scope.workflowTypes.join(', ') || 'Any'}</strong>
+            </div>
+            <div>
+              <span>Tenants</span>
+              <strong>{bulkPreview.scope.tenantIds.join(', ') || 'Unscoped'}</strong>
+            </div>
+          </div>
+
+          <div class="bulk-preview-samples">
+            {#each bulkPreview.sampleWorkflowIds as workflowId (workflowId)}
+              <span>{workflowId}</span>
+            {/each}
+          </div>
+        </div>
+      {:else if !bulkFilterIsScoped}
+        <div class="bulk-preview-empty">
+          <span aria-hidden="true">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </span>
+          <span>Select a status, type, or tag filter before previewing.</span>
+        </div>
+      {/if}
+    </div>
   </Card>
 
   {#if retentionRows}
@@ -625,6 +984,101 @@
   .tenant-quota-metric-note {
     font-size: var(--text-xs, 0.75rem);
     color: var(--text-muted, #6b7280);
+  }
+
+  .bulk-actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4, 1rem);
+  }
+
+  .bulk-action-controls {
+    display: grid;
+    gap: var(--space-3, 0.75rem);
+    align-items: end;
+  }
+
+  @media (min-width: 860px) {
+    .bulk-action-controls {
+      grid-template-columns: minmax(10rem, 0.7fr) repeat(2, minmax(0, 1fr)) auto;
+    }
+  }
+
+  .bulk-action-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2, 0.5rem);
+  }
+
+  .bulk-preview {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3, 0.75rem);
+    padding: var(--space-3, 0.75rem);
+    border: 1px solid var(--border-muted, #e5e7eb);
+    border-radius: var(--radius-md, 0.375rem);
+    background: var(--surface-inset, #f9fafb);
+  }
+
+  .bulk-preview-header,
+  .bulk-preview-grid {
+    display: grid;
+    gap: var(--space-3, 0.75rem);
+  }
+
+  @media (min-width: 720px) {
+    .bulk-preview-header {
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+    }
+
+    .bulk-preview-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+
+  .bulk-preview-label,
+  .bulk-preview-grid span,
+  .bulk-preview-token {
+    display: block;
+    font-size: var(--text-xs, 0.75rem);
+    color: var(--text-muted, #6b7280);
+  }
+
+  .bulk-preview-header strong,
+  .bulk-preview-grid strong {
+    font-size: var(--text-sm, 0.875rem);
+    color: var(--text, #111827);
+  }
+
+  .bulk-preview-token {
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    overflow-wrap: anywhere;
+  }
+
+  .bulk-preview-samples {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2, 0.5rem);
+  }
+
+  .bulk-preview-samples span {
+    max-width: 100%;
+    padding: var(--space-1, 0.25rem) var(--space-2, 0.5rem);
+    border-radius: var(--radius-sm, 0.25rem);
+    background: var(--surface, #fff);
+    border: 1px solid var(--border-muted, #e5e7eb);
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: var(--text-xs, 0.75rem);
+    overflow-wrap: anywhere;
+  }
+
+  .bulk-preview-empty {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2, 0.5rem);
+    color: var(--text-muted, #6b7280);
+    font-size: var(--text-sm, 0.875rem);
   }
 
   .workflow-list-error {

@@ -14,6 +14,15 @@ function requestInputToUrl(input: RequestInfo | URL): string {
   return input.url;
 }
 
+function requestBodyToJson(init: RequestInit | undefined): Record<string, unknown> {
+  const body = init?.body;
+  if (typeof body !== 'string') {
+    throw new Error('Expected request body to be a JSON string');
+  }
+
+  return JSON.parse(body) as Record<string, unknown>;
+}
+
 describe('ApiClient', () => {
   const originalFetch = globalThis.fetch;
 
@@ -412,5 +421,219 @@ describe('ApiClient', () => {
         nextFireAt: 4,
       }),
     ]);
+  });
+
+  it('previews and commits bulk workflow actions with confirmation metadata', async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestInputToUrl(input);
+      requests.push(init === undefined ? { url } : { url, init });
+
+      if (url === '/v1/workflows/bulk/cancel') {
+        const body = requestBodyToJson(init);
+        if (body['dryRun'] === true) {
+          return Response.json({
+            dryRun: true,
+            action: 'cancel',
+            matched: 2,
+            requestId: body['requestId'],
+            scope: {
+              matched: 2,
+              filter: body['filter'],
+              statuses: ['running'],
+              workflowTypes: ['checkout'],
+              tenantIds: ['acme'],
+              sampleWorkflowIds: ['wf-1', 'wf-2'],
+              sampleLimit: 20,
+            },
+            sampleWorkflowIds: ['wf-1', 'wf-2'],
+            confirmationToken: 'bulk:cancel-token',
+            confirmationTokenVersion: 1,
+          });
+        }
+
+        return Response.json({
+          cancelled: 2,
+          failed: 0,
+          errors: [],
+          auditEvent: {
+            type: 'bulk-operation:audit',
+            action: 'cancel',
+            requestId: body['requestId'],
+            timestamp: 1,
+            principal: { method: 'api-key' },
+            filterSummary: body['filter'],
+            scope: {
+              matched: 2,
+              filter: body['filter'],
+              statuses: ['running'],
+              workflowTypes: ['checkout'],
+              tenantIds: ['acme'],
+              sampleWorkflowIds: ['wf-1', 'wf-2'],
+              sampleLimit: 20,
+            },
+            affectedCount: 2,
+            sampleWorkflowIds: ['wf-1', 'wf-2'],
+            confirmationToken: body['confirmationToken'],
+          },
+        });
+      }
+
+      if (url === '/v1/workflows/bulk/signal') {
+        const body = requestBodyToJson(init);
+        if (body['dryRun'] === true) {
+          return Response.json({
+            dryRun: true,
+            action: 'signal',
+            matched: 2,
+            requestId: body['requestId'],
+            scope: {
+              matched: 2,
+              filter: body['filter'],
+              statuses: ['running'],
+              workflowTypes: ['checkout'],
+              tenantIds: ['acme'],
+              sampleWorkflowIds: ['wf-1', 'wf-2'],
+              sampleLimit: 20,
+            },
+            sampleWorkflowIds: ['wf-1', 'wf-2'],
+            confirmationToken: 'bulk:signal-token',
+            confirmationTokenVersion: 1,
+          });
+        }
+
+        return Response.json({
+          signalled: 2,
+          failed: 0,
+          auditEvent: {
+            type: 'bulk-operation:audit',
+            action: 'signal',
+            requestId: body['requestId'],
+            timestamp: 1,
+            principal: { method: 'api-key' },
+            filterSummary: body['filter'],
+            scope: {
+              matched: 2,
+              filter: body['filter'],
+              statuses: ['running'],
+              workflowTypes: ['checkout'],
+              tenantIds: ['acme'],
+              sampleWorkflowIds: ['wf-1', 'wf-2'],
+              sampleLimit: 20,
+            },
+            affectedCount: 2,
+            sampleWorkflowIds: ['wf-1', 'wf-2'],
+            confirmationToken: body['confirmationToken'],
+          },
+        });
+      }
+
+      if (url === '/v1/workflows/bulk/tags') {
+        return Response.json({
+          modified: 2,
+          auditEvent: {
+            type: 'bulk-operation:audit',
+            action: 'tag:add',
+            requestId: 'tag-request',
+            timestamp: 1,
+            principal: { method: 'api-key' },
+            filterSummary: {},
+            scope: {
+              matched: 2,
+              filter: {},
+              statuses: ['completed'],
+              workflowTypes: ['checkout'],
+              tenantIds: [],
+              sampleWorkflowIds: ['wf-1', 'wf-2'],
+              sampleLimit: 20,
+            },
+            affectedCount: 2,
+            sampleWorkflowIds: ['wf-1', 'wf-2'],
+            confirmationToken: 'bulk:tag-token',
+          },
+        });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as typeof fetch;
+
+    const client = new ApiClient();
+    const preview = await client.previewBulkCancelWorkflows(
+      { status: 'running', type: 'checkout', tags: ['selected'] },
+      'cancel-request',
+    );
+    const result = await client.commitBulkCancelWorkflows(
+      { status: 'running', type: 'checkout', tags: ['selected'] },
+      preview.confirmationToken,
+      preview.requestId,
+    );
+    const signalPreview = await client.previewBulkSignalWorkflows(
+      { status: 'running', type: 'checkout' },
+      'approve',
+      { reviewer: 'Ada' },
+      'signal-request',
+    );
+    const signalResult = await client.commitBulkSignalWorkflows(
+      { status: 'running', type: 'checkout' },
+      'approve',
+      { reviewer: 'Ada' },
+      signalPreview.confirmationToken,
+      signalPreview.requestId,
+    );
+    const tagResult = await client.commitBulkTagWorkflows(
+      { status: 'completed' },
+      ['archived'],
+      'add',
+      'bulk:tag-token',
+      'tag-request',
+    );
+
+    expect(preview.matched).toBe(2);
+    expect(preview.scope.tenantIds).toEqual(['acme']);
+    expect(result.cancelled).toBe(2);
+    expect(result.auditEvent?.requestId).toBe('cancel-request');
+    expect(signalPreview.action).toBe('signal');
+    expect(signalResult.signalled).toBe(2);
+    expect(tagResult.modified).toBe(2);
+
+    expect(requests.map((entry) => entry.url)).toEqual([
+      '/v1/workflows/bulk/cancel',
+      '/v1/workflows/bulk/cancel',
+      '/v1/workflows/bulk/signal',
+      '/v1/workflows/bulk/signal',
+      '/v1/workflows/bulk/tags',
+    ]);
+    expect(requests.map((entry) => entry.init?.method)).toEqual([
+      'POST',
+      'POST',
+      'POST',
+      'POST',
+      'PATCH',
+    ]);
+    expect(requestBodyToJson(requests[0]?.init)).toEqual({
+      filter: { status: 'running', type: 'checkout', tags: ['selected'] },
+      dryRun: true,
+      requestId: 'cancel-request',
+    });
+    expect(requestBodyToJson(requests[1]?.init)).toEqual({
+      filter: { status: 'running', type: 'checkout', tags: ['selected'] },
+      confirmationToken: 'bulk:cancel-token',
+      requestId: 'cancel-request',
+    });
+    expect(requestBodyToJson(requests[2]?.init)).toEqual({
+      filter: { status: 'running', type: 'checkout' },
+      name: 'approve',
+      payload: { reviewer: 'Ada' },
+      dryRun: true,
+      requestId: 'signal-request',
+    });
+    expect(requestBodyToJson(requests[3]?.init)).toEqual({
+      filter: { status: 'running', type: 'checkout' },
+      name: 'approve',
+      payload: { reviewer: 'Ada' },
+      confirmationToken: 'bulk:signal-token',
+      requestId: 'signal-request',
+    });
   });
 });

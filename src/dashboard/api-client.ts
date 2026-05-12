@@ -9,6 +9,11 @@
 
 import { buildScheduleListSearchParams } from '../client/schedule-list-search-params.ts';
 import type {
+  BulkCancelResult,
+  BulkDeleteResult,
+  BulkOperationDryRunResult,
+  BulkSignalResult,
+  BulkTagResult,
   ScheduleFilter,
   ScheduleSummary,
   TenantQuotaUsage,
@@ -88,7 +93,16 @@ export interface ListFilter {
   offset?: number;
 }
 
+export type BulkTagMutationOperation = 'add' | 'remove';
+
 export type {
+  BulkCancelResult,
+  BulkDeleteResult,
+  BulkOperationAuditEvent,
+  BulkOperationDryRunResult,
+  BulkOperationScopeSummary,
+  BulkSignalResult,
+  BulkTagResult,
   ScheduleFilter,
   ScheduleSummary,
   TenantQuotaMetricUsage,
@@ -290,5 +304,117 @@ export class ApiClient {
   /** Get retention policies and next sweep timing for the dashboard. */
   async getRetentionOverview(): Promise<RetentionOverview> {
     return request<RetentionOverview>('/retention');
+  }
+
+  /** Preview matching workflows before bulk cancellation. */
+  async previewBulkCancelWorkflows(
+    filter: ListFilter,
+    requestId: string,
+  ): Promise<BulkOperationDryRunResult> {
+    return request<BulkOperationDryRunResult>('/workflows/bulk/cancel', {
+      method: 'POST',
+      body: JSON.stringify({ filter, dryRun: true, requestId }),
+    });
+  }
+
+  /** Commit bulk cancellation with a confirmation token from a preview. */
+  async commitBulkCancelWorkflows(
+    filter: ListFilter,
+    confirmationToken: string,
+    requestId: string,
+  ): Promise<BulkCancelResult> {
+    return request<BulkCancelResult>('/workflows/bulk/cancel', {
+      method: 'POST',
+      body: JSON.stringify({ filter, confirmationToken, requestId }),
+    });
+  }
+
+  /** Preview matching terminal workflows before bulk deletion. */
+  async previewBulkDeleteWorkflows(
+    filter: ListFilter,
+    requestId: string,
+  ): Promise<BulkOperationDryRunResult> {
+    return request<BulkOperationDryRunResult>('/workflows/bulk', {
+      method: 'DELETE',
+      body: JSON.stringify({ filter, dryRun: true, requestId }),
+    });
+  }
+
+  /** Commit bulk deletion with a confirmation token from a preview. */
+  async commitBulkDeleteWorkflows(
+    filter: ListFilter,
+    confirmationToken: string,
+    requestId: string,
+  ): Promise<BulkDeleteResult> {
+    return request<BulkDeleteResult>('/workflows/bulk', {
+      method: 'DELETE',
+      body: JSON.stringify({ filter, confirmationToken, requestId }),
+    });
+  }
+
+  /** Preview matching workflows before sending a signal in bulk. */
+  async previewBulkSignalWorkflows(
+    filter: ListFilter,
+    name: string,
+    payload: unknown,
+    requestId: string,
+  ): Promise<BulkOperationDryRunResult> {
+    return request<BulkOperationDryRunResult>('/workflows/bulk/signal', {
+      method: 'POST',
+      body: JSON.stringify({
+        filter,
+        name,
+        ...(payload === undefined ? {} : { payload }),
+        dryRun: true,
+        requestId,
+      }),
+    });
+  }
+
+  /** Commit a bulk signal with a confirmation token from a preview. */
+  async commitBulkSignalWorkflows(
+    filter: ListFilter,
+    name: string,
+    payload: unknown,
+    confirmationToken: string,
+    requestId: string,
+  ): Promise<BulkSignalResult> {
+    return request<BulkSignalResult>('/workflows/bulk/signal', {
+      method: 'POST',
+      body: JSON.stringify({
+        filter,
+        name,
+        ...(payload === undefined ? {} : { payload }),
+        confirmationToken,
+        requestId,
+      }),
+    });
+  }
+
+  /** Preview matching workflows before adding or removing tags in bulk. */
+  async previewBulkTagWorkflows(
+    filter: ListFilter,
+    tags: string[],
+    operation: BulkTagMutationOperation,
+    requestId: string,
+  ): Promise<BulkOperationDryRunResult> {
+    return request<BulkOperationDryRunResult>('/workflows/bulk/tags', {
+      method: 'PATCH',
+      body: JSON.stringify({ filter, tags, operation, dryRun: true, requestId }),
+    });
+  }
+
+  /** Commit a bulk tag mutation with a confirmation token from a preview. */
+  async commitBulkTagWorkflows(
+    filter: ListFilter,
+    tags: string[],
+    operation: BulkTagMutationOperation,
+    confirmationToken: string,
+    requestId: string,
+  ): Promise<BulkTagResult> {
+    return request<BulkTagResult>('/workflows/bulk/tags', {
+      method: 'PATCH',
+      body: JSON.stringify({ filter, tags, operation, confirmationToken, requestId }),
+    });
   }
 }

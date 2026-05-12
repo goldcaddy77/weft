@@ -267,7 +267,10 @@ describe('handleRequest edge coverage', () => {
       throw new Error('cancel failed');
     };
     let response = await handleRequest(
-      request('POST', '/v1/workflows/bulk/cancel', { filter: { tags: ['selected'] } }),
+      request('POST', '/v1/workflows/bulk/cancel', {
+        filter: { tags: ['selected'] },
+        confirmationToken: 'bulk:confirmed',
+      }),
       engine,
     );
     expect(response.status).toBe(500);
@@ -280,6 +283,7 @@ describe('handleRequest edge coverage', () => {
       request('POST', '/v1/workflows/bulk/signal', {
         filter: { tags: ['selected'] },
         name: 'continue',
+        confirmationToken: 'bulk:confirmed',
       }),
       engine,
     );
@@ -290,7 +294,10 @@ describe('handleRequest edge coverage', () => {
       throw new Error('delete failed');
     };
     response = await handleRequest(
-      request('DELETE', '/v1/workflows/bulk', { filter: { tags: ['selected'] } }),
+      request('DELETE', '/v1/workflows/bulk', {
+        filter: { tags: ['selected'] },
+        confirmationToken: 'bulk:confirmed',
+      }),
       engine,
     );
     expect(response.status).toBe(500);
@@ -304,6 +311,7 @@ describe('handleRequest edge coverage', () => {
         filter: { tags: ['selected'] },
         tags: ['bulk'],
         operation: 'add',
+        confirmationToken: 'bulk:confirmed',
       }),
       engine,
     );

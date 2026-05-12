@@ -53,11 +53,41 @@ describe('weft.workflows.bulk.tags', () => {
     await firstHandle.result();
     await secondHandle.result();
 
+    let previewResponse = await handleRequest(
+      request({
+        filter: { tags: ['selected'] },
+        tags: ['bulk'],
+        operation: 'add',
+        dryRun: true,
+        requestId: 'bulk-tags-add-request',
+      }),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(previewResponse.status).toBe(200);
+    const addPreview = await previewResponse.json();
+    expect(addPreview).toEqual(
+      expect.objectContaining({
+        dryRun: true,
+        action: 'tag:add',
+        matched: 2,
+        requestId: 'bulk-tags-add-request',
+        confirmationToken: expect.stringMatching(/^bulk:/),
+      }),
+    );
+    const firstPreviewedWorkflow = await engine.get('bulk-tags-selected-a');
+    const secondPreviewedWorkflow = await engine.get('bulk-tags-selected-b');
+    expect(firstPreviewedWorkflow?.tags).toEqual(['selected']);
+    expect(secondPreviewedWorkflow?.tags).toEqual(['selected']);
+
     let response = await handleRequest(
       request({
         filter: { tags: ['selected'] },
         tags: ['bulk'],
         operation: 'add',
+        confirmationToken: addPreview.confirmationToken,
+        requestId: 'bulk-tags-add-request',
       }),
       engine,
       { operationRegistry: registry, restBindings: bindings },
@@ -65,24 +95,66 @@ describe('weft.workflows.bulk.tags', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('application/json');
-    expect(await response.json()).toEqual({ modified: 2 });
+    expect(await response.json()).toEqual({
+      modified: 2,
+      auditEvent: expect.objectContaining({
+        type: 'bulk-operation:audit',
+        action: 'tag:add',
+        affectedCount: 2,
+        requestId: 'bulk-tags-add-request',
+      }),
+    });
     const firstAddedTagsState = await engine.get('bulk-tags-selected-a');
     const secondAddedTagsState = await engine.get('bulk-tags-selected-b');
     expect(firstAddedTagsState?.tags).toEqual(['bulk', 'selected']);
     expect(secondAddedTagsState?.tags).toEqual(['bulk', 'selected']);
+
+    previewResponse = await handleRequest(
+      request({
+        filter: { tags: ['bulk'] },
+        tags: ['selected'],
+        operation: 'remove',
+        dryRun: true,
+        requestId: 'bulk-tags-remove-request',
+      }),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(previewResponse.status).toBe(200);
+    const removePreview = await previewResponse.json();
+    expect(removePreview).toEqual(
+      expect.objectContaining({
+        dryRun: true,
+        action: 'tag:remove',
+        matched: 2,
+        requestId: 'bulk-tags-remove-request',
+        confirmationToken: expect.stringMatching(/^bulk:/),
+      }),
+    );
 
     response = await handleRequest(
       request({
         filter: { tags: ['bulk'] },
         tags: ['selected'],
         operation: 'remove',
+        confirmationToken: removePreview.confirmationToken,
+        requestId: 'bulk-tags-remove-request',
       }),
       engine,
       { operationRegistry: registry, restBindings: bindings },
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ modified: 2 });
+    expect(await response.json()).toEqual({
+      modified: 2,
+      auditEvent: expect.objectContaining({
+        type: 'bulk-operation:audit',
+        action: 'tag:remove',
+        affectedCount: 2,
+        requestId: 'bulk-tags-remove-request',
+      }),
+    });
     const firstRemovedTagsState = await engine.get('bulk-tags-selected-a');
     const secondRemovedTagsState = await engine.get('bulk-tags-selected-b');
     expect(firstRemovedTagsState?.tags).toEqual(['bulk']);

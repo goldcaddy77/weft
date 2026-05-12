@@ -2,7 +2,15 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { Engine } from '../core/engine.ts';
-import type { WorkflowContext } from '../core/types.ts';
+import type {
+  BulkCancelResult,
+  BulkOperationCommitOptions,
+  BulkOperationDryRunOptions,
+  BulkOperationDryRunResult,
+  BulkOperationOptions,
+  ListFilter,
+  WorkflowContext,
+} from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { createEngineEventFeedBackend } from './engine-event-feed-backend.ts';
 import { serve, type WeftServer } from './index.ts';
@@ -243,6 +251,30 @@ function assertSuccessParity(
   }
 }
 
+function confirmationTokenFromPreview(preview: unknown): string {
+  const token = (preview as { confirmationToken?: unknown }).confirmationToken;
+  if (typeof token !== 'string') throw new Error('Expected bulk preview confirmation token');
+  return token;
+}
+
+function normalizeBulkCancelParityPayload(payload: unknown): unknown {
+  if (typeof payload !== 'object' || payload === null) return payload;
+  const result = payload as { auditEvent?: unknown };
+  if (typeof result.auditEvent !== 'object' || result.auditEvent === null) return payload;
+
+  const auditEvent = result.auditEvent as { principal?: unknown };
+  if (typeof auditEvent.principal !== 'object' || auditEvent.principal === null) return payload;
+  const principal = auditEvent.principal as { method?: unknown };
+
+  return {
+    ...result,
+    auditEvent: {
+      ...auditEvent,
+      principal: { method: typeof principal.method === 'string' ? principal.method : 'unknown' },
+    },
+  };
+}
+
 async function invokeGetAcrossTransports(
   engine: Engine,
   server: WeftServer,
@@ -458,10 +490,27 @@ async function invokeBulkCancelTransport(
 
   let callCount = 0;
   const originalCancelAll = engine.cancelAll.bind(engine);
-  engine.cancelAll = async (...args: Parameters<Engine['cancelAll']>) => {
+
+  async function trackedCancelAll(
+    filter: ListFilter,
+    options: BulkOperationDryRunOptions,
+  ): Promise<BulkOperationDryRunResult>;
+  async function trackedCancelAll(
+    filter: ListFilter,
+    options?: BulkOperationCommitOptions,
+  ): Promise<BulkCancelResult>;
+  async function trackedCancelAll(
+    filter: ListFilter,
+    options?: BulkOperationOptions,
+  ): Promise<BulkCancelResult | BulkOperationDryRunResult> {
     callCount += 1;
-    return originalCancelAll(...args);
-  };
+    if (options?.dryRun === true) {
+      return originalCancelAll(filter, options);
+    }
+    return originalCancelAll(filter, options);
+  }
+
+  engine.cancelAll = trackedCancelAll;
 
   await engine.start('hold', null, {
     id: `track8-bulk-selected-a-${transport}`,
@@ -485,42 +534,91 @@ async function invokeBulkCancelTransport(
   const server = serve({ engine, port: 0 });
   servers.push(server);
 
+  const requestId = `track8-bulk-cancel-${transport}`;
   let result: unknown;
   switch (transport) {
     case 'rest': {
+      const previewResponse = await fetch(`${server.url}/v1/workflows/bulk/cancel`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          filter: { tags: ['selected'] },
+          dryRun: true,
+          requestId,
+        }),
+      });
+      expect(previewResponse.status).toBe(200);
+      const preview = await previewResponse.json();
+      const confirmationToken = confirmationTokenFromPreview(preview);
+
       const response = await fetch(`${server.url}/v1/workflows/bulk/cancel`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ filter: { tags: ['selected'] } }),
+        body: JSON.stringify({
+          filter: { tags: ['selected'] },
+          confirmationToken,
+          requestId,
+        }),
       });
       expect(response.status).toBe(200);
       result = await response.json();
       break;
     }
-    case 'json-rpc-http':
+    case 'json-rpc-http': {
+      const preview = await postJsonRpc(server, 'weft.workflows.bulk.cancel', {
+        tags: ['selected'],
+        dryRun: true,
+        requestId,
+      });
+      const confirmationToken = confirmationTokenFromPreview(preview);
       result = await postJsonRpc(server, 'weft.workflows.bulk.cancel', {
         tags: ['selected'],
+        confirmationToken,
+        requestId,
       });
       break;
+    }
     case 'json-rpc-websocket': {
       const webSocket = await openWebSocket(`${server.url.replace('http://', 'ws://')}/jsonrpc`);
       try {
-        const messagePromise = waitForMessage(
+        const previewMessagePromise = waitForMessage(
           webSocket,
           (parsed) =>
             typeof parsed === 'object' &&
             parsed !== null &&
-            (parsed as { id?: string }).id === 'track8-bulk-cancel',
+            (parsed as { id?: string }).id === 'track8-bulk-cancel-preview',
         );
         webSocket.send(
           JSON.stringify({
             jsonrpc: '2.0',
-            id: 'track8-bulk-cancel',
+            id: 'track8-bulk-cancel-preview',
             method: 'weft.workflows.bulk.cancel',
-            params: { tags: ['selected'] },
+            params: { tags: ['selected'], dryRun: true, requestId },
           }),
         );
-        const response = (await messagePromise) as { error?: unknown; result?: unknown };
+        const previewResponse = (await previewMessagePromise) as {
+          error?: unknown;
+          result?: unknown;
+        };
+        expect(previewResponse.error).toBeUndefined();
+        const confirmationToken = confirmationTokenFromPreview(previewResponse.result);
+
+        const commitMessagePromise = waitForMessage(
+          webSocket,
+          (parsed) =>
+            typeof parsed === 'object' &&
+            parsed !== null &&
+            (parsed as { id?: string }).id === 'track8-bulk-cancel-commit',
+        );
+        webSocket.send(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'track8-bulk-cancel-commit',
+            method: 'weft.workflows.bulk.cancel',
+            params: { tags: ['selected'], confirmationToken, requestId },
+          }),
+        );
+        const response = (await commitMessagePromise) as { error?: unknown; result?: unknown };
         expect(response.error).toBeUndefined();
         result = response.result;
       } finally {
@@ -528,11 +626,20 @@ async function invokeBulkCancelTransport(
       }
       break;
     }
-    case 'json-rpc-stdio':
+    case 'json-rpc-stdio': {
+      const preview = await invokeStdioJsonRpc(engine, 'weft.workflows.bulk.cancel', {
+        tags: ['selected'],
+        dryRun: true,
+        requestId,
+      });
+      const confirmationToken = confirmationTokenFromPreview(preview);
       result = await invokeStdioJsonRpc(engine, 'weft.workflows.bulk.cancel', {
         tags: ['selected'],
+        confirmationToken,
+        requestId,
       });
       break;
+    }
   }
 
   return { callCount, result };
@@ -726,17 +833,19 @@ describe('cross-transport parity', () => {
 
     assertSuccessParity(
       {
-        rest: results.rest.result,
-        'json-rpc-http': results['json-rpc-http'].result,
-        'json-rpc-websocket': results['json-rpc-websocket'].result,
-        'json-rpc-stdio': results['json-rpc-stdio'].result,
+        rest: normalizeBulkCancelParityPayload(results.rest.result),
+        'json-rpc-http': normalizeBulkCancelParityPayload(results['json-rpc-http'].result),
+        'json-rpc-websocket': normalizeBulkCancelParityPayload(
+          results['json-rpc-websocket'].result,
+        ),
+        'json-rpc-stdio': normalizeBulkCancelParityPayload(results['json-rpc-stdio'].result),
       },
       invariants,
       'weft.workflows.bulk.cancel',
     );
 
     for (const outcome of Object.values(results)) {
-      expect(outcome.callCount).toBe(1);
+      expect(outcome.callCount).toBe(2);
       expect((outcome.result as { cancelled?: number }).cancelled).toBe(2);
     }
   });
