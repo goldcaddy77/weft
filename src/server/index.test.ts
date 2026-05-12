@@ -2666,6 +2666,55 @@ describe('long-poll endpoints (GET /v1/tasks/:queue, POST /v1/tasks/:queue/resul
     expect(snapshot[METRICS.taskExecutionLatency.name]?.type).toBe('histogram');
   });
 
+  it('refreshes lastQueuedAt when redispatching an existing queued record to long-poll', async () => {
+    const storage = new MemoryStorage();
+    engine = new Engine({ storage });
+    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+    server = serve({ engine, port: 0 });
+
+    await storage.put(
+      KEYS.operationQueued('long-poll-requeue-timing-op'),
+      encode({
+        operationId: 'long-poll-requeue-timing-op',
+        activityName: 'charge',
+        input: null,
+        queue: 'default',
+        attempt: 2,
+        visibilityTimeout: 30_000,
+        queuedAt: 1_000,
+        firstQueuedAt: 500,
+        lastQueuedAt: 1_000,
+        lastDispatchedAt: 750,
+        startedAt: 800,
+        retryCount: 1,
+        requeueCount: 1,
+        lastRequeueReason: 'visibility-timeout',
+      } satisfies QueuedRecord),
+    );
+
+    const beforeRedispatch = Date.now();
+    await server.dispatchTask({
+      operationId: 'long-poll-requeue-timing-op',
+      activityName: 'charge',
+      input: null,
+      attempt: 2,
+    });
+
+    const persisted = decode(
+      (await storage.get(KEYS.operationQueued('long-poll-requeue-timing-op')))!,
+    ) as QueuedRecord;
+    expect(persisted.firstQueuedAt).toBe(500);
+    expect(persisted.lastQueuedAt).toBe(persisted.queuedAt);
+    expect(persisted.lastQueuedAt).toBeGreaterThanOrEqual(beforeRedispatch);
+    expect(persisted.lastDispatchedAt).toBe(750);
+    expect(persisted.startedAt).toBe(800);
+
+    const pendingTask = server.taskQueue.peekPending('default')[0];
+    expect(pendingTask?.lastQueuedAt).toBe(persisted.lastQueuedAt);
+  });
+
   it('blocks until a task arrives within the timeout', async () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });

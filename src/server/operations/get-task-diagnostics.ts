@@ -233,9 +233,8 @@ async function* scanResolvedRecords(
   }
 
   // Resolved task records are historical and can grow without bound. Scan a
-  // fixed recent-history window rather than coupling that window to the result
-  // item limit, because filters are applied after storage reads.
-  for await (const [, value] of engine.storage.scan('op:resolved:', {
+  // fixed recent-history window ordered by resolvedAt rather than operationId.
+  for await (const [, value] of engine.storage.scan(KEYS.operationResolvedByTimePrefix(), {
     limit: RESOLVED_HISTORY_SCAN_LIMIT,
     reverse: true,
   })) {

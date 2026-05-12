@@ -455,9 +455,15 @@ export async function transitionInflightToResolved(
         }),
   };
 
+  const encodedResolvedRecord = encode(resolvedRecord);
   await storage.batch([
     { type: 'delete', key: KEYS.operationInflight(operationId) },
-    { type: 'put', key: KEYS.operationResolved(operationId), value: encode(resolvedRecord) },
+    { type: 'put', key: KEYS.operationResolved(operationId), value: encodedResolvedRecord },
+    {
+      type: 'put',
+      key: KEYS.operationResolvedByTime(resolvedAt, operationId),
+      value: encodedResolvedRecord,
+    },
   ]);
 }
 

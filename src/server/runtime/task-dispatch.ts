@@ -178,7 +178,7 @@ export async function dispatchTaskImpl(
   const normalizedQueuedRecord = await markQueued(options.engine.storage, {
     ...queuedRecord,
     firstQueuedAt: existingQueuedRecord?.firstQueuedAt ?? queuedRecord.queuedAt,
-    lastQueuedAt: existingQueuedRecord?.lastQueuedAt ?? queuedRecord.queuedAt,
+    lastQueuedAt: queuedRecord.queuedAt,
     lastDispatchedAt: existingQueuedRecord?.lastDispatchedAt,
     startedAt: existingQueuedRecord?.startedAt,
     retryCount: existingQueuedRecord?.retryCount ?? queuedRecord.retryCount,

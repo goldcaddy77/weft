@@ -223,7 +223,12 @@ describe('state transitions', () => {
     await transitionInflightToResolved(storage, 'op-1', 'completed');
 
     expect(await storage.get(KEYS.operationInflight('op-1'))).toBeNull();
-    expect(await storage.get(KEYS.operationResolved('op-1'))).not.toBeNull();
+    const resolvedValue = await storage.get(KEYS.operationResolved('op-1'));
+    expect(resolvedValue).not.toBeNull();
+    const resolvedRecord = decode(resolvedValue!) as ResolvedRecord;
+    expect(
+      await storage.get(KEYS.operationResolvedByTime(resolvedRecord.resolvedAt, 'op-1')),
+    ).not.toBeNull();
     expect(await getExclusiveTaskState(storage, 'op-1')).toBe('resolved');
   });
 
@@ -371,6 +376,7 @@ describe('state transitions', () => {
     const resolved = decode(
       (await storage.get(KEYS.operationResolved('metadata-op')))!,
     ) as ResolvedRecord;
+    expect(await storage.get(KEYS.operationResolvedByTime(1_900, 'metadata-op'))).not.toBeNull();
     expect(resolved.firstQueuedAt).toBe(firstQueuedAt);
     expect(resolved.lastQueuedAt).toBe(1_300);
     expect(resolved.lastDispatchedAt).toBe(1_500);

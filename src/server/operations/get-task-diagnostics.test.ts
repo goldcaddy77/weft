@@ -70,6 +70,15 @@ async function runDiagnostics({
   });
 }
 
+async function putResolvedRecord(storage: MemoryStorage, record: ResolvedRecord): Promise<void> {
+  const encodedRecord = encode(record);
+  await storage.put(KEYS.operationResolved(record.operationId), encodedRecord);
+  await storage.put(
+    KEYS.operationResolvedByTime(record.resolvedAt, record.operationId),
+    encodedRecord,
+  );
+}
+
 describe('weft.tasks.diagnostics', () => {
   it('identifies stuck queued tasks, stale inflight tasks, retry storms, and capacity saturation', async () => {
     const storage = new MemoryStorage();
@@ -128,7 +137,7 @@ describe('weft.tasks.diagnostics', () => {
 
     await storage.put(KEYS.operationQueued(stuckQueued.operationId), encode(stuckQueued));
     await storage.put(KEYS.operationInflight(staleInflight.operationId), encode(staleInflight));
-    await storage.put(KEYS.operationResolved(retryStorm.operationId), encode(retryStorm));
+    await putResolvedRecord(storage, retryStorm);
 
     registry.register({
       id: 'worker-capacity',
@@ -241,7 +250,7 @@ describe('weft.tasks.diagnostics', () => {
         requeueCount: 3,
         resolutionReason: 'max-attempts-exceeded',
       };
-      await storage.put(KEYS.operationResolved(record.operationId), encode(record));
+      await putResolvedRecord(storage, record);
     }
 
     const result = await runDiagnostics({
@@ -257,9 +266,56 @@ describe('weft.tasks.diagnostics', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected diagnostics result');
     const diagnostics = result.value as GetTaskDiagnosticsOutput;
-    expect(storage.scannedEntryCount('op:resolved:')).toBe(1_000);
+    expect(storage.scannedEntryCount(KEYS.operationResolvedByTimePrefix())).toBe(1_000);
     expect(diagnostics.summary.retryStorms).toBe(1_000);
     expect(diagnostics.items).toHaveLength(2);
+  });
+
+  it('orders resolved history by resolvedAt rather than operation id', async () => {
+    const storage = new ScanCountingStorage();
+    const engine = createEngine(storage);
+    const registry = new WorkerRegistry();
+    const taskQueue = new TaskQueue();
+
+    await putResolvedRecord(storage, {
+      operationId: 'z-old-retry',
+      workflowId: 'workflow-history',
+      activityName: 'charge',
+      queue: 'default',
+      status: 'failed',
+      resolvedAt: 1_000,
+      retryCount: 3,
+      requeueCount: 3,
+      resolutionReason: 'max-attempts-exceeded',
+    });
+    await putResolvedRecord(storage, {
+      operationId: 'a-new-retry',
+      workflowId: 'workflow-history',
+      activityName: 'charge',
+      queue: 'default',
+      status: 'failed',
+      resolvedAt: 9_000,
+      retryCount: 3,
+      requeueCount: 3,
+      resolutionReason: 'max-attempts-exceeded',
+    });
+
+    const result = await runDiagnostics({
+      engine,
+      registry,
+      taskQueue,
+      input: {
+        retryStormMinimumAttempts: 3,
+        limit: 1,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected diagnostics result');
+    const diagnostics = result.value as GetTaskDiagnosticsOutput;
+    expect(diagnostics.summary.retryStorms).toBe(2);
+    expect(diagnostics.items).toHaveLength(1);
+    expect(diagnostics.items[0]?.operationId).toBe('a-new-retry');
   });
 
   it('counts filtered resolved retry storms beyond the returned item limit', async () => {
@@ -280,7 +336,7 @@ describe('weft.tasks.diagnostics', () => {
         requeueCount: 3,
         resolutionReason: 'max-attempts-exceeded',
       };
-      await storage.put(KEYS.operationResolved(record.operationId), encode(record));
+      await putResolvedRecord(storage, record);
     }
 
     for (let index = 0; index < 2; index += 1) {
@@ -295,7 +351,7 @@ describe('weft.tasks.diagnostics', () => {
         requeueCount: 3,
         resolutionReason: 'max-attempts-exceeded',
       };
-      await storage.put(KEYS.operationResolved(record.operationId), encode(record));
+      await putResolvedRecord(storage, record);
     }
 
     const result = await runDiagnostics({
@@ -312,7 +368,7 @@ describe('weft.tasks.diagnostics', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected diagnostics result');
     const diagnostics = result.value as GetTaskDiagnosticsOutput;
-    expect(storage.scannedEntryCount('op:resolved:')).toBe(5);
+    expect(storage.scannedEntryCount(KEYS.operationResolvedByTimePrefix())).toBe(5);
     expect(diagnostics.summary.retryStorms).toBe(2);
     expect(diagnostics.items.map((item) => item.operationId)).toEqual([
       'a-matching-1',
