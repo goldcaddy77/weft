@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getContext, untrack } from 'svelte';
+  import { SvelteMap } from 'svelte/reactivity';
 
   import type {
     ApiClient,
@@ -34,7 +35,7 @@
   let initialLoading = $state(true);
   let workersError = $state<string | null>(null);
   let queuesError = $state<string | null>(null);
-  let mutationKey = $state<string | null>(null);
+  const activeMutationCounts = new SvelteMap<string, number>();
   let mutationError = $state<string | null>(null);
 
   // ---------------------------------------------------------------------------
@@ -86,7 +87,7 @@
   }
 
   async function runMutation(key: string, mutation: () => Promise<unknown>): Promise<void> {
-    mutationKey = key;
+    addActiveMutation(key);
     mutationError = null;
     try {
       await mutation();
@@ -94,28 +95,64 @@
     } catch (error) {
       mutationError = errorMessage(error);
     } finally {
-      mutationKey = null;
+      removeActiveMutation(key);
     }
   }
 
+  function addActiveMutation(key: string): void {
+    activeMutationCounts.set(key, (activeMutationCounts.get(key) ?? 0) + 1);
+  }
+
+  function removeActiveMutation(key: string): void {
+    const currentCount = activeMutationCounts.get(key) ?? 0;
+    if (currentCount <= 1) {
+      activeMutationCounts.delete(key);
+    } else {
+      activeMutationCounts.set(key, currentCount - 1);
+    }
+  }
+
+  function isMutationActive(key: string): boolean {
+    return activeMutationCounts.has(key);
+  }
+
+  function deploymentIdentityKey(deployment: WorkerDeploymentSummary): string {
+    return JSON.stringify([
+      deployment.deploymentName,
+      deployment.buildId,
+      deployment.runtimeVersion,
+      deployment.gitSha,
+    ]);
+  }
+
+  function deploymentMutationKey(deploymentName: string): string {
+    return `deployment:${deploymentName}`;
+  }
+
+  function workerMutationKey(workerId: string): string {
+    return `worker:${workerId}`;
+  }
+
   function drainWorker(worker: WorkerSummary): void {
-    void runMutation(`worker:${worker.id}`, () => apiClient.drainWorker(worker.id));
+    void runMutation(workerMutationKey(worker.id), () => apiClient.drainWorker(worker.id));
   }
 
   function resumeWorker(worker: WorkerSummary): void {
-    void runMutation(`worker:${worker.id}`, () => apiClient.clearWorkerDrain(worker.id));
+    void runMutation(workerMutationKey(worker.id), () => apiClient.clearWorkerDrain(worker.id));
   }
 
   function drainDeployment(deployment: WorkerDeploymentSummary): void {
     const deploymentName = deployment.deploymentName;
     if (deploymentName === null) return;
-    void runMutation(`deployment:${deploymentName}`, () => apiClient.drainDeployment(deploymentName));
+    void runMutation(deploymentMutationKey(deploymentName), () =>
+      apiClient.drainDeployment(deploymentName),
+    );
   }
 
   function resumeDeployment(deployment: WorkerDeploymentSummary): void {
     const deploymentName = deployment.deploymentName;
     if (deploymentName === null) return;
-    void runMutation(`deployment:${deploymentName}`, () =>
+    void runMutation(deploymentMutationKey(deploymentName), () =>
       apiClient.clearDeploymentDrain(deploymentName),
     );
   }
@@ -280,7 +317,7 @@
                   <button
                     class="table-action"
                     type="button"
-                    disabled={mutationKey === `worker:${worker.id}`}
+                    disabled={isMutationActive(workerMutationKey(worker.id))}
                     onclick={() =>
                       worker.health === 'active' ? drainWorker(worker) : resumeWorker(worker)}
                   >
@@ -323,7 +360,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each deployments as deployment (`${deployment.deploymentName ?? 'none'}:${deployment.buildId ?? 'none'}`)}
+            {#each deployments as deployment (deploymentIdentityKey(deployment))}
               <tr>
                 <td class="cell-id">{formatOptional(deployment.deploymentName)}</td>
                 <td>{formatOptional(deployment.buildId)}</td>
@@ -349,7 +386,7 @@
                     <button
                       class="table-action"
                       type="button"
-                      disabled={mutationKey === `deployment:${deployment.deploymentName}`}
+                      disabled={isMutationActive(deploymentMutationKey(deployment.deploymentName))}
                       onclick={() =>
                         deployment.health === 'active'
                           ? drainDeployment(deployment)
