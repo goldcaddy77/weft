@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { AggregateDistinctKeyCapExceededError } from '../aggregate-validation.ts';
 import { Engine } from '../engine.ts';
+import type { WorkflowContext } from '../types.ts';
 
 async function startAndComplete(
   engine: Engine,
@@ -18,7 +19,7 @@ describe('engine.aggregate', () => {
     engine.register('done', async function* () {
       return 'ok';
     });
-    engine.register('hang', async function* (ctx) {
+    engine.register('hang', async function* (ctx: WorkflowContext) {
       yield* ctx.waitForSignal('go');
       return 'ok';
     });
