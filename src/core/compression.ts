@@ -1,8 +1,7 @@
 /**
  * Payload compression utilities for transparent gzip/brotli compression
  * at the storage layer. Uses a 2-byte header (magic byte `0xC1` + algorithm
- * byte) for format detection, enabling cross-algorithm reads and backward
- * compatibility with pre-compression data.
+ * byte) for format detection and cross-algorithm reads.
  *
  * @module core/compression
  */
@@ -110,8 +109,8 @@ export type Compressor = {
 /**
  * Magic byte that prefixes all compressed-storage payloads. Uses msgpack's
  * reserved `0xC1` byte, which is defined as "never used" in the msgpack
- * specification and will never appear as the first byte of valid msgpack data.
- * This guarantees zero collisions with legacy (pre-compression) data.
+ * specification and will never appear as the first byte of valid msgpack data
+ * written directly into storage.
  */
 const MAGIC_BYTE = 0xc1;
 
@@ -203,8 +202,7 @@ export function createCompressor(algorithm: CompressionAlgorithm): Compressor {
 
 /**
  * Compress a payload, prepending a 2-byte header: magic byte (`0xC1`) +
- * algorithm byte. This distinguishes compressed-storage data from legacy
- * (pre-compression) data with zero risk of collision.
+ * algorithm byte.
  *
  * If the data is below the threshold or the algorithm is `'none'`, the payload
  * is stored with a `[0xC1, 0x00]` header and no compression is applied.
@@ -249,18 +247,17 @@ export async function compressPayload(
  * - `[0xC1, 0x00]` → uncompressed, return the rest as-is
  * - `[0xC1, 0x01]` → gzip-compressed, decompress
  * - `[0xC1, 0x02]` → brotli-compressed, decompress
- * - Any other first byte → legacy data without header, return as-is
- *   (backward compatible with pre-compression storage)
+ *
+ * Empty payloads are valid only when framed as `[0xC1, 0x00]`. Unframed empty
+ * input is rejected because it cannot prove which storage format produced it.
  */
 export async function decompressPayload(data: Uint8Array): Promise<Uint8Array> {
   if (data.length < HEADER_SIZE) {
-    // Too short to contain a header — must be legacy data or empty.
-    return data;
+    throw new Error('Compression payload missing 2-byte header.');
   }
 
   if (data[0] !== MAGIC_BYTE) {
-    // First byte is not the magic byte — legacy data, return unchanged.
-    return data;
+    throw new Error('Compression payload missing magic byte 0xC1.');
   }
 
   const algorithm = data[1]!;
@@ -277,8 +274,11 @@ export async function decompressPayload(data: Uint8Array): Promise<Uint8Array> {
       return brotliDecompressSync(body);
 
     default:
-      // Unrecognized algorithm byte after magic — return as-is for safety.
-      return data;
+      throw new Error(
+        `Compression payload uses unsupported algorithm byte 0x${algorithm
+          .toString(16)
+          .padStart(2, '0')}.`,
+      );
   }
 }
 
