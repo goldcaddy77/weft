@@ -183,7 +183,7 @@
 
   function visibilityFilters(options: { includeTenantId: boolean }): Omit<FetchFilters, 'offset'> {
     const normalizedIdPrefix = idPrefixFilter.trim();
-    const normalizedTenantId = tenantIdFilter.trim();
+    const normalizedTenantId = options.includeTenantId ? tenantIdFilter.trim() : '';
     return {
       status: statusFilter,
       type: typeFilter,
@@ -284,16 +284,11 @@
     );
   }
 
-  function resetVisibilityFiltersAndBulkPreview(): void {
-    currentOffset = 0;
-    resetBulkPreview();
-  }
-
   function toggleFailureCategoryFilter(category: FailureCategory): void {
     failureCategoryFilters = failureCategoryFilters.includes(category)
       ? failureCategoryFilters.filter((candidate) => candidate !== category)
       : [...failureCategoryFilters, category];
-    resetVisibilityFiltersAndBulkPreview();
+    resetFiltersAndBulkPreview();
   }
 
   function aggregateFilters(): FetchFilters {
@@ -946,7 +941,7 @@
         placeholder="Filter by ID prefix..."
         bind:value={idPrefixFilter}
         error={idPrefixError ?? undefined}
-        oninput={resetVisibilityFiltersAndBulkPreview}
+        oninput={resetFiltersAndBulkPreview}
       />
     </div>
     <div class="workflow-list-filter-group">
@@ -957,7 +952,7 @@
         placeholder="Tenant ID"
         bind:value={tenantIdFilter}
         list="workflow-tenant-suggestions"
-        oninput={resetVisibilityFiltersAndBulkPreview}
+        oninput={resetFiltersAndBulkPreview}
       />
       <datalist id="workflow-tenant-suggestions">
         {#each tenantSuggestions as tenantSuggestion (tenantSuggestion)}
@@ -973,21 +968,21 @@
       label="Created"
       bind:gte={createdAtGte}
       bind:lte={createdAtLte}
-      oninput={resetVisibilityFiltersAndBulkPreview}
+      oninput={resetFiltersAndBulkPreview}
     />
     <DateRangePicker
       id="updated-at"
       label="Updated"
       bind:gte={updatedAtGte}
       bind:lte={updatedAtLte}
-      oninput={resetVisibilityFiltersAndBulkPreview}
+      oninput={resetFiltersAndBulkPreview}
     />
     <DateRangePicker
       id="execution-deadline"
       label="Execution Deadline"
       bind:gte={executionDeadlineGte}
       bind:lte={executionDeadlineLte}
-      oninput={resetVisibilityFiltersAndBulkPreview}
+      oninput={resetFiltersAndBulkPreview}
     />
   </div>
 
