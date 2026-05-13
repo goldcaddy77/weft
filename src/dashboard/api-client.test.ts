@@ -596,4 +596,67 @@ describe('ApiClient', () => {
       expect.objectContaining({ queue: 'queue-a', backlog: 2, oldestQueuedAgeMs: 900 }),
     ]);
   });
+
+  it('serializes the extended workflow list filters into query parameters', async () => {
+    let requestedUrl = '';
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      requestedUrl = requestInputToUrl(input);
+      return Response.json({ items: [], total: 0, offset: 0, limit: 20 });
+    }) as typeof fetch;
+
+    const client = new ApiClient();
+    await client.listWorkflows({
+      status: ['failed', 'timed-out'],
+      idPrefix: 'order-',
+      tenantId: ['acme', 'globex'],
+      failureCategory: ['memory', 'planning'],
+      createdAt: { gte: 1000, lt: 5000 },
+      updatedAt: { gt: 2000 },
+      executionDeadline: { lte: 10_000 },
+    });
+
+    expect(requestedUrl).toContain('/v1/workflows?');
+    expect(requestedUrl).toContain('status=failed');
+    expect(requestedUrl).toContain('status=timed-out');
+    expect(requestedUrl).toContain('id_prefix=order-');
+    expect(requestedUrl).toContain('tenant_id=acme');
+    expect(requestedUrl).toContain('tenant_id=globex');
+    expect(requestedUrl).toContain('failure_category=memory');
+    expect(requestedUrl).toContain('failure_category=planning');
+    expect(requestedUrl).toContain('created_at_gte=1000');
+    expect(requestedUrl).toContain('created_at_lt=5000');
+    expect(requestedUrl).toContain('updated_at_gt=2000');
+    expect(requestedUrl).toContain('execution_deadline_lte=10000');
+  });
+
+  it('aggregateWorkflows targets /v1/workflows/aggregate with group_by', async () => {
+    let requestedUrl = '';
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      requestedUrl = requestInputToUrl(input);
+      return Response.json({ total: 0, groups: [], truncated: false });
+    }) as typeof fetch;
+
+    const client = new ApiClient();
+    await client.aggregateWorkflows({ tenantId: 'acme' }, 'status', 50);
+
+    expect(requestedUrl).toContain('/v1/workflows/aggregate?');
+    expect(requestedUrl).toContain('group_by=status');
+    expect(requestedUrl).toContain('tenant_id=acme');
+    expect(requestedUrl).toContain('limit=50');
+  });
+
+  it('aggregateWorkflows serializes attribute group-by as attribute:<name>', async () => {
+    let requestedUrl = '';
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      requestedUrl = requestInputToUrl(input);
+      return Response.json({ total: 0, groups: [], truncated: false });
+    }) as typeof fetch;
+
+    const client = new ApiClient();
+    await client.aggregateWorkflows(undefined, { attribute: 'customerTier' });
+
+    expect(requestedUrl).toContain('/v1/workflows/aggregate?');
+    expect(requestedUrl).toContain('group_by=attribute%3AcustomerTier');
+  });
 });

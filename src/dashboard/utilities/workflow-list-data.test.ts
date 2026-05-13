@@ -1,7 +1,11 @@
 import { describe, expect, it, mock } from 'bun:test';
 
-import type { ApiClient } from '../api-client.ts';
-import { loadWorkflowListData } from './workflow-list-data.ts';
+import type { AggregateResult, ApiClient } from '../api-client.ts';
+import {
+  buildWorkflowListFilter,
+  loadWorkflowAggregate,
+  loadWorkflowListData,
+} from './workflow-list-data.ts';
 
 describe('loadWorkflowListData', () => {
   it('returns workflows even when the retention overview request fails', async () => {
@@ -157,5 +161,134 @@ describe('loadWorkflowListData', () => {
 
     expect(result.workflows).toHaveLength(1);
     expect(result.schedules).toEqual([]);
+  });
+});
+
+describe('buildWorkflowListFilter', () => {
+  it('omits empty / unset fields and always includes pagination', () => {
+    expect(buildWorkflowListFilter({ status: 'all', type: '', tags: [], offset: 0 }, 20)).toEqual({
+      limit: 20,
+      offset: 0,
+    });
+  });
+
+  it('round-trips idPrefix, tenantId, failureCategory, and time ranges when set', () => {
+    const filter = buildWorkflowListFilter(
+      {
+        status: 'failed',
+        type: 'order',
+        tags: ['nightly'],
+        offset: 0,
+        idPrefix: 'order-',
+        tenantId: ['acme'],
+        failureCategory: ['memory', 'planning'],
+        createdAt: { gte: 1000 },
+        updatedAt: { lt: 5000 },
+      },
+      50,
+    );
+    expect(filter).toEqual({
+      limit: 50,
+      offset: 0,
+      status: 'failed',
+      type: 'order',
+      tags: ['nightly'],
+      idPrefix: 'order-',
+      tenantId: 'acme',
+      failureCategory: ['memory', 'planning'],
+      createdAt: { gte: 1000 },
+      updatedAt: { lt: 5000 },
+    });
+  });
+
+  it('collapses a single-element tenantId array to a string and keeps arrays of size >1', () => {
+    const single = buildWorkflowListFilter(
+      { status: 'all', type: '', tags: [], offset: 0, tenantId: ['acme'] },
+      20,
+    );
+    expect(single.tenantId).toBe('acme');
+
+    const many = buildWorkflowListFilter(
+      { status: 'all', type: '', tags: [], offset: 0, tenantId: ['acme', 'globex'] },
+      20,
+    );
+    expect(many.tenantId).toEqual(['acme', 'globex']);
+  });
+
+  it('drops empty time-range objects entirely', () => {
+    const filter = buildWorkflowListFilter(
+      { status: 'all', type: '', tags: [], offset: 0, createdAt: {}, updatedAt: { gte: 1 } },
+      20,
+    );
+    expect(filter.createdAt).toBeUndefined();
+    expect(filter.updatedAt).toEqual({ gte: 1 });
+  });
+});
+
+describe('loadWorkflowAggregate', () => {
+  it('omits limit and offset from the request filter, supplies groupBy', async () => {
+    const aggregateWorkflows = mock(
+      async (_filter?: unknown, _groupBy?: unknown, _limit?: number): Promise<AggregateResult> => ({
+        total: 5,
+        groups: [{ key: 'running', count: 5 }],
+        truncated: false,
+      }),
+    );
+    const apiClient = { aggregateWorkflows } satisfies Pick<ApiClient, 'aggregateWorkflows'>;
+
+    const result = await loadWorkflowAggregate(
+      apiClient,
+      {
+        status: 'failed',
+        type: 'order',
+        tags: ['nightly'],
+        offset: 40,
+        tenantId: ['acme'],
+        createdAt: { gte: 100 },
+      },
+      'status',
+      50,
+    );
+
+    expect(result.total).toBe(5);
+    expect(aggregateWorkflows).toHaveBeenCalledTimes(1);
+    expect(aggregateWorkflows).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'failed',
+        type: 'order',
+        tags: ['nightly'],
+        tenantId: 'acme',
+        createdAt: { gte: 100 },
+      }),
+      'status',
+      50,
+    );
+    const requestedFilter = aggregateWorkflows.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(requestedFilter).toBeDefined();
+    expect(requestedFilter).not.toHaveProperty('limit');
+    expect(requestedFilter).not.toHaveProperty('offset');
+  });
+
+  it('passes through attribute groupBy structurally', async () => {
+    const aggregateWorkflows = mock(
+      async (_filter?: unknown, _groupBy?: unknown): Promise<AggregateResult> => ({
+        total: 0,
+        groups: [],
+        truncated: false,
+      }),
+    );
+    const apiClient = { aggregateWorkflows } satisfies Pick<ApiClient, 'aggregateWorkflows'>;
+
+    await loadWorkflowAggregate(
+      apiClient,
+      { status: 'all', type: '', tags: [], offset: 0 },
+      { attribute: 'customerTier' },
+    );
+
+    expect(aggregateWorkflows).toHaveBeenCalledWith(
+      expect.anything(),
+      { attribute: 'customerTier' },
+      undefined,
+    );
   });
 });
