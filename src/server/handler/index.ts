@@ -2,10 +2,10 @@
  * Platform-agnostic HTTP request handler for the workflow REST API.
  * Maps Request to Response with no Bun-specific dependencies.
  *
- * Dispatch model: operation-backed REST routes are resolved through
- * `RestBinding` entries and the `dispatchViaExecuteOperation` pipeline.
- * Only REST-only meta and discovery endpoints bypass the operation catalog,
- * using the direct-route table shared with the OpenAPI generator.
+ * Dispatch model: REST-only meta and discovery endpoints are reserved direct
+ * routes, using the table shared with the OpenAPI generator. Every other
+ * operation-backed REST route is resolved through `RestBinding` entries and
+ * the `dispatchViaExecuteOperation` pipeline.
  *
  * @module server/handler
  */
@@ -132,6 +132,15 @@ export async function handleRequest(
   const optionError = validateHandlerOptions(options);
   if (optionError !== null) return optionError;
 
+  const directRouteLookup = matchRouteBoundary(() =>
+    matchDirectRoute(request.method, url.pathname),
+  );
+  if (directRouteLookup.kind === 'malformed') return directRouteLookup.response;
+
+  if (directRouteLookup.value !== null) {
+    return dispatchDirectRoute(request, engine, directRouteLookup.value, options, url);
+  }
+
   const restBindings = options?.restBindings ?? defaultRestBindings();
   const operationRegistry = options?.operationRegistry ?? defaultOperationRegistry();
   const bindingLookup = matchRouteBoundary(() =>
@@ -150,14 +159,5 @@ export async function handleRequest(
     );
   }
 
-  const directRouteLookup = matchRouteBoundary(() =>
-    matchDirectRoute(request.method, url.pathname),
-  );
-  if (directRouteLookup.kind === 'malformed') return directRouteLookup.response;
-
-  if (directRouteLookup.value === null) {
-    return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);
-  }
-
-  return dispatchDirectRoute(request, engine, directRouteLookup.value, options, url);
+  return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);
 }

@@ -40,7 +40,7 @@ function apiKeyAuth() {
 }
 
 describe('handleRequest coverage regressions', () => {
-  it('dispatches matching REST bindings before direct meta routes', async () => {
+  it('keeps direct meta routes reserved when a REST binding also matches', async () => {
     const engine = createEngine();
     const bindingOperation = defineOperation({
       name: 'weft.test.routeshadow',
@@ -69,7 +69,7 @@ describe('handleRequest coverage regressions', () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ resource: 'health' });
+    await expect(response.json()).resolves.toEqual({ status: 'ok' });
   });
 
   it('returns 400 when a conflicting REST binding path parameter cannot be decoded', async () => {

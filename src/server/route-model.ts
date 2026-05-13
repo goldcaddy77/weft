@@ -23,16 +23,26 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export type DirectRouteResponseMediaType =
   | 'application/json'
+  | 'application/msgpack'
   | 'application/linkset+json'
   | 'text/plain';
 
+export type DirectRouteResponseSchema = 'object' | 'string';
+
+export type DirectRouteResponseContent = {
+  /** Media type advertised for this response body. */
+  mediaType: DirectRouteResponseMediaType;
+  /** Minimal OpenAPI schema shape for this response body. */
+  schema: DirectRouteResponseSchema;
+};
+
 export type DirectRouteResponse = {
-  /** Successful HTTP status for the direct route. */
+  /** HTTP status emitted by the direct route. */
   status: number;
   /** Human-readable response description for OpenAPI. */
   description: string;
-  /** Response media type advertised by the direct route, when it has a body. */
-  mediaType?: DirectRouteResponseMediaType;
+  /** Response body variants advertised by the direct route, when it has a body. */
+  content?: readonly DirectRouteResponseContent[];
 };
 
 export type DirectRouteAccess = 'public' | 'authenticated';
@@ -54,8 +64,8 @@ export type DirectHttpRouteDefinition = {
   summary: string;
   /** OpenAPI tags for grouping. */
   tags: string[];
-  /** Successful response metadata shared by dispatch documentation. */
-  response: DirectRouteResponse;
+  /** Response metadata shared by dispatch documentation. */
+  responses: readonly DirectRouteResponse[];
   /** Direct routes are intentionally public authentication bypasses. */
   access: DirectRouteAccess;
 };
@@ -79,11 +89,16 @@ export const DIRECT_HTTP_ROUTES = [
     paramNames: [],
     summary: 'Health check',
     tags: ['System'],
-    response: {
-      status: 200,
-      description: 'Service health status',
-      mediaType: 'application/json',
-    },
+    responses: [
+      {
+        status: 200,
+        description: 'Service health status',
+        content: [
+          { mediaType: 'application/json', schema: 'object' },
+          { mediaType: 'application/msgpack', schema: 'object' },
+        ],
+      },
+    ],
     access: 'public',
   },
   {
@@ -93,11 +108,18 @@ export const DIRECT_HTTP_ROUTES = [
     paramNames: [],
     summary: 'Prometheus metrics export',
     tags: ['Observability'],
-    response: {
-      status: 200,
-      description: 'Prometheus metrics exposition',
-      mediaType: 'text/plain',
-    },
+    responses: [
+      {
+        status: 200,
+        description: 'Prometheus metrics exposition',
+        content: [{ mediaType: 'text/plain', schema: 'string' }],
+      },
+      {
+        status: 503,
+        description: 'Metrics exporter failure',
+        content: [{ mediaType: 'application/json', schema: 'object' }],
+      },
+    ],
     access: 'public',
   },
   {
@@ -107,11 +129,23 @@ export const DIRECT_HTTP_ROUTES = [
     paramNames: [],
     summary: 'RFC 9264 API catalog linkset',
     tags: ['System'],
-    response: {
-      status: 200,
-      description: 'RFC 9264 API catalog linkset',
-      mediaType: 'application/linkset+json',
-    },
+    responses: [
+      {
+        status: 200,
+        description: 'RFC 9264 API catalog linkset',
+        content: [{ mediaType: 'application/linkset+json', schema: 'object' }],
+      },
+      {
+        status: 421,
+        description: 'Request host rejected by trustedHosts',
+        content: [{ mediaType: 'application/json', schema: 'object' }],
+      },
+      {
+        status: 503,
+        description: 'API catalog origin is not configured',
+        content: [{ mediaType: 'application/json', schema: 'object' }],
+      },
+    ],
     access: 'public',
   },
   {
@@ -121,11 +155,13 @@ export const DIRECT_HTTP_ROUTES = [
     paramNames: [],
     summary: 'OpenAPI 3.1 specification',
     tags: ['System'],
-    response: {
-      status: 200,
-      description: 'OpenAPI 3.1 specification',
-      mediaType: 'application/json',
-    },
+    responses: [
+      {
+        status: 200,
+        description: 'OpenAPI 3.1 specification',
+        content: [{ mediaType: 'application/json', schema: 'object' }],
+      },
+    ],
     access: 'public',
   },
   {
@@ -135,11 +171,13 @@ export const DIRECT_HTTP_ROUTES = [
     paramNames: [],
     summary: 'OpenRPC 1.3.2 specification',
     tags: ['System'],
-    response: {
-      status: 200,
-      description: 'OpenRPC 1.3.2 specification',
-      mediaType: 'application/json',
-    },
+    responses: [
+      {
+        status: 200,
+        description: 'OpenRPC 1.3.2 specification',
+        content: [{ mediaType: 'application/json', schema: 'object' }],
+      },
+    ],
     access: 'public',
   },
   {
@@ -149,11 +187,13 @@ export const DIRECT_HTTP_ROUTES = [
     paramNames: [],
     summary: 'AsyncAPI 3.0 specification',
     tags: ['System'],
-    response: {
-      status: 200,
-      description: 'AsyncAPI 3.0 specification',
-      mediaType: 'application/json',
-    },
+    responses: [
+      {
+        status: 200,
+        description: 'AsyncAPI 3.0 specification',
+        content: [{ mediaType: 'application/json', schema: 'object' }],
+      },
+    ],
     access: 'public',
   },
 ] as const satisfies readonly DirectHttpRouteDefinition[];

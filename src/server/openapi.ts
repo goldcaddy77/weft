@@ -24,6 +24,7 @@ import {
   DIRECT_HTTP_ROUTES,
   toOpenApiPath,
   type DirectHttpRouteDefinition,
+  type DirectRouteResponseContent,
 } from './route-model.ts';
 
 export type OpenApiSecuritySchemeName = 'bearerAuth' | 'apiKeyAuth';
@@ -113,8 +114,8 @@ function streamingResponseSchema(mediaType: string): OpenApiSchema {
   return { type: 'string' };
 }
 
-function directRouteResponseSchema(route: DirectHttpRouteDefinition): OpenApiSchema {
-  if (route.response.mediaType === 'text/plain') return { type: 'string' };
+function directRouteContentSchema(content: DirectRouteResponseContent): OpenApiSchema {
+  if (content.schema === 'string') return { type: 'string' };
   return { type: 'object' };
 }
 
@@ -279,13 +280,11 @@ export function emitBindings(
   bindings: ReadonlyArray<UnknownRestBinding> = createLiveRestBindings(),
   registry: OperationRegistry = createLiveOperationRegistry(),
   schemaHelper: OpenApiSchemaHelper = DEFAULT_SCHEMA_HELPER,
-): Set<string> {
-  const bindingMethodPaths = new Set<string>();
+): void {
   for (const binding of bindings) {
     const operation: ErasedOperation | undefined = registry.get(binding.operationName);
     if (operation === undefined) continue;
     const openApiPath = toOpenApiPath(binding.path);
-    bindingMethodPaths.add(`${binding.method} ${openApiPath}`);
     if (!isDiscoverable(operation)) continue;
     if (!paths[openApiPath]) paths[openApiPath] = {};
 
@@ -308,21 +307,26 @@ export function emitBindings(
     paths[openApiPath][binding.method.toLowerCase()] = entry;
     for (const tag of operation.tags) tagSet.add(tag);
   }
-  return bindingMethodPaths;
 }
 
 function buildDirectRouteResponses(route: DirectHttpRouteDefinition): Record<string, unknown> {
-  const response: Record<string, unknown> = {
-    description: route.response.description,
-  };
-  if (route.response.mediaType !== undefined) {
-    response['content'] = {
-      [route.response.mediaType]: {
-        schema: directRouteResponseSchema(route),
-      },
+  const responses: Record<string, unknown> = {};
+  for (const routeResponse of route.responses) {
+    const response: Record<string, unknown> = {
+      description: routeResponse.description,
     };
+    if (routeResponse.content !== undefined) {
+      const content: Record<string, { schema: OpenApiSchema }> = {};
+      for (const contentVariant of routeResponse.content) {
+        content[contentVariant.mediaType] = {
+          schema: directRouteContentSchema(contentVariant),
+        };
+      }
+      response['content'] = content;
+    }
+    responses[String(routeResponse.status)] = response;
   }
-  return { [String(route.response.status)]: response };
+  return responses;
 }
 
 function buildDirectRouteSecurity(route: DirectHttpRouteDefinition): [] | undefined {
@@ -333,12 +337,9 @@ function buildDirectRouteSecurity(route: DirectHttpRouteDefinition): [] | undefi
 function emitDirectRoutes(
   paths: Record<string, Record<string, unknown>>,
   tagSet: Set<string>,
-  bindingMethodPaths: Set<string>,
 ): void {
   for (const route of DIRECT_HTTP_ROUTES) {
-    if (route.handler === 'openApiDocument') continue;
     const openApiPath = toOpenApiPath(route.path);
-    if (bindingMethodPaths.has(`${route.method} ${openApiPath}`)) continue;
     if (!paths[openApiPath]) paths[openApiPath] = {};
 
     const parameters = buildPathParameters(route.paramNames);
@@ -369,8 +370,10 @@ export function generateOpenApiDocument(options?: OpenApiOptions): Record<string
   const tagSet = new Set<string>();
   const schemaHelper = extractComponentsSchemas(registry);
 
-  const bindingMethodPaths = emitBindings(paths, tagSet, restBindings, registry, schemaHelper);
-  emitDirectRoutes(paths, tagSet, bindingMethodPaths);
+  emitBindings(paths, tagSet, restBindings, registry, schemaHelper);
+  // Direct routes are reserved infrastructure endpoints, so they are emitted
+  // after bindings and overwrite any conflicting user binding documentation.
+  emitDirectRoutes(paths, tagSet);
 
   const tags = [...tagSet].toSorted().map((name) => ({ name }));
   const supportedSchemes =

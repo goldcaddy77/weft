@@ -1235,7 +1235,7 @@ describe('executeConformance', () => {
     });
   });
 
-  it('surfaces a missing replacement worker during graceful shutdown checks', async () => {
+  it('surfaces a replacement worker that disconnects before graceful shutdown', async () => {
     const result = await executeConformance({
       timeoutMs: 1_000,
       json: true,
@@ -1248,7 +1248,7 @@ describe('executeConformance', () => {
       checks: Array<{ name: string; ok: boolean; message: string }>;
     };
     expect(report.ok).toBe(false);
-    expect(report.checks[0]?.message).toBe('No worker available for graceful shutdown check');
+    expect(report.checks[0]?.message).toContain('to become idle');
   });
 });
 
