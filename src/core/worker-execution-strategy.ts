@@ -12,10 +12,7 @@
 import type { WorkerPool } from '../workers/pool.ts';
 import type { ExecutionStrategy } from './execution-strategy.ts';
 import type { OperationOutcome, WorkerInboundMessage, WorkerOutboundMessage } from './types.ts';
-
-// ---------------------------------------------------------------------------
-// WorkerExecutionStrategy
-// ---------------------------------------------------------------------------
+import { WorkerCheckpointResumeState } from './worker-checkpoint-resume-state.ts';
 
 interface WorkerListeners {
   message: (event: MessageEvent<WorkerOutboundMessage>) => void;
@@ -30,7 +27,8 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
   readonly #workerListeners: Map<Worker, WorkerListeners>;
   readonly #broadcastChannel: BroadcastChannel | null;
   readonly #broadcastListener: ((event: MessageEvent) => void) | null;
-  readonly #resumedDuringCheckpointHandling: Set<string>;
+  readonly #checkpointResumeState: WorkerCheckpointResumeState;
+  readonly #cancelledWorkflowIds: Set<string>;
   #messageHandler: ((message: WorkerOutboundMessage) => void | Promise<void>) | null;
   #disposed: boolean;
 
@@ -40,7 +38,8 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     this.#parkedWorkersByWorkflowId = new Map();
     this.#activeWorkflowIdByWorker = new Map();
     this.#workerListeners = new Map();
-    this.#resumedDuringCheckpointHandling = new Set();
+    this.#checkpointResumeState = new WorkerCheckpointResumeState();
+    this.#cancelledWorkflowIds = new Set();
     this.#messageHandler = null;
     this.#broadcastChannel = null;
     this.#broadcastListener = null;
@@ -58,10 +57,6 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
       }
     }
   }
-
-  // -------------------------------------------------------------------------
-  // ExecutionStrategy interface
-  // -------------------------------------------------------------------------
 
   onMessage(handler: (message: WorkerOutboundMessage) => void | Promise<void>): void {
     this.#messageHandler = handler;
@@ -87,6 +82,9 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
      */
     tenant?: import('./tenant.ts').TenantContext;
   }): void {
+    this.#cancelledWorkflowIds.delete(parameters.workflowId);
+    this.#checkpointResumeState.resetWorkflow(parameters.workflowId);
+
     const message: WorkerInboundMessage & { type: 'run' } = {
       type: 'run',
       workflowId: parameters.workflowId,
@@ -114,7 +112,7 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
   }): void {
     const worker = this.#workersByWorkflowId.get(parameters.workflowId);
     if (worker) {
-      this.#resumedDuringCheckpointHandling.add(parameters.workflowId);
+      this.#checkpointResumeState.recordResume(parameters.workflowId);
       this.#postResumeMessage(worker, parameters);
       return;
     }
@@ -125,7 +123,7 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
       return;
     }
 
-    if (!this.#disposed) {
+    if (!this.#disposed && !this.#cancelledWorkflowIds.has(parameters.workflowId)) {
       this.#emit({
         type: 'failed',
         workflowId: parameters.workflowId,
@@ -159,6 +157,7 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
   cancelWorkflow(workflowId: string): void {
     const worker = this.#workersByWorkflowId.get(workflowId);
     if (worker) {
+      this.#cancelledWorkflowIds.add(workflowId);
       const message: WorkerInboundMessage = {
         type: 'cancel',
         workflowId,
@@ -172,13 +171,10 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     const parkedWorker = this.#parkedWorkersByWorkflowId.get(workflowId);
     if (!parkedWorker) return;
 
+    this.#cancelledWorkflowIds.add(workflowId);
     this.#parkedWorkersByWorkflowId.delete(workflowId);
     void this.#cancelParkedWorkflow(workflowId, parkedWorker);
   }
-
-  // -------------------------------------------------------------------------
-  // Disposal
-  // -------------------------------------------------------------------------
 
   [Symbol.dispose](): void {
     this.#teardown();
@@ -211,13 +207,10 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     this.#parkedWorkersByWorkflowId.clear();
     this.#activeWorkflowIdByWorker.clear();
     this.#workerListeners.clear();
-    this.#resumedDuringCheckpointHandling.clear();
+    this.#checkpointResumeState.clear();
+    this.#cancelledWorkflowIds.clear();
     this.#messageHandler = null;
   }
-
-  // -------------------------------------------------------------------------
-  // Private: worker acquisition and messaging
-  // -------------------------------------------------------------------------
 
   async #acquireAndSend(
     workflowId: string,
@@ -294,8 +287,10 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
   }
 
   async #handleWorkerMessage(worker: Worker, message: WorkerOutboundMessage): Promise<void> {
+    const resumeVersionBeforeCheckpointHandling =
+      this.#checkpointResumeState.beginCheckpointHandling(message);
+
     // Forward the message to the engine
-    this.#resumedDuringCheckpointHandling.delete(message.workflowId);
     let handlerFailed = false;
     try {
       const emitResult = this.#messageHandler?.(message);
@@ -306,24 +301,39 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
       handlerFailed = true;
     }
 
-    // On terminal messages, release the worker back to the pool
-    if (message.type === 'completed' || message.type === 'failed') {
-      this.#parkedWorkersByWorkflowId.delete(message.workflowId);
-      this.#releaseActiveWorker(message.workflowId);
-      this.#detachWorkerListenersIfIdle(worker);
-      return;
-    }
+    try {
+      // On terminal messages, release the worker back to the pool
+      if (message.type === 'completed' || message.type === 'failed') {
+        this.#parkedWorkersByWorkflowId.delete(message.workflowId);
+        this.#releaseActiveWorker(message.workflowId);
+        this.#detachWorkerListenersIfIdle(worker);
+        this.#checkpointResumeState.forgetWorkflowIfClosed(
+          message.workflowId,
+          this.#isWorkflowClosed(message.workflowId),
+        );
+        return;
+      }
 
-    if (handlerFailed) {
-      return;
-    }
+      if (handlerFailed) {
+        return;
+      }
 
-    if (
-      message.type === 'checkpoint' &&
-      this.#isParkableWaitSignalCheckpoint(message) &&
-      !this.#resumedDuringCheckpointHandling.has(message.workflowId)
-    ) {
-      this.#parkActiveWorkflow(message.workflowId, worker);
+      if (
+        message.type === 'checkpoint' &&
+        this.#isParkableWaitSignalCheckpoint(message) &&
+        !this.#checkpointResumeState.wasResumedDuringCheckpointHandling(
+          message.workflowId,
+          resumeVersionBeforeCheckpointHandling,
+        )
+      ) {
+        this.#parkActiveWorkflow(message.workflowId, worker);
+      }
+    } finally {
+      this.#checkpointResumeState.finishCheckpointHandling(
+        message.workflowId,
+        resumeVersionBeforeCheckpointHandling,
+        this.#isWorkflowClosed(message.workflowId),
+      );
     }
   }
 
@@ -376,6 +386,12 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     this.#activeWorkflowIdByWorker.delete(worker);
     this.#parkedWorkersByWorkflowId.set(workflowId, worker);
     this.#pool.release(worker);
+  }
+
+  #isWorkflowClosed(workflowId: string): boolean {
+    return (
+      !this.#workersByWorkflowId.has(workflowId) && !this.#parkedWorkersByWorkflowId.has(workflowId)
+    );
   }
 
   #attachWorkerListeners(worker: Worker): void {
@@ -452,10 +468,6 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     return operationRequest['type'] === 'wait-signal' || operationRequest['kind'] === 'signal-wait';
   }
 
-  // -------------------------------------------------------------------------
-  // Private: BroadcastChannel forwarding (2G)
-  // -------------------------------------------------------------------------
-
   #handleBroadcastMessage(data: Record<string, unknown>): void {
     // Forward signal-related messages to the appropriate worker
     if (data['type'] === 'signal:received' && typeof data['workflowId'] === 'string') {
@@ -466,10 +478,6 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
       }
     }
   }
-
-  // -------------------------------------------------------------------------
-  // Private: helpers
-  // -------------------------------------------------------------------------
 
   #emit(message: WorkerOutboundMessage): void {
     const result = this.#messageHandler?.(message);

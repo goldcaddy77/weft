@@ -561,6 +561,95 @@ describe('WorkerExecutionStrategy', () => {
       expect(worker.postMessage).toHaveBeenCalledTimes(1);
     });
 
+    it('does not park a signal checkpoint after a resume when another checkpoint interleaves', async () => {
+      setup();
+
+      let unblockSignalCheckpoint: (() => void) | undefined;
+      strategy.onMessage(async (message) => {
+        messages.push(message);
+        if (
+          message.type === 'checkpoint' &&
+          'type' in message.operationRequest &&
+          message.operationRequest.type === 'wait-signal'
+        ) {
+          await new Promise<void>((resolve) => {
+            unblockSignalCheckpoint = resolve;
+          });
+        }
+      });
+
+      strategy.startWorkflow({
+        workflowId: 'wf-interleaved-checkpoint',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+
+      await sleepForTesting(10);
+
+      const worker = firstWorker();
+      dispatchToMockWorker(
+        worker,
+        'message',
+        new MessageEvent('message', {
+          data: {
+            type: 'checkpoint',
+            workflowId: 'wf-interleaved-checkpoint',
+            checkpoint: new ArrayBuffer(0),
+            operationRequest: {
+              type: 'wait-signal',
+              operationId: 'op-wait',
+              signalName: 'llm-resume',
+            },
+          } satisfies WorkerOutboundMessage,
+        }),
+      );
+
+      expect(unblockSignalCheckpoint).toBeDefined();
+
+      strategy.resumeWorkflow({
+        workflowId: 'wf-interleaved-checkpoint',
+        checkpoint: new ArrayBuffer(4),
+        operationResult: { status: 'completed', value: 'resume payload' },
+      });
+
+      dispatchToMockWorker(
+        worker,
+        'message',
+        new MessageEvent('message', {
+          data: {
+            type: 'checkpoint',
+            workflowId: 'wf-interleaved-checkpoint',
+            checkpoint: new ArrayBuffer(0),
+            operationRequest: {
+              id: 'op-activity',
+              workflowId: 'wf-interleaved-checkpoint',
+              kind: 'activity',
+              queue: 'default',
+              activityName: 'doSomething',
+              attempt: 1,
+              retryPolicy: {
+                maxAttempts: 1,
+                initialBackoff: 0,
+                backoffMultiplier: 1,
+                maxBackoff: 0,
+              },
+              scheduledAt: Date.now(),
+            },
+          } satisfies WorkerOutboundMessage,
+        }),
+      );
+
+      unblockSignalCheckpoint!();
+      await sleepForTesting(10);
+
+      expect(mockPool.release).not.toHaveBeenCalled();
+      expect(worker.postMessage.mock.calls.at(-1)?.[0]).toMatchObject({
+        type: 'resume',
+        workflowId: 'wf-interleaved-checkpoint',
+      });
+    });
+
     it('lets a second workflow use a concurrency-one worker while the first workflow is parked', async () => {
       setup();
 
@@ -981,10 +1070,8 @@ describe('WorkerExecutionStrategy', () => {
         operationResult: { status: 'completed', value: null },
       });
 
-      expect(messages.at(-1)).toMatchObject({
-        type: 'failed',
-        workflowId: 'wf-parked-cancel',
-      });
+      expect(messages).toHaveLength(1);
+      expect(messages.at(-1)?.type).toBe('checkpoint');
     });
   });
 
