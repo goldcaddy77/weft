@@ -1,7 +1,6 @@
 import { Database, Statement, type SQLQueryBindings } from 'bun:sqlite';
 
 import {
-  resolvePrefixRangeEnd,
   storageValuesEqual,
   type BatchOperation,
   type ConditionalBatchCondition,
@@ -10,6 +9,18 @@ import {
 } from './interface';
 import { assertReadOnlyQuery } from './read-only-query';
 import { scopedStorage } from './scoped-storage';
+import {
+  SQLITE_COUNT_KEYS_BY_PREFIX,
+  SQLITE_CREATE_KEY_VALUE_TABLE,
+  SQLITE_DELETE_KEYS_BY_PREFIX,
+  SQLITE_DELETE_VALUE_BY_KEY,
+  SQLITE_SELECT_KEY_PRESENCE,
+  SQLITE_SELECT_VALUE_BY_KEY,
+  SQLITE_UPSERT_VALUE_BY_KEY,
+  buildSqliteKeyRangeSelect,
+  buildSqliteKeyValueRangeSelect,
+  buildSqlitePrefixRangeParameters,
+} from './sqlite-key-value-queries';
 
 /**
  * Runtime-neutral alias for the Bun SQLite adapter. Consumers that import
@@ -91,30 +102,23 @@ export class BunSQLiteStorage implements Storage {
     this.#database.exec('PRAGMA temp_store = MEMORY');
     this.#database.exec('PRAGMA wal_autocheckpoint = 10000');
 
-    this.#database.exec(`
-      CREATE TABLE IF NOT EXISTS kv (
-        key TEXT PRIMARY KEY,
-        value BLOB NOT NULL
-      ) WITHOUT ROWID
-    `);
+    this.#database.exec(SQLITE_CREATE_KEY_VALUE_TABLE);
 
     this.#getStatement = this.#database.prepare<{ value: Uint8Array }, [string]>(
-      'SELECT value FROM kv WHERE key = ?',
+      SQLITE_SELECT_VALUE_BY_KEY,
     );
     this.#putStatement = this.#database.prepare<unknown, [string, Uint8Array]>(
-      'INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+      SQLITE_UPSERT_VALUE_BY_KEY,
     );
-    this.#deleteStatement = this.#database.prepare<unknown, [string]>(
-      'DELETE FROM kv WHERE key = ?',
-    );
+    this.#deleteStatement = this.#database.prepare<unknown, [string]>(SQLITE_DELETE_VALUE_BY_KEY);
     this.#hasStatement = this.#database.prepare<{ present: number }, [string]>(
-      'SELECT 1 AS present FROM kv WHERE key = ? LIMIT 1',
+      SQLITE_SELECT_KEY_PRESENCE,
     );
     this.#countStatement = this.#database.prepare<{ count: number }, [string, string]>(
-      'SELECT COUNT(*) AS count FROM kv WHERE key >= ? AND key < ?',
+      SQLITE_COUNT_KEYS_BY_PREFIX,
     );
     this.#deletePrefixStatement = this.#database.prepare<unknown, [string, string]>(
-      'DELETE FROM kv WHERE key >= ? AND key < ?',
+      SQLITE_DELETE_KEYS_BY_PREFIX,
     );
     // Build the transaction wrapper once; bun:sqlite memoizes the compiled
     // transaction so subsequent calls just run the prepared statements.
@@ -149,56 +153,12 @@ export class BunSQLiteStorage implements Storage {
   }
 
   async deletePrefix(prefix: string): Promise<number> {
-    const prefixEnd = resolvePrefixRangeEnd(prefix);
-    return this.#deletePrefixStatement.run(prefix, prefixEnd).changes;
-  }
-
-  #buildRangeQuery(
-    prefix: string,
-    options: ScanOptions = {},
-  ): {
-    parameters: SQLQueryBindings[];
-    sqlSuffix: string;
-  } {
-    const { limit, reverse, gt, lt, gte, lte } = options;
-    const prefixEnd = resolvePrefixRangeEnd(prefix);
-
-    const conditions: string[] = ['key >= ? AND key < ?'];
-    const parameters: SQLQueryBindings[] = [prefix, prefixEnd];
-
-    if (gt !== undefined) {
-      conditions.push('key > ?');
-      parameters.push(gt);
-    }
-    if (gte !== undefined) {
-      conditions.push('key >= ?');
-      parameters.push(gte);
-    }
-    if (lt !== undefined) {
-      conditions.push('key < ?');
-      parameters.push(lt);
-    }
-    if (lte !== undefined) {
-      conditions.push('key <= ?');
-      parameters.push(lte);
-    }
-
-    const direction = reverse ? 'DESC' : 'ASC';
-    const limitClause = limit !== undefined ? ' LIMIT ?' : '';
-
-    if (limit !== undefined) {
-      parameters.push(limit);
-    }
-
-    return {
-      parameters,
-      sqlSuffix: `WHERE ${conditions.join(' AND ')} ORDER BY key ${direction}${limitClause}`,
-    };
+    const [rangeStart, rangeEnd] = buildSqlitePrefixRangeParameters(prefix);
+    return this.#deletePrefixStatement.run(rangeStart, rangeEnd).changes;
   }
 
   async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
-    const { parameters, sqlSuffix } = this.#buildRangeQuery(prefix, options);
-    const sql = `SELECT key, value FROM kv ${sqlSuffix}`;
+    const { parameters, sql } = buildSqliteKeyValueRangeSelect(prefix, options);
 
     let statement = this.#scanStatements.get(sql);
     if (!statement) {
@@ -216,8 +176,7 @@ export class BunSQLiteStorage implements Storage {
   }
 
   async *keys(prefix: string, options: ScanOptions = {}): AsyncIterable<string> {
-    const { parameters, sqlSuffix } = this.#buildRangeQuery(prefix, options);
-    const sql = `SELECT key FROM kv ${sqlSuffix}`;
+    const { parameters, sql } = buildSqliteKeyRangeSelect(prefix, options);
 
     let statement = this.#keyStatements.get(sql);
     if (!statement) {
@@ -231,8 +190,8 @@ export class BunSQLiteStorage implements Storage {
   }
 
   async count(prefix: string): Promise<number> {
-    const prefixEnd = resolvePrefixRangeEnd(prefix);
-    return this.#countStatement.get(prefix, prefixEnd)?.count ?? 0;
+    const [rangeStart, rangeEnd] = buildSqlitePrefixRangeParameters(prefix);
+    return this.#countStatement.get(rangeStart, rangeEnd)?.count ?? 0;
   }
 
   scoped(prefix: string): Storage {

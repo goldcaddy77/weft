@@ -1,20 +1,12 @@
 /**
- * Shared route definitions for the workflow REST API.
+ * Shared direct-route definitions for REST-only HTTP endpoints.
  *
- * Both `handleRequest()` and the OpenAPI generator consume this model,
- * ensuring the handler and the API documentation always agree.
- *
- * As of Wave 1, only routes that are intentionally REST-only direct
- * handlers remain here. All cataloged runtime operations have been
- * migrated to `rest-bindings.ts`:
- *   - `GET /v1/schedules`           → `weft.schedules.list`
- *   - `GET /v1/schedules/:id`       → `weft.schedules.get`
- *   - `GET /v1/tenants/:id/quota`   → `weft.tenants.quota.get`
- *   - `GET /v1/workflows/:id/replay/:step` → `weft.workflows.replay`
- *
- * Intentional REST-only direct handlers that remain:
+ * Operation-backed REST endpoints are modeled by `RestBinding` instances.
+ * These six endpoints stay direct because they describe or expose the HTTP
+ * server itself rather than a durable workflow operation:
  *   - `GET /v1/health`    — anonymous liveness probe (no catalog op)
  *   - `GET /v1/metrics`   — Prometheus text exposition (text/plain, no catalog op)
+ *   - `GET /.well-known/api-catalog` — RFC 9264 service-desc linkset
  *   - `GET /asyncapi.json` — transport-meta endpoint (self-describing, no catalog op)
  *   - `GET /openapi.json` — transport-meta endpoint (self-describing, no catalog op)
  *   - `GET /openrpc.json` — transport-meta endpoint (self-describing, no catalog op)
@@ -29,8 +21,34 @@
 /** HTTP method for a route. */
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
-/** A single REST API route definition. */
-export type RouteDefinition = {
+export type DirectRouteResponseMediaType =
+  | 'application/json'
+  | 'application/msgpack'
+  | 'application/linkset+json'
+  | 'text/plain';
+
+export type DirectRouteResponseSchema = 'object' | 'string';
+
+export type DirectRouteResponseContent = {
+  /** Media type advertised for this response body. */
+  mediaType: DirectRouteResponseMediaType;
+  /** Minimal OpenAPI schema shape for this response body. */
+  schema: DirectRouteResponseSchema;
+};
+
+export type DirectRouteResponse = {
+  /** HTTP status emitted by the direct route. */
+  status: number;
+  /** Human-readable response description for OpenAPI. */
+  description: string;
+  /** Response body variants advertised by the direct route, when it has a body. */
+  content?: readonly DirectRouteResponseContent[];
+};
+
+export type DirectRouteAccess = 'public' | 'authenticated';
+
+/** A single direct HTTP route definition. */
+export type DirectHttpRouteDefinition = {
   /** HTTP method. */
   method: HttpMethod;
   /**
@@ -46,6 +64,10 @@ export type RouteDefinition = {
   summary: string;
   /** OpenAPI tags for grouping. */
   tags: string[];
+  /** Response metadata shared by dispatch documentation. */
+  responses: readonly DirectRouteResponse[];
+  /** Direct route access policy for authentication and OpenAPI metadata. */
+  access: DirectRouteAccess;
 };
 
 // ---------------------------------------------------------------------------
@@ -54,13 +76,12 @@ export type RouteDefinition = {
 
 /**
  * Intentionally REST-only routes. These are not in the operation catalog.
- * See module JSDoc for the full list of routes migrated to catalog operations.
  *
  * `as const` preserves the literal types of `handler` so consumers can
- * derive a string-literal union (see `HandlerName` in handler.ts) for
- * compile-time exhaustiveness on route executors.
+ * derive a string-literal union for compile-time exhaustiveness on route
+ * executors.
  */
-export const ROUTES = [
+export const DIRECT_HTTP_ROUTES = [
   {
     method: 'GET',
     path: '/v1/health',
@@ -68,6 +89,17 @@ export const ROUTES = [
     paramNames: [],
     summary: 'Health check',
     tags: ['System'],
+    responses: [
+      {
+        status: 200,
+        description: 'Service health status',
+        content: [
+          { mediaType: 'application/json', schema: 'object' },
+          { mediaType: 'application/msgpack', schema: 'object' },
+        ],
+      },
+    ],
+    access: 'public',
   },
   {
     method: 'GET',
@@ -76,6 +108,19 @@ export const ROUTES = [
     paramNames: [],
     summary: 'Prometheus metrics export',
     tags: ['Observability'],
+    responses: [
+      {
+        status: 200,
+        description: 'Prometheus metrics exposition',
+        content: [{ mediaType: 'text/plain', schema: 'string' }],
+      },
+      {
+        status: 503,
+        description: 'Metrics exporter failure',
+        content: [{ mediaType: 'application/json', schema: 'object' }],
+      },
+    ],
+    access: 'public',
   },
   {
     method: 'GET',
@@ -84,6 +129,24 @@ export const ROUTES = [
     paramNames: [],
     summary: 'RFC 9264 API catalog linkset',
     tags: ['System'],
+    responses: [
+      {
+        status: 200,
+        description: 'RFC 9264 API catalog linkset',
+        content: [{ mediaType: 'application/linkset+json', schema: 'object' }],
+      },
+      {
+        status: 421,
+        description: 'Request host rejected by trustedHosts',
+        content: [{ mediaType: 'application/json', schema: 'object' }],
+      },
+      {
+        status: 503,
+        description: 'API catalog origin is not configured',
+        content: [{ mediaType: 'application/json', schema: 'object' }],
+      },
+    ],
+    access: 'public',
   },
   {
     method: 'GET',
@@ -92,6 +155,14 @@ export const ROUTES = [
     paramNames: [],
     summary: 'OpenAPI 3.1 specification',
     tags: ['System'],
+    responses: [
+      {
+        status: 200,
+        description: 'OpenAPI 3.1 specification',
+        content: [{ mediaType: 'application/json', schema: 'object' }],
+      },
+    ],
+    access: 'public',
   },
   {
     method: 'GET',
@@ -100,6 +171,14 @@ export const ROUTES = [
     paramNames: [],
     summary: 'OpenRPC 1.3.2 specification',
     tags: ['System'],
+    responses: [
+      {
+        status: 200,
+        description: 'OpenRPC 1.3.2 specification',
+        content: [{ mediaType: 'application/json', schema: 'object' }],
+      },
+    ],
+    access: 'public',
   },
   {
     method: 'GET',
@@ -108,8 +187,16 @@ export const ROUTES = [
     paramNames: [],
     summary: 'AsyncAPI 3.0 specification',
     tags: ['System'],
+    responses: [
+      {
+        status: 200,
+        description: 'AsyncAPI 3.0 specification',
+        content: [{ mediaType: 'application/json', schema: 'object' }],
+      },
+    ],
+    access: 'public',
   },
-] as const satisfies readonly RouteDefinition[];
+] as const satisfies readonly DirectHttpRouteDefinition[];
 
 // ---------------------------------------------------------------------------
 // Helpers

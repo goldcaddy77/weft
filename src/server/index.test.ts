@@ -3490,7 +3490,12 @@ describe('task assignment deduplication', () => {
 
     // First dispatch
     await server.dispatchTask({ operationId: 'reuse-op', activityName: 'charge', input: null });
-    await waitForRealTimersForTesting(100);
+    await waitFor(
+      () =>
+        received.filter((message) => message.type === 'task').length === 1 &&
+        !server.registry.isAssigned('reuse-op'),
+      { label: 'first reuse-op dispatch to complete' },
+    );
 
     // After completion, dispatch the same operationId again
     const second = await server.dispatchTask({
@@ -3611,11 +3616,14 @@ describe('visibility timeout persistence', () => {
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
     await server.dispatchTask({ operationId: 'vt-op-2', activityName: 'charge', input: null });
-    await waitForRealTimersForTesting(100);
 
     const key = KEYS.operationInflight('vt-op-2');
-    const raw = await storage.get(key);
-    expect(raw).toBeNull();
+    await waitFor(
+      async () =>
+        (await storage.get(key)) === null &&
+        (await storage.get(KEYS.operationResolved('vt-op-2'))) !== null,
+      { label: 'vt-op-2 inflight record to resolve' },
+    );
 
     ws.close();
     await waitForRealTimersForTesting(50);
@@ -5468,12 +5476,23 @@ describe('retry policy respected on reassignment', () => {
       visibilityTimeout: 100,
       retryPolicy: testRetryPolicy, // maxAttempts = 2, already at attempt 2
     });
-    await waitForRealTimersForTesting(50);
-
-    expect(server.registry.isAssigned('max-attempt-expiry-op')).toBe(true);
+    await waitFor(
+      () =>
+        received.some(
+          (message) =>
+            message.type === 'task' &&
+            message.operationId === 'max-attempt-expiry-op' &&
+            message.attempt === 2,
+        ),
+      { label: 'initial max-attempt-expiry-op dispatch' },
+    );
 
     // Wait for the visibility timeout to expire and the scanner to run
-    await waitForRealTimersForTesting(300);
+    const inflightKey = KEYS.operationInflight('max-attempt-expiry-op');
+    await waitFor(async () => (await storage.get(inflightKey)) === null, {
+      timeoutMs: 1000,
+      label: 'max-attempt-expiry-op inflight record cleanup',
+    });
 
     // The task should NOT be re-dispatched — only the initial dispatch should exist
     const taskMessages = received.filter(
@@ -5483,7 +5502,6 @@ describe('retry policy respected on reassignment', () => {
     expect(taskMessages[0]?.attempt).toBe(2);
 
     // In-flight record should be cleaned up
-    const inflightKey = KEYS.operationInflight('max-attempt-expiry-op');
     const record = await storage.get(inflightKey);
     expect(record).toBeNull();
 

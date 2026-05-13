@@ -5,7 +5,7 @@ import { emitBindings, generateOpenApiDocument } from './openapi.ts';
 import { createOperationRegistry } from './operation-catalog.ts';
 import { defineOperation } from './operation-registry.ts';
 import type { UnknownRestBinding } from './rest-bindings.ts';
-import { ROUTES, toOpenApiPath, toRegex } from './route-model.ts';
+import { DIRECT_HTTP_ROUTES, toOpenApiPath, toRegex } from './route-model.ts';
 
 describe('OpenAPI document generation', () => {
   const document = generateOpenApiDocument();
@@ -45,11 +45,10 @@ describe('OpenAPI document generation', () => {
     expect(servers[0]!.url).toBe('https://api.example.com');
   });
 
-  it('includes all non-meta routes as path items', () => {
+  it('includes all direct routes as path items', () => {
     const paths = document['paths'] as Record<string, unknown>;
-    const domainRoutes = ROUTES.filter((r) => r.handler !== 'openApiDocument');
 
-    for (const route of domainRoutes) {
+    for (const route of DIRECT_HTTP_ROUTES) {
       const openApiPath = toOpenApiPath(route.path);
       expect(paths[openApiPath]).toBeDefined();
 
@@ -130,6 +129,55 @@ describe('OpenAPI document generation', () => {
     expect(healthPath).toBeDefined();
     const operation = healthPath!['get']!;
     expect(operation).not.toHaveProperty('requestBody');
+  });
+
+  it('documents direct public meta routes with their response media types and public security', () => {
+    const paths = document['paths'] as Record<string, Record<string, Record<string, unknown>>>;
+
+    const metricsOperation = paths['/v1/metrics']!['get']!;
+    expect(metricsOperation['security']).toEqual([]);
+    const metricsResponses = metricsOperation['responses'] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const metricsContent = metricsResponses['200']!['content'] as Record<string, unknown>;
+    expect(metricsContent).toHaveProperty('text/plain');
+    const metricsFailureContent = metricsResponses['503']!['content'] as Record<string, unknown>;
+    expect(metricsFailureContent).toHaveProperty('application/json');
+
+    const healthOperation = paths['/v1/health']!['get']!;
+    const healthResponses = healthOperation['responses'] as Record<string, Record<string, unknown>>;
+    const healthContent = healthResponses['200']!['content'] as Record<string, unknown>;
+    expect(healthContent).toHaveProperty('application/json');
+    expect(healthContent).toHaveProperty('application/msgpack');
+
+    const catalogOperation = paths['/.well-known/api-catalog']!['get']!;
+    expect(catalogOperation['security']).toEqual([]);
+    const catalogResponses = catalogOperation['responses'] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const catalogContent = catalogResponses['200']!['content'] as Record<string, unknown>;
+    expect(catalogContent).toHaveProperty('application/linkset+json');
+    const catalogMisdirectedContent = catalogResponses['421']!['content'] as Record<
+      string,
+      unknown
+    >;
+    expect(catalogMisdirectedContent).toHaveProperty('application/json');
+    const catalogUnavailableContent = catalogResponses['503']!['content'] as Record<
+      string,
+      unknown
+    >;
+    expect(catalogUnavailableContent).toHaveProperty('application/json');
+
+    const asyncApiOperation = paths['/asyncapi.json']!['get']!;
+    expect(asyncApiOperation['security']).toEqual([]);
+    const asyncApiResponses = asyncApiOperation['responses'] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const asyncApiContent = asyncApiResponses['200']!['content'] as Record<string, unknown>;
+    expect(asyncApiContent).toHaveProperty('application/json');
   });
 
   it('documents storage REST bindings with their non-JSON wire formats', () => {
@@ -260,7 +308,7 @@ describe('emitBindings — body-accepting methods', () => {
     expect(entry).not.toHaveProperty('requestBody');
   });
 
-  it('does not let non-discoverable bindings suppress matching legacy routes', () => {
+  it('keeps reserved direct routes documented when a non-discoverable binding also matches', () => {
     const operation = defineOperation({
       name: 'weft.test.hiddenhealth',
       mcpExposable: false,
@@ -287,11 +335,76 @@ describe('emitBindings — body-accepting methods', () => {
       restBindings: [binding],
     });
 
-    const legacyHealthRoute = (document['paths'] as Record<string, Record<string, unknown>>)[
+    const reservedHealthRoute = (document['paths'] as Record<string, Record<string, unknown>>)[
       '/v1/health'
     ]?.['get'] as Record<string, unknown> | undefined;
-    expect(legacyHealthRoute).toBeDefined();
-    expect(legacyHealthRoute?.['operationId']).not.toBe('weft.test.hiddenhealth');
+    expect(reservedHealthRoute?.['operationId']).toBe('healthCheck');
+  });
+
+  it('keeps reserved direct route documentation ahead of discoverable binding collisions', () => {
+    const operation = defineOperation({
+      name: 'weft.test.visiblehealth',
+      mcpExposable: false,
+      summary: 'visible health binding',
+      inputSchema: z.object({}),
+      outputSchema: z.object({ ok: z.boolean() }),
+      access: { kind: 'authenticated' },
+      transports: { http: true, jsonRpcHttp: false, jsonRpcWebSocket: false, jsonRpcStdio: false },
+      unknownKeyPolicy: { http: 'reject', jsonRpc: 'reject' },
+      invoke: async () => ({ ok: true }),
+    });
+    const binding: UnknownRestBinding = {
+      method: 'GET',
+      path: '/v1/health',
+      pathParamNames: [],
+      operationName: 'weft.test.visiblehealth',
+      inputSources: {},
+      extractInput: async () => ({}),
+      success: { kind: 'json', status: 200 },
+    };
+    const document = generateOpenApiDocument({
+      registry: createOperationRegistry([operation]),
+      restBindings: [binding],
+    });
+
+    const reservedHealthRoute = (document['paths'] as Record<string, Record<string, unknown>>)[
+      '/v1/health'
+    ]?.['get'] as Record<string, unknown> | undefined;
+    expect(reservedHealthRoute?.['operationId']).toBe('healthCheck');
+    expect(reservedHealthRoute?.['security']).toEqual([]);
+  });
+
+  it('keeps the OpenAPI self-document reserved ahead of discoverable binding collisions', () => {
+    const operation = defineOperation({
+      name: 'weft.test.visibleopenapi',
+      mcpExposable: false,
+      summary: 'visible OpenAPI binding',
+      inputSchema: z.object({}),
+      outputSchema: z.object({ ok: z.boolean() }),
+      access: { kind: 'authenticated' },
+      transports: { http: true, jsonRpcHttp: false, jsonRpcWebSocket: false, jsonRpcStdio: false },
+      unknownKeyPolicy: { http: 'reject', jsonRpc: 'reject' },
+      invoke: async () => ({ ok: true }),
+    });
+    const binding: UnknownRestBinding = {
+      method: 'GET',
+      path: '/openapi.json',
+      pathParamNames: [],
+      operationName: 'weft.test.visibleopenapi',
+      inputSources: {},
+      extractInput: async () => ({}),
+      success: { kind: 'json', status: 200 },
+    };
+    const document = generateOpenApiDocument({
+      registry: createOperationRegistry([operation]),
+      restBindings: [binding],
+    });
+
+    const reservedOpenApiRoute = (document['paths'] as Record<string, Record<string, unknown>>)[
+      '/openapi.json'
+    ]?.['get'] as Record<string, unknown> | undefined;
+    expect(reservedOpenApiRoute?.['operationId']).toBe('openApiDocument');
+    expect(reservedOpenApiRoute?.['security']).toEqual([]);
   });
 
   it('treats output schemas with throwing safeParse implementations as non-nullable for octet-stream routes', () => {

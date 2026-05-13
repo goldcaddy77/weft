@@ -5,6 +5,11 @@ import { tenantFromInputField } from '../core/tenant.ts';
 import type { ScheduleSummary, WorkflowContext } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { sleepForTesting } from '../testing/fake-timers.ts';
+import {
+  clientContractEchoWorkflow,
+  clientContractWaitingWorkflow,
+  runWeftClientContractTests,
+} from './client-contract.test-support.ts';
 import { ScheduleHandleDelegation, WorkflowHandleDelegation } from './handle-delegation.ts';
 import type { WeftClient } from './interface.ts';
 import { LocalClient } from './local.ts';
@@ -15,13 +20,6 @@ import { LocalClient } from './local.ts';
 
 async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
   return input;
-}
-
-async function* waitingWorkflow(ctx: WorkflowContext, input: unknown) {
-  ctx.expose({ ready: () => true });
-  ctx.onQuery('echoInput', (queryInput) => queryInput);
-  const signal = yield* ctx.waitForSignal<string>('continue');
-  return `${String(input)}:${signal}`;
 }
 
 async function* failingWorkflow(_ctx: WorkflowContext, _input: unknown) {
@@ -39,7 +37,8 @@ function createTestEngine(): Engine {
     },
   });
   engine.register('echo', echoWorkflow);
-  engine.register('waiting', waitingWorkflow);
+  engine.register('client-contract-echo', clientContractEchoWorkflow);
+  engine.register('client-contract-waiting', clientContractWaitingWorkflow);
   engine.register('failing', failingWorkflow);
   return engine;
 }
@@ -59,16 +58,6 @@ async function waitForWorkflowStatus(
   throw new Error(`Workflow ${workflowId} did not reach ${status}`);
 }
 
-async function waitForQueryReady(client: WeftClient, workflowId: string): Promise<void> {
-  for (let attempt = 0; attempt < 5; attempt++) {
-    if ((await client.query(workflowId, 'ready')) === true) {
-      return;
-    }
-    await sleepForTesting(5);
-  }
-  throw new Error(`Workflow ${workflowId} did not expose query handlers`);
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -84,6 +73,17 @@ describe('LocalClient', () => {
 
   afterEach(async () => {
     await engine[Symbol.asyncDispose]();
+  });
+
+  runWeftClientContractTests({
+    label: 'LocalClient',
+    getClient: () => client,
+    idPrefix: 'local-client-contract',
+    workflowTypes: {
+      echo: 'client-contract-echo',
+      waiting: 'client-contract-waiting',
+    },
+    waitForRunning: (workflowId) => waitForWorkflowStatus(engine, workflowId, 'running'),
   });
 
   it('implements WeftClient', () => {
@@ -141,24 +141,6 @@ describe('LocalClient', () => {
       const handle = await client.start('echo', 42);
       const result = await handle.result();
       expect(result).toBe(42);
-    });
-  });
-
-  describe('query', () => {
-    it('passes input through local client and workflow handle queries', async () => {
-      const handle = await client.start('waiting', 'payload', { id: 'local-query-input' });
-      await waitForWorkflowStatus(engine, handle.id, 'running');
-      await waitForQueryReady(client, handle.id);
-
-      await expect(client.query(handle.id, 'echoInput', { detail: true })).resolves.toEqual({
-        detail: true,
-      });
-      await expect(handle.query('echoInput', { source: 'handle' })).resolves.toEqual({
-        source: 'handle',
-      });
-
-      await client.signal(handle.id, 'continue', 'done');
-      await expect(handle.result()).resolves.toBe('payload:done');
     });
   });
 
@@ -245,50 +227,6 @@ describe('LocalClient', () => {
   });
 
   describe('schedule surface', () => {
-    it('creates, lists, mutates, and describes schedules through the local client', async () => {
-      const schedule = await client.schedule('echo', { payload: 'nightly' }, '0 * * * *', {
-        id: 'local-schedule',
-        overlap: 'queue',
-        backfill: true,
-      });
-
-      expect(schedule.id).toBe('local-schedule');
-      expect(await schedule.describe()).toEqual(
-        expect.objectContaining({
-          id: 'local-schedule',
-          workflowType: 'echo',
-          cronExpression: '0 * * * *',
-          status: 'active',
-          overlap: 'queue',
-          backfill: true,
-        }),
-      );
-
-      expect(await client.getSchedule('local-schedule')).toEqual(
-        expect.objectContaining({ id: 'local-schedule' }),
-      );
-      const schedules = await client.listSchedules();
-      expect(schedules.items.map((item) => item.id)).toContain('local-schedule');
-
-      await schedule.pause();
-      expect(await client.getSchedule('local-schedule')).toEqual(
-        expect.objectContaining({ status: 'paused' }),
-      );
-
-      await schedule.update('30 * * * *');
-      expect(await client.getSchedule('local-schedule')).toEqual(
-        expect.objectContaining({ cronExpression: '30 * * * *' }),
-      );
-
-      await client.resumeSchedule('local-schedule');
-      expect(await schedule.describe()).toEqual(expect.objectContaining({ status: 'active' }));
-
-      await schedule.cancel();
-      expect(await client.getSchedule('local-schedule')).toEqual(
-        expect.objectContaining({ status: 'cancelled', nextFireAt: null }),
-      );
-    });
-
     it('exposes schedule handle describe and dispose helpers', async () => {
       const schedule = await client.schedule('echo', { payload: 'direct-wrapper' }, '0 * * * *', {
         id: 'local-schedule-wrapper',
@@ -381,34 +319,6 @@ describe('LocalClient', () => {
       await expect(client.getTimeline('missing-workflow')).resolves.toEqual([]);
       await expect(client.replayTo('missing-workflow', 1)).resolves.toBeNull();
       await expect(client.replayTo('wf-local-missing-replay', 1)).resolves.toBeNull();
-    });
-  });
-
-  describe('getAttributes / setAttributes', () => {
-    it('round-trips search attributes', async () => {
-      const handle = await client.start('echo', 'data');
-      await handle.result();
-
-      await client.setAttributes(handle.id, { priority: 'high' });
-      const attributes = await client.getAttributes(handle.id);
-      expect(attributes).not.toBeNull();
-      expect(attributes!['priority']).toBe('high');
-    });
-  });
-
-  describe('workflow tags', () => {
-    it('ClientHandle.addTags/removeTags mutate workflow tags through the local client', async () => {
-      const handle = await client.start('waiting', 'payload', {
-        id: 'local-client-tags',
-        tags: ['nightly'],
-      });
-      await sleepForTesting(10);
-
-      await handle.addTags('v2');
-      await handle.removeTags('nightly');
-
-      const state = await client.get('local-client-tags');
-      expect(state?.tags).toEqual(['v2']);
     });
   });
 

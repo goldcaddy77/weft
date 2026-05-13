@@ -173,6 +173,15 @@ GET /v1/metrics
 → text/plain with HELP/TYPE/value lines
 ```
 
+**Task diagnostics:**
+
+```
+GET /v1/tasks/diagnostics?workflowId=<workflow-id>&queue=default&limit=25
+→ { "items": [...], "summary": { ... }, "limit": 25 }
+```
+
+The diagnostics endpoint requires `system:read` and returns bounded evidence for stuck queued tasks, stale in-flight tasks, retry storms, and all-workers-at-capacity conditions. Use it when low-cardinality task metrics show a problem and you need workflow, operation, queue, or worker-level context.
+
 ## WebSocket upgrade paths
 
 The server supports WebSocket connections for real-time streaming. When a request includes the `Upgrade: websocket` header, the server upgrades the connection and subscribes it to the matching path.

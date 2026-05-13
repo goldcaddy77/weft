@@ -7,6 +7,7 @@
 import { decode } from '../core/codec.ts';
 import type { Engine } from '../core/engine.ts';
 import type { RetryPolicy } from '../core/types.ts';
+import { createMcpSessionManager } from '../mcp/session.ts';
 import {
   createMetricsCollectorExporter,
   MetricsCollector,
@@ -51,10 +52,6 @@ export {
   wireEventBroadcasting,
   type EventBroadcastingHandle,
 } from './runtime/event-broadcasting.ts';
-
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
 
 /**
  * Configuration object for the `serve()` function.
@@ -323,6 +320,7 @@ export function serve(options: ServeOptions): WeftServer {
     eventFeedBackend,
     workflowEventFeed: createWorkflowEventFeed(eventFeedBackend),
     activeJsonRpcSessions: new Set(),
+    mcpSessionManager: createMcpSessionManager(options.engine),
     // The authenticator is initialized asynchronously (key import) but the
     // promise is created eagerly and resolved before the first request completes.
     authenticatorPromise: options.auth ? createAuthenticator(options.auth) : null,
@@ -396,6 +394,7 @@ export function serve(options: ServeOptions): WeftServer {
   stack.defer(async () => {
     await closeJsonRpcSessionsForShutdown(context.activeJsonRpcSessions);
   });
+  stack.defer(() => context.mcpSessionManager[Symbol.asyncDispose]());
 
   stack.defer(registerWorkflowEventLifecycle(options.engine, context, broadcastingHandle));
 

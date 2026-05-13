@@ -40,20 +40,18 @@ function apiKeyAuth() {
 }
 
 describe('handleRequest coverage regressions', () => {
-  it('prefers a more specific legacy route over a conflicting REST binding', async () => {
+  it('keeps direct meta routes reserved when a REST binding also matches', async () => {
     const engine = createEngine();
     const bindingOperation = defineOperation({
       name: 'weft.test.routeshadow',
       mcpExposable: false,
       summary: 'shadow route',
       inputSchema: z.object({ resource: z.string() }),
-      outputSchema: z.object({ ok: z.literal(true) }),
+      outputSchema: z.object({ resource: z.string() }),
       access: { kind: 'public' },
       transports: { http: true, jsonRpcHttp: false, jsonRpcWebSocket: false, jsonRpcStdio: false },
       unknownKeyPolicy: { http: 'reject', jsonRpc: 'reject' },
-      invoke: async () => {
-        throw new Error('binding should not run');
-      },
+      invoke: async ({ input }) => input,
     });
     const binding: UnknownRestBinding = {
       method: 'GET',

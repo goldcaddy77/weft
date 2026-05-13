@@ -15,6 +15,7 @@ description: >-
 - Changing semantic hash inputs, canonicalization, serialization, or codec behavior.
 - Updating `JSONValue`, tool-call, tool-result, checkpoint, storage, or effect-log data.
 - Adding compatibility with another package while Weft still owns the runtime contract.
+- Generating or validating cross-process declarations from registry snapshots, or wrapping byte-oriented storage for string-oriented consumers.
 
 ## Do not use
 
@@ -28,7 +29,8 @@ description: >-
 2. Preserve semantic keys used for idempotency unless the migration explicitly changes them and includes old-record handling.
 3. Add old-vs-new fixtures before changing implementation behavior when existing stored records may exist.
 4. Normalize replayed values through the same path as fresh values, especially JSON-safe outputs and lossy codec values.
-5. Keep external compatibility structural and dev/test-only; do not import sibling package runtime types into Weft runtime source.
+5. For registry codegen, pin deterministic output and make unsupported JSON Schema keywords degrade to `unknown` rather than emitting an unsound type.
+6. Keep external compatibility structural and dev/test-only; do not import sibling package runtime types into Weft runtime source.
 
 ## Verification
 

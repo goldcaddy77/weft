@@ -29,6 +29,19 @@ describe('TursoStorage', () => {
     storage[Symbol.dispose]();
   });
 
+  it('initializes the key-value table before the first operation', async () => {
+    const storage = new TursoStorage({ url: 'file::memory:' });
+
+    await storage.put('init:key', encode('value'));
+
+    const result = await storage.query<{ sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'kv'",
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]!.sql).toContain('WITHOUT ROWID');
+    storage[Symbol.dispose]();
+  });
+
   it('put then get returns same bytes', async () => {
     const storage = new TursoStorage({ url: 'file::memory:' });
     const value = encode('hello');
