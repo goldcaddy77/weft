@@ -562,6 +562,47 @@ describe('WorkflowList view', () => {
     }
   });
 
+  it('keeps a manual refresh authoritative when a polling tick overlaps it', async () => {
+    const intervals = installIntervalController();
+    const refreshResponse = createDeferred<PaginatedResult<WorkflowSummary>>();
+    const overlappingPollResponse = createDeferred<PaginatedResult<WorkflowSummary>>();
+    const apiClient = createWorkflowListApiClient({
+      workflowListResponses: [
+        Promise.resolve(createWorkflowListResult()),
+        refreshResponse.promise,
+        overlappingPollResponse.promise,
+      ],
+    });
+    const { cleanup } = await mountWorkflowList(apiClient);
+    try {
+      setDocumentHidden(false);
+
+      buttonWithText('Refresh').click();
+      flushSvelte();
+
+      intervals.tick();
+      await settle();
+
+      overlappingPollResponse.resolve(
+        createWorkflowListResult([createWorkflowSummary('poll-bad')]),
+      );
+      await settle();
+      await settle();
+
+      expect(document.body.textContent).not.toContain('poll-bad');
+
+      refreshResponse.resolve(createWorkflowListResult([createWorkflowSummary('refresh-ok')]));
+      await settle();
+      await settle();
+
+      expect(document.body.textContent).toContain('refresh-ok');
+      expect(document.body.textContent).not.toContain('poll-bad');
+    } finally {
+      await cleanup();
+      intervals.restore();
+    }
+  });
+
   it('ignores stale polling responses after a committed bulk action refreshes the list', async () => {
     const intervals = installIntervalController();
     const stalePollResponse = createDeferred<PaginatedResult<WorkflowSummary>>();

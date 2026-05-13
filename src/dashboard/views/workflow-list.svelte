@@ -57,6 +57,7 @@
   let loading = $state(true);
   let error: string | null = $state(null);
   let fetchGeneration = 0;
+  let activeForegroundFetchGeneration: number | null = null;
   let tenantQuotaId = $state('');
   let tenantQuotaUsage = $state.raw<TenantQuotaUsage | null>(null);
   let tenantQuotaLoading = $state(false);
@@ -105,20 +106,44 @@
     offset: number;
   }
 
-  async function fetchWorkflows(generation: number, filters: FetchFilters): Promise<void> {
+  type WorkflowFetchSource = 'foreground' | 'poll';
+  type WorkflowFetchOptions = {
+    showLoading?: boolean;
+    source?: WorkflowFetchSource;
+  };
+
+  function isCurrentWorkflowFetch(
+    generation: number,
+    source: WorkflowFetchSource,
+    startedDuringForegroundFetch: boolean,
+  ): boolean {
+    if (generation !== fetchGeneration) return false;
+    if (source === 'foreground') return true;
+    return !startedDuringForegroundFetch && activeForegroundFetchGeneration === null;
+  }
+
+  async function fetchWorkflows(
+    generation: number,
+    filters: FetchFilters,
+    source: WorkflowFetchSource,
+    startedDuringForegroundFetch: boolean,
+  ): Promise<void> {
     try {
       const result = await loadWorkflowListData(apiClient, filters, pageSize);
-      if (generation !== fetchGeneration) return;
+      if (!isCurrentWorkflowFetch(generation, source, startedDuringForegroundFetch)) return;
       workflows = result.workflows;
       schedules = result.schedules;
       total = result.total;
       retentionOverview = result.retentionOverview;
       error = null;
     } catch (fetchError) {
-      if (generation !== fetchGeneration) return;
+      if (!isCurrentWorkflowFetch(generation, source, startedDuringForegroundFetch)) return;
       error = fetchError instanceof Error ? fetchError.message : String(fetchError);
     } finally {
-      if (generation === fetchGeneration) {
+      if (source === 'foreground' && generation === activeForegroundFetchGeneration) {
+        activeForegroundFetchGeneration = null;
+      }
+      if (source === 'foreground' && generation === fetchGeneration) {
         loading = false;
       }
     }
@@ -133,12 +158,20 @@
     };
   }
 
-  function startWorkflowFetch(filters: FetchFilters, options: { showLoading?: boolean } = {}): void {
+  function startWorkflowFetch(filters: FetchFilters, options: WorkflowFetchOptions = {}): void {
+    const source = options.source ?? 'foreground';
     if (options.showLoading === true) {
       loading = true;
     }
-    const generation = ++fetchGeneration;
-    void fetchWorkflows(generation, filters);
+    if (source === 'foreground') {
+      const generation = ++fetchGeneration;
+      activeForegroundFetchGeneration = generation;
+      void fetchWorkflows(generation, filters, source, false);
+      return;
+    }
+    const generation = fetchGeneration;
+    const startedDuringForegroundFetch = activeForegroundFetchGeneration !== null;
+    void fetchWorkflows(generation, filters, source, startedDuringForegroundFetch);
   }
 
   // ---------------------------------------------------------------------------
@@ -156,14 +189,14 @@
     function startPolling(): void {
       interval = setInterval(() => {
         if (!document.hidden) {
-          startWorkflowFetch(filters);
+          startWorkflowFetch(filters, { source: 'poll' });
         }
       }, 5_000);
     }
 
     function handleVisibility(): void {
       if (!document.hidden && interval === null) {
-        startWorkflowFetch(filters);
+        startWorkflowFetch(filters, { source: 'poll' });
         startPolling();
       } else if (document.hidden && interval !== null) {
         clearInterval(interval);
