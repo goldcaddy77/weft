@@ -179,7 +179,7 @@ export async function runWorkflowVisibilityDrop(
   let rowsDeleted = 0;
   for (const prefix of VISIBILITY_INDEX_PREFIXES) {
     if (storage.deletePrefix !== undefined) {
-      await storage.deletePrefix(prefix);
+      rowsDeleted += await storage.deletePrefix(prefix);
       logger(`Dropped prefix ${prefix}`);
       continue;
     }
