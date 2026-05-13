@@ -35,7 +35,9 @@ export type GetSystemMetricsOutput = MetricsSnapshot;
  * Create the `weft.system.metrics` operation bound to a server-owned
  * metrics collector.
  */
-export function createGetSystemMetricsOperation(options?: { metricsCollector?: MetricsCollector }) {
+export function createGetSystemMetricsOperation(options?: {
+  metricsCollector?: MetricsCollector | undefined;
+}) {
   return defineOperation<GetSystemMetricsInput, GetSystemMetricsOutput>({
     name: 'weft.system.metrics',
     mcpExposable: false,

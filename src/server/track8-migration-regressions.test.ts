@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { Engine } from '../core/engine.ts';
 import { tenantFromInputField } from '../core/tenant.ts';
 import type { WorkflowContext } from '../core/types.ts';
-import { MetricsCollector } from '../observability/metrics.ts';
+import { METRICS } from '../observability/metrics.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { signJWT } from './authentication.ts';
 import { serve, type WeftServer } from './index.ts';
@@ -612,20 +612,23 @@ describe('Track 8 Wave 1 migration regressions', () => {
   it('GET /v1/metrics/json preserves success and auth outcomes on REST and JSON-RPC HTTP', async () => {
     const engine = createScheduleEngine();
     engines.push(engine);
-    const metricsCollector = new MetricsCollector();
-    metricsCollector.increment('weft_test_counter', 2);
 
     const metricsToken = await issueJwt(['system:read']);
     const noScopeToken = await issueJwt(['workflows:read']);
 
-    const anonymousServer = serve({ engine, port: 0, metricsCollector });
+    const anonymousServer = serve({ engine, port: 0 });
     const authenticatedServer = serve({
       engine,
       port: 0,
-      metricsCollector,
       auth: { jwt: { secret: TEST_SECRET } },
     });
     servers.push(anonymousServer, authenticatedServer);
+
+    await authenticatedServer.dispatchTask({
+      operationId: 'track-8-metrics-json-task',
+      activityName: 'generateMetricsSnapshot',
+      input: null,
+    });
 
     const anonymousRest = await fetch(`${anonymousServer.url}/v1/metrics/json`);
     expect(anonymousRest.status).toBe(401);
@@ -646,10 +649,7 @@ describe('Track 8 Wave 1 migration regressions', () => {
       string,
       { type?: string; value?: number }
     >;
-    expect(successRestBody['weft_test_counter']).toEqual({
-      type: 'counter',
-      value: 2,
-    });
+    expect(successRestBody[METRICS.taskBacklog.name]).toEqual({ type: 'gauge', value: 1 });
 
     const anonymousJsonRpc = await postJsonRpc(anonymousServer, {
       method: 'weft.system.metrics',
@@ -701,10 +701,9 @@ describe('Track 8 Wave 1 migration regressions', () => {
       error?: unknown;
     };
     expect(successJsonRpcBody.error).toBeUndefined();
-    // The collector was incremented at the top of this test with 'weft_test_counter' → 2
-    expect(successJsonRpcBody.result?.['weft_test_counter']).toEqual({
-      type: 'counter',
-      value: 2,
+    expect(successJsonRpcBody.result?.[METRICS.taskBacklog.name]).toEqual({
+      type: 'gauge',
+      value: 1,
     });
   });
 });

@@ -96,37 +96,9 @@ The shape should stay Weft-native rather than copying Temporal feature names. Us
 
 Per the AI Surface Shrinkage decision, Weft does not ship a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) client. Weft's workflow surface is a separate concern: registered workflows can be exposed as durable MCP tools and resources to external MCP clients.
 
-- [x] **Implement an MCP server exposing Weft as a first-class MCP service.**
-
-  **Deployment shapes:**
-  - **Remote MCP over Streamable HTTP:** add an authenticated MCP endpoint to the existing server transport surface. Support client-to-server POST, server-to-client GET/SSE, and session resumption via `Mcp-Session-Id`.
-  - **Local stdio package:** publish a `weft-mcp` or `@weft/mcp` binary that can run embedded against local storage or proxy to a remote Weft server.
-
-  **Server behavior:**
-  - Handle `initialize`, `notifications/initialized`, `notifications/cancelled`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, `resources/subscribe`, `resources/unsubscribe`, `resources/templates/list`, `prompts/list`, `prompts/get`, `logging/setLevel`, `ping`, and `completion/complete`.
-  - Advertise `tools`, `resources`, optional `prompts`, and `logging` capabilities.
-  - Expose each eligible registered workflow as an MCP tool with a JSON Schema `inputSchema`.
-  - Include engine-control tools such as `start_workflow`, `signal_workflow`, `update_workflow`, `query_workflow`, `cancel_workflow`, `list_workflows`, and `get_workflow_state`.
-  - Expose read-only resources for workflow state, checkpoint history, event logs, and search-attribute query results.
-  - Return `tools/call` failures as `isError: true` content blocks, not JSON-RPC protocol errors.
-  - Map MCP cancellation to `engine.cancel(id)` and emit progress notifications for long-running calls.
-
-  **Rules:**
-  - Tool names are lowercase with underscores.
-  - Tool descriptions come from workflow registration metadata.
-  - Activities are never exposed as standalone MCP tools; workflows are the durable unit.
-  - Every MCP-exposed workflow must have an input schema.
-  - Remote tenant scoping resolves from session authentication; local embedded mode is single-tenant; local proxy forwards the configured token.
-
-  **Acceptance criteria:**
-  - A reference MCP client can initialize, list tools, call a workflow tool, cancel an in-flight call, read a workflow resource, and subscribe to resource updates.
-  - Both remote HTTP and local stdio transports have integration tests.
-  - Authorization and tenant-scoping tests prove cross-tenant data is not exposed.
-  - Verification passes with `bun run lint`, `bun run typecheck`, targeted MCP tests, and `bun run verify:documentation`.
-
 - [ ] **Add MCP catalog discovery metadata.**
 
-  **Where:** extend the OpenRPC document with an `x-weft-mcp` extension and add a `/.well-known/mcp.json` route once the live MCP server exists.
+  **Where:** extend the OpenRPC document with an `x-weft-mcp` extension and add a `/.well-known/mcp.json` route for the live MCP server.
 
   Native MCP `tools/list` is the canonical live introspection surface. The static catalog is for build-time consumers and deployment discovery, so keep it minimal.
 
