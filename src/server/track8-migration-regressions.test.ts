@@ -317,13 +317,13 @@ describe('Track 8 Wave 1 migration regressions', () => {
     await engine.schedule('echo', { payload: 'alpha' }, '0 * * * *', { id: 'schedule-alpha' });
     await engine.schedule('echo', { payload: 'beta' }, '30 * * * *', { id: 'schedule-beta' });
 
-    // Schedules require authentication (access:authenticated added in Wave 1).
+    // Schedules require authentication plus the schedule-read scope.
     // Use an api-key server so the success-shape assertions can fire without
     // triggering the JWT-tenant scope check that fires for JWT principals.
     const server = serve({
       engine,
       port: 0,
-      auth: { apiKeys: ['test-schedule-key'] },
+      auth: { apiKeys: ['test-schedule-key'], defaultApiKeyScopes: ['schedules:read'] },
     });
     servers.push(server);
 
@@ -353,12 +353,12 @@ describe('Track 8 Wave 1 migration regressions', () => {
     engines.push(engine);
     await engine.schedule('echo', { payload: 'alpha' }, '0 * * * *', { id: 'schedule-alpha' });
 
-    // Schedules require authentication (access:authenticated added in Wave 1).
+    // Schedules require authentication plus the schedule-read scope.
     // Use api-key auth to avoid the JWT-tenant scope check.
     const server = serve({
       engine,
       port: 0,
-      auth: { apiKeys: ['test-schedule-key'] },
+      auth: { apiKeys: ['test-schedule-key'], defaultApiKeyScopes: ['schedules:read'] },
     });
     servers.push(server);
 

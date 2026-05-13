@@ -6,6 +6,7 @@ import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
 import { cancelScheduleOperation, cancelScheduleRestBinding } from './cancel-schedule.ts';
+import { scheduleWriteAuthContext } from './operation-test-helpers.test-support.ts';
 
 function createEngine(): Engine {
   const storage = new MemoryStorage();
@@ -32,6 +33,7 @@ describe('weft.schedules.cancel', () => {
       {
         operationRegistry: registry,
         restBindings: bindings,
+        ...scheduleWriteAuthContext(),
       },
     );
 
@@ -50,6 +52,7 @@ describe('weft.schedules.cancel', () => {
       {
         operationRegistry: registry,
         restBindings: bindings,
+        ...scheduleWriteAuthContext(),
       },
     );
 
@@ -71,6 +74,7 @@ describe('weft.schedules.cancel', () => {
         {
           operationRegistry: registry,
           restBindings: bindings,
+          ...scheduleWriteAuthContext(),
         },
       );
 
@@ -97,6 +101,7 @@ describe('weft.schedules.cancel', () => {
         {
           operationRegistry: registry,
           restBindings: bindings,
+          ...scheduleWriteAuthContext(),
         },
       );
 

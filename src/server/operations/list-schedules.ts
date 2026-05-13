@@ -53,7 +53,7 @@ export const listSchedulesOperation = defineOperation<ListSchedulesInput, ListSc
   tags: ['Schedules'],
   inputSchema: listSchedulesInput,
   outputSchema: listSchedulesOutput as z.ZodType<ListSchedulesOutput>,
-  access: { kind: 'authenticated' },
+  access: { kind: 'scoped', scopes: { kind: 'anyOf', scopes: ['schedules:read'] } },
   producibleFaults: ['Conflict'],
   discoverable: true,
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },

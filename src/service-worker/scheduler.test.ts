@@ -6,6 +6,7 @@ import {
   useFakeTimers,
 } from '../testing/fake-timers.ts';
 
+import { decode, encode } from '../core/codec';
 import type { TimerEntry } from '../core/types';
 import type { Storage } from '../storage/interface';
 import { MemoryStorage } from '../storage/memory';
@@ -123,6 +124,14 @@ describe('ServiceWorkerScheduler', () => {
     expect(firedEntries).toHaveLength(0);
   });
 
+  it('cancel deletes corrupted timer index entries without throwing', async () => {
+    await storage.put('timer-idx:corrupted-timer', encode({ not: 'a key' }));
+
+    await scheduler.cancel('corrupted-timer');
+
+    expect(await storage.get('timer-idx:corrupted-timer')).toBeNull();
+  });
+
   // -------------------------------------------------------------------------
   // tick()
   // -------------------------------------------------------------------------
@@ -153,6 +162,95 @@ describe('ServiceWorkerScheduler', () => {
 
     const keys = await collectStorageKeys();
     expect(keys.some((key) => key.startsWith('wf-delayed:'))).toBe(false);
+  });
+
+  it('fires expired schedule timers and preserves a re-armed schedule index', async () => {
+    scheduler[Symbol.dispose]();
+    scheduler = new ServiceWorkerScheduler({
+      storage,
+      onTimerFired: async (entry) => {
+        firedEntries.push(entry);
+        await scheduler.schedule({
+          ...entry,
+          fireAt: currentTime + 60_000,
+        });
+      },
+      getNow: () => currentTime,
+    });
+
+    const entry = makeTimer({
+      id: 'schedule:daily-report',
+      workflowId: 'daily-report',
+      fireAt: currentTime - 1000,
+      kind: 'schedule',
+    });
+    await scheduler.schedule(entry);
+
+    await scheduler.tick(currentTime);
+
+    expect(firedEntries).toHaveLength(1);
+    expect(firedEntries[0]!.id).toBe('schedule:daily-report');
+
+    const keys = await collectStorageKeys();
+    const scheduleKeys = keys.filter((key) => key.startsWith('schedule-due:'));
+    expect(scheduleKeys).toHaveLength(1);
+    expect(scheduleKeys[0]).toContain('0000000001060000');
+
+    const indexValue = await storage.get('timer-idx:schedule:daily-report');
+    expect(indexValue).not.toBeNull();
+    expect(decode(indexValue!)).toBe(scheduleKeys[0]);
+  });
+
+  it('fires expired terminal cleanup timers without requiring a timer index', async () => {
+    const entry = makeTimer({
+      id: 'terminal-cleanup:full:cleanup-token',
+      workflowId: 'workflow-terminal',
+      fireAt: currentTime - 1000,
+      kind: 'terminal-cleanup',
+    });
+    await scheduler.schedule(entry);
+
+    await scheduler.tick(currentTime);
+
+    expect(firedEntries).toHaveLength(1);
+    expect(firedEntries[0]).toEqual(entry);
+
+    const keys = await collectStorageKeys();
+    expect(keys.some((key) => key.startsWith('wf-cleanup:'))).toBe(false);
+    expect(keys.some((key) => key.startsWith('timer-idx:'))).toBe(false);
+  });
+
+  it('leaves failed timer callbacks in storage for retry', async () => {
+    let attempts = 0;
+    scheduler[Symbol.dispose]();
+    scheduler = new ServiceWorkerScheduler({
+      storage,
+      onTimerFired: (entry) => {
+        attempts++;
+        firedEntries.push(entry);
+        if (attempts === 1) {
+          throw new Error('callback failed');
+        }
+      },
+      getNow: () => currentTime,
+    });
+
+    const entry = makeTimer({ id: 'timer-throw', fireAt: currentTime - 1000 });
+    await scheduler.schedule(entry);
+
+    await scheduler.tick(currentTime);
+
+    expect(attempts).toBe(1);
+    expect(await storage.get('timer-idx:timer-throw')).not.toBeNull();
+    const keysAfterFailure = await collectStorageKeys();
+    expect(keysAfterFailure.some((key) => key.startsWith('wf-deadline:'))).toBe(true);
+
+    await scheduler.tick(currentTime);
+
+    expect(attempts).toBe(2);
+    expect(await storage.get('timer-idx:timer-throw')).toBeNull();
+    const keysAfterRetry = await collectStorageKeys();
+    expect(keysAfterRetry.some((key) => key.startsWith('wf-deadline:'))).toBe(false);
   });
 
   it('does NOT fire callback for future timers', async () => {
@@ -202,6 +300,22 @@ describe('ServiceWorkerScheduler', () => {
 
     expect(firedEntries).toHaveLength(1);
     expect(firedEntries[0]!.id).toBe('timer-1');
+  });
+
+  it('tick stops scanning after stop is called but flush still drains expired timers', async () => {
+    const entry = makeTimer({ fireAt: currentTime - 1000 });
+    await scheduler.schedule(entry);
+
+    scheduler.stop();
+    await scheduler.tick(currentTime);
+
+    expect(firedEntries).toHaveLength(0);
+    expect(await storage.get('timer-idx:timer-1')).not.toBeNull();
+
+    await scheduler.flush(currentTime);
+
+    expect(firedEntries).toHaveLength(1);
+    expect(await storage.get('timer-idx:timer-1')).toBeNull();
   });
 
   // -------------------------------------------------------------------------

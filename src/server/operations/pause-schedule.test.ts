@@ -5,6 +5,7 @@ import type { WorkflowContext } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
+import { scheduleWriteAuthContext } from './operation-test-helpers.test-support.ts';
 import { pauseScheduleOperation, pauseScheduleRestBinding } from './pause-schedule.ts';
 
 function createEngine(): Engine {
@@ -32,6 +33,7 @@ describe('weft.schedules.pause', () => {
       {
         operationRegistry: registry,
         restBindings: bindings,
+        ...scheduleWriteAuthContext(),
       },
     );
 
@@ -50,6 +52,7 @@ describe('weft.schedules.pause', () => {
       {
         operationRegistry: registry,
         restBindings: bindings,
+        ...scheduleWriteAuthContext(),
       },
     );
 
@@ -71,6 +74,7 @@ describe('weft.schedules.pause', () => {
         {
           operationRegistry: registry,
           restBindings: bindings,
+          ...scheduleWriteAuthContext(),
         },
       );
 
@@ -95,6 +99,7 @@ describe('weft.schedules.pause', () => {
         {
           operationRegistry: registry,
           restBindings: bindings,
+          ...scheduleWriteAuthContext(),
         },
       );
 

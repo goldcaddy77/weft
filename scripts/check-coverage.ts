@@ -15,8 +15,7 @@ type CoverageAllowance = {
 
 function isGeneratedCoverageArtifact(filePath: string): boolean {
   if (
-    filePath.startsWith('../../../../../../private/var/folders/') &&
-    /\/weft-(?:schedule(?:-lmdb)?-(?:workflows|input)|cli-edge-workflows|validate-(?:json-invalid|mixed-(?:clean|invalid)|multi-[ab]))-[^/]+\.ts$/.test(
+    /(?:^|\/)(?:private\/)?var\/folders\/.*\/weft-(?:schedule(?:-lmdb)?-(?:workflows|input)|cli-edge-workflows|validate-(?:json-invalid|mixed-(?:clean|invalid)|multi-[ab]))-[^/]+\.ts$/.test(
       filePath,
     )
   ) {

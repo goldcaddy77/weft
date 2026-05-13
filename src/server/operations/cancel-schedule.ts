@@ -3,7 +3,12 @@ import { z } from 'zod';
 import type { Engine } from '../../core/engine.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
-import { mapScheduleErrorToFault, shapeScheduleFault } from './schedule-faults.ts';
+import {
+  isOperationFault,
+  mapScheduleErrorToFault,
+  resolveScheduleAccessOptions,
+  shapeScheduleFault,
+} from './schedule-faults.ts';
 
 const cancelScheduleInput = z.object({
   scheduleId: z.string().min(1),
@@ -20,15 +25,20 @@ export const cancelScheduleOperation = defineOperation<CancelScheduleInput, Canc
   tags: ['Schedules'],
   inputSchema: cancelScheduleInput,
   outputSchema: cancelScheduleOutput as z.ZodType<CancelScheduleOutput>,
-  access: { kind: 'public' },
+  access: { kind: 'scoped', scopes: { kind: 'anyOf', scopes: ['schedules:write'] } },
+  discoverable: true,
   producibleFaults: ['NotFound', 'Conflict'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
-  invoke: async ({ input, engine }): Promise<CancelScheduleOutput> => {
+  invoke: async ({ input, engine, principal }): Promise<CancelScheduleOutput> => {
     const e = engine as Engine;
+    const accessOptions = resolveScheduleAccessOptions(principal);
+    if (isOperationFault(accessOptions)) {
+      throw accessOptions;
+    }
 
     try {
-      await e.cancelSchedule(input.scheduleId, undefined);
+      await e.cancelSchedule(input.scheduleId, accessOptions);
       return undefined;
     } catch (error) {
       throw mapScheduleErrorToFault(input.scheduleId, error);

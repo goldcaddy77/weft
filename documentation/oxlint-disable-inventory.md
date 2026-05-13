@@ -929,3 +929,10 @@ naming the alternative that was rejected.
 - **Rule**: `max-lines`
 - **Symbol**: entire module
 - **Reason**: `TaskQueue` carries its data structures plus a stable snapshot projection (`getQueueSummaries`) used by the public `weft.task.queues.list` operation. Keeping the projection beside the state it reads is more honest than exposing private fields through a sibling module.
+
+## `service-worker-scheduler-tick-parity`
+
+- **File**: `src/service-worker/scheduler.ts`
+- **Rule**: `complexity`
+- **Symbol**: `#processExpiredTimers`
+- **Reason**: The Service Worker scheduler must drain the same durable timer sources as the core scheduler in one ordered pass so schedule, deadline, delayed-start, and terminal-cleanup retry semantics stay aligned across runtimes.

@@ -448,7 +448,14 @@ beforeAll(() => {
           method: 'api-key',
           principal: principalFromApiKey({
             subject: 'http-client-test',
-            scopes: ['quota:read', 'reviews:read', 'system:read', 'workflows:read'],
+            scopes: [
+              'quota:read',
+              'reviews:read',
+              'schedules:read',
+              'schedules:write',
+              'system:read',
+              'workflows:read',
+            ],
           }),
         },
       });

@@ -34,7 +34,10 @@ function apiKeyAuth() {
   return {
     authContext: {
       method: 'api-key' as const,
-      principal: principalFromApiKey({ subject: 'test', scopes: ['quota:read', 'workflows:read'] }),
+      principal: principalFromApiKey({
+        subject: 'test',
+        scopes: ['quota:read', 'schedules:read', 'schedules:write', 'workflows:read'],
+      }),
     },
   };
 }
@@ -172,19 +175,28 @@ describe('handleRequest coverage regressions', () => {
         cronExpression: '* * * * *',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(409);
 
     engine.resumeSchedule = async () => {
       throw new Error('Schedule cannot be resumed after cancellation');
     };
-    response = await handleRequest(request('POST', '/v1/schedules/sched-1/resume'), engine);
+    response = await handleRequest(
+      request('POST', '/v1/schedules/sched-1/resume'),
+      engine,
+      apiKeyAuth(),
+    );
     expect(response.status).toBe(409);
 
     engine.cancelSchedule = async () => {
       throw new Error('Authenticated tenant cannot access this schedule');
     };
-    response = await handleRequest(request('DELETE', '/v1/schedules/sched-1'), engine);
+    response = await handleRequest(
+      request('DELETE', '/v1/schedules/sched-1'),
+      engine,
+      apiKeyAuth(),
+    );
     expect(response.status).toBe(403);
   });
 });

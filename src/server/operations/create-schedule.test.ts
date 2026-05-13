@@ -7,7 +7,11 @@ import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest, type HandlerOptions } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
 import { createScheduleOperation, createScheduleRestBinding } from './create-schedule.ts';
-import { invalidJsonRequest, jsonRequest } from './operation-test-helpers.test-support.ts';
+import {
+  invalidJsonRequest,
+  jsonRequest,
+  scheduleWriteAuthContext,
+} from './operation-test-helpers.test-support.ts';
 
 function createEngine(): Engine {
   const engine = new Engine({ storage: new MemoryStorage() });
@@ -52,7 +56,7 @@ describe('weft.schedules.create', () => {
         backfill: true,
       }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      { operationRegistry: registry, restBindings: bindings, ...scheduleWriteAuthContext() },
     );
 
     expect(response.status).toBe(201);
@@ -74,6 +78,7 @@ describe('weft.schedules.create', () => {
     const response = await handleRequest(invalidJsonRequest('POST', '/v1/schedules', '{'), engine, {
       operationRegistry: registry,
       restBindings: bindings,
+      ...scheduleWriteAuthContext(),
     });
 
     expect(response.status).toBe(400);
@@ -88,6 +93,7 @@ describe('weft.schedules.create', () => {
     const response = await handleRequest(jsonRequest('POST', '/v1/schedules', null), engine, {
       operationRegistry: registry,
       restBindings: bindings,
+      ...scheduleWriteAuthContext(),
     });
 
     expect(response.status).toBe(400);
@@ -102,7 +108,7 @@ describe('weft.schedules.create', () => {
     const response = await handleRequest(
       jsonRequest('POST', '/v1/schedules', ['not-an-object']),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      { operationRegistry: registry, restBindings: bindings, ...scheduleWriteAuthContext() },
     );
 
     expect(response.status).toBe(400);
@@ -119,7 +125,7 @@ describe('weft.schedules.create', () => {
         overlap: 'invalid',
       }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      { operationRegistry: registry, restBindings: bindings, ...scheduleWriteAuthContext() },
     );
 
     expect(response.status).toBe(400);
@@ -133,7 +139,7 @@ describe('weft.schedules.create', () => {
     const options: HandlerOptions = {
       authContext: {
         method: 'jwt',
-        claims: { sub: 'user-123' },
+        claims: { sub: 'user-123', scope: 'schedules:write' },
       },
       operationRegistry: registry,
       restBindings: bindings,
@@ -168,7 +174,7 @@ describe('weft.schedules.create', () => {
       {
         authContext: {
           method: 'jwt',
-          claims: { tenantId: 'acme' },
+          claims: { tenantId: 'acme', scope: 'schedules:write' },
         },
         operationRegistry: registry,
         restBindings: bindings,
@@ -196,7 +202,7 @@ describe('weft.schedules.create', () => {
           cronExpression: '0 * * * *',
         }),
         engine,
-        { operationRegistry: registry, restBindings: bindings },
+        { operationRegistry: registry, restBindings: bindings, ...scheduleWriteAuthContext() },
       );
 
       expect(response.status).toBe(404);
@@ -216,7 +222,7 @@ describe('weft.schedules.create', () => {
         id: 'duplicate-schedule',
       }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      { operationRegistry: registry, restBindings: bindings, ...scheduleWriteAuthContext() },
     );
     expect(firstResponse.status).toBe(201);
 
@@ -227,7 +233,7 @@ describe('weft.schedules.create', () => {
         id: 'duplicate-schedule',
       }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      { operationRegistry: registry, restBindings: bindings, ...scheduleWriteAuthContext() },
     );
 
     expect(secondResponse.status).toBe(409);
@@ -253,7 +259,7 @@ describe('weft.schedules.create', () => {
           cronExpression: '0 * * * *',
         }),
         engine,
-        { operationRegistry: registry, restBindings: bindings },
+        { operationRegistry: registry, restBindings: bindings, ...scheduleWriteAuthContext() },
       );
 
       expect(response.status).toBe(500);

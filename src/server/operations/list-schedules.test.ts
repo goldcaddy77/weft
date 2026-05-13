@@ -13,8 +13,8 @@
  * - tenantId filter that disagrees with JWT resolved tenant returns Forbidden.
  * - EngineFailure fault shaper returns 500.
  *
- * REST tests inject an authContext with an api-key principal so the
- * `access:authenticated` check passes.
+ * REST tests inject an authContext with an api-key principal carrying
+ * `schedules:read` so the scoped schedule-read check passes.
  */
 
 import { afterEach, describe, expect, it } from 'bun:test';
@@ -28,6 +28,7 @@ import type { OperationFault } from '../operation-fault.ts';
 import { anonymousPrincipal, principalFromApiKey, principalFromJwtClaims } from '../principal.ts';
 import { createLiveOperationRegistry } from '../rest-bindings.ts';
 import { listSchedulesOperation, listSchedulesRestBinding } from './list-schedules.ts';
+import { scheduleReadAuthContext } from './operation-test-helpers.test-support.ts';
 
 function createEngine(): Engine {
   const engine = new Engine({ storage: new MemoryStorage() });
@@ -35,16 +36,6 @@ function createEngine(): Engine {
     return input;
   });
   return engine;
-}
-
-/** AuthContext for handleRequest that satisfies the access:authenticated check. */
-function apiKeyAuthContext() {
-  return {
-    authContext: {
-      method: 'api-key' as const,
-      principal: principalFromApiKey({ subject: 'test', scopes: [] }),
-    },
-  };
 }
 
 const registry = createOperationRegistry([listSchedulesOperation]);
@@ -67,7 +58,7 @@ describe('weft.schedules.list', () => {
       {
         operationRegistry: registry,
         restBindings: [listSchedulesRestBinding],
-        ...apiKeyAuthContext(),
+        ...scheduleReadAuthContext(),
       },
     );
 
@@ -95,7 +86,7 @@ describe('weft.schedules.list', () => {
       {
         operationRegistry: registry,
         restBindings: [listSchedulesRestBinding],
-        ...apiKeyAuthContext(),
+        ...scheduleReadAuthContext(),
       },
     );
 
@@ -108,7 +99,7 @@ describe('weft.schedules.list', () => {
     engine = createEngine();
 
     const liveRegistry = createLiveOperationRegistry();
-    const principal = principalFromApiKey({ subject: 'svc', scopes: [] });
+    const principal = principalFromApiKey({ subject: 'svc', scopes: ['schedules:read'] });
 
     let result = await executeOperation(
       'weft.schedules.list',
@@ -142,7 +133,7 @@ describe('weft.schedules.list', () => {
         {
           operationRegistry: registry,
           restBindings: [listSchedulesRestBinding],
-          ...apiKeyAuthContext(),
+          ...scheduleReadAuthContext(),
         },
       );
       expect(response.status).toBe(200);
@@ -159,7 +150,7 @@ describe('weft.schedules.list', () => {
       {
         operationRegistry: registry,
         restBindings: [listSchedulesRestBinding],
-        ...apiKeyAuthContext(),
+        ...scheduleReadAuthContext(),
       },
     );
 
@@ -177,7 +168,7 @@ describe('weft.schedules.list', () => {
       {
         operationRegistry: registry,
         restBindings: [listSchedulesRestBinding],
-        ...apiKeyAuthContext(),
+        ...scheduleReadAuthContext(),
       },
     );
 
@@ -193,7 +184,7 @@ describe('weft.schedules.list', () => {
       {
         operationRegistry: registry,
         restBindings: [listSchedulesRestBinding],
-        ...apiKeyAuthContext(),
+        ...scheduleReadAuthContext(),
       },
     );
 
@@ -224,7 +215,7 @@ describe('weft.schedules.list', () => {
     engine = createEngine();
 
     // JWT principal with no tenantId claim → resolveScheduleAccessOptions returns Forbidden
-    const principal = principalFromJwtClaims({ sub: 'user', scope: 'workflows:read' });
+    const principal = principalFromJwtClaims({ sub: 'user', scope: 'schedules:read' });
     const liveRegistry = createLiveOperationRegistry();
 
     const result = await executeOperation(
@@ -243,7 +234,7 @@ describe('weft.schedules.list', () => {
 
     const principal = principalFromJwtClaims({
       sub: 'user',
-      scope: 'workflows:read',
+      scope: 'schedules:read',
       tenantId: 'tenant-a',
     });
     const liveRegistry = createLiveOperationRegistry();
@@ -264,7 +255,7 @@ describe('weft.schedules.list', () => {
 
     const principal = principalFromJwtClaims({
       sub: 'user',
-      scope: 'workflows:read',
+      scope: 'schedules:read',
       tenantId: 'tenant-a',
     });
     const liveRegistry = createLiveOperationRegistry();
@@ -301,7 +292,7 @@ describe('weft.schedules.list', () => {
       {
         operationRegistry: createOperationRegistry([failingOperation]),
         restBindings: [listSchedulesRestBinding],
-        ...apiKeyAuthContext(),
+        ...scheduleReadAuthContext(),
       },
     );
 
@@ -329,7 +320,7 @@ describe('weft.schedules.list', () => {
       {
         operationRegistry: createOperationRegistry([unauthorizedOperation]),
         restBindings: [listSchedulesRestBinding],
-        ...apiKeyAuthContext(),
+        ...scheduleReadAuthContext(),
       },
     );
 
@@ -357,7 +348,7 @@ describe('weft.schedules.list', () => {
       {
         operationRegistry: createOperationRegistry([conflictOperation]),
         restBindings: [listSchedulesRestBinding],
-        ...apiKeyAuthContext(),
+        ...scheduleReadAuthContext(),
       },
     );
 

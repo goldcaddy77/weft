@@ -30,7 +30,10 @@ function apiKeyAuth() {
   return {
     authContext: {
       method: 'api-key' as const,
-      principal: principalFromApiKey({ subject: 'test', scopes: ['quota:read', 'workflows:read'] }),
+      principal: principalFromApiKey({
+        subject: 'test',
+        scopes: ['quota:read', 'schedules:read', 'schedules:write', 'workflows:read'],
+      }),
     },
   };
 }
@@ -204,6 +207,7 @@ describe('handleRequest', () => {
           backfill: true,
         }),
         engine,
+        apiKeyAuth(),
       );
 
       expect(createResponse.status).toBe(201);
@@ -272,6 +276,7 @@ describe('handleRequest', () => {
       const pauseResponse = await handleRequest(
         request('POST', '/v1/schedules/schedule-pause-resume/pause'),
         engine,
+        apiKeyAuth(),
       );
       expect(pauseResponse.status).toBe(204);
       expect(await engine.getSchedule('schedule-pause-resume')).toEqual(
@@ -281,6 +286,7 @@ describe('handleRequest', () => {
       const resumeResponse = await handleRequest(
         request('POST', '/v1/schedules/schedule-pause-resume/resume'),
         engine,
+        apiKeyAuth(),
       );
       expect(resumeResponse.status).toBe(204);
       expect(await engine.getSchedule('schedule-pause-resume')).toEqual(
@@ -295,6 +301,7 @@ describe('handleRequest', () => {
       const response = await handleRequest(
         request('PATCH', '/v1/schedules/schedule-update', { cronExpression: '30 * * * *' }),
         engine,
+        apiKeyAuth(),
       );
 
       expect(response.status).toBe(204);
@@ -310,6 +317,7 @@ describe('handleRequest', () => {
       const response = await handleRequest(
         request('DELETE', '/v1/schedules/schedule-cancel'),
         engine,
+        apiKeyAuth(),
       );
 
       expect(response.status).toBe(204);
@@ -326,6 +334,7 @@ describe('handleRequest', () => {
           cronExpression: '0 * * * *',
         }),
         engine,
+        apiKeyAuth(),
       );
       expect(missingTypeResponse.status).toBe(400);
       expect(await json(missingTypeResponse)).toEqual({ error: 'Missing required field: type' });
@@ -336,6 +345,7 @@ describe('handleRequest', () => {
           cronExpression: 'not-a-cron',
         }),
         engine,
+        apiKeyAuth(),
       );
       expect(invalidCronResponse.status).toBe(400);
       expect((await json(invalidCronResponse)) as { error: string }).toEqual(
@@ -396,7 +406,7 @@ describe('handleRequest', () => {
       const authOptions = {
         authContext: {
           method: 'jwt' as const,
-          claims: { tenantId: 'acme' },
+          claims: { tenantId: 'acme', scope: 'schedules:read' },
         },
       };
 
@@ -436,7 +446,7 @@ describe('handleRequest', () => {
       });
     });
 
-    it('Wave B schedule mutation routes do not yet forward JWT tenant scope into the operation pipeline', async () => {
+    it('JWT-authenticated schedule mutation routes are scoped to the authenticated tenant', async () => {
       engine = createTenantAwareEngine();
       await engine.schedule('echo', { tenantId: 'acme' }, '0 * * * *', { id: 'schedule-acme' });
       await engine.schedule('echo', { tenantId: 'globex' }, '0 * * * *', {
@@ -446,7 +456,7 @@ describe('handleRequest', () => {
       const authOptions = {
         authContext: {
           method: 'jwt' as const,
-          claims: { tenantId: 'acme' },
+          claims: { tenantId: 'acme', scope: 'schedules:write' },
         },
       };
 
@@ -455,14 +465,14 @@ describe('handleRequest', () => {
         engine,
         authOptions,
       );
-      expect(pauseOwnResponse.status).toBe(404);
+      expect(pauseOwnResponse.status).toBe(204);
 
       const resumeOwnResponse = await handleRequest(
         request('POST', '/v1/schedules/schedule-acme/resume'),
         engine,
         authOptions,
       );
-      expect(resumeOwnResponse.status).toBe(404);
+      expect(resumeOwnResponse.status).toBe(204);
 
       const pauseOtherTenantResponse = await handleRequest(
         request('POST', '/v1/schedules/schedule-globex/pause'),
@@ -516,7 +526,7 @@ describe('handleRequest', () => {
         {
           authContext: {
             method: 'jwt',
-            claims: { tenantId: 'acme' },
+            claims: { tenantId: 'acme', scope: 'schedules:write' },
           },
         },
       );
@@ -536,7 +546,7 @@ describe('handleRequest', () => {
         {
           authContext: {
             method: 'jwt',
-            claims: { tenantId: 'acme' },
+            claims: { tenantId: 'acme', scope: 'schedules:write' },
           },
         },
       );
@@ -556,7 +566,7 @@ describe('handleRequest', () => {
         {
           authContext: {
             method: 'jwt',
-            claims: { tenantId: 'acme' },
+            claims: { tenantId: 'acme', scope: 'schedules:write' },
           },
         },
       );
@@ -573,7 +583,7 @@ describe('handleRequest', () => {
       const response = await handleRequest(request('GET', '/v1/schedules'), engine, {
         authContext: {
           method: 'jwt',
-          claims: { sub: 'user-123' },
+          claims: { sub: 'user-123', scope: 'schedules:read' },
         },
       });
 
@@ -592,7 +602,7 @@ describe('handleRequest', () => {
         {
           authContext: {
             method: 'jwt',
-            claims: { sub: 'user-123' },
+            claims: { sub: 'user-123', scope: 'schedules:write' },
           },
         },
       );
@@ -615,6 +625,7 @@ describe('handleRequest', () => {
       const pauseResponse = await handleRequest(
         request('POST', '/v1/schedules/missing-schedule/pause'),
         engine,
+        apiKeyAuth(),
       );
       expect(pauseResponse.status).toBe(404);
     });

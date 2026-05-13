@@ -1,6 +1,9 @@
 import type { Engine } from '../../core/engine.ts';
 import type { WorkflowStatus } from '../../core/types.ts';
 import { waitForCondition } from '../../testing/fake-timers.ts';
+import type { AuthorizationScope } from '../authorization-scope.ts';
+import type { HandlerOptions } from '../handler.ts';
+import { principalFromApiKey } from '../principal.ts';
 
 type WaitForWorkflowStatusOptions = {
   intervalMilliseconds?: number;
@@ -9,6 +12,28 @@ type WaitForWorkflowStatusOptions = {
 
 const DEFAULT_STATUS_POLL_INTERVAL_MILLISECONDS = 5;
 const DEFAULT_STATUS_TIMEOUT_MILLISECONDS = 500;
+
+/** Build HandlerOptions with an api-key principal carrying the requested scopes. */
+export function scopedApiKeyAuthContext(
+  scopes: ReadonlyArray<AuthorizationScope>,
+): Pick<HandlerOptions, 'authContext'> {
+  return {
+    authContext: {
+      method: 'api-key',
+      principal: principalFromApiKey({ subject: 'operation-test', scopes }),
+    },
+  };
+}
+
+/** AuthContext for schedule read REST tests. */
+export function scheduleReadAuthContext(): Pick<HandlerOptions, 'authContext'> {
+  return scopedApiKeyAuthContext(['schedules:read']);
+}
+
+/** AuthContext for schedule write REST tests. */
+export function scheduleWriteAuthContext(): Pick<HandlerOptions, 'authContext'> {
+  return scopedApiKeyAuthContext(['schedules:write']);
+}
 
 /** Build a localhost request with an optional JSON body for operation tests. */
 export function jsonRequest(method: string, path: string, body?: unknown): Request {

@@ -3,7 +3,12 @@ import { z } from 'zod';
 import type { Engine } from '../../core/engine.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
-import { mapScheduleErrorToFault, shapeScheduleFault } from './schedule-faults.ts';
+import {
+  isOperationFault,
+  mapScheduleErrorToFault,
+  resolveScheduleAccessOptions,
+  shapeScheduleFault,
+} from './schedule-faults.ts';
 
 const pauseScheduleInput = z.object({
   scheduleId: z.string().min(1),
@@ -20,15 +25,20 @@ export const pauseScheduleOperation = defineOperation<PauseScheduleInput, PauseS
   tags: ['Schedules'],
   inputSchema: pauseScheduleInput,
   outputSchema: pauseScheduleOutput as z.ZodType<PauseScheduleOutput>,
-  access: { kind: 'public' },
+  access: { kind: 'scoped', scopes: { kind: 'anyOf', scopes: ['schedules:write'] } },
+  discoverable: true,
   producibleFaults: ['NotFound', 'Conflict'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
-  invoke: async ({ input, engine }): Promise<PauseScheduleOutput> => {
+  invoke: async ({ input, engine, principal }): Promise<PauseScheduleOutput> => {
     const e = engine as Engine;
+    const accessOptions = resolveScheduleAccessOptions(principal);
+    if (isOperationFault(accessOptions)) {
+      throw accessOptions;
+    }
 
     try {
-      await e.pauseSchedule(input.scheduleId, undefined);
+      await e.pauseSchedule(input.scheduleId, accessOptions);
       return undefined;
     } catch (error) {
       throw mapScheduleErrorToFault(input.scheduleId, error);

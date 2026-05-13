@@ -54,6 +54,36 @@ describe('parseLcov', () => {
     }
   });
 
+  it('ignores generated temporary workflow artifacts regardless of relative path depth', () => {
+    const generatedPaths = [
+      '../../../../private/var/folders/x_/tmp/weft-schedule-workflows-example.ts',
+      '../../../../../../private/var/folders/x_/tmp/weft-schedule-input-example.ts',
+      '../../../../var/folders/x_/tmp/weft-validate-mixed-clean-example.ts',
+    ];
+
+    for (const generatedPath of generatedPaths) {
+      const coverage = parseLcov(
+        [
+          `SF:${generatedPath}`,
+          'FNF:1',
+          'FNH:0',
+          'DA:1,0',
+          'end_of_record',
+          'SF:src/example.ts',
+          'FNF:1',
+          'FNH:1',
+          'DA:1,1',
+          'end_of_record',
+        ].join('\n'),
+      );
+
+      expect(coverage.covered).toBe(true);
+      expect(coverage.lines).toEqual({ total: 1, hit: 1, missed: 0 });
+      expect(coverage.functions).toEqual({ total: 1, hit: 1, missed: 0 });
+      expect(coverage.uncoveredFiles).toEqual([]);
+    }
+  });
+
   it('does not ignore nearby non-generated temporary files', () => {
     const coverage = parseLcov(
       [

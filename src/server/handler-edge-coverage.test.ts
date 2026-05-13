@@ -12,7 +12,10 @@ function apiKeyAuth(): HandlerOptions {
   return {
     authContext: {
       method: 'api-key' as const,
-      principal: principalFromApiKey({ subject: 'test', scopes: ['quota:read', 'workflows:read'] }),
+      principal: principalFromApiKey({
+        subject: 'test',
+        scopes: ['quota:read', 'schedules:read', 'schedules:write', 'workflows:read'],
+      }),
     },
   };
 }
@@ -79,6 +82,7 @@ describe('handleRequest edge coverage', () => {
         },
       }),
       engine,
+      apiKeyAuth(),
     );
 
     expect(response.status).toBe(200);
@@ -215,6 +219,7 @@ describe('handleRequest edge coverage', () => {
         name: '',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({ error: 'Field "name" must be a non-empty string' });
@@ -239,6 +244,7 @@ describe('handleRequest edge coverage', () => {
         operation: 'add',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({
@@ -252,6 +258,7 @@ describe('handleRequest edge coverage', () => {
         operation: 'add',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({
@@ -282,6 +289,7 @@ describe('handleRequest edge coverage', () => {
         name: 'continue',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(500);
     expect(typeof ((await json(response)) as { error?: unknown }).error).toBe('string');
@@ -306,6 +314,7 @@ describe('handleRequest edge coverage', () => {
         operation: 'add',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(500);
     expect(typeof ((await json(response)) as { error?: unknown }).error).toBe('string');
@@ -405,6 +414,7 @@ describe('handleRequest edge coverage', () => {
         cronExpression: '* * * * *',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({ error: 'Field "id" must be a non-empty string' });
@@ -417,6 +427,7 @@ describe('handleRequest edge coverage', () => {
         overlap: 'parallel',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({
@@ -431,6 +442,7 @@ describe('handleRequest edge coverage', () => {
         backfill: 'yes',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({ error: 'Field "backfill" must be a boolean' });
@@ -441,6 +453,7 @@ describe('handleRequest edge coverage', () => {
         input: null,
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({ error: 'Missing required field: cronExpression' });
@@ -452,6 +465,7 @@ describe('handleRequest edge coverage', () => {
         body: '{bad json',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({ error: 'Invalid JSON body' });
@@ -463,6 +477,7 @@ describe('handleRequest edge coverage', () => {
         body: '123',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({ error: 'Request body must be a JSON object' });
@@ -496,36 +511,46 @@ describe('handleRequest edge coverage', () => {
       limit: 0,
     });
 
-    const authOptions: HandlerOptions = {
+    const readMissingTenantAuthOptions: HandlerOptions = {
       authContext: {
         method: 'jwt',
-        claims: { sub: 'user-123' },
+        claims: { sub: 'user-123', scope: 'schedules:read' },
+      },
+    };
+    const writeMissingTenantAuthOptions: HandlerOptions = {
+      authContext: {
+        method: 'jwt',
+        claims: { sub: 'user-123', scope: 'schedules:write' },
       },
     };
 
-    response = await handleRequest(request('GET', '/v1/schedules/schedule-1'), engine, authOptions);
+    response = await handleRequest(
+      request('GET', '/v1/schedules/schedule-1'),
+      engine,
+      readMissingTenantAuthOptions,
+    );
     expect(response.status).toBe(403);
 
     response = await handleRequest(
       request('POST', '/v1/schedules/schedule-1/pause'),
       engine,
-      authOptions,
+      writeMissingTenantAuthOptions,
     );
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(403);
 
     response = await handleRequest(
       request('POST', '/v1/schedules/schedule-1/resume'),
       engine,
-      authOptions,
+      writeMissingTenantAuthOptions,
     );
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(403);
 
     response = await handleRequest(
       request('DELETE', '/v1/schedules/schedule-1'),
       engine,
-      authOptions,
+      writeMissingTenantAuthOptions,
     );
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(403);
 
     response = await handleRequest(
       new Request('http://localhost/v1/schedules/schedule-1', {
@@ -534,6 +559,7 @@ describe('handleRequest edge coverage', () => {
         body: '{bad json',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({ error: 'Invalid JSON body' });
@@ -545,18 +571,23 @@ describe('handleRequest edge coverage', () => {
         body: '123',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({ error: 'Request body must be a JSON object' });
 
-    response = await handleRequest(request('PATCH', '/v1/schedules/schedule-1', {}), engine);
+    response = await handleRequest(
+      request('PATCH', '/v1/schedules/schedule-1', {}),
+      engine,
+      apiKeyAuth(),
+    );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({ error: 'Missing required field: cronExpression' });
 
     response = await handleRequest(
       request('PATCH', '/v1/schedules/schedule-1', { cronExpression: '* * * * *' }),
       engine,
-      authOptions,
+      writeMissingTenantAuthOptions,
     );
     expect(response.status).toBe(403);
   });
@@ -574,6 +605,7 @@ describe('handleRequest edge coverage', () => {
         cronExpression: '* * * * *',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(409);
 
@@ -587,6 +619,7 @@ describe('handleRequest edge coverage', () => {
         cronExpression: '* * * * *',
       }),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(500);
 
@@ -603,13 +636,21 @@ describe('handleRequest edge coverage', () => {
     engine.resumeSchedule = async () => {
       throw new Error('Schedule cannot be resumed after cancellation');
     };
-    response = await handleRequest(request('POST', '/v1/schedules/schedule-1/resume'), engine);
+    response = await handleRequest(
+      request('POST', '/v1/schedules/schedule-1/resume'),
+      engine,
+      apiKeyAuth(),
+    );
     expect(response.status).toBe(409);
 
     engine.cancelSchedule = async () => {
       throw new Error('Authenticated tenant cannot access this schedule');
     };
-    response = await handleRequest(request('DELETE', '/v1/schedules/schedule-1'), engine);
+    response = await handleRequest(
+      request('DELETE', '/v1/schedules/schedule-1'),
+      engine,
+      apiKeyAuth(),
+    );
     expect(response.status).toBe(403);
   });
 });

@@ -6,7 +6,11 @@ import type { WorkflowContext } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest, type HandlerOptions } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
-import { invalidJsonRequest, jsonRequest } from './operation-test-helpers.test-support.ts';
+import {
+  invalidJsonRequest,
+  jsonRequest,
+  scheduleWriteAuthContext,
+} from './operation-test-helpers.test-support.ts';
 import { updateScheduleOperation, updateScheduleRestBinding } from './update-schedule.ts';
 
 function createEngine(): Engine {
@@ -46,7 +50,7 @@ describe('weft.schedules.update', () => {
     const response = await handleRequest(
       jsonRequest('PATCH', '/v1/schedules/schedule-update', { cronExpression: '30 * * * *' }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      { operationRegistry: registry, restBindings: bindings, ...scheduleWriteAuthContext() },
     );
 
     expect(response.status).toBe(204);
@@ -62,7 +66,7 @@ describe('weft.schedules.update', () => {
     const response = await handleRequest(
       invalidJsonRequest('PATCH', '/v1/schedules/schedule-update', '{'),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      { operationRegistry: registry, restBindings: bindings, ...scheduleWriteAuthContext() },
     );
 
     expect(response.status).toBe(400);
@@ -77,7 +81,7 @@ describe('weft.schedules.update', () => {
     const response = await handleRequest(
       jsonRequest('PATCH', '/v1/schedules/schedule-update', null),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      { operationRegistry: registry, restBindings: bindings, ...scheduleWriteAuthContext() },
     );
 
     expect(response.status).toBe(400);
@@ -92,7 +96,7 @@ describe('weft.schedules.update', () => {
     const response = await handleRequest(
       jsonRequest('PATCH', '/v1/schedules/schedule-update', ['not-an-object']),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      { operationRegistry: registry, restBindings: bindings, ...scheduleWriteAuthContext() },
     );
 
     expect(response.status).toBe(400);
@@ -104,7 +108,7 @@ describe('weft.schedules.update', () => {
     const options: HandlerOptions = {
       authContext: {
         method: 'jwt',
-        claims: { sub: 'user-123' },
+        claims: { sub: 'user-123', scope: 'schedules:write' },
       },
       operationRegistry: registry,
       restBindings: bindings,
@@ -132,7 +136,7 @@ describe('weft.schedules.update', () => {
       {
         authContext: {
           method: 'jwt',
-          claims: { tenantId: 'acme' },
+          claims: { tenantId: 'acme', scope: 'schedules:write' },
         },
         operationRegistry: registry,
         restBindings: bindings,
@@ -149,7 +153,7 @@ describe('weft.schedules.update', () => {
     const response = await handleRequest(
       jsonRequest('PATCH', '/v1/schedules/missing-schedule', { cronExpression: '30 * * * *' }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      { operationRegistry: registry, restBindings: bindings, ...scheduleWriteAuthContext() },
     );
 
     expect(response.status).toBe(404);
@@ -168,7 +172,7 @@ describe('weft.schedules.update', () => {
       const response = await handleRequest(
         jsonRequest('PATCH', '/v1/schedules/schedule-update', { cronExpression: '30 * * * *' }),
         engine,
-        { operationRegistry: registry, restBindings: bindings },
+        { operationRegistry: registry, restBindings: bindings, ...scheduleWriteAuthContext() },
       );
 
       expect(response.status).toBe(409);
@@ -187,7 +191,7 @@ describe('weft.schedules.update', () => {
         cronExpression: 'not-a-cron',
       }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      { operationRegistry: registry, restBindings: bindings, ...scheduleWriteAuthContext() },
     );
 
     expect(response.status).toBe(400);
@@ -210,7 +214,7 @@ describe('weft.schedules.update', () => {
       const response = await handleRequest(
         jsonRequest('PATCH', '/v1/schedules/schedule-update', { cronExpression: '30 * * * *' }),
         engine,
-        { operationRegistry: registry, restBindings: bindings },
+        { operationRegistry: registry, restBindings: bindings, ...scheduleWriteAuthContext() },
       );
 
       expect(response.status).toBe(500);

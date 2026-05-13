@@ -10,8 +10,16 @@
 
 import { decode } from '../core/codec';
 import { buildTimerBatchOperations } from '../core/scheduler';
+import type { ScannedTimerEntry, TimerSource } from '../core/scheduler/timer-sources';
+import {
+  advanceTimerSource,
+  readNextScannedTimerEntry,
+  readNextTerminalCleanupTimerEntry,
+  selectNextTimerSource,
+  shouldDeleteTimerIndexWithoutLookup,
+} from '../core/scheduler/timer-sources';
 import type { TimerEntry } from '../core/types';
-import type { Storage } from '../storage/interface';
+import type { BatchOperation, Storage } from '../storage/interface';
 import { KEYS, resolvePrefixRangeEnd } from '../storage/interface';
 
 // ---------------------------------------------------------------------------
@@ -61,6 +69,7 @@ export class ServiceWorkerScheduler implements Disposable {
   readonly #getNow: () => number;
   #timeoutHandle: ReturnType<typeof setTimeout> | null = null;
   #running = false;
+  #stopped = false;
   #generation = 0;
 
   constructor(options: ServiceWorkerSchedulerOptions) {
@@ -85,7 +94,13 @@ export class ServiceWorkerScheduler implements Disposable {
 
     if (indexValue === null) return;
 
-    const deadlineKey = decode(indexValue) as string;
+    const decoded = decode(indexValue);
+    if (typeof decoded !== 'string') {
+      console.error(`Corrupted timer index for ${id}: expected string, got ${typeof decoded}`);
+      await this.#storage.delete(indexKey);
+      return;
+    }
+    const deadlineKey = decoded;
 
     await this.#storage.batch([
       { type: 'delete', key: deadlineKey },
@@ -95,50 +110,13 @@ export class ServiceWorkerScheduler implements Disposable {
 
   /** Scan for expired timers, fire callbacks, and clean up. */
   async tick(now?: number): Promise<void> {
-    const currentTime = now ?? this.#getNow();
-
-    const expired: Array<{ key: string; entry: TimerEntry }> = [];
-
-    for await (const [key, value] of this.#storage.scan('wf-deadline:', {
-      lt: resolvePrefixRangeEnd(KEYS.deadline(currentTime, '')),
-    })) {
-      const entry = decode(value) as TimerEntry;
-      expired.push({ key, entry });
-    }
-
-    for await (const [key, value] of this.#storage.scan('wf-delayed:', {
-      lt: resolvePrefixRangeEnd(KEYS.delayedStart(currentTime, '')),
-    })) {
-      const entry = decode(value) as TimerEntry;
-      expired.push({ key, entry });
-    }
-
-    expired.sort((left, right) => {
-      if (left.entry.fireAt !== right.entry.fireAt) {
-        return left.entry.fireAt - right.entry.fireAt;
-      }
-
-      return left.key.localeCompare(right.key);
-    });
-
-    for (const { key, entry } of expired) {
-      try {
-        await this.#onTimerFired(entry);
-      } catch (error) {
-        console.error(`Timer callback failed for timer ${entry.id}:`, error);
-      }
-
-      const indexKey = `timer-idx:${entry.id}`;
-      await this.#storage.batch([
-        { type: 'delete', key },
-        { type: 'delete', key: indexKey },
-      ]);
-    }
+    if (this.#stopped) return;
+    await this.#processExpiredTimers(now, { respectStopped: true });
   }
 
   /** Process all expired timers then stop. */
   async flush(now?: number): Promise<void> {
-    await this.tick(now);
+    await this.#processExpiredTimers(now, { respectStopped: false });
     this.stop();
   }
 
@@ -146,6 +124,7 @@ export class ServiceWorkerScheduler implements Disposable {
   start(): void {
     if (this.#running) return;
     this.#running = true;
+    this.#stopped = false;
     this.#generation++;
 
     const periodicSync = this.#registration?.periodicSync;
@@ -174,6 +153,7 @@ export class ServiceWorkerScheduler implements Disposable {
   /** Stop the scheduler and clear all timeout handles. */
   stop(): void {
     this.#running = false;
+    this.#stopped = true;
     this.#generation++;
 
     if (this.#timeoutHandle !== null) {
@@ -189,6 +169,91 @@ export class ServiceWorkerScheduler implements Disposable {
   // -------------------------------------------------------------------------
   // Private
   // -------------------------------------------------------------------------
+
+  // oxlint-disable-next-line complexity -- ID:service-worker-scheduler-tick-parity
+  async #processExpiredTimers(
+    now: number | undefined,
+    { respectStopped }: { respectStopped: boolean },
+  ): Promise<void> {
+    const currentTime = now ?? this.#getNow();
+    const deadlineIterator = this.#storage.scan('wf-deadline:', {
+      lt: resolvePrefixRangeEnd(KEYS.deadline(currentTime, '')),
+    });
+    const delayedStartIterator = this.#storage.scan('wf-delayed:', {
+      lt: resolvePrefixRangeEnd(KEYS.delayedStart(currentTime, '')),
+    });
+    const scheduleIterator = this.#storage.scan('schedule-due:', {
+      lt: resolvePrefixRangeEnd(KEYS.scheduleTick(currentTime, '')),
+    });
+    const terminalCleanupIterator = this.#storage.scan('wf-cleanup:', {
+      lt: resolvePrefixRangeEnd(KEYS.terminalCleanup(currentTime, '')),
+    });
+    const timerSources = [
+      {
+        iterator: deadlineIterator[Symbol.asyncIterator](),
+        next: null as ScannedTimerEntry | null,
+        readNext: readNextScannedTimerEntry,
+      },
+      {
+        iterator: delayedStartIterator[Symbol.asyncIterator](),
+        next: null as ScannedTimerEntry | null,
+        readNext: readNextScannedTimerEntry,
+      },
+      {
+        iterator: scheduleIterator[Symbol.asyncIterator](),
+        next: null as ScannedTimerEntry | null,
+        readNext: readNextScannedTimerEntry,
+      },
+      {
+        iterator: terminalCleanupIterator[Symbol.asyncIterator](),
+        next: null as ScannedTimerEntry | null,
+        readNext: readNextTerminalCleanupTimerEntry,
+      },
+    ] satisfies TimerSource[];
+
+    for (const timerSource of timerSources) {
+      await advanceTimerSource(timerSource, this.#storage);
+    }
+
+    while (timerSources.some((timerSource) => timerSource.next !== null)) {
+      const selectedSource = selectNextTimerSource(timerSources);
+      const nextEntry = selectedSource?.next;
+      if (!nextEntry || !selectedSource) break;
+
+      if (respectStopped && this.#stopped) return;
+
+      try {
+        await this.#onTimerFired(nextEntry.entry);
+      } catch (error) {
+        console.error(`Timer callback failed for timer ${nextEntry.entry.id}:`, error);
+        await advanceTimerSource(selectedSource, this.#storage);
+        continue;
+      }
+
+      const indexKey = `timer-idx:${nextEntry.entry.id}`;
+
+      try {
+        const cleanupOperations: BatchOperation[] = [{ type: 'delete', key: nextEntry.key }];
+        if (nextEntry.entry.kind === 'schedule') {
+          const indexValue = await this.#storage.get(indexKey);
+          if (indexValue !== null) {
+            const decodedIndexValue = decode(indexValue);
+            if (typeof decodedIndexValue !== 'string' || decodedIndexValue === nextEntry.key) {
+              cleanupOperations.push({ type: 'delete', key: indexKey });
+            }
+          }
+        } else if (shouldDeleteTimerIndexWithoutLookup(nextEntry.entry)) {
+          cleanupOperations.push({ type: 'delete', key: indexKey });
+        }
+
+        await this.#storage.batch(cleanupOperations);
+      } catch (deleteError) {
+        console.error(`Failed to delete timer keys for ${nextEntry.entry.id}:`, deleteError);
+      }
+
+      await advanceTimerSource(selectedSource, this.#storage);
+    }
+  }
 
   #schedulePoll(): void {
     if (!this.#running) return;

@@ -29,7 +29,9 @@ import { describe, expect, it } from 'bun:test';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
-import { handleRequest } from './handler.ts';
+import type { AuthorizationScope } from './authorization-scope.ts';
+import { handleRequest, type HandlerOptions } from './handler.ts';
+import { principalFromApiKey } from './principal.ts';
 
 const AUDIT_EXTRA_KEY = '__auditExtraKey__';
 
@@ -55,6 +57,7 @@ type AuditCase = {
   readonly path: string | ((engine: Engine) => Promise<string>);
   readonly baselineBody: Record<string, unknown>;
   readonly expectedBaselineStatuses: ReadonlyArray<number>;
+  readonly authorizationScopes?: ReadonlyArray<AuthorizationScope>;
 };
 
 const AUDIT_CASES: ReadonlyArray<AuditCase> = [
@@ -127,6 +130,7 @@ const AUDIT_CASES: ReadonlyArray<AuditCase> = [
     path: '/v1/schedules',
     baselineBody: { type: 'echo', cronExpression: '* * * * *', input: {} },
     expectedBaselineStatuses: [201],
+    authorizationScopes: ['schedules:write'],
   },
   // The routes below target a nonexistent resource (schedule / workflow
   // / review). Each handler validates the id first and returns 404 —
@@ -139,6 +143,7 @@ const AUDIT_CASES: ReadonlyArray<AuditCase> = [
     path: '/v1/schedules/does-not-exist',
     baselineBody: { cronExpression: '*/5 * * * *' },
     expectedBaselineStatuses: [404],
+    authorizationScopes: ['schedules:write'],
   },
   {
     name: 'POST /v1/schedules/:id/pause (pauseSchedule) — nonexistent id → 404',
@@ -146,6 +151,7 @@ const AUDIT_CASES: ReadonlyArray<AuditCase> = [
     path: '/v1/schedules/does-not-exist/pause',
     baselineBody: {},
     expectedBaselineStatuses: [404],
+    authorizationScopes: ['schedules:write'],
   },
   {
     name: 'POST /v1/schedules/:id/resume (resumeSchedule) — nonexistent id → 404',
@@ -153,6 +159,7 @@ const AUDIT_CASES: ReadonlyArray<AuditCase> = [
     path: '/v1/schedules/does-not-exist/resume',
     baselineBody: {},
     expectedBaselineStatuses: [404],
+    authorizationScopes: ['schedules:write'],
   },
   {
     name: 'POST /v1/workflows/:id/resume (resumeWorkflow) — nonexistent id → 404',
@@ -214,6 +221,19 @@ function requestWith(method: string, path: string, body: unknown): Request {
   });
 }
 
+function handlerOptionsFor(testCase: AuditCase): HandlerOptions | undefined {
+  if (testCase.authorizationScopes === undefined) return undefined;
+  return {
+    authContext: {
+      method: 'api-key',
+      principal: principalFromApiKey({
+        subject: 'rest-unknown-key-audit',
+        scopes: testCase.authorizationScopes,
+      }),
+    },
+  };
+}
+
 describe('REST unknown-key disposition baseline audit', () => {
   for (const testCase of AUDIT_CASES) {
     it(`${testCase.name} — extra top-level key does not change status`, async () => {
@@ -223,6 +243,7 @@ describe('REST unknown-key disposition baseline audit', () => {
       const baselineResponse = await handleRequest(
         requestWith(testCase.method, baselinePath, testCase.baselineBody),
         baselineEngine,
+        handlerOptionsFor(testCase),
       );
       expect(testCase.expectedBaselineStatuses).toContain(baselineResponse.status);
 
@@ -239,6 +260,7 @@ describe('REST unknown-key disposition baseline audit', () => {
       const auditResponse = await handleRequest(
         requestWith(testCase.method, auditPath, bodyWithExtra),
         auditEngine,
+        handlerOptionsFor(testCase),
       );
 
       // The baseline disposition is 'strip' or 'passthrough': the extra
