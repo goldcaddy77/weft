@@ -1,0 +1,39 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun run \"/Users/stevekinney/Developer/weft/tmp/scrumlord-agent-hook.ts\" codex",
+            "timeout": 10
+          }
+        ],
+        "matcher": "startup|resume"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun run \"/Users/stevekinney/Developer/weft/tmp/scrumlord-agent-hook.ts\" codex",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Bash"
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun run \"/Users/stevekinney/Developer/weft/tmp/scrumlord-agent-hook.ts\" codex",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
