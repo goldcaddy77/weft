@@ -72,8 +72,9 @@ export type PublicOriginWarner = {
 };
 
 const PUBLIC_ORIGIN_WARNING_TEXT =
-  '[weft] /.well-known/api-catalog: `publicOrigin` is not configured. The ' +
-  'service-desc URLs will be derived from the incoming request, which is ' +
+  '[weft] discovery routes (`/.well-known/api-catalog`, `/.well-known/mcp.json`): ' +
+  '`publicOrigin` is not configured. Absolute discovery URLs will be derived from ' +
+  'the incoming request, which is ' +
   'safe for direct connections but vulnerable to Host-header poisoning ' +
   'when running behind a reverse proxy. Set `serve({ publicOrigin: ' +
   "'https://api.example.com' })` in production.";

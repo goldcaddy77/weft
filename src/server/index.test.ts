@@ -14,6 +14,7 @@ import { METRICS } from '../observability/metrics.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
+import { resetPublicOriginWarningForTesting } from './api-catalog.ts';
 import { DeadlineTracker } from './deadline-tracker.ts';
 import * as handlerModule from './handler.ts';
 import type { WeftServer } from './index.ts';
@@ -159,6 +160,9 @@ describe('serve', () => {
   it('serves public MCP discovery that matches the live MCP transport', async () => {
     const originalNodeEnv = Bun.env['NODE_ENV'];
     Bun.env['NODE_ENV'] = 'development';
+    resetPublicOriginWarningForTesting();
+    const originalWarn = console.warn;
+    console.warn = () => {};
     const apiKey = 'mcp-discovery-live-key';
     engine = createEngine();
     server = serve({ engine, port: 0, auth: { apiKeys: [apiKey] } });
@@ -248,6 +252,7 @@ describe('serve', () => {
       });
       expect(deleteResponse.status).toBe(204);
     } finally {
+      console.warn = originalWarn;
       if (originalNodeEnv !== undefined) Bun.env['NODE_ENV'] = originalNodeEnv;
       else delete Bun.env['NODE_ENV'];
     }

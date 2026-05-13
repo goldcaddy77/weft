@@ -188,13 +188,21 @@ describe('API catalog linkset', () => {
     const originalOverride = Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'];
     delete Bun.env['NODE_ENV'];
     Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'] = '1';
+    resetPublicOriginWarningForTesting();
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
     try {
       const response = await handleRequest(
         new Request('https://api.example.com/.well-known/mcp.json'),
         engine,
       );
       expect(response.status).toBe(200);
+      expect(warnings).toHaveLength(1);
     } finally {
+      console.warn = originalWarn;
       if (originalNodeEnv !== undefined) Bun.env['NODE_ENV'] = originalNodeEnv;
       else delete Bun.env['NODE_ENV'];
       if (originalOverride !== undefined) {
@@ -241,9 +249,36 @@ describe('API catalog linkset', () => {
       else delete Bun.env['NODE_ENV'];
     }
     const matching = warnings.filter((line) =>
-      line.includes('/.well-known/api-catalog: `publicOrigin` is not configured'),
+      line.includes('discovery routes (`/.well-known/api-catalog`, `/.well-known/mcp.json`)'),
     );
     // One-shot warning: only the first call should log.
+    expect(matching).toHaveLength(1);
+  });
+
+  it('warns once for /.well-known/mcp.json when NODE_ENV=development and publicOrigin is unset', async () => {
+    // MCP discovery uses the same origin-resolution path as the API
+    // catalog, so development-mode Host-derived fallback should carry
+    // the same one-shot operator warning.
+    engine = createEngine();
+    resetPublicOriginWarningForTesting();
+    const originalNodeEnv = Bun.env['NODE_ENV'];
+    Bun.env['NODE_ENV'] = 'development';
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      await handleRequest(new Request('https://api.example.com/.well-known/mcp.json'), engine);
+      await handleRequest(new Request('https://api.example.com/.well-known/mcp.json'), engine);
+    } finally {
+      console.warn = originalWarn;
+      if (originalNodeEnv !== undefined) Bun.env['NODE_ENV'] = originalNodeEnv;
+      else delete Bun.env['NODE_ENV'];
+    }
+    const matching = warnings.filter((line) =>
+      line.includes('discovery routes (`/.well-known/api-catalog`, `/.well-known/mcp.json`)'),
+    );
     expect(matching).toHaveLength(1);
   });
 
@@ -356,13 +391,21 @@ describe('API catalog linkset', () => {
     const originalOverride = Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'];
     delete Bun.env['NODE_ENV'];
     Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'] = '1';
+    resetPublicOriginWarningForTesting();
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
     try {
       const response = await handleRequest(
         new Request('https://api.example.com/.well-known/api-catalog'),
         engine,
       );
       expect(response.status).toBe(200);
+      expect(warnings).toHaveLength(1);
     } finally {
+      console.warn = originalWarn;
       if (originalNodeEnv !== undefined) Bun.env['NODE_ENV'] = originalNodeEnv;
       else delete Bun.env['NODE_ENV'];
       if (originalOverride !== undefined) {
