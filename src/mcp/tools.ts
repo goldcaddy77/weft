@@ -35,9 +35,23 @@ type ToolImplementation = {
   readonly call: (argumentsValue: unknown, context: ToolCallContext) => Promise<unknown>;
 };
 
+type ToolRegistrySignatureEntry = readonly [
+  type: string,
+  description: string | undefined,
+  inputSchema: unknown,
+];
+
+type ToolRegistry = {
+  readonly signature: ReadonlyArray<ToolRegistrySignatureEntry>;
+  readonly tools: ReadonlyArray<ToolImplementation>;
+  readonly toolsByName: ReadonlyMap<string, ToolImplementation>;
+};
+
+const toolRegistryCache = new WeakMap<Engine, ToolRegistry>();
+
 /** Build deterministic MCP tool definitions for the current engine registry. */
 export function listMcpTools(engine: Engine): McpToolDefinition[] {
-  return buildToolImplementations(engine).map((tool) => tool.definition);
+  return getToolRegistry(engine).tools.map((tool) => tool.definition);
 }
 
 /** Invoke an MCP tool and shape application failures as tool errors. */
@@ -46,9 +60,7 @@ export async function callMcpTool(
   argumentsValue: unknown,
   context: ToolCallContext,
 ): Promise<McpToolResult> {
-  const tool = buildToolImplementations(context.engine).find(
-    (candidate) => candidate.definition.name === name,
-  );
+  const tool = getToolRegistry(context.engine).toolsByName.get(name);
   if (tool === undefined) {
     return toolError(`Unknown tool: ${name}`);
   }
@@ -60,6 +72,52 @@ export async function callMcpTool(
     const message = error instanceof Error ? error.message : String(error);
     return toolError(message);
   }
+}
+
+function getToolRegistry(engine: Engine): ToolRegistry {
+  const signature = toolRegistrySignature(engine);
+  const cached = toolRegistryCache.get(engine);
+  if (cached !== undefined && toolRegistrySignaturesEqual(cached.signature, signature)) {
+    return cached;
+  }
+
+  const tools = buildToolImplementations(engine);
+  const registry = {
+    signature,
+    tools,
+    toolsByName: new Map(tools.map((tool) => [tool.definition.name, tool])),
+  };
+  toolRegistryCache.set(engine, registry);
+  return registry;
+}
+
+function toolRegistrySignature(engine: Engine): ToolRegistrySignatureEntry[] {
+  return engine
+    .listWorkflowDefinitions()
+    .toSorted((left, right) => (left.type < right.type ? -1 : left.type > right.type ? 1 : 0))
+    .map(
+      (definition) => [definition.type, definition.description, definition.inputSchema] as const,
+    );
+}
+
+function toolRegistrySignaturesEqual(
+  left: ReadonlyArray<ToolRegistrySignatureEntry>,
+  right: ReadonlyArray<ToolRegistrySignatureEntry>,
+): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index++) {
+    const leftEntry = left[index];
+    const rightEntry = right[index];
+    if (leftEntry === undefined || rightEntry === undefined) return false;
+    if (
+      leftEntry[0] !== rightEntry[0] ||
+      leftEntry[1] !== rightEntry[1] ||
+      leftEntry[2] !== rightEntry[2]
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function buildToolImplementations(engine: Engine): ToolImplementation[] {

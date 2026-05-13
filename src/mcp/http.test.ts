@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { Engine } from '../core/engine.ts';
 import { tenantFromInputField } from '../core/tenant.ts';
-import type { WorkflowContext } from '../core/types.ts';
+import type { DefinitionSchema, WorkflowContext } from '../core/types.ts';
 import { signJWT } from '../server/authentication.ts';
 import { serve, type WeftServer } from '../server/index.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -172,6 +172,29 @@ function parseToolText(result: unknown): unknown {
   return JSON.parse(toolResult.content[0]!.text);
 }
 
+function countingDefinitionSchema<TInput = unknown>(
+  onInputConversion: () => void,
+): DefinitionSchema<unknown, TInput> {
+  return {
+    '~standard': {
+      version: 1,
+      vendor: 'counting-test',
+      jsonSchema: {
+        input: () => {
+          onInputConversion();
+          return {
+            type: 'object',
+            properties: { name: { type: 'string' } },
+            required: ['name'],
+            additionalProperties: false,
+          };
+        },
+        output: () => ({ type: 'object' }),
+      },
+    },
+  };
+}
+
 describe('MCP Streamable HTTP transport', () => {
   let server: WeftServer | undefined;
 
@@ -299,14 +322,94 @@ describe('MCP Streamable HTTP transport', () => {
     expect((failedToolCall.result as ToolCallResult).isError).toBe(true);
   });
 
+  it('reuses the converted tool registry until workflow definitions change', async () => {
+    const engine = new Engine({ storage: new MemoryStorage() });
+    let inputConversions = 0;
+    engine.register('counted-tool', {
+      inputSchema: countingDefinitionSchema<{ name?: string }>(() => {
+        inputConversions += 1;
+      }),
+      handler: async function* (_context: WorkflowContext, input: { name?: string }) {
+        return { message: `Hello, ${input.name ?? 'there'}!` };
+      },
+    });
+    server = serve({ engine, port: 0 });
+    const sessionId = await initialize(server);
+
+    await mcpJson(server, sessionId, {
+      jsonrpc: '2.0',
+      id: 'first-list',
+      method: 'tools/list',
+      params: {},
+    });
+    await mcpJson(server, sessionId, {
+      jsonrpc: '2.0',
+      id: 'second-list',
+      method: 'tools/list',
+      params: {},
+    });
+    expect(inputConversions).toBe(1);
+
+    const called = await mcpJson(server, sessionId, {
+      jsonrpc: '2.0',
+      id: 'call-counted-tool',
+      method: 'tools/call',
+      params: { name: 'counted_tool', arguments: { name: 'Ada' } },
+    });
+    expect(parseToolText(called.result)).toMatchObject({
+      result: { message: 'Hello, Ada!' },
+    });
+    expect(inputConversions).toBe(1);
+
+    engine.register('late-tool', {
+      inputSchema: countingDefinitionSchema(() => {
+        inputConversions += 1;
+      }),
+      handler: async function* () {
+        return { ok: true };
+      },
+    });
+
+    const afterRegistration = await mcpJson(server, sessionId, {
+      jsonrpc: '2.0',
+      id: 'after-registration',
+      method: 'tools/list',
+      params: {},
+    });
+    const names = (
+      (afterRegistration.result as { tools: Array<{ name: string }> }).tools ?? []
+    ).map((tool) => tool.name);
+    expect(names).toContain('late_tool');
+    expect(inputConversions).toBe(3);
+  });
+
   it('reads workflow resources and emits resource update notifications for subscriptions', async () => {
     const engine = createEngine();
     server = serve({ engine, port: 0 });
     const sessionId = await initialize(server);
 
     const handle = await engine.start('hold-for-cancel', { label: 'resource-test' });
+    const encodedHandle = await engine.start(
+      'hold-for-cancel',
+      { label: 'encoded-resource-test' },
+      { id: 'workflow with spaces' },
+    );
     await waitForStatus(engine, handle.id, 'running');
+    await waitForStatus(engine, encodedHandle.id, 'running');
     const uri = `weft://workflows/${handle.id}/state`;
+    const encodedUri = `weft://workflows/${encodeURIComponent(encodedHandle.id)}/state`;
+
+    const resources = await mcpJson(server, sessionId, {
+      jsonrpc: '2.0',
+      id: 'resources-list',
+      method: 'resources/list',
+      params: {},
+    });
+    const resourceUris = (
+      (resources.result as { resources: Array<{ uri: string }> }).resources ?? []
+    ).map((resource) => resource.uri);
+    expect(resourceUris).toContain(encodedUri);
+    expect(resourceUris).not.toContain(`weft://workflows/${encodedHandle.id}/state`);
 
     const read = await mcpJson(server, sessionId, {
       jsonrpc: '2.0',
@@ -319,6 +422,18 @@ describe('MCP Streamable HTTP transport', () => {
     expect(contents[0]?.uri).toBe(uri);
     expect(JSON.parse(contents[0]!.text)).toMatchObject({
       id: handle.id,
+      status: 'running',
+    });
+
+    const encodedRead = await mcpJson(server, sessionId, {
+      jsonrpc: '2.0',
+      id: 'read-encoded',
+      method: 'resources/read',
+      params: { uri: encodedUri },
+    });
+    const encodedContents = (encodedRead.result as { contents: Array<{ text: string }> }).contents;
+    expect(JSON.parse(encodedContents[0]!.text)).toMatchObject({
+      id: encodedHandle.id,
       status: 'running',
     });
 
@@ -351,7 +466,7 @@ describe('MCP Streamable HTTP transport', () => {
     });
     const searchContents = (search.result as { contents: Array<{ text: string }> }).contents;
     expect(JSON.parse(searchContents[0]!.text)).toMatchObject({
-      items: [expect.objectContaining({ id: handle.id })],
+      items: expect.arrayContaining([expect.objectContaining({ id: handle.id })]),
     });
 
     const controller = new AbortController();

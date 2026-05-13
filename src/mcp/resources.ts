@@ -76,7 +76,7 @@ export async function listMcpResources(
   assertScope(context, 'workflows:read', 'Listing workflow resources');
   const workflows = await listVisibleWorkflows(context.engine, context.principal, {});
   return workflows.items.map((workflow) => ({
-    uri: `weft://workflows/${workflow.id}/state`,
+    uri: workflowResourceUri(workflow.id, 'state'),
     name: `workflow_${workflow.id}`,
     title: `${workflow.type} workflow ${workflow.id}`,
     description: `Current state for workflow ${workflow.id}.`,
@@ -173,7 +173,8 @@ function parseSearchResource(searchParams: URLSearchParams): ParsedResourceUri |
 }
 
 function parseWorkflowResourcePath(pathname: string): ParsedResourceUri | null {
-  const parts = pathname.split('/').filter(Boolean);
+  const parts = pathname.split('/').filter(Boolean).map(decodePathSegment);
+  if (parts.some((part) => part === null)) return null;
   if (parts.length !== 2) return null;
   const [workflowId, resourceKind] = parts;
   if (!workflowId) return null;
@@ -181,4 +182,19 @@ function parseWorkflowResourcePath(pathname: string): ParsedResourceUri | null {
     return { kind: resourceKind, workflowId };
   }
   return null;
+}
+
+function workflowResourceUri(
+  workflowId: string,
+  resourceKind: 'state' | 'events' | 'checkpoints',
+): string {
+  return `weft://workflows/${encodeURIComponent(workflowId)}/${resourceKind}`;
+}
+
+function decodePathSegment(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
 }
