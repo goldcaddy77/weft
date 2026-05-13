@@ -418,10 +418,6 @@ Architecture and reference:
 - [Browser Runtime](documentation/architecture/browser-runtime.md), [Web Workers](documentation/architecture/web-workers.md), [Single Binary](documentation/architecture/single-binary.md)
 - [API Reference](documentation/reference/) (Engine, Context, Storage, Server, Workers, Testing, Events, Interceptors, Observability, CLI, Configuration, Types)
 
-Integrations:
-
-- [Agent Bureau storage integration](documentation/integrations/agent-bureau.md)
-
 Contributing:
 
 - [Development Setup](documentation/contributing/development-setup.md), [Documentation Maintenance](documentation/contributing/documentation-maintenance.md), [Architecture Decisions](documentation/contributing/architecture-decisions.md)

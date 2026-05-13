@@ -81,7 +81,7 @@ Every addition or removal in `src/index.ts` is a public API change. Verify:
 - Removed exports are truly unused by consumers
 - Also check the secondary entrypoints: `./service-worker`, `./storage/indexeddb`, `./storage/text-value-store`, `./server/handler`
 
-### Phase 5b: Documentation Gates
+### Documentation Gates
 
 Run these when documentation, examples, generated references, or public declarations changed:
 

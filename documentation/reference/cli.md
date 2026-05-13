@@ -55,6 +55,8 @@ weft doctor --database ./weft.db --json
 
 ### conformance
 
+Use these two commands when you need to prove worker compatibility or publish typed registry declarations from a live server.
+
 Run the RemoteWorker protocol conformance harness against a worker command. Use this when validating a non-TypeScript SDK, a custom worker launcher, or a protocol-level change.
 
 ```bash
