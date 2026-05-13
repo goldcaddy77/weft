@@ -94,18 +94,40 @@ const METRICS: {
   workflowStarted: MetricDefinition;
   workflowCompleted: MetricDefinition;
   workflowFailed: MetricDefinition;
+  promptCacheHits: MetricDefinition;
+  promptCacheMisses: MetricDefinition;
+  dpmoDefects: MetricDefinition;
+  dpmoOperations: MetricDefinition;
+  taskBacklog: MetricDefinition;
+  taskQueueLatency: MetricDefinition;
+  taskExecutionLatency: MetricDefinition;
+  taskRetries: MetricDefinition;
+  taskRequeues: MetricDefinition;
+  taskStaleHeartbeats: MetricDefinition;
+  workerCapacitySaturation: MetricDefinition;
 };
 ```
 
-| Key                 | Name                      | Type        | Unit        | Description                     |
-| ------------------- | ------------------------- | ----------- | ----------- | ------------------------------- |
-| `workflowDuration`  | `weft.workflow.duration`  | `histogram` | `ms`        | Duration of workflow execution  |
-| `activityDuration`  | `weft.activity.duration`  | `histogram` | `ms`        | Duration of activity execution  |
-| `activityAttempts`  | `weft.activity.attempts`  | `histogram` | `attempts`  | Number of attempts per activity |
-| `workflowActive`    | `weft.workflow.active`    | `gauge`     | `workflows` | Currently active workflows      |
-| `workflowStarted`   | `weft.workflow.started`   | `counter`   | `workflows` | Total workflows started         |
-| `workflowCompleted` | `weft.workflow.completed` | `counter`   | `workflows` | Total workflows completed       |
-| `workflowFailed`    | `weft.workflow.failed`    | `counter`   | `workflows` | Total workflows failed          |
+| Key                        | Name                              | Type        | Unit        | Description                                                   |
+| -------------------------- | --------------------------------- | ----------- | ----------- | ------------------------------------------------------------- |
+| `workflowDuration`         | `weft.workflow.duration`          | `histogram` | `ms`        | Duration of workflow execution                                |
+| `activityDuration`         | `weft.activity.duration`          | `histogram` | `ms`        | Duration of activity execution                                |
+| `activityAttempts`         | `weft.activity.attempts`          | `histogram` | `attempts`  | Number of attempts per activity                               |
+| `workflowActive`           | `weft.workflow.active`            | `gauge`     | `workflows` | Currently active workflows                                    |
+| `workflowStarted`          | `weft.workflow.started`           | `counter`   | `workflows` | Total workflows started                                       |
+| `workflowCompleted`        | `weft.workflow.completed`         | `counter`   | `workflows` | Total workflows completed                                     |
+| `workflowFailed`           | `weft.workflow.failed`            | `counter`   | `workflows` | Total workflows failed                                        |
+| `promptCacheHits`          | `weft.prompt_cache.hits`          | `counter`   | `hits`      | Total prompt prefix cache hits                                |
+| `promptCacheMisses`        | `weft.prompt_cache.misses`        | `counter`   | `misses`    | Total prompt prefix cache misses                              |
+| `dpmoDefects`              | `weft.dpmo.defects`               | `counter`   | `workflows` | Failed workflows for DPMO                                     |
+| `dpmoOperations`           | `weft.dpmo.operations`            | `counter`   | `workflows` | Started workflows for DPMO                                    |
+| `taskBacklog`              | `weft.task.backlog`               | `gauge`     | `tasks`     | Queued tasks waiting for workers                              |
+| `taskQueueLatency`         | `weft.task.queue_latency`         | `histogram` | `ms`        | Time tasks spend queued before dispatch                       |
+| `taskExecutionLatency`     | `weft.task.execution_latency`     | `histogram` | `ms`        | Time tasks spend executing after worker start                 |
+| `taskRetries`              | `weft.task.retries`               | `counter`   | `retries`   | Retry attempts after first dispatch                           |
+| `taskRequeues`             | `weft.task.requeues`              | `counter`   | `requeues`  | Visibility-timeout or disconnect requeues                     |
+| `taskStaleHeartbeats`      | `weft.task.stale_heartbeats`      | `gauge`     | `tasks`     | In-flight tasks past the stale-heartbeat diagnostic threshold |
+| `workerCapacitySaturation` | `weft.worker.capacity_saturation` | `gauge`     | `ratio`     | In-flight worker slots divided by total worker concurrency    |
 
 ### `MetricDefinition`
 
@@ -119,6 +141,30 @@ interface MetricDefinition {
 
 type MetricType = 'counter' | 'gauge' | 'histogram';
 ```
+
+Task metrics stay deliberately low-cardinality. Use `GET /v1/tasks/diagnostics` when you need workflow IDs, operation IDs, worker IDs, or queue-specific evidence for stuck work; keep metric labels suitable for aggregation.
+
+### `GET /v1/tasks/diagnostics`
+
+Returns bounded task diagnostics for queued, in-flight, and recently resolved activity records. The REST endpoint is backed by the `weft.tasks.diagnostics` operation and requires `system:read`.
+
+```http
+GET /v1/tasks/diagnostics?workflowId=checkout-123&queue=payments&limit=25
+```
+
+Query parameters:
+
+| Parameter                   | Type     | Default | Description                                               |
+| --------------------------- | -------- | ------- | --------------------------------------------------------- |
+| `operationId`               | `string` |         | Limit results to one activity operation.                  |
+| `workflowId`                | `string` |         | Limit results to one workflow.                            |
+| `queue`                     | `string` |         | Limit results to one task queue.                          |
+| `staleQueuedAfterMs`        | `number` | `60000` | Queue latency threshold for `stuck-queued` diagnostics.   |
+| `staleHeartbeatAfterMs`     | `number` | `60000` | Heartbeat age threshold for `stale-inflight` diagnostics. |
+| `retryStormMinimumAttempts` | `number` | `3`     | Minimum retry count for `retry-storm` diagnostics.        |
+| `limit`                     | `number` | `50`    | Maximum returned items. The server caps this at `200`.    |
+
+Each item has a `kind` of `stuck-queued`, `stale-inflight`, `retry-storm`, or `all-workers-at-capacity`, plus bounded evidence strings. The response also includes summary counts so callers can tell when more matching diagnostics exist than the requested item limit.
 
 ---
 

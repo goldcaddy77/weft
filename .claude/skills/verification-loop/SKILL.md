@@ -79,7 +79,19 @@ Every addition or removal in `src/index.ts` is a public API change. Verify:
 - New exports are intentional and properly typed
 - No internal types or implementation details leaked into the public surface
 - Removed exports are truly unused by consumers
-- Also check the secondary entrypoints: `./service-worker`, `./storage/indexeddb`, `./server/handler`
+- Also check the secondary entrypoints: `./service-worker`, `./storage/indexeddb`, `./storage/text-value-store`, `./server/handler`
+
+### Phase 5b: Documentation Gates
+
+Run these when documentation, examples, generated references, or public declarations changed:
+
+```bash
+bun run verify:documentation
+bun run verify:markdown-doctests
+bun run verify:jsdoc:doctests
+```
+
+Use `bun run verify:jsdoc:full` when exported declarations or public JSDoc changed.
 
 ### Phase 6: Diff Review
 

@@ -41,7 +41,17 @@ bun run format:check     # Check formatting without changes
 
 ```bash
 bun run clean            # Clean build artifacts (dist/, coverage/, caches)
+bun run verify:documentation
+bun run verify:markdown-doctests
+bun run verify:jsdoc:doctests
+bun run verify:jsdoc:full
+weft conformance -- <worker-command>
+weft codegen --server http://localhost:7233 --out ./src/weft.generated.d.ts
 ```
+
+`verify:documentation` is the minimum gate for public Markdown, generated reference links, and documentation anchors. Run `verify:markdown-doctests` when Markdown examples change, `verify:jsdoc:doctests` when JSDoc examples change, and `verify:jsdoc:full` before shipping changes that alter exported declarations.
+
+Use `weft conformance` when a change touches the `RemoteWorker` protocol or worker SDK compatibility. Use `weft codegen` when validating cross-process type-generation docs or client fixtures; the command reads `/v1/registry` from a live server or `--from` a vendored registry JSON file and writes a deterministic `.d.ts`.
 
 ## Architecture Overview
 
@@ -108,6 +118,13 @@ If an `as` cast is genuinely necessary (e.g., deserializing from storage where t
 
 1. **Environment variables**: Add to `.env.example` first, then update the schema in `src/environment.ts`.
 2. **Types**: Shared/reusable types go in `src/types.ts`; domain-specific types live near their modules.
+
+### Server and Dashboard Surfaces
+
+- New REST or JSON-RPC operations must declare their access scope, operation name, transport availability, input source mapping, and fault shaping explicitly.
+- Operator diagnostics should keep metrics low-cardinality. Use bounded diagnostic endpoints for workflow IDs, operation IDs, worker IDs, queue names, and other high-cardinality evidence.
+- If a server operation is surfaced in the dashboard, update the dashboard API client types and tests together with the route or operation.
+- Preserve legacy REST response contracts during cleanup refactors. Shared helpers are fine, but tests must pin any intentionally raw or masked error shape.
 
 ### Testing Approach
 
