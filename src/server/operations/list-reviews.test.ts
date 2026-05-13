@@ -162,6 +162,27 @@ describe('weft.reviews.list', () => {
     expect(await response.json()).toEqual({ items: [] });
   });
 
+  it('rejects completed review operation output missing artifact metadata', () => {
+    const result = listReviewsOperation.outputSchema.safeParse({
+      items: [
+        {
+          status: 'completed',
+          reviewId: 'missing-artifact',
+          workflowId: 'wf-missing-artifact',
+          reviewType: 'design',
+          reviewers: ['alice'],
+          allowPartial: false,
+          createdAt: 1_000,
+          decision: 'approved',
+          reviewer: 'alice',
+          timestamp: 2_000,
+        },
+      ],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it('returns 400 when the status filter is invalid', async () => {
     const setup = createEngineWithStorage();
     engine = setup.engine;

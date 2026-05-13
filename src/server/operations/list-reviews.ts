@@ -16,7 +16,7 @@ const pendingReviewEntrySchema = z.object({
   status: z.literal('pending'),
   reviewId: z.string(),
   workflowId: z.string(),
-  artifact: z.unknown(),
+  artifact: z.unknown().nonoptional(),
   reviewType: z.string(),
   reviewers: z.array(z.string()),
   allowPartial: z.boolean(),
@@ -24,24 +24,14 @@ const pendingReviewEntrySchema = z.object({
   webhookUrl: z.string().optional(),
   createdAt: z.number(),
 });
-const completedReviewEntrySchema = pendingReviewEntrySchema
-  .extend({
-    status: z.literal('completed'),
-    decision: z.enum(['approved', 'rejected', 'needs-changes']),
-    reviewer: z.string(),
-    feedback: z.string().optional(),
-    sectionDecisions: z.record(z.string(), z.enum(['approved', 'rejected'])).optional(),
-    timestamp: z.number(),
-  })
-  .superRefine((review, context) => {
-    if (!Object.hasOwn(review, 'artifact')) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Required',
-        path: ['artifact'],
-      });
-    }
-  });
+const completedReviewEntrySchema = pendingReviewEntrySchema.extend({
+  status: z.literal('completed'),
+  decision: z.enum(['approved', 'rejected', 'needs-changes']),
+  reviewer: z.string(),
+  feedback: z.string().optional(),
+  sectionDecisions: z.record(z.string(), z.enum(['approved', 'rejected'])).optional(),
+  timestamp: z.number(),
+});
 const reviewListEntrySchema = z.union([pendingReviewEntrySchema, completedReviewEntrySchema]);
 const listReviewsOutput = z.object({
   items: z.array(reviewListEntrySchema),

@@ -7,7 +7,7 @@ import type { CompletedReviewEntry, PendingReviewEntry } from '../types.ts';
 const storedReviewRequestSchema = z.object({
   reviewId: z.string(),
   workflowId: z.string(),
-  artifact: z.unknown(),
+  artifact: z.unknown().nonoptional(),
   reviewType: z.string(),
   reviewers: z.array(z.string()),
   allowPartial: z.boolean(),
@@ -16,33 +16,23 @@ const storedReviewRequestSchema = z.object({
   createdAt: z.number(),
 });
 
-const persistedCompletedReviewEntrySchema = z
-  .object({
-    status: z.literal('completed'),
-    reviewId: z.string(),
-    workflowId: z.string(),
-    artifact: z.unknown(),
-    reviewType: z.string(),
-    reviewers: z.array(z.string()),
-    allowPartial: z.boolean(),
-    timeout: z.number().optional(),
-    webhookUrl: z.string().optional(),
-    createdAt: z.number(),
-    decision: z.enum(['approved', 'rejected', 'needs-changes']),
-    reviewer: z.string(),
-    feedback: z.string().optional(),
-    sectionDecisions: z.record(z.string(), z.enum(['approved', 'rejected'])).optional(),
-    timestamp: z.number(),
-  })
-  .superRefine((review, context) => {
-    if (!Object.hasOwn(review, 'artifact')) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Required',
-        path: ['artifact'],
-      });
-    }
-  });
+const persistedCompletedReviewEntrySchema = z.object({
+  status: z.literal('completed'),
+  reviewId: z.string(),
+  workflowId: z.string(),
+  artifact: z.unknown().nonoptional(),
+  reviewType: z.string(),
+  reviewers: z.array(z.string()),
+  allowPartial: z.boolean(),
+  timeout: z.number().optional(),
+  webhookUrl: z.string().optional(),
+  createdAt: z.number(),
+  decision: z.enum(['approved', 'rejected', 'needs-changes']),
+  reviewer: z.string(),
+  feedback: z.string().optional(),
+  sectionDecisions: z.record(z.string(), z.enum(['approved', 'rejected'])).optional(),
+  timestamp: z.number(),
+});
 
 type StoredReviewRequest = z.infer<typeof storedReviewRequestSchema>;
 type PersistedCompletedReviewEntry = z.infer<typeof persistedCompletedReviewEntrySchema>;

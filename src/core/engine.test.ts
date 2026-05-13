@@ -4005,6 +4005,31 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('engine.listReviews({ status: completed }) skips records missing artifact metadata', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    await storage.put(
+      'review-decision:missing-artifact',
+      encode({
+        status: 'completed',
+        reviewId: 'missing-artifact',
+        workflowId: 'wf-missing-artifact',
+        reviewType: 'design',
+        reviewers: ['alice'],
+        allowPartial: false,
+        createdAt: 1_000,
+        decision: 'approved',
+        reviewer: 'alice',
+        timestamp: 2_000,
+      }),
+    );
+
+    const reviews = await engine.listReviews({ status: 'completed' });
+    expect(reviews).toEqual([]);
+    engine[Symbol.dispose]();
+  });
+
   it('engine.listReviews({ workflowId }) filters pending reviews by workflow id', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
