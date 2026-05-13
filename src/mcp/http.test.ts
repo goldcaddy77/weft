@@ -782,8 +782,8 @@ describe('MCP Streamable HTTP transport', () => {
     );
     const listed = parseToolText(visible.result) as { items: Array<{ id: string }> };
     expect(listed.items.map((item) => item.id)).toEqual([
-      'tenant-a-workflow',
       'tenant-a-workflow-2',
+      'tenant-a-workflow',
     ]);
 
     const secondVisiblePage = await mcpJson(
@@ -798,7 +798,7 @@ describe('MCP Streamable HTTP transport', () => {
       { authorization: `Bearer ${token}` },
     );
     expect(parseToolText(secondVisiblePage.result)).toMatchObject({
-      items: [expect.objectContaining({ id: 'tenant-a-workflow-2' })],
+      items: [expect.objectContaining({ id: 'tenant-a-workflow' })],
       total: 2,
       offset: 1,
       limit: 1,
@@ -843,8 +843,8 @@ describe('MCP Streamable HTTP transport', () => {
     );
     expect(parseToolText(readOnlyList.result)).toMatchObject({
       items: [
-        expect.objectContaining({ id: 'tenant-a-workflow' }),
         expect.objectContaining({ id: 'tenant-a-workflow-2' }),
+        expect.objectContaining({ id: 'tenant-a-workflow' }),
       ],
     });
 
