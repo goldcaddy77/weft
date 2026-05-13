@@ -116,15 +116,50 @@ describe('weft.reviews.list', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       items: [
-        expect.objectContaining({
+        {
           status: 'completed',
           reviewId: 'rev-completed',
           workflowId: 'wf-completed',
+          artifact: { text: 'review me' },
           reviewType: 'design',
+          reviewers: ['alice'],
+          allowPartial: false,
+          createdAt: 1_234,
           decision: 'approved',
-        }),
+          reviewer: 'alice',
+          timestamp: expect.any(Number),
+        },
       ],
     });
+  });
+
+  it('skips completed review records missing canonical request metadata', async () => {
+    const setup = createEngineWithStorage();
+    engine = setup.engine;
+
+    await setup.storage.put(
+      'review-decision:legacy-review',
+      encode({
+        reviewId: 'legacy-review',
+        decision: 'approved',
+        reviewer: 'legacy-bot',
+        feedback: 'stored by an older runtime',
+        timestamp: 9_000,
+      }),
+    );
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/reviews?status=completed', { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: [listReviewsRestBinding],
+        ...reviewsReadAuthContext(),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ items: [] });
   });
 
   it('returns 400 when the status filter is invalid', async () => {
