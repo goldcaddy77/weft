@@ -27,6 +27,7 @@ import {
 } from './events.ts';
 import { InlineExecutionStrategy } from './inline-execution-strategy.ts';
 import type { ActivityInterceptor, WorkflowInterceptor } from './interceptor.ts';
+import { ListFilterValidationError } from './list-filter-validation.ts';
 import { tenantFromInputField } from './tenant.ts';
 import { WorkflowTimeoutError } from './timeouts.ts';
 import type {
@@ -1252,6 +1253,15 @@ describe('Engine', () => {
 
     const completedOnly = await engine.list({ status: 'completed' });
     expect(completedOnly.items.every((item) => item.status === 'completed')).toBe(true);
+    engine[Symbol.dispose]();
+  });
+
+  it('list() rejects malformed filters through the shared validation path', async () => {
+    const engine = new Engine();
+
+    await expect(engine.list({ idPrefix: 'a:b' })).rejects.toBeInstanceOf(
+      ListFilterValidationError,
+    );
     engine[Symbol.dispose]();
   });
 

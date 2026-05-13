@@ -1,5 +1,6 @@
 import { KEYS } from '../../storage/interface.ts';
 import { decode, encode } from '../codec.ts';
+import { normalizeListFilter } from '../list-filter-validation.ts';
 import { buildIndexOperations, validateAttributeType } from '../search-attributes.ts';
 import type {
   ListFilter,
@@ -28,8 +29,16 @@ export async function list(
   internals: EngineInternals,
   filter?: ListFilter,
 ): Promise<PaginatedResult<WorkflowSummary>> {
-  const normalizedTagFilters = normalizeWorkflowTags(filter?.tags);
-  const constrainedIds = await resolveListCandidateIds(internals, filter, normalizedTagFilters);
+  // Validate the filter the same way `engine.aggregate()` does, so in-process
+  // callers receive the same diagnostics as REST / JSON-RPC clients instead of
+  // silently getting an empty page for malformed input.
+  const normalizedFilter = filter === undefined ? undefined : normalizeListFilter(filter);
+  const normalizedTagFilters = normalizeWorkflowTags(normalizedFilter?.tags);
+  const constrainedIds = await resolveListCandidateIds(
+    internals,
+    normalizedFilter,
+    normalizedTagFilters,
+  );
 
   const items: WorkflowSummary[] = [];
 
@@ -51,11 +60,12 @@ export async function list(
       for (const stateBytes of chunkBytes) {
         if (!stateBytes) continue;
         const state = decodeWorkflowState(stateBytes);
-        if (!matchesListFilter(state, filter, constrainedIds, normalizedTagFilters)) continue;
+        if (!matchesListFilter(state, normalizedFilter, constrainedIds, normalizedTagFilters))
+          continue;
         items.push(summaryFromState(state));
       }
     }
-    return paginateWorkflowSummaries(sortSummariesByCreatedAtDescending(items), filter);
+    return paginateWorkflowSummaries(sortSummariesByCreatedAtDescending(items), normalizedFilter);
   }
 
   let scanned = 0;
@@ -68,12 +78,12 @@ export async function list(
     }
 
     const state = decodeWorkflowState(value);
-    if (!matchesListFilter(state, filter, constrainedIds, normalizedTagFilters)) continue;
+    if (!matchesListFilter(state, normalizedFilter, constrainedIds, normalizedTagFilters)) continue;
 
     items.push(summaryFromState(state));
   }
 
-  return paginateWorkflowSummaries(sortSummariesByCreatedAtDescending(items), filter);
+  return paginateWorkflowSummaries(sortSummariesByCreatedAtDescending(items), normalizedFilter);
 }
 
 function summaryFromState(state: WorkflowState): WorkflowSummary {
