@@ -3,6 +3,44 @@ import sveltePlugin from 'bun-plugin-svelte';
 
 await $`rm -rf dist`;
 
+const typescriptTranspiler = new Bun.Transpiler({ loader: 'ts', target: 'bun' });
+
+function rewriteRelativeJavaScriptSpecifiers(source: string): string {
+  return source
+    .replace(/from (["'])(\.\.?\/[^"']+)\1/g, (match, quote: string, specifier: string) => {
+      if (/\.(js|json|html|css)$/.test(specifier)) return match;
+      const withoutTypeScriptExtension = specifier.endsWith('.ts')
+        ? specifier.slice(0, -3)
+        : specifier;
+      return `from ${quote}${withoutTypeScriptExtension}.js${quote}`;
+    })
+    .replace(/import\((["'])(\.\.?\/[^"']+)\1\)/g, (match, quote: string, specifier: string) => {
+      if (/\.(js|json|html|css)$/.test(specifier)) return match;
+      const withoutTypeScriptExtension = specifier.endsWith('.ts')
+        ? specifier.slice(0, -3)
+        : specifier;
+      return `import(${quote}${withoutTypeScriptExtension}.js${quote})`;
+    });
+}
+
+async function writeUnbundledRuntimeModules(): Promise<void> {
+  const sourceGlob = new Bun.Glob('src/**/*.ts');
+
+  for await (const sourcePath of sourceGlob.scan('.')) {
+    if (
+      sourcePath.endsWith('.test.ts') ||
+      sourcePath.endsWith('.test-d.ts') ||
+      sourcePath.includes('/__fixtures__/')
+    ) {
+      continue;
+    }
+
+    const outputPath = sourcePath.replace(/^src\//, 'dist/').replace(/\.ts$/, '.js');
+    const transformed = typescriptTranspiler.transformSync(await Bun.file(sourcePath).text());
+    await Bun.write(outputPath, rewriteRelativeJavaScriptSpecifiers(transformed));
+  }
+}
+
 // Node/Bun target — main bundle + per-backend storage submodules.
 // Heavy backends (lmdb, @libsql/client) are externalized so consumers
 // only pay for what they actually import.
@@ -24,6 +62,8 @@ await Bun.build({
     './src/worker/protocol.ts',
     './src/mcp/index.ts',
     './src/mcp/cli.ts',
+    './src/client/index.ts',
+    './src/client/local.ts',
     // Bun-only server subpath (weft/server)
     './src/server/index.ts',
   ],
@@ -116,6 +156,8 @@ await Bun.build({
   sourcemap: 'external',
   plugins: [sveltePlugin],
 });
+
+await writeUnbundledRuntimeModules();
 
 await $`bunx tsc --declaration --emitDeclarationOnly --project tsconfig.build.json`;
 

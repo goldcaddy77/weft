@@ -1,4 +1,4 @@
-import { activity, type WorkflowRegistration } from '../src/index.ts';
+import { activity, type WorkflowRegistration } from 'weft';
 
 export const formatGreetingActivity = activity({
   name: 'formatGreeting',

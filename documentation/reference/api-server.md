@@ -11,7 +11,8 @@ function serve(options: ServeOptions): WeftServer;
 Start the Weft HTTP + WebSocket server. Returns a `WeftServer` handle for introspection and shutdown.
 
 ```ts partial
-import { Engine, serve } from 'weft';
+import { Engine } from 'weft';
+import { serve } from 'weft/server';
 
 const engine = new Engine();
 engine.register('greet', async function* (context, name) {
@@ -101,7 +102,7 @@ A pure HTTP request handler that maps a `Request` to a `Response`. Has no Bun-sp
 `HandlerOptions` accepts an operation registry, REST bindings, and a Prometheus exporter. Omit it to use defaults.
 
 ```ts partial
-import { handleRequest } from 'weft';
+import { handleRequest } from 'weft/server/handler';
 
 // Use inside a custom Bun.serve, Deno.serve, or any framework
 const response = await handleRequest(request, engine);

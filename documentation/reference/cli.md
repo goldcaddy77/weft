@@ -204,33 +204,41 @@ weft schedule cancel <schedule-id> --database ./weft.db
 Show the execution timeline for a workflow.
 
 ```bash
-weft timeline --database ./weft.db --id <workflow-id>
+weft timeline <workflow-id> --database ./weft.db
+weft timeline <workflow-id> --step 3 --database ./weft.db
+weft timeline <workflow-id> --diff 2 3 --database ./weft.db
 ```
 
 **Options:**
 
-| Flag         | Short | Default     | Description               |
-| ------------ | ----- | ----------- | ------------------------- |
-| `--database` | `-d`  | `./weft.db` | SQLite database file path |
-| `--id`       |       | (required)  | Workflow ID to inspect    |
-| `--json`     | `-j`  | `false`     | Output as JSON            |
-| `--help`     | `-h`  |             | Show help message         |
+| Flag         | Short | Default     | Description                                              |
+| ------------ | ----- | ----------- | -------------------------------------------------------- |
+| `--database` | `-d`  | `./weft.db` | SQLite database file path                                |
+| `--step`     |       |             | Show replay details for one checkpoint step              |
+| `--diff`     |       | `false`     | Diff two checkpoint steps supplied after the workflow ID |
+| `--help`     | `-h`  |             | Show help message                                        |
 
 ### validate
 
 Validate a workflows module for correctness before deployment.
 
 ```bash
-weft validate --workflows ./src/workflows.ts
+weft validate ./src/workflows.ts
+weft validate ./src/workflows.ts ./src/activities.ts --json
 ```
 
 **Options:**
 
-| Flag          | Short | Default    | Description                                     |
-| ------------- | ----- | ---------- | ----------------------------------------------- |
-| `--workflows` | `-w`  | (required) | Path to module exporting workflow registrations |
-| `--json`      | `-j`  | `false`    | Output as JSON                                  |
-| `--help`      | `-h`  |            | Show help message                               |
+| Flag     | Short | Default | Description                                   |
+| -------- | ----- | ------- | --------------------------------------------- |
+| `--json` | `-j`  | `false` | Output as JSON instead of human-readable text |
+| `--help` | `-h`  |         | Show help message                             |
+
+**Arguments:**
+
+| Argument        | Description                                                                            |
+| --------------- | -------------------------------------------------------------------------------------- |
+| `<entry.ts>...` | One or more TypeScript modules or glob patterns containing workflow/activity metadata. |
 
 ## Programmatic API
 

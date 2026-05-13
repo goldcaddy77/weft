@@ -26,12 +26,17 @@ interface ServeOptions {
   port?: number;
   hostname?: string;
   development?: boolean; // enable Bun's development mode (HMR, source maps)
+  dashboard?: unknown; // dashboard HTML/module import served at /ui
   auth?: AuthConfig; // API key or JWT authentication configuration
   routingPolicy?: RoutingPolicy; // task dispatch policy for remote workers; default: 'least-loaded'
   schedulingPolicy?: SchedulingPolicy; // workflow scheduling policy
   prometheusExporter?: PrometheusExporter; // Prometheus metrics exporter
 }
 ```
+
+## Dashboard
+
+The built-in dashboard is served at `/ui` when the server receives a `dashboard` HTML/module import. The CLI loads the bundled dashboard by default and prints the dashboard URL after startup; pass `--no-ui` to run only the API and worker endpoints. For production, do not expose a CLI-started dashboard directly on a public interface unless access is controlled in front of Weft. Use an authenticated reverse proxy, or embed the server yourself with `serve({ auth, dashboard })` so the same authentication policy protects API and dashboard requests. During dashboard development, `bun run dev:dashboard` starts the server with the dashboard artifact from `src/dashboard/index.html`, which is the same kind of value you can pass through `ServeOptions.dashboard` in an embedded server.
 
 ## The WeftServer handle
 
