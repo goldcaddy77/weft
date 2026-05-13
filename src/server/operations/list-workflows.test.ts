@@ -2,7 +2,7 @@
  * `weft.workflows.list` operation + REST binding — behavior tests.
  */
 
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 
 import { decode, encode } from '../../core/codec.ts';
 import { Engine } from '../../core/engine.ts';
@@ -19,8 +19,11 @@ import {
 } from './list-workflows.ts';
 import { waitForWorkflowStatus } from './operation-test-helpers.test-support.ts';
 
+const createdEngines: Engine[] = [];
+
 function createEngine(storage = new MemoryStorage()): Engine {
   const engine = new Engine({ storage });
+  createdEngines.push(engine);
   engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
     return input;
   });
@@ -53,6 +56,12 @@ const registry = createOperationRegistry([listWorkflowsOperation]);
 const bindings = [listWorkflowsRestBinding];
 
 describe('weft.workflows.list', () => {
+  afterEach(() => {
+    for (const engine of createdEngines.splice(0)) {
+      engine[Symbol.dispose]();
+    }
+  });
+
   it('returns the paginated workflow list on the happy path', async () => {
     const engine = createEngine();
 
