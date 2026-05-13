@@ -6,10 +6,12 @@ import { tenantFromInputField } from '../core/tenant.ts';
 import type { DefinitionSchema, WorkflowContext } from '../core/types.ts';
 import { signJWT } from '../server/authentication.ts';
 import { serve, type WeftServer } from '../server/index.ts';
+import { anonymousPrincipal } from '../server/principal.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { waitForCondition } from '../testing/fake-timers.ts';
 import { handleMcpHttpRequest } from './http.ts';
-import { createMcpSessionManager, type McpSessionManager } from './session.ts';
+import { createMcpSessionManager, McpSession, type McpSessionManager } from './session.ts';
+import { callMcpTool } from './tools.ts';
 
 const MCP_PROTOCOL_VERSION = '2025-11-25';
 const TEST_SECRET = 'mcp-test-secret-at-least-32-chars';
@@ -533,6 +535,64 @@ describe('MCP Streamable HTTP transport', () => {
     controller.abort();
     expect(notificationText).toContain('notifications/resources/updated');
     expect(notificationText).toContain(searchUri);
+  });
+
+  it('notifies search resource subscribers when the changed workflow no longer loads', async () => {
+    const engine = createEngine();
+    await using manager = createMcpSessionManager(engine);
+    const session = manager.create(anonymousPrincipal());
+    const searchUri = 'weft://workflows/search?status=completed&type=hold-for-cancel';
+    const messages: unknown[] = [];
+    session.subscriptions.add(searchUri);
+    session.addTarget((message) => messages.push(message));
+
+    const originalGet = engine.get.bind(engine);
+    engine.get = async (workflowId: string) => {
+      if (workflowId === 'deleted-workflow') return null;
+      return originalGet(workflowId);
+    };
+
+    engine.dispatchEvent(
+      Object.assign(new Event('workflow:completed'), { workflowId: 'deleted-workflow' }),
+    );
+
+    await waitForCondition(
+      () => messages.some((message) => JSON.stringify(message).includes(`"uri":"${searchUri}"`)),
+      {
+        timeoutMs: 2_000,
+        intervalMs: 10,
+        label: 'search subscription notification for deleted workflow',
+      },
+    );
+  });
+
+  it('honors workflow tool cancellation observed before engine.start writes state', async () => {
+    const engine = createEngine();
+    const session = new McpSession('race-session', anonymousPrincipal());
+    const originalTrackRequest = session.trackRequest.bind(session);
+    session.trackRequest = (requestId, workflowId) => {
+      originalTrackRequest(requestId, workflowId);
+      session.cancelRequest(requestId);
+    };
+
+    const result = await callMcpTool(
+      'hold_for_cancel',
+      { label: 'cancel-before-start' },
+      {
+        engine,
+        session,
+        principal: anonymousPrincipal(),
+        authRequired: false,
+        requestId: 'cancel-before-start',
+      },
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('cancelled');
+    await expect(engine.list({ type: 'hold-for-cancel' })).resolves.toMatchObject({
+      total: 0,
+      items: [],
+    });
   });
 
   it('maps MCP cancellation notifications to engine.cancel for an in-flight workflow tool call', async () => {

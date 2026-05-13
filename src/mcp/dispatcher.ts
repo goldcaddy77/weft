@@ -76,7 +76,7 @@ async function dispatchNotification(
 
   if (request.method === 'notifications/cancelled') {
     const params = objectParams(request.params);
-    const workflowId = context.session.workflowForRequest(params['requestId']);
+    const workflowId = context.session.cancelRequest(params['requestId']);
     if (workflowId !== undefined) {
       await context.engine.cancel(workflowId);
     }

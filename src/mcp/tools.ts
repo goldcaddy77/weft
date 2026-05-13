@@ -139,9 +139,16 @@ function buildToolImplementations(engine: Engine): ToolImplementation[] {
       call: async (argumentsValue, context) => {
         assertScope(context, 'workflows:write', 'Calling workflow tools');
         const input = applyPrincipalTenantToInput(context.principal, argumentsValue);
-        const handle = await context.engine.start(workflowType, input);
-        context.session.trackRequest(context.requestId, handle.id);
+        const workflowId = crypto.randomUUID();
+        context.session.trackRequest(context.requestId, workflowId);
         try {
+          if (context.session.isRequestCancelled(context.requestId)) {
+            throw new Error('Workflow cancelled');
+          }
+          const handle = await context.engine.start(workflowType, input, { id: workflowId });
+          if (context.session.isRequestCancelled(context.requestId)) {
+            await context.engine.cancel(handle.id);
+          }
           const result = await handle.result();
           return { workflowId: handle.id, result };
         } finally {

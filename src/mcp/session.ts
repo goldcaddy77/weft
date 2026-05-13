@@ -2,7 +2,6 @@ import type { Engine } from '../core/engine.ts';
 import type { WeftEventMap } from '../core/events.ts';
 import type { JsonRpcId } from '../server/json-rpc-protocol.ts';
 import type { Principal } from '../server/principal.ts';
-import { getVisibleWorkflowState } from './access.ts';
 import { requestIdKey, type McpResponse } from './protocol.ts';
 import { isWorkflowSearchResourceUri, workflowResourceUri } from './resources.ts';
 
@@ -98,6 +97,7 @@ export class McpSession {
   lastActivityMilliseconds: number;
 
   readonly #pendingRequests = new Map<string, PendingRequest>();
+  readonly #cancelledRequestKeys = new Set<string>();
   readonly #targets = new Set<NotificationTarget>();
 
   constructor(id: string, principal: Principal, currentTimeMilliseconds = Date.now()) {
@@ -124,11 +124,28 @@ export class McpSession {
     this.#pendingRequests.set(key, { workflowId });
   }
 
+  /** Record cancellation for a tracked in-flight request and return its workflow id. */
+  cancelRequest(requestId: unknown): string | undefined {
+    const key = requestIdKey(asJsonRpcId(requestId));
+    if (key === undefined) return undefined;
+    const request = this.#pendingRequests.get(key);
+    if (request === undefined) return undefined;
+    this.#cancelledRequestKeys.add(key);
+    return request.workflowId;
+  }
+
+  /** True when an in-flight MCP request has received a cancellation notification. */
+  isRequestCancelled(requestId: unknown): boolean {
+    const key = requestIdKey(asJsonRpcId(requestId));
+    return key !== undefined && this.#cancelledRequestKeys.has(key);
+  }
+
   /** Stop tracking an in-flight request after it completes. */
   untrackRequest(requestId: unknown): void {
     const key = requestIdKey(asJsonRpcId(requestId));
     if (key === undefined) return;
     this.#pendingRequests.delete(key);
+    this.#cancelledRequestKeys.delete(key);
   }
 
   /** Return the workflow associated with an in-flight MCP request. */
@@ -157,6 +174,7 @@ export class McpSession {
 
   close(): void {
     this.#pendingRequests.clear();
+    this.#cancelledRequestKeys.clear();
     this.subscriptions.clear();
     this.#targets.clear();
   }
@@ -201,9 +219,7 @@ export class McpSessionManager implements AsyncDisposable {
     this.#listener = (event) => {
       const workflowId = (event as { workflowId?: unknown }).workflowId;
       if (typeof workflowId !== 'string') return;
-      void this.#notifyWorkflowResourceUpdated(workflowId).catch(() => {
-        this.#deleteExpiredSessions();
-      });
+      this.#notifyWorkflowResourceUpdated(workflowId);
     };
     for (const eventName of RESOURCE_EVENT_NAMES) {
       this.#engine.addEventListener(eventName, this.#listener);
@@ -256,7 +272,7 @@ export class McpSessionManager implements AsyncDisposable {
     this.#sessions.clear();
   }
 
-  async #notifyWorkflowResourceUpdated(workflowId: string): Promise<void> {
+  #notifyWorkflowResourceUpdated(workflowId: string): void {
     const candidateUris = [
       workflowResourceUri(workflowId, 'state'),
       workflowResourceUri(workflowId, 'events'),
@@ -271,13 +287,8 @@ export class McpSessionManager implements AsyncDisposable {
         subscribedUris.add(uri);
       }
       const searchUris = [...session.subscriptions].filter(isWorkflowSearchResourceUri);
-      if (searchUris.length > 0) {
-        const state = await getVisibleWorkflowState(this.#engine, session.principal, workflowId);
-        if (state !== null) {
-          for (const uri of searchUris) {
-            subscribedUris.add(uri);
-          }
-        }
+      for (const uri of searchUris) {
+        subscribedUris.add(uri);
       }
       if (subscribedUris.size === 0) continue;
       session.touch(now);
