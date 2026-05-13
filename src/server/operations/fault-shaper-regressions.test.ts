@@ -64,11 +64,27 @@ describe('REST fault shaper regressions', () => {
       message: 'legacy raw engine failure',
       data: {},
     };
+    const invalidParamsFaultValue = invalidParamsFault('Legacy invalid params');
+    const notFoundFault: OperationFault = {
+      code: 'NotFound',
+      message: 'Legacy workflow not found',
+      data: { resource: 'workflow', identifier: 'workflow-2' },
+    };
 
     await expectJsonErrorResponse(
       shapeLegacyRestFaultWithRawEngineFailureMessage(engineFailureFault),
       500,
       engineFailureFault.message,
+    );
+    await expectJsonErrorResponse(
+      shapeLegacyRestFaultWithRawEngineFailureMessage(invalidParamsFaultValue),
+      400,
+      invalidParamsFaultValue.message,
+    );
+    await expectJsonErrorResponse(
+      shapeLegacyRestFaultWithRawEngineFailureMessage(notFoundFault),
+      404,
+      notFoundFault.message,
     );
   });
 
