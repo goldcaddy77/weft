@@ -25,10 +25,13 @@ const allowedHistoricalChangelogToken = ['`', 'Agent', 'Bureau', 'ConversationHi
   '',
 );
 
-// Tracked file types that can carry prose, identifiers, or configuration.
-// Extends beyond the obvious docs/source extensions to cover frontend
-// components, MDX guides, YAML config, shell scripts, and HTML so a banned
-// reference cannot slip in through a less-scrutinized surface.
+// Tracked text surfaces that can carry prose, identifiers, or configuration.
+// The list is built from the actual set of tracked file shapes in this repo
+// (extensions + extensionless husky hook scripts + env-example files); when
+// a new text-carrying file type lands in the repo it must be added here so
+// the check covers it. The set is intentionally explicit rather than
+// "every tracked file" so binary blobs and vendored generated artifacts
+// stay out of the scan without per-path skip logic.
 const trackedTextGlobs = [
   '*.ts',
   '*.tsx',
@@ -46,6 +49,8 @@ const trackedTextGlobs = [
   '*.html',
   '*.css',
   '*.sh',
+  '.env*',
+  '.husky/*',
 ];
 
 async function trackedFiles(): Promise<string[]> {
