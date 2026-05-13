@@ -13,6 +13,7 @@ import {
   REMOTE_WORKER_PROTOCOL_VERSION,
   isRemoteWorkerJsonValue,
   parseServerToWorkerMessage,
+  type RemoteWorkerCapabilities,
   type RemoteWorkerJsonValue,
   type ServerToWorkerMessage,
   type TaskMessage,
@@ -40,6 +41,12 @@ export interface RemoteWorkerOptions {
   concurrency?: number; // default: 10
   queue?: string; // default: 'default'
   disconnectTimeoutMs?: number; // default: 30_000
+  deploymentName?: string;
+  buildId?: string;
+  runtimeVersion?: string;
+  gitSha?: string;
+  startedAt?: number;
+  capabilities?: RemoteWorkerCapabilities;
   /** Activity interceptors to run around each activity execution on this worker. */
   interceptors?: import('../core/interceptor.ts').ActivityInterceptor[];
 }
@@ -137,6 +144,20 @@ export class RemoteWorker implements Disposable {
             activities: Object.keys(this.#options.activities),
             concurrency: this.#options.concurrency,
             queue: this.#options.queue,
+            ...(this.#options.deploymentName !== undefined
+              ? { deploymentName: this.#options.deploymentName }
+              : {}),
+            ...(this.#options.buildId !== undefined ? { buildId: this.#options.buildId } : {}),
+            ...(this.#options.runtimeVersion !== undefined
+              ? { runtimeVersion: this.#options.runtimeVersion }
+              : {}),
+            ...(this.#options.gitSha !== undefined ? { gitSha: this.#options.gitSha } : {}),
+            ...(this.#options.startedAt !== undefined
+              ? { startedAt: this.#options.startedAt }
+              : {}),
+            ...(this.#options.capabilities !== undefined
+              ? { capabilities: this.#options.capabilities }
+              : {}),
           });
         },
         { signal: this.#abortController.signal },

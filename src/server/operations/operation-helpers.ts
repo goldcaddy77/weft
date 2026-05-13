@@ -47,3 +47,14 @@ export function shapeRestFault(fault: OperationFault): Response {
   }
   return jsonErrorResponse(fault.message, FAULT_CODE_TO_HTTP_STATUS[fault.code]);
 }
+
+/**
+ * Legacy REST fault shaper for routes whose pre-catalog behavior exposed the
+ * raw engine error message in `{ error }` responses. This is intentionally
+ * not the default because `EngineFailure` messages can contain internal
+ * implementation details. Prefer {@link shapeRestFault} for new or canonical
+ * REST bindings.
+ */
+export function shapeLegacyRestFaultWithRawEngineFailureMessage(fault: OperationFault): Response {
+  return jsonErrorResponse(fault.message, FAULT_CODE_TO_HTTP_STATUS[fault.code]);
+}

@@ -4,9 +4,10 @@
 // ---------------------------------------------------------------------------
 
 import type { RetryPolicy } from '../core/types.ts';
+import type { TaskLifecycleFields } from './task-state.ts';
 
 /** A task waiting to be claimed by a long-poll worker. */
-export interface PendingTask {
+export interface PendingTask extends TaskLifecycleFields {
   operationId: string;
   activityName: string;
   input: unknown;
@@ -16,6 +17,8 @@ export interface PendingTask {
   enqueuedAt?: number | undefined;
   /** Propagated interceptor headers (e.g. W3C trace context, auth tokens). */
   headers?: Record<string, string> | undefined;
+  /** Workflow that dispatched this activity. Present when the dispatch included a workflowId. */
+  workflowId?: string | undefined;
   /**
    * Task priority. Higher values are dequeued first. Tasks with equal priority
    * maintain FIFO order. Default: 0. Agent workflow tasks use priority 10.
@@ -318,6 +321,15 @@ export class TaskQueue {
   /** Number of pending (unclaimed) tasks in a queue. */
   pendingCount(queue: string): number {
     return this.#pending.get(queue)?.length ?? 0;
+  }
+
+  /** Total number of pending tasks across every queue. */
+  totalPendingCount(): number {
+    let count = 0;
+    for (const tasks of this.#pending.values()) {
+      count += tasks.length;
+    }
+    return count;
   }
 
   // ---------------------------------------------------------------------------

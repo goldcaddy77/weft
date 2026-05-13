@@ -61,6 +61,47 @@ describe('RemoteWorker protocol contract', () => {
     });
   });
 
+  it('accepts optional deployment identity fields on v1 register messages', () => {
+    const result = parseWorkerToServerMessage({
+      type: 'register',
+      protocolVersion: 1,
+      workerId: 'worker-1',
+      activities: ['charge'],
+      deploymentName: 'payments',
+      buildId: 'build-2026-05-12',
+      runtimeVersion: 'bun-1.2.13',
+      gitSha: '0123456789abcdef',
+      startedAt: 1_778_608_000_000,
+      capabilities: {
+        region: 'us-west',
+        gpu: false,
+        slots: 4,
+        labels: ['stable', 'canary'],
+      },
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      message: {
+        type: 'register',
+        protocolVersion: 1,
+        workerId: 'worker-1',
+        activities: ['charge'],
+        deploymentName: 'payments',
+        buildId: 'build-2026-05-12',
+        runtimeVersion: 'bun-1.2.13',
+        gitSha: '0123456789abcdef',
+        startedAt: 1_778_608_000_000,
+        capabilities: {
+          region: 'us-west',
+          gpu: false,
+          slots: 4,
+          labels: ['stable', 'canary'],
+        },
+      },
+    });
+  });
+
   it('rejects missing or unsupported protocol versions as registration errors', () => {
     expect(
       parseWorkerToServerMessage({
@@ -143,6 +184,45 @@ describe('RemoteWorker protocol contract', () => {
     ).toMatchObject({
       ok: false,
       error: { message: 'register.queue must be a non-empty string' },
+    });
+
+    expect(
+      parseWorkerToServerMessage({
+        type: 'register',
+        protocolVersion: 1,
+        workerId: 'worker-1',
+        activities: ['charge'],
+        deploymentName: '',
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'register.deploymentName must be a non-empty string when present' },
+    });
+
+    expect(
+      parseWorkerToServerMessage({
+        type: 'register',
+        protocolVersion: 1,
+        workerId: 'worker-1',
+        activities: ['charge'],
+        startedAt: Number.POSITIVE_INFINITY,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'register.startedAt must be a finite number when present' },
+    });
+
+    expect(
+      parseWorkerToServerMessage({
+        type: 'register',
+        protocolVersion: 1,
+        workerId: 'worker-1',
+        activities: ['charge'],
+        capabilities: { notJson: Symbol('bad') },
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'register.capabilities must be a JSON object when present' },
     });
 
     expect(parseWorkerToServerMessage({ type: 'heartbeat', workerId: '' })).toMatchObject({

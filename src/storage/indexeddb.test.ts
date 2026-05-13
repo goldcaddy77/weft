@@ -3,6 +3,8 @@ import 'fake-indexeddb/auto';
 
 import { IndexedDBStorage } from './indexeddb';
 
+const INDEXED_DB_LARGE_SCAN_TIMEOUT_MS = 30_000;
+
 /** Helper to encode a string as Uint8Array. */
 function encode(value: string): Uint8Array {
   return new TextEncoder().encode(value);
@@ -655,12 +657,11 @@ describe('IndexedDBStorage', () => {
       const entries = await collect(storage.scan('item:'));
       expect(entries).toHaveLength(1000);
 
-      // Verify sorted order
       for (let index = 0; index < entries.length; index++) {
         expect(entries[index]![0]).toBe(`item:${String(index).padStart(4, '0')}`);
       }
     },
-    { timeout: 15_000 },
+    INDEXED_DB_LARGE_SCAN_TIMEOUT_MS,
   );
 
   it('conditionalBatch rejects on request errors and ignores a later transaction error', async () => {

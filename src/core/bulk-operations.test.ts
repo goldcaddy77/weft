@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { waitForCondition } from '../testing/fake-timers.ts';
+import { flush } from '../testing/storage-backends.ts';
 
 import {
   encodeStorageKeyComponent,
@@ -12,7 +13,7 @@ import { BULK_WORKFLOW_FILTER_ERROR_MESSAGE } from './bulk-workflow-filter.ts';
 import { encode } from './codec.ts';
 import { BulkDeleteRequiresTerminalWorkflowsError, Engine } from './engine.ts';
 import { cancelAll } from './engine/bulk-operations.ts';
-import type { WorkflowContext, WorkflowState } from './types.ts';
+import type { SearchAttributeValue, WorkflowContext, WorkflowState } from './types.ts';
 
 async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
   return input;
@@ -65,8 +66,13 @@ async function createCompletedWorkflow(
   engine: Engine,
   workflowId: string,
   tags?: string[],
+  searchAttributes?: Record<string, SearchAttributeValue>,
 ): Promise<void> {
-  const handle = await engine.start('echo', workflowId, { id: workflowId, ...(tags && { tags }) });
+  const handle = await engine.start('echo', workflowId, {
+    id: workflowId,
+    ...(tags && { tags }),
+    ...(searchAttributes && { searchAttributes }),
+  });
   await handle.result();
 }
 
@@ -680,6 +686,88 @@ describe('bulk workflow operations', () => {
       expect(recoveredOtherState?.tags).toEqual(['other']);
     } finally {
       await recoveredEngine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('applies limit and offset to tag-indexed bulk tag mutations after filtering', async () => {
+    const engine = new Engine({ storage: new MemoryStorage() });
+    engine.register('echo', echoWorkflow);
+
+    try {
+      await createCompletedWorkflow(engine, 'bulk-tags-window-01', ['bulk-window']);
+      await createCompletedWorkflow(engine, 'bulk-tags-window-02', ['bulk-window']);
+      await createCompletedWorkflow(engine, 'bulk-tags-window-03', ['bulk-window']);
+      await createCompletedWorkflow(engine, 'bulk-tags-window-other', ['other']);
+
+      const result = await engine.tagAll(
+        {
+          tags: ['bulk-window'],
+          offset: 1,
+          limit: 1,
+        },
+        ['selected-window'],
+      );
+
+      expect(result).toEqual({ modified: 1 });
+      const firstWindowState = await engine.get('bulk-tags-window-01');
+      const secondWindowState = await engine.get('bulk-tags-window-02');
+      const thirdWindowState = await engine.get('bulk-tags-window-03');
+      const otherState = await engine.get('bulk-tags-window-other');
+      expect(firstWindowState?.tags).toEqual(['bulk-window']);
+      expect(secondWindowState?.tags).toEqual(['bulk-window', 'selected-window']);
+      expect(thirdWindowState?.tags).toEqual(['bulk-window']);
+      expect(otherState?.tags).toEqual(['other']);
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('applies limit and offset to attribute-indexed bulk tag mutations after filtering', async () => {
+    const engine = new Engine({ storage: new MemoryStorage() });
+    engine.register('attribute-window', {
+      handler: waitForSignalWorkflow,
+      searchAttributes: { customerId: { type: 'string' } },
+    });
+
+    try {
+      await engine.start('attribute-window', 'first', {
+        id: 'bulk-attributes-window-01',
+        searchAttributes: { customerId: 'alpha' },
+      });
+      await engine.start('attribute-window', 'second', {
+        id: 'bulk-attributes-window-02',
+        searchAttributes: { customerId: 'alpha' },
+      });
+      await engine.start('attribute-window', 'third', {
+        id: 'bulk-attributes-window-03',
+        searchAttributes: { customerId: 'alpha' },
+      });
+      await engine.start('attribute-window', 'other', {
+        id: 'bulk-attributes-window-other',
+        searchAttributes: { customerId: 'beta' },
+      });
+      await flush();
+
+      const result = await engine.tagAll(
+        {
+          attributes: [{ key: 'customerId', value: 'alpha' }],
+          offset: 1,
+          limit: 1,
+        },
+        ['selected-window'],
+      );
+
+      expect(result).toEqual({ modified: 1 });
+      const firstWindowState = await engine.get('bulk-attributes-window-01');
+      const secondWindowState = await engine.get('bulk-attributes-window-02');
+      const thirdWindowState = await engine.get('bulk-attributes-window-03');
+      const otherState = await engine.get('bulk-attributes-window-other');
+      expect(firstWindowState?.tags).toBeUndefined();
+      expect(secondWindowState?.tags).toEqual(['selected-window']);
+      expect(thirdWindowState?.tags).toBeUndefined();
+      expect(otherState?.tags).toBeUndefined();
+    } finally {
+      await engine[Symbol.asyncDispose]();
     }
   });
 

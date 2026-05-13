@@ -66,6 +66,11 @@ import {
   getSystemMetricsOperation,
 } from './operations/get-system-metrics.ts';
 import {
+  createGetTaskDiagnosticsOperation,
+  getTaskDiagnosticsOperation,
+  getTaskDiagnosticsRestBinding,
+} from './operations/get-task-diagnostics.ts';
+import {
   getTenantQuotaOperation,
   getTenantQuotaRestBinding,
 } from './operations/get-tenant-quota.ts';
@@ -177,6 +182,20 @@ import {
   updateWorkflowOperation,
   updateWorkflowRestBinding,
 } from './operations/update-workflow.ts';
+import {
+  clearDeploymentDrainOperation,
+  clearWorkerDrainOperation,
+  createClearDeploymentDrainOperation,
+  createClearDeploymentDrainRestBinding,
+  createClearWorkerDrainOperation,
+  createClearWorkerDrainRestBinding,
+  createDrainDeploymentOperation,
+  createDrainDeploymentRestBinding,
+  createDrainWorkerOperation,
+  createDrainWorkerRestBinding,
+  drainDeploymentOperation,
+  drainWorkerOperation,
+} from './operations/worker-drain.ts';
 import { workflowEventsSubscriptionOperation } from './operations/workflow-events-subscription.ts';
 import type { RestBinding } from './rest-binding.ts';
 import type { TaskQueue } from './task-queue.ts';
@@ -243,6 +262,7 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
   resumeScheduleRestBinding,
   getStreamChunksRestBinding,
   streamWorkflowSseRestBinding,
+  getTaskDiagnosticsRestBinding,
   // Wave 1 — previously legacy direct handlers
   listSchedulesRestBinding,
   getScheduleRestBinding,
@@ -268,6 +288,10 @@ export function createLiveRestBindings(): ReadonlyArray<UnknownRestBinding> {
     ...REST_BINDINGS,
     createGetSystemMetricsRestBinding(),
     createListWorkersRestBinding(),
+    createDrainWorkerRestBinding(),
+    createClearWorkerDrainRestBinding(),
+    createDrainDeploymentRestBinding(),
+    createClearDeploymentDrainRestBinding(),
     createListTaskQueuesRestBinding(),
   ];
 }
@@ -316,6 +340,32 @@ function buildListWorkersOperationForRegistry(options: LiveOperationRegistryOpti
   });
 }
 
+function buildDrainWorkerOperationForRegistry(options: LiveOperationRegistryOptions) {
+  if (options.workerRegistry === undefined) return drainWorkerOperation;
+  return createDrainWorkerOperation({
+    workerRegistry: options.workerRegistry,
+    ...(options.clock !== undefined ? { clock: options.clock } : {}),
+  });
+}
+
+function buildClearWorkerDrainOperationForRegistry(options: LiveOperationRegistryOptions) {
+  if (options.workerRegistry === undefined) return clearWorkerDrainOperation;
+  return createClearWorkerDrainOperation({ workerRegistry: options.workerRegistry });
+}
+
+function buildDrainDeploymentOperationForRegistry(options: LiveOperationRegistryOptions) {
+  if (options.workerRegistry === undefined) return drainDeploymentOperation;
+  return createDrainDeploymentOperation({
+    workerRegistry: options.workerRegistry,
+    ...(options.clock !== undefined ? { clock: options.clock } : {}),
+  });
+}
+
+function buildClearDeploymentDrainOperationForRegistry(options: LiveOperationRegistryOptions) {
+  if (options.workerRegistry === undefined) return clearDeploymentDrainOperation;
+  return createClearDeploymentDrainOperation({ workerRegistry: options.workerRegistry });
+}
+
 function buildListTaskQueuesOperationForRegistry(options: LiveOperationRegistryOptions) {
   if (options.workerRegistry === undefined || options.taskQueue === undefined) {
     return listTaskQueuesOperation;
@@ -324,6 +374,17 @@ function buildListTaskQueuesOperationForRegistry(options: LiveOperationRegistryO
     workerRegistry: options.workerRegistry,
     taskQueue: options.taskQueue,
     ...(options.clock !== undefined ? { clock: options.clock } : {}),
+  });
+}
+
+function buildTaskDiagnosticsOperationForRegistry(options: LiveOperationRegistryOptions) {
+  if (options.workerRegistry === undefined || options.taskQueue === undefined) {
+    return getTaskDiagnosticsOperation;
+  }
+  return createGetTaskDiagnosticsOperation({
+    registry: options.workerRegistry,
+    taskQueue: options.taskQueue,
+    ...(options.clock !== undefined ? { now: options.clock } : {}),
   });
 }
 
@@ -371,6 +432,7 @@ export function createLiveOperationRegistry(
     getStreamChunksOperation,
     streamWorkflowSseOperation,
     workflowEventsSubscriptionOperation,
+    buildTaskDiagnosticsOperationForRegistry(resolved),
     // Wave 1 — previously legacy direct handlers
     listSchedulesOperation,
     getScheduleOperation,
@@ -384,6 +446,10 @@ export function createLiveOperationRegistry(
     storageConditionalBatchOperation,
     buildSystemMetricsOperation(resolved),
     buildListWorkersOperationForRegistry(resolved),
+    buildDrainWorkerOperationForRegistry(resolved),
+    buildClearWorkerDrainOperationForRegistry(resolved),
+    buildDrainDeploymentOperationForRegistry(resolved),
+    buildClearDeploymentDrainOperationForRegistry(resolved),
     buildListTaskQueuesOperationForRegistry(resolved),
   ]);
 }

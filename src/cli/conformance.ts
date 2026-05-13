@@ -252,7 +252,7 @@ async function runConformanceChecks(
 
     const replacementWorker = startWorker(command, server);
     await waitForCondition(
-      () => server.registry.getAll().length >= 2,
+      () => server.registry.getAll().some((registeredWorker) => registeredWorker.id !== workerId),
       timeoutMs,
       'replacement worker register',
     );
