@@ -46,12 +46,16 @@ async function writeUnbundledRuntimeModules(): Promise<void> {
   }
 }
 
-// Node/Bun target — main bundle + per-backend storage submodules.
-// Heavy backends (lmdb, @libsql/client) are externalized so consumers
-// only pay for what they actually import.
+// Baseline runtime modules. Specialized builds below overwrite the public
+// subpaths that need bundling, minification, browser targeting, or constructor
+// name preservation.
+await writeUnbundledRuntimeModules();
+
+// Node/Bun target — per-backend storage and integration submodules.
+// Heavy backends (lmdb, @libsql/client) are externalized so consumers only pay
+// for what they actually import.
 await Bun.build({
   entrypoints: [
-    './src/index.ts',
     // Storage submodule entry points (one per subpath export)
     './src/storage/interface.ts',
     './src/storage/memory.ts',
@@ -67,8 +71,6 @@ await Bun.build({
     './src/worker/protocol.ts',
     './src/mcp/index.ts',
     './src/mcp/cli.ts',
-    './src/client/index.ts',
-    './src/client/local.ts',
     // Bun-only server subpath (weft/server)
     './src/server/index.ts',
   ],
@@ -81,8 +83,6 @@ await Bun.build({
   minify: true,
   external: ['lmdb', '@libsql/client', '@opentelemetry/api', 'bun:sqlite', 'better-sqlite3'],
 });
-
-await writeUnbundledRuntimeModules();
 
 // Keep the storage barrel as local binding re-exports. Bun 1.3.13 can
 // incorrectly strip imported bindings that are only used by a bundled barrel
