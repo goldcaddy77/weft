@@ -82,6 +82,7 @@ function summaryFromState(state: WorkflowState): WorkflowSummary {
     type: state.type,
     status: state.status,
     ...(state.tags !== undefined && { tags: state.tags }),
+    ...(state.tenant !== undefined && { tenant: state.tenant }),
     version: state.version,
     createdAt: state.createdAt,
     updatedAt: state.updatedAt,

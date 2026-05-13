@@ -36,7 +36,7 @@ import {
   jsonResponse,
   negotiatedResponse,
 } from './response-helpers.ts';
-import type { HandlerName } from './route-matching.ts';
+import type { DirectRouteHandlerName } from './route-matching.ts';
 
 /** Alias for `AuthContext` — kept local so handler-internal code reads naturally. */
 type AuthenticatedRequestContext = AuthContext;
@@ -161,7 +161,7 @@ export type RouteExecutionContext = {
 
 export type RouteExecutor = (context: RouteExecutionContext) => Promise<Response>;
 
-export const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
+export const DIRECT_ROUTE_EXECUTORS: Record<DirectRouteHandlerName, RouteExecutor> = {
   healthCheck: async ({ request }) => negotiatedResponse(request, { status: 'ok' }),
   getMetrics: async ({ options }) =>
     handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),

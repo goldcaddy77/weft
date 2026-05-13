@@ -53,6 +53,85 @@ weft doctor --database ./weft.db --json
 - **Activities**: pending and in-flight operation counts per queue
 - **Recommendations**: actionable warnings based on configurable thresholds
 
+### conformance
+
+Use these two commands when you need to prove worker compatibility or publish typed registry declarations from a live server.
+
+Run the RemoteWorker protocol conformance harness against a worker command. Use this when validating a non-TypeScript SDK, a custom worker launcher, or a protocol-level change.
+
+```bash
+weft conformance -- ./bin/my-worker
+weft conformance --timeout 30000 --json -- ./bin/my-worker --queue default
+```
+
+The worker command receives these environment variables:
+
+| Variable                       | Description                                                      |
+| ------------------------------ | ---------------------------------------------------------------- |
+| `WEFT_WORKER_URL`              | Temporary WebSocket task-stream URL the worker should connect to |
+| `WEFT_WORKER_QUEUE`            | Queue name assigned to the conformance run                       |
+| `WEFT_WORKER_ACTIVITIES`       | Comma-separated activity names the worker should expose          |
+| `WEFT_WORKER_PROTOCOL_VERSION` | Protocol version expected by the harness                         |
+
+**Options:**
+
+| Flag        | Short | Default | Description                        |
+| ----------- | ----- | ------- | ---------------------------------- |
+| `--timeout` |       | `15000` | Per-check timeout in milliseconds  |
+| `--json`    | `-j`  | `false` | Output conformance results as JSON |
+| `--help`    | `-h`  |         | Show help message                  |
+
+### codegen
+
+Generate deterministic TypeScript declarations from a registry snapshot. Use this when a client package needs typed workflow and activity names but does not have direct access to the `Engine` instance that registered them.
+
+```bash
+weft codegen --server http://localhost:7233 --out ./src/weft.generated.d.ts
+weft codegen --from ./registry.json --out ./src/weft.generated.d.ts
+weft codegen --server http://localhost:7233 --out ./src/weft.generated.d.ts --json
+```
+
+The generated file augments the public `weft` module with `WorkflowRegistry` and `ActivityTypes` entries. Output is byte-stable: running the command again with the same snapshot reports that the file is up to date and does not rewrite it.
+
+**Options:**
+
+| Flag        | Short | Default | Description                                                                                      |
+| ----------- | ----- | ------- | ------------------------------------------------------------------------------------------------ |
+| `--server`  |       |         | Base URL of a running Weft server. The CLI appends `/v1/registry` to the supplied path.          |
+| `--from`    |       |         | Local registry snapshot JSON file. Mutually exclusive with `--server`.                           |
+| `--token`   |       |         | Bearer token for `--server`. Falls back to `WEFT_TOKEN`; persistent credentials are unsupported. |
+| `--out`     | `-o`  |         | Required output `.d.ts` file. The parent directory must already exist.                           |
+| `--timeout` |       | `30000` | Network timeout in milliseconds for `--server`.                                                  |
+| `--json`    | `-j`  | `false` | Emit one machine-readable JSON result on stdout; errors are JSON on stderr.                      |
+| `--help`    | `-h`  |         | Show help message                                                                                |
+
+**Exit codes:**
+
+- `0`: declarations were written or were already up to date.
+- `1`: validation, network, authentication, or filesystem failure. Partial output is not left behind.
+
+**Generated declaration shape:**
+
+```typescript partial
+declare module 'weft' {
+  interface WorkflowRegistry {
+    checkout: {
+      input: CheckoutInput;
+      output: CheckoutOutput;
+    };
+  }
+
+  interface ActivityTypes {
+    sendEmail: {
+      input: SendEmailInput;
+      output: SendEmailOutput;
+    };
+  }
+}
+```
+
+Unsupported JSON Schema features intentionally degrade to `unknown` rather than emitting an unsound type. `$ref`, `patternProperties`, `not`, `dependentRequired`, and other unsupported keywords should be simplified before publishing the registry snapshot if you need narrower generated types.
+
 ### version:check
 
 Analyze registered workflow versions against an existing database to check deployment compatibility.
@@ -100,22 +179,25 @@ Manage durable schedules.
 
 ```bash
 weft schedule list --database ./weft.db
-weft schedule create --database ./weft.db --type my-workflow --cron "0 * * * *"
-weft schedule pause --database ./weft.db --id <schedule-id>
-weft schedule unpause --database ./weft.db --id <schedule-id>
-weft schedule delete --database ./weft.db --id <schedule-id>
+weft schedule create my-workflow "0 * * * *" --database ./weft.db --workflows ./src/workflows.ts
+weft schedule pause <schedule-id> --database ./weft.db
+weft schedule resume <schedule-id> --database ./weft.db
+weft schedule cancel <schedule-id> --database ./weft.db
 ```
 
 **Options:**
 
-| Flag         | Short | Default     | Description                            |
-| ------------ | ----- | ----------- | -------------------------------------- |
-| `--database` | `-d`  | `./weft.db` | SQLite database file path              |
-| `--id`       |       |             | Schedule ID (for pause/unpause/delete) |
-| `--type`     |       |             | Workflow type (for create)             |
-| `--cron`     |       |             | Cron expression (for create)           |
-| `--json`     | `-j`  | `false`     | Output as JSON                         |
-| `--help`     | `-h`  |             | Show help message                      |
+| Flag          | Short | Default     | Description                                                   |
+| ------------- | ----- | ----------- | ------------------------------------------------------------- |
+| `--database`  | `-d`  | `./weft.db` | SQLite database file path                                     |
+| `--storage`   | `-s`  | `sqlite`    | Storage backend: `sqlite` or `lmdb`                           |
+| `--workflows` | `-w`  |             | Workflow registration module, required for create             |
+| `--input`     |       | `null`      | JSON input payload for create                                 |
+| `--id`        |       |             | Custom schedule ID for create                                 |
+| `--overlap`   |       |             | Overlap policy: `skip`, `queue`, `cancel-running`, or `allow` |
+| `--backfill`  |       | `false`     | Run missed ticks on recovery                                  |
+| `--json`      | `-j`  | `false`     | Output as JSON                                                |
+| `--help`      | `-h`  |             | Show help message                                             |
 
 ### timeline
 

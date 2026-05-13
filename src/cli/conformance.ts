@@ -108,6 +108,66 @@ async function waitForRegisteredWorker(server: WeftServer, timeoutMs: number): P
   return worker.id;
 }
 
+async function waitForReplacementWorker(
+  server: WeftServer,
+  originalWorkerId: string,
+  timeoutMs: number,
+): Promise<string> {
+  let replacementWorkerId: string | undefined;
+  await waitForCondition(
+    () => {
+      replacementWorkerId = server.registry
+        .getAll()
+        .find((registeredWorker) => registeredWorker.id !== originalWorkerId)?.id;
+      return replacementWorkerId !== undefined;
+    },
+    timeoutMs,
+    'replacement worker register',
+  );
+  if (replacementWorkerId === undefined) {
+    throw new Error('replacement worker registry was empty after registration wait');
+  }
+  return replacementWorkerId;
+}
+
+async function waitForWorkerHeartbeat(
+  server: WeftServer,
+  workerId: string,
+  timeoutMs: number,
+): Promise<void> {
+  const heartbeatBefore = server.registry.getWorker(workerId)?.lastHeartbeat;
+  if (heartbeatBefore === undefined) {
+    throw new Error(`Worker ${workerId} disconnected before heartbeat readiness check`);
+  }
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    const worker = server.registry.getWorker(workerId);
+    if (worker === undefined) {
+      throw new Error(`Worker ${workerId} disconnected while waiting for heartbeat`);
+    }
+    if (worker.lastHeartbeat > heartbeatBefore) return;
+    await Bun.sleep(25);
+  }
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for worker ${workerId} heartbeat`);
+}
+
+async function waitForWorkerIdle(
+  server: WeftServer,
+  workerId: string,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    const worker = server.registry.getWorker(workerId);
+    if (worker === undefined) {
+      throw new Error(`Worker ${workerId} disconnected while waiting to become idle`);
+    }
+    if (worker.inFlight === 0) return;
+    await Bun.sleep(25);
+  }
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for worker ${workerId} to become idle`);
+}
+
 function isResolvedRecord(value: unknown): value is ResolvedRecord {
   if (!isRecord(value)) return false;
   return (
@@ -197,12 +257,7 @@ async function runConformanceChecks(
     );
     checks.push(createCheck('task completion', true, 'echo task resolved'));
 
-    const heartbeatBefore = registered?.lastHeartbeat ?? 0;
-    await waitForCondition(
-      () => (server.registry.getWorker(workerId)?.lastHeartbeat ?? 0) > heartbeatBefore,
-      timeoutMs,
-      'worker heartbeat',
-    );
+    await waitForWorkerHeartbeat(server, workerId, timeoutMs);
     await dispatchAndWait(
       server,
       storage,
@@ -235,7 +290,8 @@ async function runConformanceChecks(
     checks.push(createCheck('cancellation', true, 'cancelled task resolved as failed'));
 
     const reconnectOperationId = 'conformance-reconnect';
-    const reconnectDelayMs = Math.min(750, Math.max(250, Math.floor(timeoutMs / 4)));
+    // Keep the first worker busy while its replacement registers, but leave room for retry.
+    const reconnectDelayMs = Math.min(1_500, Math.max(250, Math.floor(timeoutMs * 0.75)));
     const reconnectDispatched = await server.dispatchTask({
       operationId: reconnectOperationId,
       activityName: 'weft.conformance.sleep',
@@ -251,11 +307,8 @@ async function runConformanceChecks(
     );
 
     const replacementWorker = startWorker(command, server);
-    await waitForCondition(
-      () => server.registry.getAll().some((registeredWorker) => registeredWorker.id !== workerId),
-      timeoutMs,
-      'replacement worker register',
-    );
+    const replacementWorkerId = await waitForReplacementWorker(server, workerId, timeoutMs);
+    await waitForWorkerHeartbeat(server, replacementWorkerId, timeoutMs);
     await stopWorker(worker);
     worker = replacementWorker;
     await waitForCondition(
@@ -264,9 +317,10 @@ async function runConformanceChecks(
       'original worker disconnect',
     );
     await waitForResolvedStatus(storage, reconnectOperationId, 'completed', timeoutMs);
+    await waitForWorkerIdle(server, replacementWorkerId, timeoutMs);
     checks.push(createCheck('reconnect', true, 'in-flight task completed after reconnect'));
 
-    const shutdownWorkerId = server.registry.getAll()[0]?.id;
+    const shutdownWorkerId = server.registry.getWorker(replacementWorkerId)?.id;
     if (shutdownWorkerId === undefined) {
       throw new Error('No worker available for graceful shutdown check');
     }

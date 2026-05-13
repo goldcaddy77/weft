@@ -99,13 +99,20 @@ deleting on the attribute alone would be a footgun. Combine it with
 The error message returned when a bulk filter is too broad now
 enumerates the new valid scopes.
 
+### Removed (breaking)
+
+The `weft/server/handler` subpath no longer exports the internal legacy route
+precedence helpers `countLiteralSegments`, `countPathParameters`, or
+`shouldPreferLegacyRoute`. Direct meta and discovery endpoints are now modeled
+as reserved direct HTTP routes instead of legacy fallbacks.
+
 ## [0.1.0] - 2026-05-11
 
 ### Removed (breaking)
 
 Weft no longer ships an AI agent surface. All agent loops, declarations, and
-coordination primitives have moved to the `agent-bureau` package (or an
-equivalent external layer of your choosing).
+coordination primitives now live outside Weft — in an external agent
+framework or in your own loop on top of `ctx.run()` and `ctx.review()`.
 
 Removed exports:
 
@@ -153,8 +160,8 @@ migration.
 ### Migration
 
 Weft now focuses on durable execution and human-in-the-loop review. If you
-were using weft's agent loop or coordination primitives, migrate to
-[agent-bureau](https://github.com/stevekinney/agent-bureau) or build your
-loop on top of `ctx.run()` and `ctx.review()`.
+were using Weft's agent loop or coordination primitives, migrate to an
+external agent framework or build your loop on top of `ctx.run()` and
+`ctx.review()`.
 
 ---

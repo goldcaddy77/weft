@@ -238,14 +238,18 @@ export interface WorkflowStateNamespace {
  * Lightweight summary of a workflow returned by list operations. Contains
  * identity and lifecycle fields but not the full input, result, or checkpoint.
  * Use {@link Engine.get} to retrieve the complete {@link WorkflowState}. The
- * optional fields (`tenantId`, `executionDeadline`, `failureCategory`) are
- * populated whenever the underlying `WorkflowState` carries them.
+ * optional fields (`tenant`, `tenantId`, `executionDeadline`, and
+ * `failureCategory`) are populated whenever the underlying `WorkflowState`
+ * carries them. Notably absent from the summary: `input`, `result`, `error`,
+ * and `forkedFrom` — fetch the full `WorkflowState` via `engine.get(id)` to
+ * access those.
  */
 export interface WorkflowSummary {
   id: WorkflowId;
   type: string;
   status: WorkflowStatus;
   tags?: string[];
+  tenant?: TenantContext;
   version: string;
   createdAt: number;
   updatedAt: number;

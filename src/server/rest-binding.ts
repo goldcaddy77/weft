@@ -6,20 +6,17 @@
  * query / header / body), and how the output is shaped into an HTTP
  * response.
  *
- * This module deliberately does NOT import the existing `route-model.ts`
- * — bindings describe migrated operations. The legacy `ROUTES` array
- * still describes the remaining routes; the OpenAPI generator emits
- * `REST_BINDINGS` first and falls back to `ROUTES` for anything not
- * yet migrated.
+ * This module deliberately does NOT import `route-model.ts`: bindings
+ * describe operation-backed HTTP routes, while that model describes the
+ * remaining REST-only meta and discovery endpoints.
  */
 
 import type { OperationFault } from './operation-fault.ts';
 import type { HttpMethod } from './route-model.ts';
 
 /**
- * Thrown by `bindingPathMatches` (and the legacy route matcher) when a
- * URL path parameter contains malformed percent-encoding. The top-level
- * handler catches it and returns a 400.
+ * Thrown by `bindingPathMatches` when a URL path parameter contains malformed
+ * percent-encoding. The top-level handler catches it and returns a 400.
  */
 export class MalformedRouteParameterError extends Error {
   constructor() {
