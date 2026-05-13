@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { resolve } from 'node:path';
 import ts from 'typescript';
 
+import { writeDoctestTsconfig } from './lib/doctest-tsconfig.ts';
 import { buildManifest, type PublicFace } from './lib/jsdoc-manifest.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
@@ -183,40 +184,6 @@ function hasFaceImport(block: string, publicFaces: PublicFace[]): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Build tmp/doctests/tsconfig.json with `paths` from publicEntryPoints.
-// ---------------------------------------------------------------------------
-
-function writeTsconfig(publicEntryPoints: Record<string, string>): void {
-  const paths: Record<string, string[]> = {};
-  for (const [importPath, sourceRel] of Object.entries(publicEntryPoints)) {
-    // tsconfig paths are relative to baseUrl. tmp/doctests/ sits two levels
-    // under REPO_ROOT, so paths are written relative to that.
-    paths[importPath] = [`../../${sourceRel.replace(/\.ts$/, '')}`];
-  }
-  // Extend the project tsconfig to inherit lib/target/strictness rules so
-  // doctests compile against the same ground truth as project sources. We
-  // override `include`, `paths`, `noUnusedLocals`, and `noUnusedParameters`
-  // because doctests are minimal snippets that often declare unused locals.
-  const tsconfig = {
-    extends: '../../tsconfig.json',
-    compilerOptions: {
-      noEmit: true,
-      noUnusedLocals: false,
-      noUnusedParameters: false,
-      baseUrl: '.',
-      paths,
-    },
-    include: ['./**/*.ts'],
-    exclude: [],
-  };
-  writeFileSync(
-    resolve(DOCTESTS_DIR, 'tsconfig.json'),
-    JSON.stringify(tsconfig, null, 2) + '\n',
-    'utf8',
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Entry point.
 // ---------------------------------------------------------------------------
 
@@ -302,7 +269,7 @@ function main(): void {
     });
   }
 
-  writeTsconfig(manifest.publicEntryPoints);
+  writeDoctestTsconfig(DOCTESTS_DIR, manifest.publicEntryPoints);
 
   if (malformedFences.length > 0) {
     console.error('extract-doctests: malformed @example fences (must be ```ts):');

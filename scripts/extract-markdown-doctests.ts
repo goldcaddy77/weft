@@ -50,6 +50,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { join, relative, resolve } from 'node:path';
 import ts from 'typescript';
 
+import { writeDoctestTsconfig } from './lib/doctest-tsconfig.ts';
 import { buildManifest } from './lib/jsdoc-manifest.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
@@ -136,7 +137,22 @@ function loadSkipReasons(): Set<string> {
 
 function loadSkipCounts(): Record<string, number> {
   if (!existsSync(SKIP_COUNTS_PATH)) return {};
-  return JSON.parse(readFileSync(SKIP_COUNTS_PATH, 'utf8'));
+  const parsed: unknown = JSON.parse(readFileSync(SKIP_COUNTS_PATH, 'utf8'));
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    console.error(`extract-markdown-doctests: ${SKIP_COUNTS_PATH} must contain a JSON object`);
+    process.exit(1);
+  }
+  const counts: Record<string, number> = {};
+  for (const [reason, count] of Object.entries(parsed)) {
+    if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) {
+      console.error(
+        `extract-markdown-doctests: ${SKIP_COUNTS_PATH} value for "${reason}" must be a non-negative integer`,
+      );
+      process.exit(1);
+    }
+    counts[reason] = count;
+  }
+  return counts;
 }
 
 function classifyFence(
@@ -227,30 +243,6 @@ function extractBlocksFromFile(
     bodyLines.push(raw);
   }
   return { blocks, unknownLanguageBlocks };
-}
-
-function writeTsconfig(publicEntryPoints: Record<string, string>): void {
-  const paths: Record<string, string[]> = {};
-  for (const [importPath, sourceRel] of Object.entries(publicEntryPoints)) {
-    paths[importPath] = [`../../${sourceRel.replace(/\.ts$/, '')}`];
-  }
-  const tsconfig = {
-    extends: '../../tsconfig.json',
-    compilerOptions: {
-      noEmit: true,
-      noUnusedLocals: false,
-      noUnusedParameters: false,
-      baseUrl: '.',
-      paths,
-    },
-    include: ['./**/*.ts'],
-    exclude: [],
-  };
-  writeFileSync(
-    resolve(DOCTESTS_DIR, 'tsconfig.json'),
-    JSON.stringify(tsconfig, null, 2) + '\n',
-    'utf8',
-  );
 }
 
 function writeRunnableBlock(block: Block): string {
@@ -467,7 +459,7 @@ function main(): void {
 
   const runnableBlocks = blocks.filter((b) => b.classification.kind === 'runnable');
   for (const block of runnableBlocks) writeRunnableBlock(block);
-  writeTsconfig(manifest.publicEntryPoints);
+  writeDoctestTsconfig(DOCTESTS_DIR, manifest.publicEntryPoints);
 
   let typecheckOk = true;
   let perFileFailures = new Map<string, string[]>();
