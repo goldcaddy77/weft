@@ -563,12 +563,19 @@ naming the alternative that was rejected.
 - **Symbol**: `diffWorkflowVersionTuples`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
-## `dashboard-api-client-list-workflows-complexity`
+## `dashboard-api-client-build-workflow-filter-params`
 
 - **File**: `src/dashboard/api-client.ts`
 - **Rule**: `complexity`
-- **Symbol**: `listWorkflows`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+- **Symbol**: `buildWorkflowFilterSearchParams`
+- **Reason**: Shared serializer for every supported ListFilter dimension. Each branch is a one-liner mapping one field to its query-parameter shape — splitting the function would fragment the per-field contract that the API-client tests assert against a single point of truth.
+
+## `dashboard-build-workflow-list-filter`
+
+- **File**: `src/dashboard/utilities/workflow-list-data.ts`
+- **Rule**: `complexity`
+- **Symbol**: `buildWorkflowListFilter`
+- **Reason**: Mirrors `buildWorkflowFilterSearchParams` on the application side — one branch per `WorkflowListFilters` field deciding whether to round-trip it. Splitting would not reduce branch count, just move it elsewhere.
 
 ## `dashboard-fragments-workflow-execution-timeline-collect-value-diffs-complexity`
 
