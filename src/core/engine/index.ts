@@ -87,12 +87,12 @@ import { UpdateCoordinator } from '../updates.ts';
 import { WorkerExecutionStrategy } from '../worker-execution-strategy.ts';
 import { broadcast as broadcastFromInternals, type BroadcastCallbacks } from './broadcast.ts';
 import {
-  runBulkCancellation as cancelAllWorkflows,
-  runBulkDeletion as deleteAllWorkflows,
+  cancelAll as cancelAllWorkflows,
+  deleteAll as deleteAllWorkflows,
   purge as purgeWorkflows,
   signalAll as signalAllWorkflows,
-  runBulkTagAddition as tagAllWorkflows,
-  runBulkTagRemoval as untagAllWorkflows,
+  tagAll as tagAllWorkflows,
+  untagAll as untagAllWorkflows,
 } from './bulk-operations.ts';
 import {
   createBroadcastCallbacks as createBroadcastCallbacksForEngine,
