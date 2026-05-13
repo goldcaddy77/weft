@@ -335,20 +335,19 @@ interface PendingReviewEntry extends ReviewRequest {
 
 interface CompletedReviewEntry extends ReviewDecision {
   status: 'completed';
-  workflowId?: string;
-  artifact?: unknown;
-  reviewType?: string;
-  reviewers?: string[];
-  allowPartial?: boolean;
+  workflowId: string;
+  artifact: unknown;
+  reviewType: string;
+  reviewers: string[];
+  allowPartial: boolean;
   timeout?: number;
   webhookUrl?: string;
-  createdAt?: number;
+  createdAt: number;
 }
 ```
 
-New completed review entries include the original request metadata above. Historical
-decision-only records created before enriched persistence can still be listed,
-but may omit those optional request fields.
+Completed review entries include the original request metadata above plus the
+persisted reviewer decision.
 
 ### `Duration`
 

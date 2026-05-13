@@ -34,26 +34,8 @@ const persistedCompletedReviewEntrySchema = z.object({
   timestamp: z.number(),
 });
 
-const legacyCompletedReviewEntrySchema = z.object({
-  reviewId: z.string(),
-  workflowId: z.string().optional(),
-  artifact: z.unknown().optional(),
-  reviewType: z.string().optional(),
-  reviewers: z.array(z.string()).optional(),
-  allowPartial: z.boolean().optional(),
-  timeout: z.number().optional(),
-  webhookUrl: z.string().optional(),
-  createdAt: z.number().optional(),
-  decision: z.enum(['approved', 'rejected', 'needs-changes']),
-  reviewer: z.string(),
-  feedback: z.string().optional(),
-  sectionDecisions: z.record(z.string(), z.enum(['approved', 'rejected'])).optional(),
-  timestamp: z.number(),
-});
-
 type StoredReviewRequest = z.infer<typeof storedReviewRequestSchema>;
 type PersistedCompletedReviewEntry = z.infer<typeof persistedCompletedReviewEntrySchema>;
-type LegacyCompletedReviewEntry = z.infer<typeof legacyCompletedReviewEntrySchema>;
 
 function assignWhenDefined<T extends object, K extends keyof T>(
   target: T,
@@ -156,31 +138,6 @@ function normalizeCompletedReviewEntry(
   return completedReview;
 }
 
-function normalizeLegacyCompletedReviewEntry(
-  persistedReview: LegacyCompletedReviewEntry,
-): CompletedReviewEntry {
-  const completedReview: CompletedReviewEntry = {
-    status: 'completed',
-    reviewId: persistedReview.reviewId,
-    decision: persistedReview.decision,
-    reviewer: persistedReview.reviewer,
-    timestamp: persistedReview.timestamp,
-  };
-
-  assignWhenDefined(completedReview, 'workflowId', persistedReview.workflowId);
-  assignWhenDefined(completedReview, 'artifact', persistedReview.artifact);
-  assignWhenDefined(completedReview, 'reviewType', persistedReview.reviewType);
-  assignWhenDefined(completedReview, 'reviewers', persistedReview.reviewers);
-  assignWhenDefined(completedReview, 'allowPartial', persistedReview.allowPartial);
-  assignWhenDefined(completedReview, 'timeout', persistedReview.timeout);
-  assignWhenDefined(completedReview, 'webhookUrl', persistedReview.webhookUrl);
-  assignWhenDefined(completedReview, 'createdAt', persistedReview.createdAt);
-  assignWhenDefined(completedReview, 'feedback', persistedReview.feedback);
-  assignWhenDefined(completedReview, 'sectionDecisions', persistedReview.sectionDecisions);
-
-  return completedReview;
-}
-
 export function parseCompletedReviewEntry(value: Uint8Array): CompletedReviewEntry | null {
   let decodedValue: unknown;
   try {
@@ -190,14 +147,8 @@ export function parseCompletedReviewEntry(value: Uint8Array): CompletedReviewEnt
   }
 
   const parsedReview = persistedCompletedReviewEntrySchema.safeParse(decodedValue);
-
   if (!parsedReview.success) {
-    const parsedLegacyReview = legacyCompletedReviewEntrySchema.safeParse(decodedValue);
-    if (!parsedLegacyReview.success) {
-      return null;
-    }
-
-    return normalizeLegacyCompletedReviewEntry(parsedLegacyReview.data);
+    return null;
   }
 
   return normalizeCompletedReviewEntry(parsedReview.data);

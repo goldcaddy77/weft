@@ -3985,7 +3985,7 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
-  it('engine.listReviews({ status: completed }) keeps legacy decision-only records visible', async () => {
+  it('engine.listReviews({ status: completed }) skips decision-only records missing review metadata', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
 
@@ -4001,16 +4001,7 @@ describe('Engine', () => {
     );
 
     const reviews = await engine.listReviews({ status: 'completed' });
-    expect(reviews).toEqual([
-      {
-        status: 'completed',
-        reviewId: 'legacy-review',
-        decision: 'approved',
-        reviewer: 'legacy-bot',
-        feedback: 'stored by an older runtime',
-        timestamp: 9_000,
-      },
-    ]);
+    expect(reviews).toEqual([]);
     engine[Symbol.dispose]();
   });
 
