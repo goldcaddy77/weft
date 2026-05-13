@@ -25,7 +25,7 @@ function extension(path: string): string {
 }
 
 function isTestFile(path: string): boolean {
-  return /\.test-d\.ts$|\.test\.ts$|\.spec\.ts$/.test(path);
+  return /\.test-d\.ts$|\.test\.ts$|\.spec\.ts$|\.test-support\.ts$/.test(path);
 }
 
 async function collectFiles(path: string): Promise<string[]> {

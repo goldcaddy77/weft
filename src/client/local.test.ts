@@ -9,7 +9,7 @@ import {
   clientContractEchoWorkflow,
   clientContractWaitingWorkflow,
   runWeftClientContractTests,
-} from './client-contract.test.ts';
+} from './client-contract.test-support.ts';
 import { ScheduleHandleDelegation, WorkflowHandleDelegation } from './handle-delegation.ts';
 import type { WeftClient } from './interface.ts';
 import { LocalClient } from './local.ts';

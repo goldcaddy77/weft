@@ -11,7 +11,7 @@ import {
   clientContractEchoWorkflow,
   clientContractWaitingWorkflow,
   runWeftClientContractTests,
-} from './client-contract.test.ts';
+} from './client-contract.test-support.ts';
 import { HttpClient, HttpClientError } from './index.ts';
 import type { WeftClient } from './interface.ts';
 
