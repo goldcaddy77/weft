@@ -151,14 +151,16 @@ async function waitForWorkerIdle(
   workerId: string,
   timeoutMs: number,
 ): Promise<void> {
-  await waitForCondition(
-    () => {
-      const worker = server.registry.getWorker(workerId);
-      return worker !== undefined && worker.inFlight === 0;
-    },
-    timeoutMs,
-    `worker ${workerId} to become idle`,
-  );
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    const worker = server.registry.getWorker(workerId);
+    if (worker === undefined) {
+      throw new Error(`Worker ${workerId} disconnected while waiting to become idle`);
+    }
+    if (worker.inFlight === 0) return;
+    await Bun.sleep(25);
+  }
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for worker ${workerId} to become idle`);
 }
 
 function isResolvedRecord(value: unknown): value is ResolvedRecord {
