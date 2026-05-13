@@ -80,6 +80,23 @@ async function resolveDimensionKey(
 }
 
 /**
+ * Thrown when an aggregate `groupBy: { attribute }` references a search
+ * attribute that no registration declares. Maps to an `Unprocessable`
+ * fault at the operation boundary.
+ */
+export class UnknownAggregateAttributeError extends Error {
+  readonly attribute: string;
+
+  constructor(attribute: string) {
+    super(
+      `Unknown search attribute "${attribute}". Aggregate groupBy requires a declared attribute.`,
+    );
+    this.name = 'UnknownAggregateAttributeError';
+    this.attribute = attribute;
+  }
+}
+
+/**
  * Validate an attribute-name `groupBy` against the engine's
  * `SearchAttributeSchema` (when configured). Runs before any storage
  * access so unknown attributes fail fast with a validation error.
@@ -100,9 +117,7 @@ function validateAttributeDimension(internals: EngineInternals, attributeName: s
     }
   }
   if (anySchemaDeclared && !attributeFound) {
-    throw new Error(
-      `Unknown search attribute "${attributeName}". Aggregate groupBy requires a declared attribute.`,
-    );
+    throw new UnknownAggregateAttributeError(attributeName);
   }
 }
 

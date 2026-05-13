@@ -7,7 +7,10 @@ import {
   type AggregateGroupBy,
 } from '../../core/aggregate-validation.ts';
 import type { Engine } from '../../core/engine.ts';
-import { type AggregateResult } from '../../core/engine/aggregate.ts';
+import {
+  UnknownAggregateAttributeError,
+  type AggregateResult,
+} from '../../core/engine/aggregate.ts';
 import { WorkflowListScanCapExceededError } from '../../core/engine/workflow-indexes.ts';
 import {
   ListFilterValidationError,
@@ -68,7 +71,8 @@ export const aggregateWorkflowsOperation = defineOperation<
     } catch (error) {
       if (
         error instanceof ListFilterValidationError ||
-        error instanceof AggregateOptionsValidationError
+        error instanceof AggregateOptionsValidationError ||
+        error instanceof UnknownAggregateAttributeError
       ) {
         throw toUnprocessable(error.message);
       }
