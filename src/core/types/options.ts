@@ -284,20 +284,6 @@ export interface ListFilter {
   failureCategory?: FailureCategory | FailureCategory[];
 }
 
-/**
- * Options accepted by {@link Engine.list} beyond the filter, controlling how
- * each {@link WorkflowSummary} is shaped. Off by default to keep storage cost
- * unchanged; opt in when callers need the extra fields.
- */
-export interface ListOptions {
-  /**
-   * Populate {@link WorkflowSummary.failureCategory} by reading the
-   * `failureCategory` search attribute alongside the workflow state. Default
-   * `false`.
-   */
-  includeFailureCategory?: boolean;
-}
-
 export type AttributeFilterKey = string | SearchAttributeHandle;
 
 export type AttributeFilterValue<TKey extends AttributeFilterKey> =
