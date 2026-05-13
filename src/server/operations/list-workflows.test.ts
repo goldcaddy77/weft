@@ -4,17 +4,22 @@
 
 import { describe, expect, it } from 'bun:test';
 
+import { decode, encode } from '../../core/codec.ts';
 import { Engine } from '../../core/engine.ts';
-import type { WorkflowContext } from '../../core/types.ts';
+import type { WorkflowContext, WorkflowState } from '../../core/types.ts';
+import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
 import type { OperationFault } from '../operation-fault.ts';
-import { listWorkflowsOperation, listWorkflowsRestBinding } from './list-workflows.ts';
+import {
+  listWorkflowsOperation,
+  listWorkflowsRestBinding,
+  type ListWorkflowsOutput,
+} from './list-workflows.ts';
 import { waitForWorkflowStatus } from './operation-test-helpers.test-support.ts';
 
-function createEngine(): Engine {
-  const storage = new MemoryStorage();
+function createEngine(storage = new MemoryStorage()): Engine {
   const engine = new Engine({ storage });
   engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
     return input;
@@ -22,7 +27,26 @@ function createEngine(): Engine {
   engine.register('hold', async function* (ctx: WorkflowContext) {
     return yield* ctx.waitForSignal<string>('release');
   });
+  engine.register('crash', async function* () {
+    throw new Error('workflow failure');
+  });
   return engine;
+}
+
+async function startLegacyFailedWorkflow(
+  engine: Engine,
+  storage: MemoryStorage,
+  id: string,
+): Promise<void> {
+  const handle = await engine.start('crash', null, { id });
+  await expect(handle.result()).rejects.toThrow('workflow failure');
+
+  const stateBytes = await storage.get(KEYS.workflow(id));
+  expect(stateBytes).not.toBeNull();
+  const state = decode(stateBytes!) as WorkflowState;
+  state.failureCategory = null;
+  await storage.put(KEYS.workflow(id), encode(state));
+  await storage.put(KEYS.attribute(id), encode({ failureCategory: 'planning' }));
 }
 
 const registry = createOperationRegistry([listWorkflowsOperation]);
@@ -82,6 +106,89 @@ describe('weft.workflows.list', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('application/json');
     expect(await response.json()).toEqual(expected);
+  });
+
+  it('includes failureCategory from search attributes only when requested over REST', async () => {
+    const storage = new MemoryStorage();
+    const engine = createEngine(storage);
+    await startLegacyFailedWorkflow(engine, storage, 'failed-with-legacy-category');
+
+    const defaultResponse = await handleRequest(
+      new Request('http://localhost/v1/workflows?status=failed', { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: bindings,
+      },
+    );
+
+    expect(defaultResponse.status).toBe(200);
+    const defaultBody = (await defaultResponse.json()) as ListWorkflowsOutput;
+    expect(defaultBody.items).toHaveLength(1);
+    expect(defaultBody.items[0]?.failureCategory).toBeUndefined();
+
+    const includedResponse = await handleRequest(
+      new Request('http://localhost/v1/workflows?status=failed&include=failureCategory', {
+        method: 'GET',
+      }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: bindings,
+      },
+    );
+
+    expect(includedResponse.status).toBe(200);
+    const includedBody = (await includedResponse.json()) as ListWorkflowsOutput;
+    expect(includedBody.items).toHaveLength(1);
+    expect(includedBody.items[0]?.failureCategory).toBe('planning');
+
+    const repeatedIncludedResponse = await handleRequest(
+      new Request(
+        'http://localhost/v1/workflows?status=failed&include=failureCategory&include=failureCategory',
+        { method: 'GET' },
+      ),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: bindings,
+      },
+    );
+
+    expect(repeatedIncludedResponse.status).toBe(200);
+    const repeatedIncludedBody = (await repeatedIncludedResponse.json()) as ListWorkflowsOutput;
+    expect(repeatedIncludedBody.items).toHaveLength(1);
+    expect(repeatedIncludedBody.items[0]?.failureCategory).toBe('planning');
+  });
+
+  it('returns 400 when include contains an unsupported field', async () => {
+    const engine = createEngine();
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/workflows?include=input', { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: bindings,
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'invalid params' });
+
+    const repeatedResponse = await handleRequest(
+      new Request('http://localhost/v1/workflows?include=failureCategory&include=input', {
+        method: 'GET',
+      }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: bindings,
+      },
+    );
+
+    expect(repeatedResponse.status).toBe(400);
+    expect(await repeatedResponse.json()).toEqual({ error: 'invalid params' });
   });
 
   it('returns 400 when query tags are invalid (validation runs in invoke for parity across transports)', async () => {

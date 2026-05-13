@@ -1,9 +1,11 @@
 import { KEYS } from '../../storage/interface.ts';
 import { decode, encode } from '../codec.ts';
-import { normalizeListFilter } from '../list-filter-validation.ts';
+import { isFailureCategory, normalizeListFilter } from '../list-filter-validation.ts';
 import { buildIndexOperations, validateAttributeType } from '../search-attributes.ts';
 import type {
+  FailureCategory,
   ListFilter,
+  ListOptions,
   PaginatedResult,
   SearchAttributeValue,
   WorkflowState,
@@ -28,6 +30,7 @@ export const BULK_OPERATION_BATCH_SIZE = 1000;
 export async function list(
   internals: EngineInternals,
   filter?: ListFilter,
+  options?: ListOptions,
 ): Promise<PaginatedResult<WorkflowSummary>> {
   // Validate the filter the same way `engine.aggregate()` does, so in-process
   // callers receive the same diagnostics as REST / JSON-RPC clients instead of
@@ -62,7 +65,10 @@ export async function list(
         const state = decodeWorkflowState(stateBytes);
         if (!matchesListFilter(state, normalizedFilter, constrainedIds, normalizedTagFilters))
           continue;
-        items.push(summaryFromState(state));
+        const attributeBytes = shouldReadFailureCategoryAttribute(state, options)
+          ? await internals.storage.get(KEYS.attribute(state.id))
+          : null;
+        items.push(summaryFromState(state, failureCategoryFromAttributeBytes(attributeBytes)));
       }
     }
     return paginateWorkflowSummaries(sortSummariesByCreatedAtDescending(items), normalizedFilter);
@@ -80,13 +86,47 @@ export async function list(
     const state = decodeWorkflowState(value);
     if (!matchesListFilter(state, normalizedFilter, constrainedIds, normalizedTagFilters)) continue;
 
-    items.push(summaryFromState(state));
+    const attributeBytes = shouldReadFailureCategoryAttribute(state, options)
+      ? await internals.storage.get(KEYS.attribute(state.id))
+      : null;
+    items.push(summaryFromState(state, failureCategoryFromAttributeBytes(attributeBytes)));
   }
 
   return paginateWorkflowSummaries(sortSummariesByCreatedAtDescending(items), normalizedFilter);
 }
 
-function summaryFromState(state: WorkflowState): WorkflowSummary {
+function shouldReadFailureCategoryAttribute(
+  state: WorkflowState,
+  options: ListOptions | undefined,
+): boolean {
+  return (
+    options?.includeFailureCategory === true &&
+    state.status === 'failed' &&
+    (state.failureCategory === undefined || state.failureCategory === null)
+  );
+}
+
+function failureCategoryFromAttributeBytes(
+  attributeBytes: Uint8Array | null,
+): FailureCategory | undefined {
+  if (attributeBytes === null) return undefined;
+
+  const attributes = decode(attributeBytes);
+  if (!isRecord(attributes)) return undefined;
+
+  const value = attributes['failureCategory'];
+  return isFailureCategory(value) ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function summaryFromState(
+  state: WorkflowState,
+  attributeFailureCategory?: FailureCategory,
+): WorkflowSummary {
+  const failureCategory = state.failureCategory ?? attributeFailureCategory;
   return {
     id: state.id,
     type: state.type,
@@ -98,8 +138,7 @@ function summaryFromState(state: WorkflowState): WorkflowSummary {
     updatedAt: state.updatedAt,
     ...(state.tenant?.id !== undefined && { tenantId: state.tenant.id }),
     ...(state.executionDeadline !== undefined && { executionDeadline: state.executionDeadline }),
-    ...(state.failureCategory !== undefined &&
-      state.failureCategory !== null && { failureCategory: state.failureCategory }),
+    ...(failureCategory !== undefined && failureCategory !== null && { failureCategory }),
   };
 }
 

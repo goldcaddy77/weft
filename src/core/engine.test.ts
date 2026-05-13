@@ -82,6 +82,17 @@ function makeDefinitionSchema<TOutput>(): DefinitionSchema<unknown, TOutput> {
   };
 }
 
+class AttributeReadCountingStorage extends MemoryStorage {
+  attributeReadCount = 0;
+
+  override async get(key: string): Promise<Uint8Array | null> {
+    if (key.startsWith('attr:')) {
+      this.attributeReadCount += 1;
+    }
+    return super.get(key);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1262,6 +1273,75 @@ describe('Engine', () => {
     await expect(engine.list({ idPrefix: 'a:b' })).rejects.toBeInstanceOf(
       ListFilterValidationError,
     );
+    engine[Symbol.dispose]();
+  });
+
+  it('list() backfills legacy failed workflow failureCategory only when requested', async () => {
+    const storage = new AttributeReadCountingStorage();
+    const engine = new Engine({ storage });
+    engine.register('attribute-backed-category', async function* () {
+      throw new Error('legacy failure');
+    });
+
+    const handle = await engine.start('attribute-backed-category', null, {
+      id: 'wf-attribute-category',
+    });
+    await expect(handle.result()).rejects.toThrow('legacy failure');
+
+    const stateBytes = await storage.get(KEYS.workflow(handle.id));
+    expect(stateBytes).not.toBeNull();
+    const legacyState = decode(stateBytes!) as WorkflowState;
+    legacyState.failureCategory = null;
+    await storage.put(KEYS.workflow(handle.id), encode(legacyState));
+    await storage.put(KEYS.attribute(handle.id), encode({ failureCategory: 'planning' }));
+
+    storage.attributeReadCount = 0;
+
+    const defaultResult = await engine.list({ status: 'failed' });
+    expect(defaultResult.items).toContainEqual(
+      expect.objectContaining({ id: 'wf-attribute-category' }),
+    );
+    expect(defaultResult.items[0]?.failureCategory).toBeUndefined();
+    expect(storage.attributeReadCount).toBe(0);
+
+    const includedResult = await engine.list(
+      { status: 'failed' },
+      { includeFailureCategory: true },
+    );
+    expect(includedResult.items[0]?.failureCategory).toBe('planning');
+    expect(storage.attributeReadCount).toBe(1);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('list() keeps workflow state failureCategory authoritative over stale attributes', async () => {
+    const storage = new AttributeReadCountingStorage();
+    const engine = new Engine({ storage });
+    engine.register('state-backed-category', async function* () {
+      throw new Error('state failure');
+    });
+
+    const handle = await engine.start('state-backed-category', null, {
+      id: 'wf-state-category',
+    });
+    await expect(handle.result()).rejects.toThrow('state failure');
+    await storage.put(KEYS.attribute(handle.id), encode({ failureCategory: 'planning' }));
+
+    storage.attributeReadCount = 0;
+
+    const includedResult = await engine.list(
+      { status: 'failed' },
+      { includeFailureCategory: true },
+    );
+
+    expect(includedResult.items).toContainEqual(
+      expect.objectContaining({
+        id: 'wf-state-category',
+        failureCategory: 'system',
+      }),
+    );
+    expect(storage.attributeReadCount).toBe(0);
+
     engine[Symbol.dispose]();
   });
 
