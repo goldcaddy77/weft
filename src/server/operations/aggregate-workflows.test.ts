@@ -30,7 +30,7 @@ describe('weft.workflows.aggregate', () => {
       { operationRegistry: registry, restBindings: bindings },
     );
 
-    expect(response.status).toBe(422);
+    expect(response.status).toBe(400);
     expect(response.headers.get('content-type')).toBe('application/json');
     expect(await response.json()).toEqual({
       error:
