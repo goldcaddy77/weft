@@ -65,6 +65,12 @@
       "import": "./dist/storage/compressed-storage.js",
       "default": "./dist/storage/compressed-storage.js"
     },
+    "./storage/text-value-store": {
+      "types": "./dist/storage/text-value-store.d.ts",
+      "bun": "./dist/storage/text-value-store.js",
+      "import": "./dist/storage/text-value-store.js",
+      "default": "./dist/storage/text-value-store.js"
+    },
     "./storage/sqlite": {
       "types": "./dist/storage/sqlite.d.ts",
       "bun": "./dist/storage/bun-sql.js",

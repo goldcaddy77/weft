@@ -28,6 +28,16 @@ import {
   createListWorkersRestBinding,
   listWorkersOperation,
 } from './list-workers.ts';
+import {
+  createClearDeploymentDrainOperation,
+  createClearDeploymentDrainRestBinding,
+  createClearWorkerDrainOperation,
+  createClearWorkerDrainRestBinding,
+  createDrainDeploymentOperation,
+  createDrainDeploymentRestBinding,
+  createDrainWorkerOperation,
+  createDrainWorkerRestBinding,
+} from './worker-drain.ts';
 
 function createEngine(): Engine {
   return new Engine({ storage: new MemoryStorage() });
@@ -38,6 +48,15 @@ function systemReadAuthContext() {
     authContext: {
       method: 'api-key' as const,
       principal: principalFromApiKey({ subject: 'test', scopes: ['system:read'] }),
+    },
+  };
+}
+
+function systemAdminAuthContext() {
+  return {
+    authContext: {
+      method: 'api-key' as const,
+      principal: principalFromApiKey({ subject: 'test', scopes: ['system:admin'] }),
     },
   };
 }
@@ -114,6 +133,80 @@ describe('weft.workers.list — REST GET /v1/workers', () => {
     });
   });
 
+  it('returns deployment identity, drain health, and deployment aggregate summaries', async () => {
+    engine = createEngine();
+    const workerRegistry = new WorkerRegistry();
+    workerRegistry.register({
+      id: 'active-worker',
+      queue: 'payments',
+      activities: ['charge'],
+      concurrency: 4,
+      deploymentName: 'payments',
+      buildId: 'build-1',
+      runtimeVersion: 'bun-1.2.13',
+      gitSha: 'abc',
+      startedAt: 100,
+      capabilities: { region: 'us-west' },
+    });
+    workerRegistry.register({
+      id: 'draining-worker',
+      queue: 'payments',
+      activities: ['charge'],
+      concurrency: 4,
+      deploymentName: 'payments',
+      buildId: 'build-1',
+      runtimeVersion: 'bun-1.2.13',
+      gitSha: 'abc',
+      startedAt: 200,
+    });
+    workerRegistry.assignTask('draining-worker', 'op-draining', 30_000);
+    workerRegistry.markWorkerDraining('draining-worker', {
+      reason: 'host replacement',
+      updatedAt: 1000,
+    });
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/workers', { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: createOperationRegistry([
+          createListWorkersOperation({ workerRegistry, clock: () => 5000 }),
+        ]),
+        restBindings: [binding],
+        ...systemReadAuthContext(),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      items: Array<Record<string, unknown>>;
+      deployments: Array<Record<string, unknown>>;
+    };
+    expect(body.items.find((worker) => worker['id'] === 'active-worker')).toMatchObject({
+      deploymentName: 'payments',
+      buildId: 'build-1',
+      runtimeVersion: 'bun-1.2.13',
+      gitSha: 'abc',
+      startedAt: 100,
+      capabilities: { region: 'us-west' },
+      health: 'active',
+    });
+    expect(body.items.find((worker) => worker['id'] === 'draining-worker')).toMatchObject({
+      health: 'draining',
+    });
+    expect(body.deployments).toEqual([
+      expect.objectContaining({
+        deploymentName: 'payments',
+        buildId: 'build-1',
+        health: 'draining',
+        workers: 2,
+        activeWorkers: 1,
+        drainingWorkers: 1,
+        inFlight: 1,
+      }),
+    ]);
+  });
+
   it('strips unknown query keys without raising InvalidParams', async () => {
     engine = createEngine();
     const workerRegistry = new WorkerRegistry();
@@ -175,6 +268,243 @@ describe('weft.workers.list — REST GET /v1/workers', () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected rejection');
     expect(result.fault.code).toBe('Forbidden');
+  });
+});
+
+describe('worker drain operations', () => {
+  let engine: Engine | undefined;
+
+  afterEach(() => {
+    engine?.[Symbol.dispose]();
+    engine = undefined;
+  });
+
+  it('marks and clears a worker drain over REST with system:admin', async () => {
+    engine = createEngine();
+    const workerRegistry = new WorkerRegistry();
+    workerRegistry.register({
+      id: 'worker-1',
+      queue: 'default',
+      activities: ['charge'],
+      concurrency: 2,
+    });
+    workerRegistry.assignTask('worker-1', 'in-flight', 30_000);
+
+    const registry = createOperationRegistry([
+      createDrainWorkerOperation({ workerRegistry, clock: () => 1000 }),
+      createClearWorkerDrainOperation({ workerRegistry }),
+    ]);
+    const restBindings = [createDrainWorkerRestBinding(), createClearWorkerDrainRestBinding()];
+
+    const drainResponse = await handleRequest(
+      new Request('http://localhost/v1/workers/worker-1/drain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'maintenance' }),
+      }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings,
+        ...systemAdminAuthContext(),
+      },
+    );
+
+    expect(drainResponse.status).toBe(200);
+    expect(await drainResponse.json()).toEqual({
+      target: 'worker',
+      workerId: 'worker-1',
+      affectedWorkers: 1,
+      inFlight: 1,
+      health: 'draining',
+    });
+    expect(workerRegistry.getWorkerSummaries(2000)[0]).toMatchObject({
+      health: 'draining',
+    });
+    expect(workerRegistry.getWorker('worker-1')).toMatchObject({
+      drainReason: 'maintenance',
+      drainStartedAt: 1000,
+    });
+
+    const clearResponse = await handleRequest(
+      new Request('http://localhost/v1/workers/worker-1/drain', { method: 'DELETE' }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings,
+        ...systemAdminAuthContext(),
+      },
+    );
+
+    expect(clearResponse.status).toBe(200);
+    expect(workerRegistry.getWorkerSummaries(3000)[0]?.health).toBe('active');
+  });
+
+  it('requires system:admin for worker drain mutations', async () => {
+    engine = createEngine();
+    const workerRegistry = new WorkerRegistry();
+    workerRegistry.register({
+      id: 'worker-1',
+      queue: 'default',
+      activities: ['charge'],
+      concurrency: 2,
+    });
+
+    const result = await executeOperation(
+      'weft.workers.drain',
+      { workerId: 'worker-1' },
+      {
+        principal: principalFromApiKey({ subject: 'test', scopes: ['system:read'] }),
+        engine,
+        transport: 'jsonRpcStdio',
+        registry: createOperationRegistry([createDrainWorkerOperation({ workerRegistry })]),
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected rejection');
+    expect(result.fault.code).toBe('Forbidden');
+  });
+
+  it('rejects unused resume reasons over JSON-RPC', async () => {
+    engine = createEngine();
+    const workerRegistry = new WorkerRegistry();
+    workerRegistry.register({
+      id: 'worker-1',
+      queue: 'default',
+      activities: ['charge'],
+      concurrency: 2,
+      deploymentName: 'payments',
+    });
+    workerRegistry.markWorkerDraining('worker-1', { updatedAt: 1000 });
+    workerRegistry.markDeploymentDraining('payments', { updatedAt: 1000 });
+
+    const principal = principalFromApiKey({ subject: 'test', scopes: ['system:admin'] });
+    const registry = createOperationRegistry([
+      createClearWorkerDrainOperation({ workerRegistry }),
+      createClearDeploymentDrainOperation({ workerRegistry }),
+    ]);
+
+    const workerResult = await executeOperation(
+      'weft.workers.resume',
+      { workerId: 'worker-1', reason: 'unused' },
+      { principal, engine, transport: 'jsonRpcStdio', registry },
+    );
+    const deploymentResult = await executeOperation(
+      'weft.worker.deployments.resume',
+      { deploymentName: 'payments', reason: 'unused' },
+      { principal, engine, transport: 'jsonRpcStdio', registry },
+    );
+
+    expect(workerResult.ok).toBe(false);
+    if (workerResult.ok) throw new Error('expected worker resume rejection');
+    expect(workerResult.fault.code).toBe('InvalidParams');
+    expect(deploymentResult.ok).toBe(false);
+    if (deploymentResult.ok) throw new Error('expected deployment resume rejection');
+    expect(deploymentResult.fault.code).toBe('InvalidParams');
+    expect(workerRegistry.getWorker('worker-1')?.drainStartedAt).toBe(1000);
+    expect(workerRegistry.getWorkerSummaries(2000)[0]?.health).toBe('drained');
+  });
+
+  it('rejects malformed worker drain JSON before mutating drain state', async () => {
+    engine = createEngine();
+    const workerRegistry = new WorkerRegistry();
+    workerRegistry.register({
+      id: 'worker-1',
+      queue: 'default',
+      activities: ['charge'],
+      concurrency: 2,
+    });
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/workers/worker-1/drain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{not-json',
+      }),
+      engine,
+      {
+        operationRegistry: createOperationRegistry([
+          createDrainWorkerOperation({ workerRegistry, clock: () => 1000 }),
+        ]),
+        restBindings: [createDrainWorkerRestBinding()],
+        ...systemAdminAuthContext(),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(workerRegistry.getWorkerSummaries(2000)[0]?.health).toBe('active');
+  });
+
+  it('marks and clears deployment drain state for all matching workers', async () => {
+    engine = createEngine();
+    const workerRegistry = new WorkerRegistry();
+    workerRegistry.register({
+      id: 'worker-a',
+      queue: 'default',
+      activities: ['charge'],
+      concurrency: 2,
+      deploymentName: 'payments',
+    });
+    workerRegistry.register({
+      id: 'worker-b',
+      queue: 'default',
+      activities: ['charge'],
+      concurrency: 2,
+      deploymentName: 'payments',
+    });
+
+    const registry = createOperationRegistry([
+      createDrainDeploymentOperation({ workerRegistry, clock: () => 1000 }),
+      createClearDeploymentDrainOperation({ workerRegistry }),
+    ]);
+    const restBindings = [
+      createDrainDeploymentRestBinding(),
+      createClearDeploymentDrainRestBinding(),
+    ];
+
+    const drainResponse = await handleRequest(
+      new Request('http://localhost/v1/worker-deployments/payments/drain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'rollback' }),
+      }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings,
+        ...systemAdminAuthContext(),
+      },
+    );
+
+    expect(drainResponse.status).toBe(200);
+    expect(await drainResponse.json()).toEqual({
+      target: 'deployment',
+      deploymentName: 'payments',
+      affectedWorkers: 2,
+      inFlight: 0,
+      health: 'drained',
+    });
+    expect(workerRegistry.getWorkerSummaries(2000).map((worker) => worker.health)).toEqual([
+      'drained',
+      'drained',
+    ]);
+
+    const clearResponse = await handleRequest(
+      new Request('http://localhost/v1/worker-deployments/payments/drain', { method: 'DELETE' }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings,
+        ...systemAdminAuthContext(),
+      },
+    );
+
+    expect(clearResponse.status).toBe(200);
+    expect(workerRegistry.getWorkerSummaries(3000).map((worker) => worker.health)).toEqual([
+      'active',
+      'active',
+    ]);
   });
 });
 

@@ -195,6 +195,10 @@ describe('KEYS', () => {
     expect(KEYS.operationInflight('operation-1')).toBe('op:inflight:operation-1');
     expect(KEYS.operationQueued('operation-1')).toBe('op:queued:operation-1');
     expect(KEYS.operationResolved('operation-1')).toBe('op:resolved:operation-1');
+    expect(KEYS.operationResolvedByTimePrefix()).toBe('op:resolved-by-time:');
+    expect(KEYS.operationResolvedByTime(1_234, workflowId)).toBe(
+      `op:resolved-by-time:0000000000001234:${encodedWorkflowId}`,
+    );
     expect(KEYS.eventPrefix(workflowId)).toBe(`ev:${encodedWorkflowId}:`);
     expect(KEYS.event(workflowId, 9)).toBe(`ev:${encodedWorkflowId}:0000000009`);
     expect(KEYS.eventHead(workflowId)).toBe(`ev:${encodedWorkflowId}:head`);

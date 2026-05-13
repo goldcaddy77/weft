@@ -10,7 +10,7 @@ import type {
   BulkTagResult,
   ListFilter,
 } from '../../core/types.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 import {
@@ -20,12 +20,15 @@ import {
   bulkOperatorAccessPolicy,
   engineFailureFault,
   faultMessage,
-  invalidParamsFault,
   listFilterFromBulkInput,
   parseBulkListFilterFromBody,
   parseBulkOperationControlFromBody,
   readOptionalJsonBody,
 } from './bulk-filter-helpers.ts';
+import {
+  invalidParamsFault,
+  shapeLegacyRestFaultWithRawEngineFailureMessage,
+} from './operation-helpers.ts';
 
 const bulkMutateWorkflowTagsInput = z
   .object({
@@ -131,10 +134,7 @@ function shapeBulkMutateWorkflowTagsFault(fault: OperationFault): Response {
   // tag validation, missing operation field) maps canonically to
   // 400. `EngineFailure` echoes raw engine message at 500 (legacy
   // parity).
-  return new Response(JSON.stringify({ error: fault.message }), {
-    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return shapeLegacyRestFaultWithRawEngineFailureMessage(fault);
 }
 
 export const bulkMutateWorkflowTagsRestBinding: UnknownRestBinding = {

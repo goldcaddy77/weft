@@ -293,12 +293,10 @@ export function serve(options: ServeOptions): WeftServer {
   }
 
   const tlsOptions = buildTLSOptions(options.auth);
-
   // The dashboard HTML is passed in via options or loaded dynamically.
   // When available, Bun's static route handler bundles and serves it
   // with HMR in dev mode and cached assets in production mode.
   const dashboard = options.dashboard ?? null;
-
   const eventFeedBackend = createEngineEventFeedBackend(options.engine);
   const workerRegistry = new WorkerRegistry(
     options.routingPolicy !== undefined ? { policy: options.routingPolicy } : undefined,
@@ -338,7 +336,6 @@ export function serve(options: ServeOptions): WeftServer {
     processingOperations: new Set(),
     reconciliationRunning: false,
   };
-
   /** Remove an operationId from the workflow→operations reverse index. */
   function cleanupWorkflowIndex(operationId: string): void {
     const workflowId = context.operationToWorkflow.get(operationId);
@@ -351,7 +348,6 @@ export function serve(options: ServeOptions): WeftServer {
       context.operationToWorkflow.delete(operationId);
     }
   }
-
   const routes: Record<string, unknown> = {};
   if (dashboard !== null) {
     routes['/ui'] = dashboard;

@@ -1,4 +1,8 @@
-import type { WorkflowState, WorkflowTimelineEntry } from '../api-client.ts';
+import type {
+  TaskDiagnosticsResponse,
+  WorkflowState,
+  WorkflowTimelineEntry,
+} from '../api-client.ts';
 import type { WorkflowTimelineDiffRow } from '../fragments/workflow-execution-timeline.ts';
 
 export type WorkflowTimelineInspectionState = {
@@ -26,6 +30,16 @@ export type TerminalWorkflowDetailRefreshResult =
       error: unknown;
       message: string;
     };
+
+export type WorkflowTaskDiagnosticEvidence = {
+  operationId: string;
+  activityName: string;
+  queueEvidence: string;
+  workerEvidence: string;
+  retryEvidence: string;
+  heartbeatEvidence: string;
+  evidence: string[];
+};
 
 export function clearWorkflowTimelineInspectionState(): WorkflowTimelineInspectionState {
   return {
@@ -114,6 +128,29 @@ export async function loadTerminalWorkflowDetailRefresh({
   }
 }
 
+export function buildWorkflowTaskDiagnosticEvidence(
+  workflowId: string,
+  diagnostics: TaskDiagnosticsResponse,
+): WorkflowTaskDiagnosticEvidence[] {
+  return diagnostics.items.flatMap((item) => {
+    if (item.workflowId !== workflowId || item.operationId === undefined) return [];
+    return [
+      {
+        operationId: item.operationId,
+        activityName: item.activityName ?? item.operationId,
+        queueEvidence: item.queue ?? 'unknown queue',
+        workerEvidence: item.workerId ?? 'no worker assigned',
+        retryEvidence: formatRetryEvidence(item.retryCount, item.requeueCount),
+        heartbeatEvidence:
+          item.heartbeatAgeMs === undefined
+            ? 'no heartbeat evidence'
+            : `${formatDiagnosticDuration(item.heartbeatAgeMs)} since last heartbeat`,
+        evidence: [...item.evidence],
+      },
+    ];
+  });
+}
+
 function selectTimelineDiffStep({
   currentStep,
   fallbackStep,
@@ -134,4 +171,17 @@ function selectTimelineDiffStep({
 
 function formatWorkflowTimelineError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function formatRetryEvidence(retryCount: number, requeueCount: number): string {
+  return `${retryCount} ${retryCount === 1 ? 'retry' : 'retries'}, ${requeueCount} ${
+    requeueCount === 1 ? 'requeue' : 'requeues'
+  }`;
+}
+
+function formatDiagnosticDuration(milliseconds: number): string {
+  if (milliseconds >= 1_000 && milliseconds % 1_000 === 0) {
+    return `${milliseconds / 1_000}s`;
+  }
+  return `${milliseconds}ms`;
 }

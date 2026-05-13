@@ -1,8 +1,8 @@
 /**
  * Typed fetch wrapper for the Weft REST API.
  *
- * Browser-only shapes are declared inline here, while shared contract
- * types are re-exported from core as type-only imports.
+ * Browser-only shapes are re-exported from `api-client-types.ts`, while shared
+ * contract types flow through core as type-only imports.
  *
  * @module dashboard/api-client
  */
@@ -13,132 +13,28 @@ import type {
   BulkDeleteResult,
   BulkOperationDryRunResult,
   BulkSignalResult,
+  BulkTagMutationOperation,
   BulkTagResult,
-  ListFilter as CoreListFilter,
+  BulkWorkflowFilter,
+  ListFilter,
+  ListTaskQueuesResponse,
+  ListWorkersResponse,
+  PaginatedResult,
+  RetentionOverview,
+  ReviewDecision,
+  ReviewRequest,
   ScheduleFilter,
   ScheduleSummary,
+  TaskDiagnosticsFilter,
+  TaskDiagnosticsResponse,
   TenantQuotaUsage,
+  WorkerDrainMutationResponse,
+  WorkflowEvent,
   WorkflowReplay,
+  WorkflowState,
+  WorkflowSummary,
   WorkflowTimelineEntry,
-} from '../core/types.ts';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-export type WorkflowStatus =
-  | 'pending'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'cancelled'
-  | 'timed-out';
-
-export interface WorkflowState {
-  id: string;
-  type: string;
-  status: WorkflowStatus;
-  tags?: string[];
-  input: unknown;
-  result?: unknown;
-  error?: string;
-  version: string;
-  createdAt: number;
-  updatedAt: number;
-  executionDeadline?: number;
-}
-
-export interface WorkflowSummary {
-  id: string;
-  type: string;
-  status: WorkflowStatus;
-  tags?: string[];
-  version: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface PaginatedResult<T> {
-  items: T[];
-  total: number;
-  offset: number;
-  limit: number;
-}
-
-export interface RetentionPolicy {
-  completed?: number;
-  failed?: number;
-  cancelled?: number;
-  timedOut?: number;
-}
-
-export interface WorkflowTypeRetentionPolicy {
-  type: string;
-  source: 'engine' | 'workflow' | 'none';
-  retention: RetentionPolicy | null;
-}
-
-export interface RetentionOverview {
-  defaultRetention: RetentionPolicy | null;
-  sweepIntervalMs: number;
-  sweepBatchSize: number;
-  nextSweepAt: number | null;
-  workflowTypes: WorkflowTypeRetentionPolicy[];
-}
-
-export interface ListFilter {
-  status?: WorkflowStatus;
-  type?: string;
-  tags?: string[];
-  limit?: number;
-  offset?: number;
-}
-
-export type BulkWorkflowFilter = CoreListFilter;
-export type BulkTagMutationOperation = 'add' | 'remove';
-
-/** Routing strategy the server selects when assigning tasks to workers. */
-export type WorkerRoutingPolicy = 'least-loaded' | 'round-robin' | 'fair-share';
-
-/** Scheduling strategy a task queue applies when ordering pending tasks. */
-export type TaskQueueSchedulingPolicy = 'priority' | 'fifo' | 'lifo';
-
-/** A single connected worker as reported by `GET /v1/workers`. */
-export type WorkerSummary = {
-  id: string;
-  queue: string;
-  activities: string[];
-  concurrency: number;
-  inFlight: number;
-  availableCapacity: number;
-  connectedAt: number;
-  lastHeartbeatAt: number;
-  heartbeatAgeMs: number;
-};
-
-/** Top-level response shape for `GET /v1/workers`. */
-export type ListWorkersResponse = {
-  items: WorkerSummary[];
-  routingPolicy: WorkerRoutingPolicy;
-};
-
-/** Per-queue health as reported by `GET /v1/task-queues`. */
-export type TaskQueueHealth = {
-  queue: string;
-  backlog: number;
-  oldestEnqueuedAt: number | null;
-  oldestQueuedAgeMs: number | null;
-  waitingPollers: number;
-  schedulingPolicy: TaskQueueSchedulingPolicy;
-  inFlight: number;
-  connectedWorkers: number;
-};
-
-/** Top-level response shape for `GET /v1/task-queues`. */
-export type ListTaskQueuesResponse = {
-  items: TaskQueueHealth[];
-};
-
+} from './api-client-types.ts';
 export type {
   BulkCancelResult,
   BulkDeleteResult,
@@ -146,36 +42,43 @@ export type {
   BulkOperationDryRunResult,
   BulkOperationScopeSummary,
   BulkSignalResult,
+  BulkTagMutationOperation,
   BulkTagResult,
+  BulkWorkflowFilter,
+  ListFilter,
+  ListTaskQueuesResponse,
+  ListWorkersResponse,
+  PaginatedResult,
+  RetentionOverview,
+  RetentionPolicy,
+  ReviewDecision,
+  ReviewRequest,
   ScheduleFilter,
   ScheduleSummary,
+  TaskDiagnosticItem,
+  TaskDiagnosticKind,
+  TaskDiagnosticsFilter,
+  TaskDiagnosticsResponse,
+  TaskDiagnosticsSummary,
+  TaskQueueHealth,
+  TaskQueueSchedulingPolicy,
   TenantQuotaMetricUsage,
   TenantQuotaUsage,
   TenantWorkflowCreationRateUsage,
+  WorkerCapabilities,
+  WorkerDeploymentSummary,
+  WorkerDrainMutationResponse,
+  WorkerHealth,
+  WorkerRoutingPolicy,
+  WorkerSummary,
+  WorkflowEvent,
   WorkflowReplay,
+  WorkflowState,
+  WorkflowStatus,
+  WorkflowSummary,
   WorkflowTimelineEntry,
-} from '../core/types.ts';
-
-export interface WorkflowEvent {
-  type: string;
-  timestamp: number;
-  data: Record<string, unknown>;
-}
-
-export interface ReviewRequest {
-  reviewId: string;
-  workflowId: string;
-  artifact: unknown;
-  reviewType: string;
-  reviewers: string[];
-  createdAt: number;
-}
-
-export interface ReviewDecision {
-  decision: 'approved' | 'rejected' | 'needs-changes';
-  reviewer: string;
-  feedback?: string;
-}
+  WorkflowTypeRetentionPolicy,
+} from './api-client-types.ts';
 
 // ---------------------------------------------------------------------------
 // Error
@@ -196,6 +99,26 @@ export class ApiError extends Error {
 // ---------------------------------------------------------------------------
 
 const BASE_PATH = '/v1';
+
+function setOptionalSearchParam(
+  params: URLSearchParams,
+  key: string,
+  value: string | number | undefined,
+): void {
+  if (value !== undefined) params.set(key, String(value));
+}
+
+function buildTaskDiagnosticsSearchParams(filter?: TaskDiagnosticsFilter): URLSearchParams {
+  const params = new URLSearchParams();
+  setOptionalSearchParam(params, 'operationId', filter?.operationId);
+  setOptionalSearchParam(params, 'workflowId', filter?.workflowId);
+  setOptionalSearchParam(params, 'queue', filter?.queue);
+  setOptionalSearchParam(params, 'staleQueuedAfterMs', filter?.staleQueuedAfterMs);
+  setOptionalSearchParam(params, 'staleHeartbeatAfterMs', filter?.staleHeartbeatAfterMs);
+  setOptionalSearchParam(params, 'retryStormMinimumAttempts', filter?.retryStormMinimumAttempts);
+  setOptionalSearchParam(params, 'limit', filter?.limit);
+  return params;
+}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(options?.headers);
@@ -289,6 +212,14 @@ export class ApiClient {
       `/workflows/${encodeURIComponent(id)}/timeline`,
     );
     return response ?? [];
+  }
+
+  /** Get bounded task diagnostics for workflow detail and operator views. */
+  async getTaskDiagnostics(filter?: TaskDiagnosticsFilter): Promise<TaskDiagnosticsResponse> {
+    const query = buildTaskDiagnosticsSearchParams(filter).toString();
+    const path = query ? `/tasks/diagnostics?${query}` : '/tasks/diagnostics';
+
+    return request<TaskDiagnosticsResponse>(path);
   }
 
   /** Reconstruct workflow state at a historical checkpoint step. */
@@ -491,6 +422,43 @@ export class ApiClient {
   /** List connected workers with capacity, heartbeat, and routing policy. */
   async listWorkers(): Promise<ListWorkersResponse> {
     return request<ListWorkersResponse>('/workers');
+  }
+
+  /** Mark one connected worker as draining. */
+  async drainWorker(workerId: string, reason?: string): Promise<WorkerDrainMutationResponse> {
+    return request<WorkerDrainMutationResponse>(`/workers/${encodeURIComponent(workerId)}/drain`, {
+      method: 'POST',
+      body: JSON.stringify(reason === undefined ? {} : { reason }),
+    });
+  }
+
+  /** Clear one worker's explicit drain marker. */
+  async clearWorkerDrain(workerId: string): Promise<WorkerDrainMutationResponse> {
+    return request<WorkerDrainMutationResponse>(`/workers/${encodeURIComponent(workerId)}/drain`, {
+      method: 'DELETE',
+    });
+  }
+
+  /** Mark every current and future worker for a deployment as draining. */
+  async drainDeployment(
+    deploymentName: string,
+    reason?: string,
+  ): Promise<WorkerDrainMutationResponse> {
+    return request<WorkerDrainMutationResponse>(
+      `/worker-deployments/${encodeURIComponent(deploymentName)}/drain`,
+      {
+        method: 'POST',
+        body: JSON.stringify(reason === undefined ? {} : { reason }),
+      },
+    );
+  }
+
+  /** Clear the deployment-level drain marker. */
+  async clearDeploymentDrain(deploymentName: string): Promise<WorkerDrainMutationResponse> {
+    return request<WorkerDrainMutationResponse>(
+      `/worker-deployments/${encodeURIComponent(deploymentName)}/drain`,
+      { method: 'DELETE' },
+    );
   }
 
   /** List per-queue health: backlog, oldest age, waiting pollers, in-flight. */

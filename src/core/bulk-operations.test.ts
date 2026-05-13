@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { waitForCondition } from '../testing/fake-timers.ts';
+import { flush } from '../testing/storage-backends.ts';
 
 import {
   encodeStorageKeyComponent,
@@ -12,7 +13,7 @@ import { BULK_WORKFLOW_FILTER_ERROR_MESSAGE } from './bulk-workflow-filter.ts';
 import { decode, encode } from './codec.ts';
 import { BulkDeleteRequiresTerminalWorkflowsError, Engine } from './engine.ts';
 import { cancelAll } from './engine/bulk-operations.ts';
-import type { WorkflowContext, WorkflowState } from './types.ts';
+import type { SearchAttributeValue, WorkflowContext, WorkflowState } from './types.ts';
 
 async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
   return input;
@@ -69,9 +70,18 @@ async function createCompletedWorkflow(
   engine: Engine,
   workflowId: string,
   tags?: string[],
+  searchAttributes?: Record<string, SearchAttributeValue>,
 ): Promise<void> {
-  const handle = await engine.start('echo', workflowId, { id: workflowId, ...(tags && { tags }) });
+  const handle = await engine.start('echo', workflowId, {
+    id: workflowId,
+    ...(tags && { tags }),
+    ...(searchAttributes && { searchAttributes }),
+  });
   await handle.result();
+}
+
+function isTopLevelWorkflowStateKey(key: string): boolean {
+  return key.startsWith('wf:') && !key.slice('wf:'.length).includes(':');
 }
 
 class BulkCancelFailureStorage extends MemoryStorage {
@@ -105,7 +115,7 @@ class BulkBatchTrackingStorage extends MemoryStorage {
   ): AsyncIterable<[string, Uint8Array]> {
     for await (const entry of super.scan(prefix, options)) {
       const [key] = entry;
-      if (prefix === 'wf:' && key.startsWith('wf:') && !key.slice('wf:'.length).includes(':')) {
+      if (prefix === 'wf:' && isTopLevelWorkflowStateKey(key)) {
         this.scannedTopLevelWorkflowStateEntries += 1;
       }
       yield entry;
@@ -115,16 +125,29 @@ class BulkBatchTrackingStorage extends MemoryStorage {
   override async batch(operations: BatchOperation[]): Promise<void> {
     const mutatesTopLevelWorkflowState =
       this.shouldTrackBulkMutations &&
-      operations.some(
-        (operation) =>
-          operation.key.startsWith('wf:') && !operation.key.slice('wf:'.length).includes(':'),
-      );
+      operations.some((operation) => isTopLevelWorkflowStateKey(operation.key));
 
     if (mutatesTopLevelWorkflowState && this.firstMutationSeenAfterScanningCount === null) {
       this.firstMutationSeenAfterScanningCount = this.scannedTopLevelWorkflowStateEntries;
     }
 
     await super.batch(operations);
+  }
+}
+
+class WorkflowStateGetFailureStorage extends MemoryStorage {
+  shouldFailWorkflowStateGet = false;
+  workflowStateGetCount = 0;
+
+  override async get(key: string): Promise<Uint8Array | null> {
+    if (isTopLevelWorkflowStateKey(key)) {
+      this.workflowStateGetCount += 1;
+      if (this.shouldFailWorkflowStateGet) {
+        throw new Error(`unexpected workflow state get for ${key}`);
+      }
+    }
+
+    return super.get(key);
   }
 }
 
@@ -628,6 +651,31 @@ describe('bulk workflow operations', () => {
     }
   });
 
+  it('prepares bulk delete dry runs from the terminal scan without reloading workflow states', async () => {
+    const storage = new WorkflowStateGetFailureStorage();
+    const engine = new Engine({ storage });
+    engine.register('echo', echoWorkflow);
+
+    try {
+      await createCompletedWorkflow(engine, 'bulk-delete-single-scan');
+
+      storage.workflowStateGetCount = 0;
+      storage.shouldFailWorkflowStateGet = true;
+
+      await expect(engine.deleteAll({ status: 'completed' }, { dryRun: true })).resolves.toEqual(
+        expect.objectContaining({
+          action: 'delete',
+          dryRun: true,
+          matched: 1,
+        }),
+      );
+      expect(storage.workflowStateGetCount).toBe(0);
+    } finally {
+      storage.shouldFailWorkflowStateGet = false;
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
   it('rejects invalid limit and offset values for destructive bulk operations instead of widening the filter', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
     engine.register('echo', echoWorkflow);
@@ -713,6 +761,88 @@ describe('bulk workflow operations', () => {
       expect(recoveredOtherState?.tags).toEqual(['other']);
     } finally {
       await recoveredEngine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('applies limit and offset to tag-indexed bulk tag mutations after filtering', async () => {
+    const engine = new Engine({ storage: new MemoryStorage() });
+    engine.register('echo', echoWorkflow);
+
+    try {
+      await createCompletedWorkflow(engine, 'bulk-tags-window-01', ['bulk-window']);
+      await createCompletedWorkflow(engine, 'bulk-tags-window-02', ['bulk-window']);
+      await createCompletedWorkflow(engine, 'bulk-tags-window-03', ['bulk-window']);
+      await createCompletedWorkflow(engine, 'bulk-tags-window-other', ['other']);
+
+      const result = await engine.tagAll(
+        {
+          tags: ['bulk-window'],
+          offset: 1,
+          limit: 1,
+        },
+        ['selected-window'],
+      );
+
+      expect(result).toEqual({ modified: 1 });
+      const firstWindowState = await engine.get('bulk-tags-window-01');
+      const secondWindowState = await engine.get('bulk-tags-window-02');
+      const thirdWindowState = await engine.get('bulk-tags-window-03');
+      const otherState = await engine.get('bulk-tags-window-other');
+      expect(firstWindowState?.tags).toEqual(['bulk-window']);
+      expect(secondWindowState?.tags).toEqual(['bulk-window', 'selected-window']);
+      expect(thirdWindowState?.tags).toEqual(['bulk-window']);
+      expect(otherState?.tags).toEqual(['other']);
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('applies limit and offset to attribute-indexed bulk tag mutations after filtering', async () => {
+    const engine = new Engine({ storage: new MemoryStorage() });
+    engine.register('attribute-window', {
+      handler: waitForSignalWorkflow,
+      searchAttributes: { customerId: { type: 'string' } },
+    });
+
+    try {
+      await engine.start('attribute-window', 'first', {
+        id: 'bulk-attributes-window-01',
+        searchAttributes: { customerId: 'alpha' },
+      });
+      await engine.start('attribute-window', 'second', {
+        id: 'bulk-attributes-window-02',
+        searchAttributes: { customerId: 'alpha' },
+      });
+      await engine.start('attribute-window', 'third', {
+        id: 'bulk-attributes-window-03',
+        searchAttributes: { customerId: 'alpha' },
+      });
+      await engine.start('attribute-window', 'other', {
+        id: 'bulk-attributes-window-other',
+        searchAttributes: { customerId: 'beta' },
+      });
+      await flush();
+
+      const result = await engine.tagAll(
+        {
+          attributes: [{ key: 'customerId', value: 'alpha' }],
+          offset: 1,
+          limit: 1,
+        },
+        ['selected-window'],
+      );
+
+      expect(result).toEqual({ modified: 1 });
+      const firstWindowState = await engine.get('bulk-attributes-window-01');
+      const secondWindowState = await engine.get('bulk-attributes-window-02');
+      const thirdWindowState = await engine.get('bulk-attributes-window-03');
+      const otherState = await engine.get('bulk-attributes-window-other');
+      expect(firstWindowState?.tags).toBeUndefined();
+      expect(secondWindowState?.tags).toEqual(['selected-window']);
+      expect(thirdWindowState?.tags).toBeUndefined();
+      expect(otherState?.tags).toBeUndefined();
+    } finally {
+      await engine[Symbol.asyncDispose]();
     }
   });
 

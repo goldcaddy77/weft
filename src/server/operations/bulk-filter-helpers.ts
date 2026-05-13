@@ -18,6 +18,7 @@ import {
 import type { AccessPolicy } from '../authorization.ts';
 import type { OperationFault } from '../operation-fault.ts';
 import type { Principal } from '../principal.ts';
+import { invalidParamsFault } from './operation-helpers.ts';
 
 const workflowStatusSchema = z.custom<WorkflowStatus>((value) => typeof value === 'string');
 const searchAttributeValueSchema = z.custom<SearchAttributeValue>((value) => {
@@ -62,14 +63,6 @@ export const bulkOperatorAccessPolicy = {
 
 export function faultMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-export function invalidParamsFault(message: string): OperationFault {
-  return {
-    code: 'InvalidParams',
-    message,
-    data: { issues: [] },
-  };
 }
 
 export function unprocessableFault(message: string): OperationFault {

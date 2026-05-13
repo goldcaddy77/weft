@@ -8,7 +8,7 @@ import {
 } from '../../core/engine.ts';
 import { coerceStartWorkflowTags } from '../../core/start-workflow-validation.ts';
 import type { BulkDeleteResult, BulkOperationDryRunResult } from '../../core/types.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 import {
@@ -18,7 +18,6 @@ import {
   bulkOperatorAccessPolicy,
   engineFailureFault,
   faultMessage,
-  invalidParamsFault,
   listFilterFromBulkInput,
   parseBulkListFilterFromBody,
   parseBulkOperationControlFromBody,
@@ -27,6 +26,10 @@ import {
   type BulkListFilterInput,
   type BulkOperationControlInput,
 } from './bulk-filter-helpers.ts';
+import {
+  invalidParamsFault,
+  shapeLegacyRestFaultWithRawEngineFailureMessage,
+} from './operation-helpers.ts';
 
 const bulkDeleteWorkflowsInput = bulkListFilterInputSchema.merge(bulkOperationControlInputSchema);
 const bulkDeleteWorkflowsOutput = z.unknown();
@@ -99,10 +102,7 @@ function shapeBulkDeleteWorkflowsSuccess(result: BulkDeleteWorkflowsOutput): Res
 }
 
 function shapeBulkDeleteWorkflowsFault(fault: OperationFault): Response {
-  return new Response(JSON.stringify({ error: fault.message }), {
-    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return shapeLegacyRestFaultWithRawEngineFailureMessage(fault);
 }
 
 export const bulkDeleteWorkflowsRestBinding: UnknownRestBinding = {

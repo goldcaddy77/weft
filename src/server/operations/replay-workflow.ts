@@ -17,10 +17,10 @@ import { z } from 'zod';
 import { encode } from '../../core/codec.ts';
 import type { Engine } from '../../core/engine.ts';
 import type { WorkflowReplay } from '../../core/types.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
-import { invalidParamsFault } from './operation-helpers.ts';
+import { invalidParamsFault, shapeRestFault } from './operation-helpers.ts';
 
 const replayWorkflowInput = z.object({
   workflowId: z.string().min(1),
@@ -81,40 +81,7 @@ export const replayWorkflowOperation = defineOperation<ReplayWorkflowInput, Repl
 });
 
 function shapeReplayWorkflowFault(fault: OperationFault): Response {
-  if (fault.code === 'NotFound') {
-    return new Response(JSON.stringify({ error: fault.message }), {
-      status: 404,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  if (fault.code === 'InvalidParams') {
-    return new Response(JSON.stringify({ error: fault.message }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  if (fault.code === 'Unauthorized') {
-    return new Response(JSON.stringify({ error: fault.message }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  if (fault.code === 'Forbidden') {
-    return new Response(JSON.stringify({ error: fault.message }), {
-      status: 403,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  if (fault.code === 'EngineFailure') {
-    return new Response(JSON.stringify({ error: 'Internal server error' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  return new Response(JSON.stringify({ error: fault.message }), {
-    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return shapeRestFault(fault);
 }
 
 /**

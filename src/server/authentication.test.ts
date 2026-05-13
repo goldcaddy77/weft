@@ -1036,6 +1036,33 @@ describe('serve() with authentication', () => {
     expect(authResponse.status).toBe(200);
   });
 
+  it('requires system read scope for task diagnostics REST requests', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0, auth: { apiKeys: [TEST_API_KEY] } });
+
+    const unauthenticatedResponse = await fetch(`${server.url}/v1/tasks/diagnostics`);
+    expect(unauthenticatedResponse.status).toBe(401);
+
+    const forbiddenResponse = await fetch(`${server.url}/v1/tasks/diagnostics`, {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
+    expect(forbiddenResponse.status).toBe(403);
+
+    await server.stop();
+    server = serve({
+      engine,
+      port: 0,
+      auth: { apiKeys: [TEST_API_KEY], defaultApiKeyScopes: ['system:read'] },
+    });
+
+    const allowedResponse = await fetch(`${server.url}/v1/tasks/diagnostics`, {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
+    expect(allowedResponse.status).toBe(200);
+    const body = (await allowedResponse.json()) as { summary: { staleInflight: number } };
+    expect(body.summary.staleInflight).toBe(0);
+  });
+
   it('throws on invalid auth configuration', () => {
     engine = createEngine();
     expect(() => serve({ engine, port: 0, auth: {} })).toThrow(

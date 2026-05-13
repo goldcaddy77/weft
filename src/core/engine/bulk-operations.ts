@@ -250,13 +250,12 @@ export async function deleteAll(
 ): Promise<BulkDeleteResult | BulkOperationDryRunResult> {
   options = normalizeBulkOperationOptions(options);
   assertScopedBulkWorkflowFilter(filter);
-  const candidateWorkflowIds = await collectTerminalWorkflowIds(internals, filter);
-  const preparation = await prepareBulkOperationFromWorkflowIds(
-    internals,
+  const candidateWorkflowSnapshots = await collectTerminalWorkflowSnapshots(internals, filter);
+  const preparation = buildBulkOperationPreparation(
     'delete',
     filter,
     {},
-    candidateWorkflowIds,
+    candidateWorkflowSnapshots,
     options,
   );
   if (options.dryRun === true) return preparation.preview;
@@ -437,25 +436,6 @@ async function prepareBulkOperation(
   options: BulkOperationOptions,
 ): Promise<BulkOperationPreparation> {
   const snapshots = await snapshotMatchingWorkflowSnapshots(internals, scanFilter);
-  return buildBulkOperationPreparation(action, tokenFilter, actionParameters, snapshots, options);
-}
-
-async function prepareBulkOperationFromWorkflowIds(
-  internals: EngineInternals,
-  action: BulkOperationAction,
-  tokenFilter: ListFilter,
-  actionParameters: Record<string, unknown>,
-  workflowIds: readonly string[],
-  options: BulkOperationOptions,
-): Promise<BulkOperationPreparation> {
-  const snapshots: BulkWorkflowSnapshot[] = [];
-
-  for (const workflowId of workflowIds) {
-    const state = await loadWorkflowState(internals, workflowId);
-    if (state === null) continue;
-    snapshots.push(workflowStateToBulkSnapshot(state));
-  }
-
   return buildBulkOperationPreparation(action, tokenFilter, actionParameters, snapshots, options);
 }
 
@@ -812,20 +792,20 @@ function isBulkTokenPrimitive(value: unknown): boolean {
   );
 }
 
-async function collectTerminalWorkflowIds(
+async function collectTerminalWorkflowSnapshots(
   internals: EngineInternals,
   filter: ListFilter,
-): Promise<string[]> {
-  const workflowIds: string[] = [];
+): Promise<BulkWorkflowSnapshot[]> {
+  const snapshots: BulkWorkflowSnapshot[] = [];
   for await (const batch of streamWorkflowStateBatches(internals, filter)) {
     for (const state of batch) {
       if (!isTerminalWorkflowStatus(state.status)) {
         throw new BulkDeleteRequiresTerminalWorkflowsError();
       }
-      workflowIds.push(state.id);
+      snapshots.push(workflowStateToBulkSnapshot(state));
     }
   }
-  return workflowIds;
+  return snapshots;
 }
 
 async function loadTerminalWorkflowStatesForBatch(

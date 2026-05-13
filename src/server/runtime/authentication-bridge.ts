@@ -308,7 +308,13 @@ export function createServerWebSocketHandlers(
                   );
                   return;
                 }
-                await reassignOrExpireTask(context, options, task.operationId, record);
+                await reassignOrExpireTask(
+                  context,
+                  options,
+                  task.operationId,
+                  record,
+                  'worker-disconnect',
+                );
               } else {
                 // Storage write hadn't committed — clean up the key just in case.
                 console.warn(

@@ -4,7 +4,7 @@ import { assertScopedBulkWorkflowFilter } from '../../core/bulk-workflow-filter.
 import { BulkOperationConfirmationError, type Engine } from '../../core/engine.ts';
 import { coerceStartWorkflowTags } from '../../core/start-workflow-validation.ts';
 import type { BulkCancelResult, BulkOperationDryRunResult } from '../../core/types.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 import {
@@ -14,7 +14,6 @@ import {
   bulkOperatorAccessPolicy,
   engineFailureFault,
   faultMessage,
-  invalidParamsFault,
   listFilterFromBulkInput,
   parseBulkListFilterFromBody,
   parseBulkOperationControlFromBody,
@@ -22,6 +21,10 @@ import {
   type BulkListFilterInput,
   type BulkOperationControlInput,
 } from './bulk-filter-helpers.ts';
+import {
+  invalidParamsFault,
+  shapeLegacyRestFaultWithRawEngineFailureMessage,
+} from './operation-helpers.ts';
 
 const bulkCancelWorkflowsInput = bulkListFilterInputSchema.merge(bulkOperationControlInputSchema);
 const bulkCancelWorkflowsOutput = z.unknown();
@@ -90,14 +93,10 @@ function shapeBulkCancelWorkflowsSuccess(result: BulkCancelWorkflowsOutput): Res
 
 function shapeBulkCancelWorkflowsFault(fault: OperationFault): Response {
   // `InvalidParams` (caller mistakes — bad body, scope assertion,
-  // tag validation) maps canonically to 400 via
-  // `FAULT_CODE_TO_HTTP_STATUS`. `EngineFailure` echoes the raw
-  // engine message at 500 (legacy parity). Sanitization is a
-  // deliberate behavior shift left for a follow-up PR.
-  return new Response(JSON.stringify({ error: fault.message }), {
-    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
-    headers: { 'Content-Type': 'application/json' },
-  });
+  // tag validation) maps canonically to 400. `EngineFailure` echoes
+  // the raw engine message at 500 (legacy parity). Sanitization is a
+  // deliberate behavior shift left for a follow-up pull request.
+  return shapeLegacyRestFaultWithRawEngineFailureMessage(fault);
 }
 
 export const bulkCancelWorkflowsRestBinding: UnknownRestBinding = {

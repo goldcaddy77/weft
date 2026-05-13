@@ -36,6 +36,15 @@ describe('storage package exports', () => {
     expect(Object.hasOwn(packageJson.exports, './storage/resolve')).toBe(true);
   });
 
+  it('exposes the text-value-store compatibility wrapper as a subpath', () => {
+    expect(packageJson.exports['./storage/text-value-store']).toEqual({
+      types: './dist/storage/text-value-store.d.ts',
+      bun: './dist/storage/text-value-store.js',
+      import: './dist/storage/text-value-store.js',
+      default: './dist/storage/text-value-store.js',
+    });
+  });
+
   it('exposes the RemoteWorker protocol contract as a package subpath', () => {
     expect(packageJson.exports['./worker-protocol']).toEqual({
       types: './dist/worker/protocol.d.ts',

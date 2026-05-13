@@ -307,13 +307,6 @@ naming the alternative that was rejected.
 - **Symbol**: `line-5082`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
-## `core-engine-list-complexity`
-
-- **File**: `src/core/engine/listing.ts`
-- **Rule**: `complexity`
-- **Symbol**: `list`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
 ## `core-engine-matches-schedule-filter-complexity`
 
 - **File**: `src/core/engine/index.ts`
@@ -915,6 +908,13 @@ naming the alternative that was rejected.
 - **Rule**: `complexity`
 - **Symbol**: `findWorker`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `worker-registry-tracks-routing-drain-and-summary-state`
+
+- **File**: `src/worker/registry.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: WorkerRegistry owns the shared in-memory routing surface for registration identity, capacity, in-flight visibility bookkeeping, fair-share counters, drain state, and operator summaries. Splitting the drain state into a separate coordinator would add cross-object synchronization around every assignment and completion path, so the current file remains the smallest auditable owner of those invariants.
 
 ## `worker-registry-pick-fair-share-complexity`
 

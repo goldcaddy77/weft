@@ -412,6 +412,9 @@ export const KEYS = {
   bulkOperationAuditPrefix: () => 'audit:bulk:',
   bulkOperationAudit: (timestamp: number, requestId: string, confirmationToken: string) =>
     `audit:bulk:${formatSortableTimestamp(timestamp)}:${encodeStorageKeyComponent(requestId)}:${encodeStorageKeyComponent(confirmationToken)}`,
+  operationResolvedByTimePrefix: () => 'op:resolved-by-time:',
+  operationResolvedByTime: (resolvedAt: number, id: string) =>
+    `op:resolved-by-time:${formatSortableTimestamp(resolvedAt)}:${encodeStorageKeyComponent(id)}`,
   eventPrefix: (workflowId: string) => `ev:${encodeStorageKeyComponent(workflowId)}:`,
   event: (workflowId: string, sequence: number) =>
     `ev:${encodeStorageKeyComponent(workflowId)}:${String(sequence).padStart(10, '0')}`,

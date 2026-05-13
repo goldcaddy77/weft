@@ -242,6 +242,7 @@ async function collectQueueStatistics(storage: Storage): Promise<QueueStatistics
     if (key.startsWith('op:inflight:')) continue;
     if (key.startsWith('op:queued:')) continue;
     if (key.startsWith('op:resolved:')) continue;
+    if (key.startsWith(KEYS.operationResolvedByTimePrefix())) continue;
 
     const parts = key.split(':');
     const queueName = parts[1] ?? '';
