@@ -53,7 +53,33 @@ The shape should stay Weft-native rather than copying Temporal feature names. Us
   - Invalid filter fields and unsupported aggregate dimensions fail with clear diagnostics before scanning workflow storage.
   - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/server/operations/list-workflows.test.ts src/server/attribute-filters.test.ts src/dashboard/utilities/workflow-list-data.test.ts`, and `bun run verify:documentation`.
 
-- [ ] **Add safe operator bulk actions with dry-run previews.**
+- [ ] **Expose worker fleet and task queue health.**
+
+  **Where:** `src/worker/registry.ts`, `src/server/task-queue.ts`, new `src/server/operations/list-workers.ts` and `src/server/operations/list-task-queues.ts`, dashboard API/client files, and `documentation/reference/api-workers.md`.
+
+  Add operation-catalog-backed APIs for connected workers and queues: worker id, queue, advertised activities, concurrency, in-flight count, available capacity, connected time, heartbeat age, routing policy, queue backlog, oldest queued age, waiting pollers, and in-flight task counts. Use the same operations for REST, JSON-RPC, and the dashboard so operator views do not become a private side channel.
+
+  **Acceptance criteria:**
+  - Worker fleet listing reports each connected worker's queue, activities, capacity, in-flight count, heartbeat age, and routing metadata.
+  - Queue health listing reports per-queue backlog, oldest queued task age, waiting pollers, in-flight task count, and scheduling policy.
+  - The dashboard adds a "Workers & Queues" view backed by those public operations.
+  - Authorization requires a system-level read scope and preserves tenant isolation where tenant-scoped queue data is exposed.
+  - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/worker/registry.test.ts src/server/task-queue.test.ts src/server/operations/list-workers.test.ts src/server/operations/list-task-queues.test.ts src/dashboard/api-client.test.ts`, and `bun run verify:documentation`.
+
+- [x] **Add task latency, retry, and stuck-work diagnostics.**
+
+  **Where:** `src/server/task-state.ts`, `src/server/runtime/task-dispatch.ts`, `src/server/runtime/task-polling.ts`, `src/server/runtime/task-reconciliation.ts`, `src/observability/metrics.ts`, new task-diagnostics operations, and dashboard diagnostics utilities.
+
+  Record and expose activity task lifecycle timings: enqueue-to-dispatch latency, dispatch-to-start latency when knowable, start-to-complete latency, heartbeat age, retry attempt count, visibility-timeout requeues, and final resolution reason. Add diagnostics for stuck queued tasks, stale heartbeats, retry storms, and workers at capacity so operators can tell whether a workflow is slow because of code, retries, queue pressure, or missing workers.
+
+  **Acceptance criteria:**
+  - Durable task records preserve enough timestamps and counters to reconstruct queue latency, execution latency, retry count, requeue count, and resolution reason after server restart.
+  - Metrics expose task backlog, queue latency, execution latency, retry/requeue counts, stale heartbeat counts, and capacity saturation without high-cardinality labels.
+  - A diagnostic operation identifies stuck queued tasks, stale in-flight tasks, retry storms, and all-workers-at-capacity conditions with bounded result sizes.
+  - Dashboard diagnostics link from a workflow/activity to the relevant queue, worker, retry, and heartbeat evidence.
+  - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/server/task-state.test.ts src/server/index.test.ts src/server/operations/get-system-metrics.test.ts src/dashboard/utilities/workflow-detail-timeline.test.ts`, and `bun run verify:documentation`.
+
+- [x] **Add safe operator bulk actions with dry-run previews.**
 
   **Where:** `src/core/engine/bulk-operations.ts`, `src/server/operations/bulk-*.ts`, workflow event/audit plumbing, dashboard bulk-action flows, and `documentation/reference/api-server.md`.
 
@@ -70,37 +96,9 @@ The shape should stay Weft-native rather than copying Temporal feature names. Us
 
 Per the AI Surface Shrinkage decision, Weft does not ship a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) client. Weft's workflow surface is a separate concern: registered workflows can be exposed as durable MCP tools and resources to external MCP clients.
 
-- [x] **Implement an MCP server exposing Weft as a first-class MCP service.**
-
-  **Deployment shapes:**
-  - **Remote MCP over Streamable HTTP:** add an authenticated MCP endpoint to the existing server transport surface. Support client-to-server POST, server-to-client GET/SSE, and session resumption via `Mcp-Session-Id`.
-  - **Local stdio package:** publish a `weft-mcp` or `@weft/mcp` binary that can run embedded against local storage or proxy to a remote Weft server.
-
-  **Server behavior:**
-  - Handle `initialize`, `notifications/initialized`, `notifications/cancelled`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, `resources/subscribe`, `resources/unsubscribe`, `resources/templates/list`, `prompts/list`, `prompts/get`, `logging/setLevel`, `ping`, and `completion/complete`.
-  - Advertise `tools`, `resources`, optional `prompts`, and `logging` capabilities.
-  - Expose each eligible registered workflow as an MCP tool with a JSON Schema `inputSchema`.
-  - Include engine-control tools such as `start_workflow`, `signal_workflow`, `update_workflow`, `query_workflow`, `cancel_workflow`, `list_workflows`, and `get_workflow_state`.
-  - Expose read-only resources for workflow state, checkpoint history, event logs, and search-attribute query results.
-  - Return `tools/call` failures as `isError: true` content blocks, not JSON-RPC protocol errors.
-  - Map MCP cancellation to `engine.cancel(id)` and emit progress notifications for long-running calls.
-
-  **Rules:**
-  - Tool names are lowercase with underscores.
-  - Tool descriptions come from workflow registration metadata.
-  - Activities are never exposed as standalone MCP tools; workflows are the durable unit.
-  - Every MCP-exposed workflow must have an input schema.
-  - Remote tenant scoping resolves from session authentication; local embedded mode is single-tenant; local proxy forwards the configured token.
-
-  **Acceptance criteria:**
-  - A reference MCP client can initialize, list tools, call a workflow tool, cancel an in-flight call, read a workflow resource, and subscribe to resource updates.
-  - Both remote HTTP and local stdio transports have integration tests.
-  - Authorization and tenant-scoping tests prove cross-tenant data is not exposed.
-  - Verification passes with `bun run lint`, `bun run typecheck`, targeted MCP tests, and `bun run verify:documentation`.
-
 - [ ] **Add MCP catalog discovery metadata.**
 
-  **Where:** extend the OpenRPC document with an `x-weft-mcp` extension and add a `/.well-known/mcp.json` route once the live MCP server exists.
+  **Where:** extend the OpenRPC document with an `x-weft-mcp` extension and add a `/.well-known/mcp.json` route for the live MCP server.
 
   Native MCP `tools/list` is the canonical live introspection surface. The static catalog is for build-time consumers and deployment discovery, so keep it minimal.
 

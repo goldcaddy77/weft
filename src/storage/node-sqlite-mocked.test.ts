@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { describe, expect, it } from 'bun:test';
 
 import { storageCount, storageDeletePrefix, storageKeys } from './interface.ts';
 
@@ -125,29 +125,13 @@ function createFakeDatabaseConstructor() {
   };
 }
 
-afterEach(() => {
-  mock.restore();
-});
-
 describe('NodeSQLiteStorage with mocked better-sqlite3', () => {
   it('covers the full adapter surface without native bindings', async () => {
     const FakeDatabase = createFakeDatabaseConstructor();
 
-    mock.module('node:module', () => ({
-      createRequire: () => {
-        return (specifier: string) => {
-          if (specifier !== 'better-sqlite3') {
-            throw new Error(`Unexpected require target: ${specifier}`);
-          }
-
-          return { default: FakeDatabase };
-        };
-      },
-    }));
-
     const { NodeSQLiteStorage } = await import(`./node-sqlite.ts?mocked=${Date.now()}`);
 
-    const storage = new NodeSQLiteStorage(':memory:');
+    const storage = new NodeSQLiteStorage(':memory:', FakeDatabase);
 
     expect(await storage.get('missing')).toBeNull();
 

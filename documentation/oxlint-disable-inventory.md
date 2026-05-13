@@ -153,6 +153,13 @@ naming the alternative that was rejected.
 - **Symbol**: `sanitizeObject`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
+## `core-engine-bulk-operations-file-length`
+
+- **File**: `src/core/engine/bulk-operations.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Bulk operations and terminal purge share the same workflow-state scan, confirmation, audit, and cleanup helpers. Splitting the file while this surface is still being actively expanded would make the destructive-action review path harder to audit; revisit when retry and recover bulk actions are added.
+
 ## `core-engine-apply-schedule-occurrence-complexity`
 
 - **File**: `src/core/engine/schedules.ts`
@@ -901,13 +908,6 @@ naming the alternative that was rejected.
 - **Rule**: `complexity`
 - **Symbol**: `pickFairShare`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `server-index-serve-orchestration`
-
-- **File**: `src/server/index.ts`
-- **Rule**: `max-lines`
-- **Symbol**: entire module
-- **Reason**: `serve()` orchestrates [Bun.serve](https://bun.com/docs/api/http) setup, WebSocket upgrade, dashboard hosting, and shutdown sequencing. Splitting further would scatter the lifecycle, so the file is exempted while the structure remains intentional.
 
 ## `server-task-queue-includes-snapshot-projection`
 

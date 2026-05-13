@@ -206,7 +206,7 @@ export function handleWorkerWebSocketMessage(
       context.registry.completeTask(operationId);
       context.deadlineTracker.remove(operationId);
       cleanupWorkflowIndex(operationId);
-      recordWorkerCapacitySaturationMetric(options.metricsCollector, context.registry);
+      recordWorkerCapacitySaturationMetric(context.metricsCollector, context.registry);
 
       void (async () => {
         const inflightRecord = await readInflightRecord(options.engine.storage, operationId);
@@ -218,7 +218,7 @@ export function handleWorkerWebSocketMessage(
           resolutionReason: resolvedStatus,
         });
         if (inflightRecord !== null) {
-          recordTaskExecutionLatencyMetric(options.metricsCollector, inflightRecord, resolvedAt);
+          recordTaskExecutionLatencyMetric(context.metricsCollector, inflightRecord, resolvedAt);
         }
       })().catch((error) => {
         console.error(

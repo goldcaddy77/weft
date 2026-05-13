@@ -1,4 +1,13 @@
-import { Engine, signal, type WorkflowContext, type WorkflowHandle } from 'weft';
+import {
+  BulkDeleteRequiresTerminalWorkflowsError,
+  BulkOperationConfirmationError,
+  Engine,
+  signal,
+  type BulkOperationDryRunResult,
+  type BulkSignalResult,
+  type WorkflowContext,
+  type WorkflowHandle,
+} from 'weft';
 
 interface PackageRootWelcomeInput {
   name: string;
@@ -58,6 +67,47 @@ void verifyPackageRootWorkflowTyping;
 
 // @ts-expect-error workflow input must match the public package-root augmentation.
 void engine.start('packageRootWelcome', { id: 'wrong' });
+
+async function verifyPackageRootBulkSignalTyping(): Promise<void> {
+  const noPayloadPreview: BulkOperationDryRunResult = await engine.signalAll(
+    { tags: ['nightly'] },
+    'continue',
+    undefined,
+    { dryRun: true },
+  );
+  const preview: BulkOperationDryRunResult = await engine.signalAll(
+    { tags: ['nightly'] },
+    'continue',
+    { approved: true },
+    { dryRun: true },
+  );
+  const confirmed: BulkSignalResult = await engine.signalAll(
+    { tags: ['nightly'] },
+    'continue',
+    { approved: true },
+    { confirmationToken: preview.confirmationToken },
+  );
+  const legacyPayloadCommit: BulkSignalResult = await engine.signalAll(
+    { tags: ['nightly'] },
+    'continue',
+    { approved: true },
+  );
+  const legacyRequestIdPayloadCommit: BulkSignalResult = await engine.signalAll(
+    { tags: ['nightly'] },
+    'continue',
+    { requestId: 'payload-request' },
+  );
+  const confirmationError: BulkOperationConfirmationError = new BulkOperationConfirmationError();
+  const terminalOnlyError: BulkDeleteRequiresTerminalWorkflowsError =
+    new BulkDeleteRequiresTerminalWorkflowsError();
+  void noPayloadPreview;
+  void confirmed;
+  void legacyPayloadCommit;
+  void legacyRequestIdPayloadCommit;
+  void confirmationError;
+  void terminalOnlyError;
+}
+void verifyPackageRootBulkSignalTyping;
 
 // Dynamic names are still available to package consumers.
 void engine.start('runtime-discovered-package-root', { id: 'dynamic' });

@@ -31,10 +31,45 @@ export class WorkflowAlreadyExistsError extends Error {
   }
 }
 
+/**
+ * Thrown by {@link Engine.deleteAll} when the supplied filter would match
+ * non-terminal workflows. Narrow the filter to completed, failed, cancelled,
+ * or timed-out workflows before deleting in bulk.
+ *
+ * @example
+ * ```ts
+ * import { BulkDeleteRequiresTerminalWorkflowsError } from 'weft';
+ *
+ * function shouldShowTerminalOnlyMessage(error: unknown): boolean {
+ *   return error instanceof BulkDeleteRequiresTerminalWorkflowsError;
+ * }
+ * ```
+ */
 export class BulkDeleteRequiresTerminalWorkflowsError extends Error {
   constructor() {
     super('Bulk delete matches non-terminal workflows');
     this.name = 'BulkDeleteRequiresTerminalWorkflowsError';
+  }
+}
+
+/**
+ * Thrown by committed bulk operations when the supplied confirmation token no
+ * longer matches the current dry-run scope. Run a fresh preview and commit
+ * with the returned token.
+ *
+ * @example
+ * ```ts
+ * import { BulkOperationConfirmationError } from 'weft';
+ *
+ * function needsFreshBulkPreview(error: unknown): boolean {
+ *   return error instanceof BulkOperationConfirmationError;
+ * }
+ * ```
+ */
+export class BulkOperationConfirmationError extends Error {
+  constructor() {
+    super('Bulk confirmation token does not match the current dry-run scope');
+    this.name = 'BulkOperationConfirmationError';
   }
 }
 

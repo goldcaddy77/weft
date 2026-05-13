@@ -1,254 +1,84 @@
 /**
  * Typed fetch wrapper for the Weft REST API.
  *
- * Browser-only shapes are declared inline here, while shared contract
- * types are re-exported from core as type-only imports.
+ * Browser-only shapes are re-exported from `api-client-types.ts`, while shared
+ * contract types flow through core as type-only imports.
  *
  * @module dashboard/api-client
  */
 
 import { buildScheduleListSearchParams } from '../client/schedule-list-search-params.ts';
 import type {
+  BulkCancelResult,
+  BulkDeleteResult,
+  BulkOperationDryRunResult,
+  BulkSignalResult,
+  BulkTagMutationOperation,
+  BulkTagResult,
+  BulkWorkflowFilter,
+  ListFilter,
+  ListTaskQueuesResponse,
+  ListWorkersResponse,
+  PaginatedResult,
+  RetentionOverview,
+  ReviewDecision,
+  ReviewRequest,
   ScheduleFilter,
   ScheduleSummary,
+  TaskDiagnosticsFilter,
+  TaskDiagnosticsResponse,
   TenantQuotaUsage,
+  WorkerDrainMutationResponse,
+  WorkflowEvent,
   WorkflowReplay,
+  WorkflowState,
+  WorkflowSummary,
   WorkflowTimelineEntry,
-} from '../core/types.ts';
-
-export type WorkflowStatus =
-  | 'pending'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'cancelled'
-  | 'timed-out';
-
-export interface WorkflowState {
-  id: string;
-  type: string;
-  status: WorkflowStatus;
-  tags?: string[];
-  input: unknown;
-  result?: unknown;
-  error?: string;
-  version: string;
-  createdAt: number;
-  updatedAt: number;
-  executionDeadline?: number;
-}
-
-export interface WorkflowSummary {
-  id: string;
-  type: string;
-  status: WorkflowStatus;
-  tags?: string[];
-  version: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface PaginatedResult<T> {
-  items: T[];
-  total: number;
-  offset: number;
-  limit: number;
-}
-
-export interface RetentionPolicy {
-  completed?: number;
-  failed?: number;
-  cancelled?: number;
-  timedOut?: number;
-}
-
-export interface WorkflowTypeRetentionPolicy {
-  type: string;
-  source: 'engine' | 'workflow' | 'none';
-  retention: RetentionPolicy | null;
-}
-
-export interface RetentionOverview {
-  defaultRetention: RetentionPolicy | null;
-  sweepIntervalMs: number;
-  sweepBatchSize: number;
-  nextSweepAt: number | null;
-  workflowTypes: WorkflowTypeRetentionPolicy[];
-}
-
-export interface ListFilter {
-  status?: WorkflowStatus;
-  type?: string;
-  tags?: string[];
-  limit?: number;
-  offset?: number;
-}
-
-/** Routing strategy the server selects when assigning tasks to workers. */
-export type WorkerRoutingPolicy = 'least-loaded' | 'round-robin' | 'fair-share';
-
-/** Health state used by routing and drain controls for connected workers. */
-export type WorkerHealth = 'active' | 'draining' | 'drained';
-
-/** JSON-serializable capability metadata a remote worker reports at registration. */
-export type WorkerCapabilities = Record<string, unknown>;
-
-/** Scheduling strategy a task queue applies when ordering pending tasks. */
-export type TaskQueueSchedulingPolicy = 'priority' | 'fifo' | 'lifo';
-
-/** A single connected worker as reported by `GET /v1/workers`. */
-export type WorkerSummary = {
-  id: string;
-  queue: string;
-  activities: string[];
-  concurrency: number;
-  inFlight: number;
-  availableCapacity: number;
-  connectedAt: number;
-  lastHeartbeatAt: number;
-  heartbeatAgeMs: number;
-  startedAt: number;
-  capabilities: WorkerCapabilities;
-  health: WorkerHealth;
-  deploymentName?: string;
-  buildId?: string;
-  runtimeVersion?: string;
-  gitSha?: string;
-};
-
-/** Per-deployment aggregate reported by `GET /v1/workers`. */
-export type WorkerDeploymentSummary = {
-  deploymentName: string | null;
-  buildId: string | null;
-  runtimeVersion: string | null;
-  gitSha: string | null;
-  health: WorkerHealth;
-  workers: number;
-  activeWorkers: number;
-  drainingWorkers: number;
-  drainedWorkers: number;
-  inFlight: number;
-  oldestStartedAt: number | null;
-};
-
-/** Response from worker/deployment drain mutation endpoints. */
-export type WorkerDrainMutationResponse =
-  | {
-      target: 'worker';
-      workerId: string;
-      affectedWorkers: number;
-      inFlight: number;
-      health: WorkerHealth;
-    }
-  | {
-      target: 'deployment';
-      deploymentName: string;
-      affectedWorkers: number;
-      inFlight: number;
-      health: WorkerHealth;
-    };
-
-/** Top-level response shape for `GET /v1/workers`. */
-export type ListWorkersResponse = {
-  items: WorkerSummary[];
-  deployments: WorkerDeploymentSummary[];
-  routingPolicy: WorkerRoutingPolicy;
-};
-
-/** Per-queue health as reported by `GET /v1/task-queues`. */
-export type TaskQueueHealth = {
-  queue: string;
-  backlog: number;
-  oldestEnqueuedAt: number | null;
-  oldestQueuedAgeMs: number | null;
-  waitingPollers: number;
-  schedulingPolicy: TaskQueueSchedulingPolicy;
-  inFlight: number;
-  connectedWorkers: number;
-};
-
-/** Top-level response shape for `GET /v1/task-queues`. */
-export type ListTaskQueuesResponse = {
-  items: TaskQueueHealth[];
-};
-
+} from './api-client-types.ts';
 export type {
+  BulkCancelResult,
+  BulkDeleteResult,
+  BulkOperationAuditEvent,
+  BulkOperationDryRunResult,
+  BulkOperationScopeSummary,
+  BulkSignalResult,
+  BulkTagMutationOperation,
+  BulkTagResult,
+  BulkWorkflowFilter,
+  ListFilter,
+  ListTaskQueuesResponse,
+  ListWorkersResponse,
+  PaginatedResult,
+  RetentionOverview,
+  RetentionPolicy,
+  ReviewDecision,
+  ReviewRequest,
   ScheduleFilter,
   ScheduleSummary,
+  TaskDiagnosticItem,
+  TaskDiagnosticKind,
+  TaskDiagnosticsFilter,
+  TaskDiagnosticsResponse,
+  TaskDiagnosticsSummary,
+  TaskQueueHealth,
+  TaskQueueSchedulingPolicy,
   TenantQuotaMetricUsage,
   TenantQuotaUsage,
   TenantWorkflowCreationRateUsage,
+  WorkerCapabilities,
+  WorkerDeploymentSummary,
+  WorkerDrainMutationResponse,
+  WorkerHealth,
+  WorkerRoutingPolicy,
+  WorkerSummary,
+  WorkflowEvent,
   WorkflowReplay,
+  WorkflowState,
+  WorkflowStatus,
+  WorkflowSummary,
   WorkflowTimelineEntry,
-} from '../core/types.ts';
-
-export interface WorkflowEvent {
-  type: string;
-  timestamp: number;
-  data: Record<string, unknown>;
-}
-
-export interface ReviewRequest {
-  reviewId: string;
-  workflowId: string;
-  artifact: unknown;
-  reviewType: string;
-  reviewers: string[];
-  createdAt: number;
-}
-
-export interface ReviewDecision {
-  decision: 'approved' | 'rejected' | 'needs-changes';
-  reviewer: string;
-  feedback?: string;
-}
-
-export type TaskDiagnosticKind =
-  | 'stuck-queued'
-  | 'stale-inflight'
-  | 'retry-storm'
-  | 'all-workers-at-capacity';
-
-export interface TaskDiagnosticItem {
-  kind: TaskDiagnosticKind;
-  state: 'queued' | 'inflight' | 'resolved' | 'capacity';
-  operationId?: string;
-  workflowId?: string;
-  activityName?: string;
-  queue?: string;
-  workerId?: string;
-  retryCount: number;
-  requeueCount: number;
-  queueLatencyMs?: number;
-  executionLatencyMs?: number;
-  heartbeatAgeMs?: number;
-  lastRequeueReason?: 'visibility-timeout' | 'worker-disconnect';
-  resolutionReason?: string;
-  evidence: string[];
-}
-
-export interface TaskDiagnosticsSummary {
-  stuckQueued: number;
-  staleInflight: number;
-  retryStorms: number;
-  allWorkersAtCapacity: number;
-}
-
-export interface TaskDiagnosticsResponse {
-  items: TaskDiagnosticItem[];
-  summary: TaskDiagnosticsSummary;
-  limit: number;
-}
-
-export interface TaskDiagnosticsFilter {
-  operationId?: string;
-  workflowId?: string;
-  queue?: string;
-  staleQueuedAfterMs?: number;
-  staleHeartbeatAfterMs?: number;
-  retryStormMinimumAttempts?: number;
-  limit?: number;
-}
+  WorkflowTypeRetentionPolicy,
+} from './api-client-types.ts';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -437,10 +267,148 @@ export class ApiClient {
   async checkHealth(): Promise<{ status: string }> {
     return request<{ status: string }>('/health');
   }
-
   /** Get retention policies and next sweep timing for the dashboard. */
   async getRetentionOverview(): Promise<RetentionOverview> {
     return request<RetentionOverview>('/retention');
+  }
+  /** Preview matching workflows before bulk cancellation. */
+  async previewBulkCancelWorkflows(
+    filter: BulkWorkflowFilter,
+    requestId?: string,
+  ): Promise<BulkOperationDryRunResult> {
+    return request<BulkOperationDryRunResult>('/workflows/bulk/cancel', {
+      method: 'POST',
+      body: JSON.stringify({
+        filter,
+        dryRun: true,
+        ...(requestId === undefined ? {} : { requestId }),
+      }),
+    });
+  }
+
+  /** Commit bulk cancellation with a confirmation token from a preview. */
+  async commitBulkCancelWorkflows(
+    filter: BulkWorkflowFilter,
+    confirmationToken: string,
+    requestId?: string,
+  ): Promise<BulkCancelResult> {
+    return request<BulkCancelResult>('/workflows/bulk/cancel', {
+      method: 'POST',
+      body: JSON.stringify({
+        filter,
+        confirmationToken,
+        ...(requestId === undefined ? {} : { requestId }),
+      }),
+    });
+  }
+
+  /** Preview matching terminal workflows before bulk deletion. */
+  async previewBulkDeleteWorkflows(
+    filter: BulkWorkflowFilter,
+    requestId?: string,
+  ): Promise<BulkOperationDryRunResult> {
+    return request<BulkOperationDryRunResult>('/workflows/bulk', {
+      method: 'DELETE',
+      body: JSON.stringify({
+        filter,
+        dryRun: true,
+        ...(requestId === undefined ? {} : { requestId }),
+      }),
+    });
+  }
+
+  /** Commit bulk deletion with a confirmation token from a preview. */
+  async commitBulkDeleteWorkflows(
+    filter: BulkWorkflowFilter,
+    confirmationToken: string,
+    requestId?: string,
+  ): Promise<BulkDeleteResult> {
+    return request<BulkDeleteResult>('/workflows/bulk', {
+      method: 'DELETE',
+      body: JSON.stringify({
+        filter,
+        confirmationToken,
+        ...(requestId === undefined ? {} : { requestId }),
+      }),
+    });
+  }
+
+  /** Preview matching workflows before sending a signal in bulk. */
+  async previewBulkSignalWorkflows(
+    filter: BulkWorkflowFilter,
+    name: string,
+    payload?: unknown,
+    requestId?: string,
+  ): Promise<BulkOperationDryRunResult> {
+    return request<BulkOperationDryRunResult>('/workflows/bulk/signal', {
+      method: 'POST',
+      body: JSON.stringify({
+        filter,
+        name,
+        ...(payload === undefined ? {} : { payload }),
+        dryRun: true,
+        ...(requestId === undefined ? {} : { requestId }),
+      }),
+    });
+  }
+
+  /** Commit a bulk signal with a confirmation token from a preview. */
+  async commitBulkSignalWorkflows(
+    filter: BulkWorkflowFilter,
+    name: string,
+    payload: unknown = undefined,
+    confirmationToken: string,
+    requestId?: string,
+  ): Promise<BulkSignalResult> {
+    return request<BulkSignalResult>('/workflows/bulk/signal', {
+      method: 'POST',
+      body: JSON.stringify({
+        filter,
+        name,
+        ...(payload === undefined ? {} : { payload }),
+        confirmationToken,
+        ...(requestId === undefined ? {} : { requestId }),
+      }),
+    });
+  }
+
+  /** Preview matching workflows before adding or removing tags in bulk. */
+  async previewBulkTagWorkflows(
+    filter: BulkWorkflowFilter,
+    tags: string[],
+    operation: BulkTagMutationOperation,
+    requestId?: string,
+  ): Promise<BulkOperationDryRunResult> {
+    return request<BulkOperationDryRunResult>('/workflows/bulk/tags', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        filter,
+        tags,
+        operation,
+        dryRun: true,
+        ...(requestId === undefined ? {} : { requestId }),
+      }),
+    });
+  }
+
+  /** Commit a bulk tag mutation with a confirmation token from a preview. */
+  async commitBulkTagWorkflows(
+    filter: BulkWorkflowFilter,
+    tags: string[],
+    operation: BulkTagMutationOperation,
+    confirmationToken: string,
+    requestId?: string,
+  ): Promise<BulkTagResult> {
+    return request<BulkTagResult>('/workflows/bulk/tags', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        filter,
+        tags,
+        operation,
+        confirmationToken,
+        ...(requestId === undefined ? {} : { requestId }),
+      }),
+    });
   }
 
   /** List connected workers with capacity, heartbeat, and routing policy. */

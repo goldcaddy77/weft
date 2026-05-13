@@ -11,6 +11,7 @@ import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
 import type { OperationFault } from '../operation-fault.ts';
+import { principalFromApiKey } from '../principal.ts';
 import {
   bulkSignalWorkflowsOperation,
   bulkSignalWorkflowsRestBinding,
@@ -58,6 +59,20 @@ function request(body?: unknown): Request {
 const registry = createOperationRegistry([bulkSignalWorkflowsOperation]);
 const bindings = [bulkSignalWorkflowsRestBinding];
 
+function bulkAdminHandlerOptions(customRegistry = registry) {
+  return {
+    operationRegistry: customRegistry,
+    restBindings: bindings,
+    authContext: {
+      method: 'api-key' as const,
+      principal: principalFromApiKey({
+        subject: 'bulk-admin-operator',
+        scopes: ['workflows:admin'],
+      }),
+    },
+  };
+}
+
 describe('weft.workflows.bulk.signal', () => {
   it('returns signal counts and signals matching workflows', async () => {
     const engine = createEngine();
@@ -81,19 +96,58 @@ describe('weft.workflows.bulk.signal', () => {
       waitForStatus(engine, otherHandle.id, 'running'),
     ]);
 
+    const previewResponse = await handleRequest(
+      request({
+        filter: { tags: ['selected'] },
+        name: 'continue',
+        payload: 'released',
+        dryRun: true,
+        requestId: 'bulk-signal-request',
+      }),
+      engine,
+      bulkAdminHandlerOptions(),
+    );
+
+    expect(previewResponse.status).toBe(200);
+    const preview = await previewResponse.json();
+    expect(preview).toEqual(
+      expect.objectContaining({
+        dryRun: true,
+        action: 'signal',
+        matched: 2,
+        requestId: 'bulk-signal-request',
+        confirmationToken: expect.stringMatching(/^bulk:/),
+      }),
+    );
+    const firstPreviewedWorkflow = await engine.get(firstHandle.id);
+    const secondPreviewedWorkflow = await engine.get(secondHandle.id);
+    expect(firstPreviewedWorkflow?.status).toBe('running');
+    expect(secondPreviewedWorkflow?.status).toBe('running');
+
     const response = await handleRequest(
       request({
         filter: { tags: ['selected'] },
         name: 'continue',
         payload: 'released',
+        confirmationToken: preview.confirmationToken,
+        requestId: 'bulk-signal-request',
       }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      bulkAdminHandlerOptions(),
     );
 
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('application/json');
-    expect(await response.json()).toEqual({ signalled: 2, failed: 0 });
+    expect(await response.json()).toEqual({
+      signalled: 2,
+      failed: 0,
+      auditEvent: expect.objectContaining({
+        type: 'bulk-operation:audit',
+        action: 'signal',
+        affectedCount: 2,
+        requestId: 'bulk-signal-request',
+      }),
+    });
     await expect(firstHandle.result()).resolves.toBe('first:released');
     await expect(secondHandle.result()).resolves.toBe('second:released');
     const untouchedState = await engine.get(otherHandle.id);
@@ -107,8 +161,7 @@ describe('weft.workflows.bulk.signal', () => {
     const engine = createEngine();
 
     const response = await handleRequest(request(['not-an-object']), engine, {
-      operationRegistry: registry,
-      restBindings: bindings,
+      ...bulkAdminHandlerOptions(),
     });
 
     expect(response.status).toBe(400);
@@ -120,8 +173,7 @@ describe('weft.workflows.bulk.signal', () => {
     const engine = createEngine();
 
     let response = await handleRequest(request({ filter: {}, name: 'continue' }), engine, {
-      operationRegistry: registry,
-      restBindings: bindings,
+      ...bulkAdminHandlerOptions(),
     });
 
     expect(response.status).toBe(400);
@@ -136,14 +188,29 @@ describe('weft.workflows.bulk.signal', () => {
       }),
       engine,
       {
-        operationRegistry: registry,
-        restBindings: bindings,
+        ...bulkAdminHandlerOptions(),
       },
     );
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
       error: 'Field "name" must be a non-empty string',
+    });
+
+    response = await handleRequest(
+      request({
+        filter: { tags: ['selected'] },
+        name: 'continue',
+      }),
+      engine,
+      {
+        ...bulkAdminHandlerOptions(),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'Field "confirmationToken" is required after a dry run',
     });
   });
 
@@ -169,8 +236,7 @@ describe('weft.workflows.bulk.signal', () => {
       }),
       engine,
       {
-        operationRegistry: failingRegistry,
-        restBindings: bindings,
+        ...bulkAdminHandlerOptions(failingRegistry),
       },
     );
 

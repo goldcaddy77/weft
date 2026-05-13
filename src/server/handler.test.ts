@@ -30,7 +30,10 @@ function apiKeyAuth() {
   return {
     authContext: {
       method: 'api-key' as const,
-      principal: principalFromApiKey({ subject: 'test', scopes: ['quota:read', 'workflows:read'] }),
+      principal: principalFromApiKey({
+        subject: 'test',
+        scopes: ['quota:read', 'workflows:read', 'workflows:admin'],
+      }),
     },
   };
 }
@@ -99,6 +102,14 @@ function request(method: string, path: string, body?: unknown): Request {
 
 async function json(response: Response): Promise<unknown> {
   return response.json();
+}
+
+function confirmationTokenFromPreview(preview: unknown): string {
+  const token = (preview as { confirmationToken?: unknown }).confirmationToken;
+  if (typeof token !== 'string') {
+    throw new Error('Expected bulk preview confirmation token');
+  }
+  return token;
 }
 
 // ---------------------------------------------------------------------------
@@ -1127,19 +1138,36 @@ describe('handleRequest', () => {
         waitForWorkflowStatus(engine, 'bulk-route-cancel-other', 'running'),
       ]);
 
+      const previewResponse = await handleRequest(
+        request('POST', '/v1/workflows/bulk/cancel', {
+          filter: { tags: ['bulk-route'] },
+          dryRun: true,
+          requestId: 'bulk-route-cancel',
+        }),
+        engine,
+        apiKeyAuth(),
+      );
+      expect(previewResponse.status).toBe(200);
+      const preview = await json(previewResponse);
+
       const response = await handleRequest(
         request('POST', '/v1/workflows/bulk/cancel', {
           filter: { tags: ['bulk-route'] },
+          confirmationToken: confirmationTokenFromPreview(preview),
+          requestId: 'bulk-route-cancel',
         }),
         engine,
+        apiKeyAuth(),
       );
-
       expect(response.status).toBe(200);
-      expect(await json(response)).toEqual({
-        cancelled: 2,
-        failed: 0,
-        errors: [],
-      });
+      expect(await json(response)).toEqual(
+        expect.objectContaining({
+          cancelled: 2,
+          failed: 0,
+          errors: [],
+          auditEvent: expect.objectContaining({ requestId: 'bulk-route-cancel' }),
+        }),
+      );
       const firstCancelledState = await engine.get('bulk-route-cancel-a');
       const secondCancelledState = await engine.get('bulk-route-cancel-b');
       const untouchedState = await engine.get('bulk-route-cancel-other');
@@ -1173,17 +1201,39 @@ describe('handleRequest', () => {
         waitForWorkflowStatus(engine, untouchedHandle.id, 'running'),
       ]);
 
+      const previewResponse = await handleRequest(
+        request('POST', '/v1/workflows/bulk/signal', {
+          filter: { tags: ['bulk-route-signal'] },
+          name: 'continue',
+          payload: 'released',
+          dryRun: true,
+          requestId: 'bulk-route-signal',
+        }),
+        engine,
+        apiKeyAuth(),
+      );
+      expect(previewResponse.status).toBe(200);
+      const preview = await json(previewResponse);
+
       const response = await handleRequest(
         request('POST', '/v1/workflows/bulk/signal', {
           filter: { tags: ['bulk-route-signal'] },
           name: 'continue',
           payload: 'released',
+          confirmationToken: confirmationTokenFromPreview(preview),
+          requestId: 'bulk-route-signal',
         }),
         engine,
+        apiKeyAuth(),
       );
-
       expect(response.status).toBe(200);
-      expect(await json(response)).toEqual({ signalled: 2, failed: 0 });
+      expect(await json(response)).toEqual(
+        expect.objectContaining({
+          signalled: 2,
+          failed: 0,
+          auditEvent: expect.objectContaining({ requestId: 'bulk-route-signal' }),
+        }),
+      );
       await expect(firstHandle.result()).resolves.toBe('first:released');
       await expect(secondHandle.result()).resolves.toBe('second:released');
       const untouchedState = await engine.get(untouchedHandle.id);
@@ -1212,8 +1262,10 @@ describe('handleRequest', () => {
       const response = await handleRequest(
         request('DELETE', '/v1/workflows/bulk', {
           filter: { tags: ['bulk-route-delete'] },
+          dryRun: true,
         }),
         engine,
+        apiKeyAuth(),
       );
 
       expect(response.status).toBe(422);
@@ -1240,15 +1292,34 @@ describe('handleRequest', () => {
       await firstHandle.result();
       await secondHandle.result();
 
+      const previewResponse = await handleRequest(
+        request('DELETE', '/v1/workflows/bulk', {
+          filter: { tags: ['bulk-route-delete-only'] },
+          dryRun: true,
+          requestId: 'bulk-route-delete',
+        }),
+        engine,
+        apiKeyAuth(),
+      );
+      expect(previewResponse.status).toBe(200);
+      const preview = await json(previewResponse);
+
       const response = await handleRequest(
         request('DELETE', '/v1/workflows/bulk', {
           filter: { tags: ['bulk-route-delete-only'] },
+          confirmationToken: confirmationTokenFromPreview(preview),
+          requestId: 'bulk-route-delete',
         }),
         engine,
+        apiKeyAuth(),
       );
-
       expect(response.status).toBe(200);
-      expect(await json(response)).toEqual({ deleted: 2 });
+      expect(await json(response)).toEqual(
+        expect.objectContaining({
+          deleted: 2,
+          auditEvent: expect.objectContaining({ requestId: 'bulk-route-delete' }),
+        }),
+      );
       expect(await engine.get('bulk-route-delete-a')).toBeNull();
       expect(await engine.get('bulk-route-delete-b')).toBeNull();
     });
@@ -1267,31 +1338,73 @@ describe('handleRequest', () => {
       await firstHandle.result();
       await secondHandle.result();
 
+      const addPreviewResponse = await handleRequest(
+        request('PATCH', '/v1/workflows/bulk/tags', {
+          filter: { tags: ['selected'] },
+          tags: ['bulk'],
+          operation: 'add',
+          dryRun: true,
+          requestId: 'bulk-route-tags-add',
+        }),
+        engine,
+        apiKeyAuth(),
+      );
+      expect(addPreviewResponse.status).toBe(200);
+      const addPreview = await json(addPreviewResponse);
+
       const addResponse = await handleRequest(
         request('PATCH', '/v1/workflows/bulk/tags', {
           filter: { tags: ['selected'] },
           tags: ['bulk'],
           operation: 'add',
+          confirmationToken: confirmationTokenFromPreview(addPreview),
+          requestId: 'bulk-route-tags-add',
         }),
         engine,
+        apiKeyAuth(),
       );
-
       expect(addResponse.status).toBe(200);
-      expect(await json(addResponse)).toEqual({ modified: 2 });
+      expect(await json(addResponse)).toEqual(
+        expect.objectContaining({
+          modified: 2,
+          auditEvent: expect.objectContaining({ requestId: 'bulk-route-tags-add' }),
+        }),
+      );
       const addedTagsState = await engine.get('bulk-route-tags-a');
       expect(addedTagsState?.tags).toEqual(['bulk', 'selected']);
+
+      const removePreviewResponse = await handleRequest(
+        request('PATCH', '/v1/workflows/bulk/tags', {
+          filter: { tags: ['bulk'] },
+          tags: ['selected'],
+          operation: 'remove',
+          dryRun: true,
+          requestId: 'bulk-route-tags-remove',
+        }),
+        engine,
+        apiKeyAuth(),
+      );
+      expect(removePreviewResponse.status).toBe(200);
+      const removePreview = await json(removePreviewResponse);
 
       const removeResponse = await handleRequest(
         request('PATCH', '/v1/workflows/bulk/tags', {
           filter: { tags: ['bulk'] },
           tags: ['selected'],
           operation: 'remove',
+          confirmationToken: confirmationTokenFromPreview(removePreview),
+          requestId: 'bulk-route-tags-remove',
         }),
         engine,
+        apiKeyAuth(),
       );
-
       expect(removeResponse.status).toBe(200);
-      expect(await json(removeResponse)).toEqual({ modified: 2 });
+      expect(await json(removeResponse)).toEqual(
+        expect.objectContaining({
+          modified: 2,
+          auditEvent: expect.objectContaining({ requestId: 'bulk-route-tags-remove' }),
+        }),
+      );
       const firstRemovedTagsState = await engine.get('bulk-route-tags-a');
       const secondRemovedTagsState = await engine.get('bulk-route-tags-b');
       expect(firstRemovedTagsState?.tags).toEqual(['bulk']);
@@ -1308,6 +1421,7 @@ describe('handleRequest', () => {
           operation: 'rename',
         }),
         engine,
+        apiKeyAuth(),
       );
 
       expect(response.status).toBe(400);
@@ -1322,6 +1436,7 @@ describe('handleRequest', () => {
       const missingFilterResponse = await handleRequest(
         request('POST', '/v1/workflows/bulk/cancel', {}),
         engine,
+        apiKeyAuth(),
       );
 
       expect(missingFilterResponse.status).toBe(400);
@@ -1334,6 +1449,7 @@ describe('handleRequest', () => {
           filter: { tags: [] },
         }),
         engine,
+        apiKeyAuth(),
       );
 
       expect(emptyTagsResponse.status).toBe(400);
@@ -1346,6 +1462,7 @@ describe('handleRequest', () => {
           filter: { attributes: [] },
         }),
         engine,
+        apiKeyAuth(),
       );
 
       expect(emptyAttributesResponse.status).toBe(400);
@@ -1358,6 +1475,7 @@ describe('handleRequest', () => {
           filter: { attributes: [{ key: '   ' }] },
         }),
         engine,
+        apiKeyAuth(),
       );
 
       expect(blankAttributeKeyResponse.status).toBe(400);
