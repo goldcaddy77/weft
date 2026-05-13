@@ -1,4 +1,8 @@
 import { Engine } from '../core/engine.ts';
+import {
+  runtimeWorkflowEngine,
+  type RuntimeWorkflowEngine,
+} from '../core/runtime-workflow-engine.ts';
 import type { StepWorkflowContext } from '../core/types.ts';
 import type { MemorySample } from '../diagnostics/memory-profiler.ts';
 import { MemoryProfiler, linearRegression } from '../diagnostics/memory-profiler.ts';
@@ -70,7 +74,7 @@ function loadConfiguration(argv: string[]): BenchmarkConfiguration {
 }
 
 async function completeWorkflowBatch(
-  engine: Engine,
+  engine: RuntimeWorkflowEngine,
   workflowStartIndex: number,
   workflowBatchSize: number,
 ): Promise<void> {
@@ -84,7 +88,7 @@ async function completeWorkflowBatch(
   await Promise.all(handles.map((handle) => handle.result()));
 }
 
-async function runWarmup(engine: Engine): Promise<void> {
+async function runWarmup(engine: RuntimeWorkflowEngine): Promise<void> {
   for (
     let workflowStartIndex = 0;
     workflowStartIndex < DEFAULT_WARMUP_WORKFLOWS;
@@ -161,7 +165,7 @@ function calculateRssGrowthRatePerSecond(samples: MemorySample[]): number {
 }
 
 async function runSustainedLoad(
-  engine: Engine,
+  engine: RuntimeWorkflowEngine,
   profiler: MemoryProfiler,
   durationMilliseconds: number,
   targetWorkflowsPerSecond: number,
@@ -209,17 +213,19 @@ export async function measureLoadGrowthMemory(
   configuration: BenchmarkConfiguration,
 ): Promise<LoadGrowthMemoryMeasurement> {
   const storage = new BunSQLiteStorage(':memory:');
-  const engine = new Engine({
-    storage,
-    retention: {
-      cancelled: DEFAULT_RETENTION_DURATION_MILLISECONDS,
-      completed: DEFAULT_RETENTION_DURATION_MILLISECONDS,
-      failed: DEFAULT_RETENTION_DURATION_MILLISECONDS,
-      timedOut: DEFAULT_RETENTION_DURATION_MILLISECONDS,
-    },
-    retentionSweepBatchSize: DEFAULT_RETENTION_SWEEP_BATCH_SIZE,
-    retentionSweepInterval: DEFAULT_RETENTION_SWEEP_INTERVAL,
-  });
+  const engine = runtimeWorkflowEngine(
+    new Engine({
+      storage,
+      retention: {
+        cancelled: DEFAULT_RETENTION_DURATION_MILLISECONDS,
+        completed: DEFAULT_RETENTION_DURATION_MILLISECONDS,
+        failed: DEFAULT_RETENTION_DURATION_MILLISECONDS,
+        timedOut: DEFAULT_RETENTION_DURATION_MILLISECONDS,
+      },
+      retentionSweepBatchSize: DEFAULT_RETENTION_SWEEP_BATCH_SIZE,
+      retentionSweepInterval: DEFAULT_RETENTION_SWEEP_INTERVAL,
+    }),
+  );
 
   try {
     engine.register('noop', async (_context: StepWorkflowContext, input: unknown) => {

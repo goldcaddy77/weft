@@ -23,8 +23,6 @@ import {
   DEFAULT_RETENTION_SWEEP_INTERVAL_MS,
   messageName,
   type ActivityContext,
-  type ActivityTypes,
-  type AllowsDynamicWorkflowNames,
   type AnyActivityDefinition,
   type AnyWorkflowDefinition,
   type AttributeFilterKey,
@@ -40,6 +38,7 @@ import {
   type CheckpointState,
   type CheckpointSummary,
   type CoordinatedUpdateResult,
+  type DefaultActivityTypes,
   type DefaultWorkflowRegistry,
   type EngineOptions,
   type ForkOptions,
@@ -47,6 +46,8 @@ import {
   type InferActivityEntry,
   type InferWorkflowEntries,
   type InferWorkflowEntry,
+  type IsDefaultActivityTypes,
+  type IsDefaultWorkflowRegistry,
   type ListFilter,
   type ListOptions,
   type MessageName,
@@ -70,7 +71,6 @@ import {
   type SubmitReviewOptions,
   type TenantQuotaUsage,
   type TypedListFilter,
-  type UnregisteredName,
   type UpdateDefinition,
   type WorkerOutboundMessage,
   type WorkflowEvent,
@@ -84,6 +84,7 @@ import {
   type WorkflowTimelineEntry,
 } from '../types.ts';
 import type { TimerEntry } from '../types/checkpoint.ts';
+import type { UnknownNameWhenRegistryHasNoKnownNames } from '../types/registry-type-helpers.ts';
 import { UpdateCoordinator } from '../updates.ts';
 import { WorkerExecutionStrategy } from '../worker-execution-strategy.ts';
 import {
@@ -315,6 +316,7 @@ export type EngineCreateOptions<
 };
 
 type KnownWorkflowNames<TWorkflows extends object> = Extract<keyof TWorkflows, string>;
+type KnownActivityNames<TActivities extends object> = Extract<keyof TActivities, string>;
 declare const emptyWorkflowDefinitions: unique symbol;
 declare const emptyActivityDefinitions: unique symbol;
 type EmptyWorkflowDefinitions = Record<string, never> & {
@@ -330,9 +332,20 @@ type EngineCreateRuntimeOptions = EngineConstructorOptions & {
   acknowledgeUnknownWorkflowTypes?: boolean;
 };
 
-type DynamicWorkflowName<TWorkflows extends object, TName extends string> =
-  AllowsDynamicWorkflowNames<TWorkflows> extends true
-    ? UnregisteredName<TName, KnownWorkflowNames<TWorkflows>>
+type UnknownWorkflowNameWhenDefaultRegistryIsEmpty<
+  TWorkflows extends object,
+  TName extends string,
+> =
+  IsDefaultWorkflowRegistry<TWorkflows> extends true
+    ? UnknownNameWhenRegistryHasNoKnownNames<TName, KnownWorkflowNames<TWorkflows>>
+    : never;
+
+type UnknownActivityNameWhenDefaultRegistryIsEmpty<
+  TActivities extends object,
+  TName extends string,
+> =
+  IsDefaultActivityTypes<TActivities> extends true
+    ? UnknownNameWhenRegistryHasNoKnownNames<TName, KnownActivityNames<TActivities>>
     : never;
 
 function definitionEntries<TDefinition extends object>(
@@ -522,7 +535,7 @@ export const ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING = Symbol('engineSignalWaiter
  */
 export class Engine<
   TWorkflows extends object = DefaultWorkflowRegistry,
-  TActivities extends object = ActivityTypes,
+  TActivities extends object = DefaultActivityTypes,
 >
   extends EventTarget
   implements Disposable, AsyncDisposable
@@ -869,11 +882,11 @@ export class Engine<
     >,
   ): void;
   register<TName extends string, TInput = unknown, TOutput = unknown>(
-    name: UnregisteredName<TName, KnownWorkflowNames<TWorkflows>>,
+    name: UnknownWorkflowNameWhenDefaultRegistryIsEmpty<TWorkflows, TName>,
     handler: WorkflowFunction<TInput, TOutput> | StepWorkflowFunction<TInput, TOutput>,
   ): void;
   register<TName extends string, TInput = unknown, TOutput = unknown>(
-    name: UnregisteredName<TName, KnownWorkflowNames<TWorkflows>>,
+    name: UnknownWorkflowNameWhenDefaultRegistryIsEmpty<TWorkflows, TName>,
     registration: WorkflowRegistration<TInput, TOutput>,
   ): void;
   register<TDefinition extends AnyWorkflowDefinition>(definition: TDefinition): void;
@@ -900,18 +913,18 @@ export class Engine<
     getInternals(this).activityRegistry.register(definition.name, definition);
   }
 
-  registerActivity<TName extends Extract<keyof TActivities, string>>(
+  registerActivity<TName extends KnownActivityNames<TActivities>>(
     name: TName,
     fn: RegisteredActivityFunction<TActivities, TName>,
     options?: ActivityRegistrationOptions,
   ): void;
   registerActivity<TName extends string, TResult>(
-    name: UnregisteredName<TName, Extract<keyof TActivities, string>>,
+    name: UnknownActivityNameWhenDefaultRegistryIsEmpty<TActivities, TName>,
     fn: () => TResult | Promise<TResult>,
     options?: ActivityRegistrationOptions,
   ): void;
   registerActivity<TName extends string, TInput, TResult>(
-    name: UnregisteredName<TName, Extract<keyof TActivities, string>>,
+    name: UnknownActivityNameWhenDefaultRegistryIsEmpty<TActivities, TName>,
     fn: (input: TInput, context?: ActivityContext) => TResult | Promise<TResult>,
     options?: ActivityRegistrationOptions,
   ): void;
@@ -939,7 +952,7 @@ export class Engine<
     options?: StartOptions,
   ): Promise<WorkflowHandle<WorkflowOutput<TWorkflows, TName>>>;
   async start<TName extends string>(
-    type: DynamicWorkflowName<TWorkflows, TName>,
+    type: UnknownWorkflowNameWhenDefaultRegistryIsEmpty<TWorkflows, TName>,
     input: unknown,
     options?: StartOptions,
   ): Promise<WorkflowHandle>;

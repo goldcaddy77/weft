@@ -1,4 +1,5 @@
 import { Engine } from '../core/engine.ts';
+import { runtimeWorkflowEngine } from '../core/runtime-workflow-engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 
@@ -27,7 +28,7 @@ async function measureWorkflowStartAdmissions(
   warmupStarts: number,
 ): Promise<WorkflowStartAdmissionMeasurement> {
   const storage = new BunSQLiteStorage(':memory:');
-  const engine = new Engine({ storage });
+  const engine = runtimeWorkflowEngine(new Engine({ storage }));
 
   try {
     // The benchmark needs the minimal immediately-completing workflow shape.

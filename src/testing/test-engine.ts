@@ -9,6 +9,7 @@
  */
 
 import { Engine } from '../core/engine.ts';
+import { runtimeWorkflowEngine } from '../core/runtime-workflow-engine.ts';
 import { parseDuration } from '../core/scheduler.ts';
 import type { Duration } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -302,7 +303,7 @@ export class TestEngine extends Engine {
       try {
         // Use a unique ID per run to keep workflow state isolated.
         const runId = `runN-${type}-${i}-${Date.now()}`;
-        const handle = await this.start(type, input, { id: runId });
+        const handle = await runtimeWorkflowEngine(this).start(type, input, { id: runId });
         const output = await handle.result();
         passes++;
         successOutputs.push(output);

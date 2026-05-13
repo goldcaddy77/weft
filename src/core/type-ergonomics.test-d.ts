@@ -83,6 +83,8 @@ engine.register('welcome', async function* (ctx: WorkflowContext, input: Welcome
   const greeting = yield* ctx.run('formatGreeting', { name: input.name });
   // @ts-expect-error string-name activities must match their augmented input type.
   yield* ctx.run('formatGreeting', { id: 'wrong' });
+  // @ts-expect-error string-name activities must be present in the augmented registry.
+  yield* ctx.run('runtimeFormatGreeting', { name: input.name });
   const signalPayload = yield* ctx.waitForSignal<{ approved: boolean }>('approval');
   const typedSignalPayload: { approved: boolean } = yield* ctx.waitForSignal(approvalSignal);
   const updatePayload = yield* ctx.waitForUpdate<{ suffix: string }>('rename');
@@ -141,6 +143,11 @@ engine.registerActivity('formatGreeting', async (input: FormatGreetingInput) => 
 // @ts-expect-error registered activities must match their augmented input type.
 engine.registerActivity('formatGreeting', async (input: { id: string }) => input.id);
 
+// @ts-expect-error registered activity names must be present in the augmented registry.
+engine.registerActivity('runtimeFormatGreeting', async (input: FormatGreetingInput) => {
+  return `Hello, ${input.name}`;
+});
+
 async function verifyHandleTyping(): Promise<void> {
   const handle = await engine.start('welcome', { name: 'Steve' });
   const typedHandle: WorkflowHandle<WelcomeOutput> = handle;
@@ -153,9 +160,10 @@ void verifyHandleTyping;
 // @ts-expect-error start input must match the augmented workflow input type.
 void engine.start('welcome', { id: 'wrong' });
 
-// Dynamic workflow names remain available for runtime-discovered workflows.
+// @ts-expect-error workflow names must be present in the augmented registry.
 void engine.start('runtime-discovered', { id: 'dynamic' });
 
+// @ts-expect-error workflow registration names must be present in the augmented registry.
 engine.register('runtime-discovered', async () => {
   return 'dynamic';
 });
@@ -200,6 +208,17 @@ const zeroInputActivity = activity({
   execute: async () => 'pong',
 });
 
+const explicitEmptyEngine = new Engine<{}, {}>();
+// @ts-expect-error explicit empty workflow registries reject unknown workflow starts.
+void explicitEmptyEngine.start('notRegistered', null);
+// @ts-expect-error explicit empty workflow registries reject name-based workflow registration.
+explicitEmptyEngine.register('notRegistered', async function* () {
+  yield;
+  return 'not registered';
+});
+// @ts-expect-error explicit empty activity registries reject name-based activity registration.
+explicitEmptyEngine.registerActivity('notRegisteredActivity', async () => 'not registered');
+
 const strictLocalEngine = new Engine<{}, {}>()
   .withWorkflow(localGreet)
   .withWorkflow(concreteWorkflow)
@@ -222,12 +241,11 @@ void zeroInputCallable();
 void zeroInputCallable('unexpected');
 
 async function verifyEngineCreateInference(): Promise<void> {
-  // No definition maps: the engine retains the same dynamic-name fallback as
-  // `new Engine()` — same module-augmented WorkflowRegistry / ActivityTypes,
-  // same legacy `start('any-name', ...)` overload. Engine.create is sugar
-  // over the constructor; without explicit definition maps the type contract
-  // does not narrow.
+  // No definition maps: the engine uses the module-augmented
+  // WorkflowRegistry / ActivityTypes, without the old dynamic-name fallback.
   const neither = await Engine.create({ recover: false });
+  void neither.start('welcome', { name: 'Steve' });
+  // @ts-expect-error no definition maps means only module-augmented workflows are available.
   void neither.start('localGreet', 'Steve');
 
   // workflows-only narrows TWorkflows to the inferred map keys; activities
@@ -240,12 +258,15 @@ async function verifyEngineCreateInference(): Promise<void> {
   // @ts-expect-error workflow names not in the map are rejected.
   void workflowsOnly.start('missingFromWorkflowMap', 'Steve');
 
-  // activities-only mirrors workflows-only: TWorkflows keeps the fallback,
+  // activities-only mirrors workflows-only: TWorkflows keeps the
+  // module-augmented registry,
   // TActivities narrows to the inferred map.
   const activitiesOnly = await Engine.create({
     activities: { sendEmail },
     recover: false,
   });
+  void activitiesOnly.start('welcome', { name: 'Steve' });
+  // @ts-expect-error activity maps do not add workflow names.
   void activitiesOnly.start('localGreet', 'Steve');
 
   const both = await Engine.create({
@@ -260,17 +281,12 @@ async function verifyEngineCreateInference(): Promise<void> {
   void both.start('missingFromBothMap', 'Steve');
 
   // Regression guard for the recover-then-register pattern that
-  // `Engine.create({ storage, recover: false })` is documented to support.
-  // If a future change collapses the no-maps overload to a strict-empty
-  // registry, `engine.register(...)` followed by `engine.start(name, ...)`
-  // will fail to compile because the dynamic-name overloads resolve to
-  // `never`.
+  // `Engine.create({ storage, recover: false })` is documented to support:
+  // deferred names must flow through the explicit builder API so the typed
+  // view records the additional workflow before it is started.
   const deferredRegistration = await Engine.create({ recover: false });
-  deferredRegistration.register('deferredWorkflow', async function* () {
-    yield;
-    return 'ok';
-  });
-  void deferredRegistration.start('deferredWorkflow', null);
+  const deferredRegistrationWithWorkflow = deferredRegistration.withWorkflow(localGreet);
+  void deferredRegistrationWithWorkflow.start('localGreet', 'Steve');
 }
 void verifyEngineCreateInference;
 

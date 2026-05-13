@@ -62,26 +62,31 @@ export interface ActivityTypes {}
 
 export type WorkflowRegistryEntry = { input: unknown; output: unknown };
 
-declare const dynamicWorkflowRegistryFallback: unique symbol;
-
-type DynamicWorkflowRegistryFallback = {
-  readonly [dynamicWorkflowRegistryFallback]: true;
-};
+declare const defaultWorkflowRegistry: unique symbol;
+declare const defaultActivityTypes: unique symbol;
 
 /**
  * Default workflow registry carried by `new Engine()` when no local registry
  * type parameters are supplied. It preserves module-augmented workflow names
- * and the legacy dynamic-name fallback.
+ * without adding a hidden dynamic-name fallback.
  */
-export type DefaultWorkflowRegistry = WorkflowRegistry & DynamicWorkflowRegistryFallback;
+export type DefaultWorkflowRegistry = WorkflowRegistry & {
+  readonly [defaultWorkflowRegistry]: true;
+};
 
 /**
- * Resolve whether an engine registry type should keep the legacy dynamic
- * workflow-name overloads. `new Engine<{}, {}>()` omits the marker and becomes
- * strict after builder registration.
+ * Default activity registry carried by `new Engine()` when no local activity
+ * type parameter is supplied.
  */
-export type AllowsDynamicWorkflowNames<TRegistry extends object> =
-  TRegistry extends DynamicWorkflowRegistryFallback ? true : false;
+export type DefaultActivityTypes = ActivityTypes & {
+  readonly [defaultActivityTypes]: true;
+};
+
+export type IsDefaultWorkflowRegistry<TRegistry extends object> =
+  TRegistry extends DefaultWorkflowRegistry ? true : false;
+
+export type IsDefaultActivityTypes<TActivities extends object> =
+  TActivities extends DefaultActivityTypes ? true : false;
 
 /**
  * Broad workflow-definition constraint used by {@link Engine.create} and the
@@ -176,9 +181,6 @@ export type RegisteredActivityFunction<
       ? (input: TInput) => TResult
       : never
   : never;
-
-export type UnregisteredName<TName extends string, TKnownNames extends string> = TName &
-  (TName extends TKnownNames ? never : unknown);
 
 type UnionToIntersection<TUnion> = (
   TUnion extends unknown ? (value: TUnion) => void : never

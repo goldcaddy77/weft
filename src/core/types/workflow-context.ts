@@ -9,6 +9,7 @@ import type { TenantContext } from '../tenant.ts';
 import type { ActivityCallable, ActivityCallOptions } from './activity.ts';
 import type { WorkflowId } from './identity.ts';
 import type { QueryDefinition, SignalDefinition, UpdateDefinition } from './message-handles.ts';
+import type { UnknownNameWhenRegistryHasNoKnownNames } from './registry-type-helpers.ts';
 import type { Duration } from './retry-retention.ts';
 import type { SearchAttributeHandle, SearchAttributeValue } from './search-attributes.ts';
 import type { WorkflowStateNamespace } from './state.ts';
@@ -22,12 +23,10 @@ import type {
   WorkflowReduceInput,
   WorkflowReduceOptions,
 } from './workflow-function.ts';
-import type {
-  ActivityArguments,
-  ActivityResult,
-  ActivityTypes,
-  UnregisteredName,
-} from './workflow-registries.ts';
+import type { ActivityArguments, ActivityResult, ActivityTypes } from './workflow-registries.ts';
+
+type UnknownActivityNameWhenRegistryIsEmpty<TName extends string> =
+  UnknownNameWhenRegistryHasNoKnownNames<TName, Extract<keyof ActivityTypes, string>>;
 
 /**
  * The durable workflow authoring surface passed to every
@@ -84,7 +83,7 @@ export interface WorkflowContext {
     ...rest: [...ActivityArguments<ActivityTypes, TName>, ActivityCallOptions]
   ): WorkflowOperation<ActivityResult<ActivityTypes, TName>>;
   run<TName extends string>(
-    name: UnregisteredName<TName, Extract<keyof ActivityTypes, string>>,
+    name: UnknownActivityNameWhenRegistryIsEmpty<TName>,
     input?: unknown,
     options?: ActivityCallOptions,
   ): WorkflowOperation<unknown>;

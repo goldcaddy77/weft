@@ -1,10 +1,10 @@
 import { z } from 'zod';
 
-import type { Engine } from '../../core/engine.ts';
 import {
   WorkflowAlreadyExistsError,
   WorkflowNotRegisteredError,
 } from '../../core/engine/errors.ts';
+import { runtimeWorkflowEngine } from '../../core/runtime-workflow-engine.ts';
 import {
   assertExclusiveStartWorkflowOptions,
   coerceStartWorkflowDuration,
@@ -54,7 +54,7 @@ export const startWorkflowOperation = defineOperation<StartWorkflowInput, StartW
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   // oxlint-disable-next-line complexity -- ID:server-operations-start-workflow-invoke-complexity
   invoke: async ({ input, engine }): Promise<StartWorkflowOutput> => {
-    const typedEngine = engine as Engine;
+    const typedEngine = runtimeWorkflowEngine(engine);
 
     // Validate `type` here so REST and JSON-RPC clients share one error path.
     if (typeof input.type !== 'string' || input.type.length === 0) {
