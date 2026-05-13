@@ -38,7 +38,7 @@ These items are still present in `reference/architecture.md` and are not complet
 
 Per the AI Surface Shrinkage decision, Weft does not ship a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) client. Weft's workflow surface is a separate concern: registered workflows can be exposed as durable MCP tools and resources to external MCP clients.
 
-- [ ] **Add MCP catalog discovery metadata.**
+- [x] **Add MCP catalog discovery metadata.**
 
   **Where:** extend the OpenRPC document with an `x-weft-mcp` extension and add a `/.well-known/mcp.json` route for the live MCP server.
 

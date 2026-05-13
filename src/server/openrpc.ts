@@ -25,10 +25,12 @@
 import { z } from 'zod';
 
 import { definitionSchemaToJsonSchema } from '../core/types/definition-schema-to-json.ts';
+import type { McpToolDefinition } from '../mcp/tools.ts';
 import { VERSION } from '../version.ts';
 import { isDiscoverable } from './discovery-filter.ts';
 import { applyDiscoveryInfo, type DiscoveryInfo } from './discovery-info.ts';
 import { asPlainObject, compareStrings } from './json-schema-utilities.ts';
+import { MCP_DISCOVERY_PATH, MCP_TOOLS_LIST_METHOD } from './mcp-discovery.ts';
 import { OpenRpcDocumentSchema } from './openrpc-document-schema.ts';
 import { buildOpenRpcComponentsErrors } from './openrpc-errors.ts';
 import {
@@ -54,6 +56,12 @@ export type OpenRpcOptions = {
   readonly discoveryInfo?: DiscoveryInfo;
   /** Optional server URL; emitted as a single-entry `servers` array. */
   readonly serverUrl?: string;
+  /**
+   * Live MCP `tools/list` output. Required when any listed operation is
+   * `mcpExposable`, because live MCP tool naming owns workflow-name collision
+   * handling.
+   */
+  readonly mcpTools?: ReadonlyArray<Pick<McpToolDefinition, 'name' | 'title'>>;
 };
 
 type ContentDescriptor = {
@@ -71,6 +79,20 @@ type OpenRpcMethod = {
   result: ContentDescriptor;
   errors?: Array<{ $ref: string }>;
   'x-weft-paramsSchema': Record<string, unknown>;
+  'x-weft-mcp'?: OpenRpcMcpMethodMetadata;
+};
+
+type OpenRpcMcpMethodMetadata = {
+  workflowType: string;
+  toolName: string;
+  toolDiscovery: {
+    method: typeof MCP_TOOLS_LIST_METHOD;
+    source: 'live';
+  };
+};
+
+type OpenRpcMcpToolReference = {
+  toolName: string;
 };
 
 /**
@@ -79,6 +101,7 @@ type OpenRpcMethod = {
  */
 export function generateOpenRpcDocument(options: OpenRpcOptions): Record<string, unknown> {
   const methods: OpenRpcMethod[] = [];
+  const mcpTools: OpenRpcMcpToolReference[] = [];
   let registryProvidesDiscover = false;
 
   for (const operation of options.registry.list()) {
@@ -90,7 +113,13 @@ export function generateOpenRpcDocument(options: OpenRpcOptions): Record<string,
       // emit duplicate method names.
       registryProvidesDiscover = true;
     }
-    methods.push(buildMethod(operation));
+    const method = buildMethod(operation);
+    if (operation.mcpExposable) {
+      const metadata = buildMethodMcpMetadata(operation, options.mcpTools);
+      method['x-weft-mcp'] = metadata;
+      mcpTools.push({ toolName: metadata.toolName });
+    }
+    methods.push(method);
   }
   if (!registryProvidesDiscover && options.transports.length > 0) {
     methods.push(buildDiscoverMethod());
@@ -103,6 +132,7 @@ export function generateOpenRpcDocument(options: OpenRpcOptions): Record<string,
     components: {
       errors: buildOpenRpcComponentsErrors(),
     },
+    'x-weft-mcp': buildDocumentMcpMetadata(mcpTools),
   };
   applyOpenRpcServer(document, options.serverUrl);
   return document;
@@ -127,6 +157,56 @@ function applyOpenRpcServer(
   if (serverUrl) {
     document['servers'] = [{ url: serverUrl }];
   }
+}
+
+function buildDocumentMcpMetadata(
+  tools: ReadonlyArray<OpenRpcMcpToolReference>,
+): Record<string, unknown> {
+  return {
+    discoveryPath: MCP_DISCOVERY_PATH,
+    toolDiscoveryMethod: MCP_TOOLS_LIST_METHOD,
+    toolNames: [...tools].map((tool) => tool.toolName).toSorted(compareStrings),
+  };
+}
+
+function buildMethodMcpMetadata(
+  operation: ErasedOperation,
+  mcpTools: OpenRpcOptions['mcpTools'],
+): OpenRpcMcpMethodMetadata {
+  const workflowType = operation.mcpTool?.workflowType;
+  if (workflowType === undefined) {
+    throw new Error(
+      `openrpc: operation ${operation.name} is mcpExposable but lacks mcpTool.workflowType metadata`,
+    );
+  }
+  const toolName = resolveLiveMcpToolName(operation.name, workflowType, mcpTools);
+  return {
+    workflowType,
+    toolName,
+    toolDiscovery: {
+      method: MCP_TOOLS_LIST_METHOD,
+      source: 'live',
+    },
+  };
+}
+
+function resolveLiveMcpToolName(
+  operationName: string,
+  workflowType: string,
+  mcpTools: OpenRpcOptions['mcpTools'],
+): string {
+  if (mcpTools === undefined) {
+    throw new Error(
+      `openrpc: operation ${operationName} is mcpExposable but no live MCP tools/list metadata was provided`,
+    );
+  }
+  const matches = mcpTools.filter((tool) => tool.title === workflowType);
+  if (matches.length !== 1) {
+    throw new Error(
+      `openrpc: operation ${operationName} maps to workflow "${workflowType}", but live MCP tools/list returned ${matches.length} matching tools`,
+    );
+  }
+  return matches[0]!.name;
 }
 
 function isOperationLiveOnJsonRpc(

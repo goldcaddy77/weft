@@ -33,6 +33,7 @@ export function generateApiCatalog(options: ApiCatalogOptions): LinksetDocument 
   const { origin } = options;
 
   const links: LinksetLink[] = [
+    { href: `${origin}/.well-known/mcp.json`, type: 'application/json' },
     { href: `${origin}/asyncapi.json`, type: 'application/asyncapi+json' },
     { href: `${origin}/openapi.json`, type: 'application/openapi+json' },
     { href: `${origin}/openrpc.json`, type: 'application/json' },
@@ -71,8 +72,9 @@ export type PublicOriginWarner = {
 };
 
 const PUBLIC_ORIGIN_WARNING_TEXT =
-  '[weft] /.well-known/api-catalog: `publicOrigin` is not configured. The ' +
-  'service-desc URLs will be derived from the incoming request, which is ' +
+  '[weft] discovery routes (`/.well-known/api-catalog`, `/.well-known/mcp.json`): ' +
+  '`publicOrigin` is not configured. Absolute discovery URLs will be derived from ' +
+  'the incoming request, which is ' +
   'safe for direct connections but vulnerable to Host-header poisoning ' +
   'when running behind a reverse proxy. Set `serve({ publicOrigin: ' +
   "'https://api.example.com' })` in production.";

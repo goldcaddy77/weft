@@ -170,6 +170,15 @@ describe('OpenAPI document generation', () => {
     >;
     expect(catalogUnavailableContent).toHaveProperty('application/json');
 
+    const mcpDiscoveryOperation = paths['/.well-known/mcp.json']!['get']!;
+    expect(mcpDiscoveryOperation['security']).toEqual([]);
+    const mcpDiscoveryResponses = mcpDiscoveryOperation['responses'] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const mcpDiscoveryContent = mcpDiscoveryResponses['200']!['content'] as Record<string, unknown>;
+    expect(mcpDiscoveryContent).toHaveProperty('application/json');
+
     const asyncApiOperation = paths['/asyncapi.json']!['get']!;
     expect(asyncApiOperation['security']).toEqual([]);
     const asyncApiResponses = asyncApiOperation['responses'] as Record<

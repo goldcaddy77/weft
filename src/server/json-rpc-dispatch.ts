@@ -16,6 +16,7 @@
  * appropriately.
  */
 
+import { listMcpTools } from '../mcp/tools.ts';
 import { faultToJsonRpcError } from './fault-to-json-rpc.ts';
 import { parseJsonRpcRequest, type ParsedBatchItem, type ParseResult } from './json-rpc-parse.ts';
 import {
@@ -151,9 +152,11 @@ async function dispatchOne(
 ): Promise<JsonRpcResponse> {
   const id: JsonRpcId = request.id ?? null;
   if (request.method === DISCOVER_METHOD_NAME) {
+    const mcpToolProvider = asMcpToolProvider(context.engine);
     const document = generateOpenRpcDocument({
       registry: context.registry,
       transports: ['http', 'websocket'],
+      ...(mcpToolProvider === null ? {} : { mcpTools: listMcpTools(mcpToolProvider) }),
     });
     return { jsonrpc: JSON_RPC_VERSION, result: document, id };
   }
@@ -172,4 +175,16 @@ async function dispatchOne(
     error: { code: error.code, message: error.message, data: error.data },
     id,
   };
+}
+
+function asMcpToolProvider(engine: unknown): Parameters<typeof listMcpTools>[0] | null {
+  if (
+    engine !== null &&
+    typeof engine === 'object' &&
+    'listWorkflowDefinitions' in engine &&
+    typeof engine.listWorkflowDefinitions === 'function'
+  ) {
+    return engine as Parameters<typeof listMcpTools>[0];
+  }
+  return null;
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { z } from 'zod';
 
+import { createOperationRegistry } from '../operation-catalog.ts';
 import { defineOperation } from '../operation-registry.ts';
 import { createLiveOperationRegistry } from '../rest-bindings.ts';
 
@@ -61,6 +62,7 @@ describe('mcpExposable ratchet', () => {
         name: 'weft.test.mcpexposablepass',
         summary: 'fixture',
         mcpExposable: true,
+        mcpTool: { workflowType: 'fixture-workflow' },
         inputSchema: z.object({ field: z.string() }),
         outputSchema: z.object({}),
         access: { kind: 'public' },
@@ -77,6 +79,7 @@ describe('mcpExposable ratchet', () => {
         name: 'weft.test.mcpexposablestrict',
         summary: 'fixture',
         mcpExposable: true,
+        mcpTool: { workflowType: 'fixture-workflow' },
         inputSchema: z.object({}).strict(),
         outputSchema: z.object({}),
         access: { kind: 'public' },
@@ -93,6 +96,7 @@ describe('mcpExposable ratchet', () => {
         name: 'weft.test.mcpexposablefail',
         summary: 'fixture',
         mcpExposable: true,
+        mcpTool: { workflowType: 'fixture-workflow' },
         // The opt-in default — fields wide-open, no declared shape. An
         // MCP-exposed operation must declare its actual contract.
         inputSchema: z.object({}).passthrough(),
@@ -104,6 +108,22 @@ describe('mcpExposable ratchet', () => {
       });
 
       expect(isInputSchemaNonTrivial(operation.inputSchema)).toBe(false);
+    });
+
+    it('rejects an mcpExposable: true operation without workflow tool metadata', () => {
+      const operation = defineOperation({
+        name: 'weft.test.mcpexposablemissingmetadata',
+        summary: 'fixture',
+        mcpExposable: true,
+        inputSchema: z.object({ field: z.string() }),
+        outputSchema: z.object({}),
+        access: { kind: 'public' },
+        transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
+        unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
+        invoke: async () => ({}),
+      });
+
+      expect(() => createOperationRegistry([operation])).toThrow(/mcpTool\.workflowType/);
     });
   });
 });

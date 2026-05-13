@@ -30,6 +30,7 @@ export {
   type DispatchContext,
   type DispatchResult,
   type ErasedOperation,
+  type McpToolMetadata,
   type OperationContext,
   type OperationDefinition,
   type OperationInvocationResult,

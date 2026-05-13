@@ -98,7 +98,7 @@ Enable it explicitly in `serve()`—it is not started automatically. Local proce
 
 Use MCP when an MCP client should treat Weft workflows as durable tools and resources.
 
-Remote MCP is mounted at `POST /mcp`, `GET /mcp`, and `DELETE /mcp` when you start the Weft server. `initialize` creates a session and returns `Mcp-Session-Id`; subsequent POST, GET, and DELETE requests send that header plus the negotiated `Mcp-Protocol-Version`. POST carries client-to-server JSON-RPC messages, GET opens the server-to-client event stream, and DELETE closes the session.
+Remote MCP discovery is available at `GET /.well-known/mcp.json`. In production, configure `serve({ publicOrigin })` or `serve({ trustedHosts })` first because the discovery document emits absolute endpoint URLs. The document points clients at `POST /mcp`, `GET /mcp`, and `DELETE /mcp` when you start the Weft server. `initialize` creates a session and returns `Mcp-Session-Id`; subsequent POST, GET, and DELETE requests send that header plus the negotiated `Mcp-Protocol-Version`. POST carries client-to-server JSON-RPC messages, GET opens the server-to-client event stream, and DELETE closes the session.
 
 Local MCP is exposed through the `weft-mcp` binary. It runs an embedded Weft engine over newline-delimited stdio frames. Admission is mandatory: pass `--startup-token <token>` and send `weft.authenticate` as the first frame, or use `--allow-unauthenticated-local-admin` only for trusted local process boundaries.
 
@@ -115,7 +115,7 @@ Activities are not exposed as MCP tools. A workflow without an `inputSchema` is 
 
 A few endpoints are intentionally REST-only or unauthenticated:
 
-- `GET /openapi.json` and `GET /openrpc.json` — describe the catalog; mounting them as catalog operations creates a circular self-description
+- `GET /openapi.json`, `GET /openrpc.json`, and `GET /.well-known/mcp.json` — describe the catalog or transport discovery surface; mounting them as catalog operations creates a circular self-description
 - `GET /v1/health` — anonymous liveness probe for load balancers
 - `GET /v1/metrics` — Prometheus exposition format (`text/plain`); the JSON-shaped form is `weft.system.metrics` on the catalog
 

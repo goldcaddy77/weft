@@ -19,6 +19,15 @@ import {
  */
 export const MCP_PROTOCOL_VERSION = '2025-11-25';
 
+/** MCP method used for live tool introspection. */
+export const MCP_TOOLS_LIST_METHOD = 'tools/list';
+
+/** MCP method used for live resource introspection. */
+export const MCP_RESOURCES_LIST_METHOD = 'resources/list';
+
+/** MCP method used for live resource-template introspection. */
+export const MCP_RESOURCE_TEMPLATES_LIST_METHOD = 'resources/templates/list';
+
 /**
  * Default MCP HTTP body limit. Mirrors the existing JSON-RPC adapter limit.
  *

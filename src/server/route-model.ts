@@ -2,11 +2,12 @@
  * Shared direct-route definitions for REST-only HTTP endpoints.
  *
  * Operation-backed REST endpoints are modeled by `RestBinding` instances.
- * These six endpoints stay direct because they describe or expose the HTTP
+ * These seven endpoints stay direct because they describe or expose the HTTP
  * server itself rather than a durable workflow operation:
  *   - `GET /v1/health`    — anonymous liveness probe (no catalog op)
  *   - `GET /v1/metrics`   — Prometheus text exposition (text/plain, no catalog op)
  *   - `GET /.well-known/api-catalog` — RFC 9264 service-desc linkset
+ *   - `GET /.well-known/mcp.json` — MCP transport discovery
  *   - `GET /asyncapi.json` — transport-meta endpoint (self-describing, no catalog op)
  *   - `GET /openapi.json` — transport-meta endpoint (self-describing, no catalog op)
  *   - `GET /openrpc.json` — transport-meta endpoint (self-describing, no catalog op)
@@ -143,6 +144,32 @@ export const DIRECT_HTTP_ROUTES = [
       {
         status: 503,
         description: 'API catalog origin is not configured',
+        content: [{ mediaType: 'application/json', schema: 'object' }],
+      },
+    ],
+    access: 'public',
+  },
+  {
+    method: 'GET',
+    path: '/.well-known/mcp.json',
+    handler: 'mcpDiscovery',
+    paramNames: [],
+    summary: 'MCP discovery document',
+    tags: ['System'],
+    responses: [
+      {
+        status: 200,
+        description: 'MCP transport discovery document',
+        content: [{ mediaType: 'application/json', schema: 'object' }],
+      },
+      {
+        status: 421,
+        description: 'Request host rejected by trustedHosts',
+        content: [{ mediaType: 'application/json', schema: 'object' }],
+      },
+      {
+        status: 503,
+        description: 'MCP discovery origin is not configured',
         content: [{ mediaType: 'application/json', schema: 'object' }],
       },
     ],

@@ -9,6 +9,9 @@ import {
   isMcpRequest,
   isNotification,
   MCP_PROTOCOL_VERSION,
+  MCP_RESOURCE_TEMPLATES_LIST_METHOD,
+  MCP_RESOURCES_LIST_METHOD,
+  MCP_TOOLS_LIST_METHOD,
   methodNotFound,
   resourceNotFound,
   successResponse,
@@ -96,13 +99,17 @@ type RequestHandler = (request: McpRequest, context: McpDispatchContext) => unkn
 const REQUEST_HANDLERS: Readonly<Record<string, RequestHandler>> = {
   initialize: async (request, context) => initialize(request.params, context.session),
   ping: async () => ({}),
-  'tools/list': async (_request, context) => ({ tools: listMcpTools(context.engine) }),
+  [MCP_TOOLS_LIST_METHOD]: async (_request, context) => ({ tools: listMcpTools(context.engine) }),
   'tools/call': callTool,
-  'resources/list': async (_request, context) => ({ resources: await listMcpResources(context) }),
+  [MCP_RESOURCES_LIST_METHOD]: async (_request, context) => ({
+    resources: await listMcpResources(context),
+  }),
   'resources/read': readResource,
   'resources/subscribe': subscribeResource,
   'resources/unsubscribe': unsubscribeResource,
-  'resources/templates/list': async () => ({ resourceTemplates: listMcpResourceTemplates() }),
+  [MCP_RESOURCE_TEMPLATES_LIST_METHOD]: async () => ({
+    resourceTemplates: listMcpResourceTemplates(),
+  }),
   'prompts/list': async () => ({ prompts: [] }),
   'prompts/get': async () => {
     throw new McpProtocolError(-32002, 'Prompt not found');

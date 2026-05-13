@@ -327,20 +327,27 @@ When server authentication is enabled, `GET /v1/reviews` requires the `reviews:r
 
 The operation catalog is the unified, transport-neutral registry of every operation Weft exposes. The discovery routes serve machine-readable schemas derived from the same registry that powers REST, JSON-RPC, and WebSocket dispatch.
 
-| Method | Path            | Description                                    |
-| ------ | --------------- | ---------------------------------------------- |
-| `GET`  | `/openapi.json` | OpenAPI 3.1 contract for the operation catalog |
-| `GET`  | `/openrpc.json` | OpenRPC 1.3.2 contract                         |
+| Method | Path                       | Description                                      |
+| ------ | -------------------------- | ------------------------------------------------ |
+| `GET`  | `/.well-known/api-catalog` | RFC 9264 linkset for API discovery documents     |
+| `GET`  | `/.well-known/mcp.json`    | MCP discovery document for Weft MCP transports   |
+| `GET`  | `/openapi.json`            | OpenAPI 3.1 contract for the operation catalog   |
+| `GET`  | `/openrpc.json`            | OpenRPC 1.3.2 contract with Weft MCP metadata    |
+| `GET`  | `/asyncapi.json`           | AsyncAPI 3.0 contract for streaming and channels |
 
 **`GET /openapi.json`** — OpenAPI 3.1 document describing every REST-bound operation. Useful for client codegen, request validation, and Swagger-style UIs. Schemas are generated from the same Zod definitions the server uses at runtime, so the document never drifts from the implementation.
 
-**`GET /openrpc.json`** — OpenRPC 1.3.2 document describing every JSON-RPC method. Pair this with `/jsonrpc` (WebSocket) or JSON-RPC-over-HTTP for typed RPC clients.
+**`GET /openrpc.json`** — OpenRPC 1.3.2 document describing every JSON-RPC method. Pair this with `/jsonrpc` (WebSocket) or JSON-RPC-over-HTTP for typed RPC clients. The root-level `x-weft-mcp` extension identifies the live MCP discovery surface and marks MCP-exposable operation methods with method-level `x-weft-mcp` metadata.
 
-Both documents enumerate operations from the unified catalog. To see which transports an operation is bound to, look at the `tags` and binding metadata in the document. To see the input/output schemas for an operation, follow the `$ref` links into `components.schemas`.
+**`GET /.well-known/mcp.json`** — minimal MCP discovery document. It points remote clients at the Streamable HTTP MCP endpoint (`POST`, `GET`, and `DELETE /mcp`), names `tools/list` as the canonical live tool introspection method, and includes the `weft-mcp` stdio command for local clients.
+
+The OpenAPI and OpenRPC documents enumerate operations from the unified catalog. To see which transports an operation is bound to, look at the `tags` and binding metadata in the document. To see the input/output schemas for an operation, follow the `$ref` links into `components.schemas`.
 
 ### MCP Server
 
 The MCP server exposes Weft workflows to [Model Context Protocol](https://modelcontextprotocol.io/) clients. It is not a fifth operation-catalog transport: `tools/list`, `tools/call`, and `resources/read` are MCP methods that adapt registered workflows and workflow resources into the MCP protocol.
+
+Discovery starts at `GET /.well-known/mcp.json`. The document advertises the live Streamable HTTP endpoint, the local `weft-mcp` stdio command, and the live MCP methods clients should call for tool and resource introspection. In production, configure `serve({ publicOrigin })` or `serve({ trustedHosts })` before serving this route because it emits absolute endpoint URLs.
 
 | Method   | Path   | Description                                             |
 | -------- | ------ | ------------------------------------------------------- |
