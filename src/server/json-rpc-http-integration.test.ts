@@ -71,15 +71,25 @@ async function waitForStatus(
   throw new Error(`workflow ${workflowId} did not reach ${status} in time`);
 }
 
+function disposeCreatedEngines(): void {
+  let disposeError: unknown;
+  for (const engine of createdEngines.splice(0)) {
+    try {
+      engine[Symbol.dispose]();
+    } catch (error) {
+      disposeError ??= error;
+    }
+  }
+  if (disposeError !== undefined) throw disposeError;
+}
+
 describe('serve() — POST /jsonrpc', () => {
   let server: WeftServer | undefined;
 
   afterEach(async () => {
     await server?.stop();
     server = undefined;
-    for (const engine of createdEngines.splice(0)) {
-      engine[Symbol.dispose]();
-    }
+    disposeCreatedEngines();
   });
 
   it('dispatches weft.workflows.get against the live engine and sets Cache-Control: no-store', async () => {

@@ -55,11 +55,21 @@ async function startLegacyFailedWorkflow(
 const registry = createOperationRegistry([listWorkflowsOperation]);
 const bindings = [listWorkflowsRestBinding];
 
+function disposeCreatedEngines(): void {
+  let disposeError: unknown;
+  for (const engine of createdEngines.splice(0)) {
+    try {
+      engine[Symbol.dispose]();
+    } catch (error) {
+      disposeError ??= error;
+    }
+  }
+  if (disposeError !== undefined) throw disposeError;
+}
+
 describe('weft.workflows.list', () => {
   afterEach(() => {
-    for (const engine of createdEngines.splice(0)) {
-      engine[Symbol.dispose]();
-    }
+    disposeCreatedEngines();
   });
 
   it('returns the paginated workflow list on the happy path', async () => {
