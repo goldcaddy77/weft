@@ -13,7 +13,7 @@ const inputSchema = z.object({
 });
 
 describe('single-workflow control operation helpers', () => {
-  it('maps common not-found and engine failures through one invoke scaffold', async () => {
+  it('maps not-found failures through one invoke scaffold', async () => {
     const operation = createSingleWorkflowControlOperation({
       name: 'weft.workflows.cancel',
       summary: 'Cancel a running workflow',
