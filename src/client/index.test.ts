@@ -7,6 +7,11 @@ import { handleRequest } from '../server/handler.ts';
 import { principalFromApiKey } from '../server/principal.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { sleepForTesting } from '../testing/fake-timers.ts';
+import {
+  clientContractEchoWorkflow,
+  clientContractWaitingWorkflow,
+  runWeftClientContractTests,
+} from './client-contract.test.ts';
 import { HttpClient, HttpClientError } from './index.ts';
 import type { WeftClient } from './interface.ts';
 
@@ -16,13 +21,6 @@ import type { WeftClient } from './interface.ts';
 
 async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
   return input;
-}
-
-async function* waitForSignalWorkflow(ctx: WorkflowContext, input: unknown) {
-  ctx.expose({ ready: () => true });
-  ctx.onQuery('echoInput', (queryInput) => queryInput);
-  const signal = yield* ctx.waitForSignal<string>('continue');
-  return `${String(input)}:${signal}`;
 }
 
 function requestInputToUrl(input: RequestInfo | URL): string {
@@ -38,16 +36,6 @@ function requestInputToUrl(input: RequestInfo | URL): string {
 }
 
 type FetchCall = { url: string; init: RequestInit | undefined };
-
-async function waitForQueryReady(client: WeftClient, workflowId: string): Promise<void> {
-  for (let attempt = 0; attempt < 5; attempt++) {
-    if ((await client.query(workflowId, 'ready')) === true) {
-      return;
-    }
-    await sleepForTesting(5);
-  }
-  throw new Error(`Workflow ${workflowId} did not expose query handlers`);
-}
 
 function createFullSurfaceResponses(
   jsonResponse: (body: unknown, status?: number) => Response,
@@ -436,7 +424,8 @@ beforeAll(() => {
     },
   });
   engine.register('echo', echoWorkflow);
-  engine.register('wait-for-signal', waitForSignalWorkflow);
+  engine.register('client-contract-echo', clientContractEchoWorkflow);
+  engine.register('client-contract-waiting', clientContractWaitingWorkflow);
 
   server = Bun.serve({
     port: 0, // random available port
@@ -468,6 +457,16 @@ afterAll(async () => {
 // ---------------------------------------------------------------------------
 
 describe('HttpClient', () => {
+  runWeftClientContractTests({
+    label: 'HttpClient',
+    getClient: () => client,
+    idPrefix: 'http-client-contract',
+    workflowTypes: {
+      echo: 'client-contract-echo',
+      waiting: 'client-contract-waiting',
+    },
+  });
+
   it('implements WeftClient', () => {
     expect(client.start).toBeFunction();
     expect(client.schedule).toBeFunction();
@@ -535,43 +534,6 @@ describe('HttpClient', () => {
       const state = await client.get('http-client-tags');
       expect(state?.tags).toEqual(['nightly', 'v2']);
     });
-
-    it('posts query input through the HTTP client and workflow handle', async () => {
-      const handle = await client.start('wait-for-signal', 'payload', {
-        id: 'http-query-input',
-      });
-      await waitForQueryReady(client, handle.id);
-
-      await expect(client.query(handle.id, 'echoInput', { detail: true })).resolves.toEqual({
-        detail: true,
-      });
-      await expect(handle.query('echoInput', { source: 'handle' })).resolves.toEqual({
-        source: 'handle',
-      });
-
-      await client.signal(handle.id, 'continue', 'done');
-      await expect(handle.result()).resolves.toBe('payload:done');
-    });
-
-    it('persists handle.addTags(...tags) and handle.removeTags(...tags) through the HTTP routes', async () => {
-      const handle = await client.start('wait-for-signal', 'payload', {
-        id: 'http-client-tag-mutations',
-        tags: ['alpha'],
-      });
-      await sleepForTesting(10);
-
-      await handle.addTags('beta');
-      await handle.removeTags('alpha');
-
-      const state = await client.get('http-client-tag-mutations');
-      expect(state?.tags).toEqual(['beta']);
-
-      const result = await client.list({ tags: ['beta'] });
-      expect(result.items.some((item) => item.id === 'http-client-tag-mutations')).toBe(true);
-
-      await handle.signal('continue', 'done');
-      await expect(handle.result()).resolves.toBe('payload:done');
-    });
   });
 
   describe('get', () => {
@@ -622,52 +584,6 @@ describe('HttpClient', () => {
   });
 
   describe('schedule surface', () => {
-    it('creates, lists, mutates, and describes schedules over HTTP', async () => {
-      const schedule = await client.schedule('echo', { payload: 'hourly' }, '0 * * * *', {
-        id: 'http-schedule',
-        overlap: 'queue',
-        backfill: true,
-      });
-
-      expect(schedule.id).toBe('http-schedule');
-      expect(await schedule.describe()).toEqual(
-        expect.objectContaining({
-          id: 'http-schedule',
-          workflowType: 'echo',
-          cronExpression: '0 * * * *',
-          status: 'active',
-          overlap: 'queue',
-          backfill: true,
-        }),
-      );
-
-      expect(await client.getSchedule('http-schedule')).toEqual(
-        expect.objectContaining({ id: 'http-schedule' }),
-      );
-      const schedules = await client.listSchedules();
-      expect(schedules.items.map((item) => item.id)).toContain('http-schedule');
-
-      await schedule.pause();
-      expect(await client.getSchedule('http-schedule')).toEqual(
-        expect.objectContaining({ status: 'paused' }),
-      );
-
-      await schedule.update('30 * * * *');
-      expect(await schedule.describe()).toEqual(
-        expect.objectContaining({ cronExpression: '30 * * * *' }),
-      );
-
-      await client.resumeSchedule('http-schedule');
-      expect(await client.getSchedule('http-schedule')).toEqual(
-        expect.objectContaining({ status: 'active' }),
-      );
-
-      await schedule.cancel();
-      expect(await client.getSchedule('http-schedule')).toEqual(
-        expect.objectContaining({ status: 'cancelled', nextFireAt: null }),
-      );
-    });
-
     it('exposes schedule handle describe and dispose helpers over HTTP', async () => {
       const schedule = await client.schedule('echo', { payload: 'wrapper' }, '0 * * * *', {
         id: 'http-schedule-wrapper',
@@ -756,18 +672,6 @@ describe('HttpClient', () => {
       await expect(client.getTimeline('missing-workflow')).resolves.toEqual([]);
       await expect(client.replayTo('missing-workflow', 1)).resolves.toBeNull();
       await expect(client.replayTo('wf-http-missing-replay', 1)).resolves.toBeNull();
-    });
-  });
-
-  describe('getAttributes / setAttributes', () => {
-    it('round-trips search attributes', async () => {
-      const handle = await client.start('echo', 'data', { id: 'http-attrs-test' });
-      await handle.result();
-
-      await client.setAttributes('http-attrs-test', { priority: 'high' });
-      const attributes = await client.getAttributes('http-attrs-test');
-      expect(attributes).not.toBeNull();
-      expect(attributes!['priority']).toBe('high');
     });
   });
 
