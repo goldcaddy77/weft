@@ -252,18 +252,3 @@ export async function getWorkflowVisibilityWatermark(
   if (typeof payload !== 'number') return 'stale';
   return payload >= WORKFLOW_VISIBILITY_INDEX_VERSION ? 'current' : 'stale';
 }
-
-/**
- * Convenience wrapper that loads the current manifest and returns the batch
- * operations needed to transition the visibility indexes to `nextState`.
- * Callers append the result to their own batch so storage commits the index
- * update atomically with the workflow-state write it accompanies.
- */
-export async function buildWorkflowVisibilityIndexUpdate(
-  storage: Storage,
-  workflowId: string,
-  nextState: WorkflowState | null,
-): Promise<BatchOperation[]> {
-  const manifest = await loadWorkflowVisibilityManifest(storage, workflowId);
-  return buildWorkflowVisibilityIndexOperations(workflowId, manifest, nextState).batchOps;
-}
