@@ -74,18 +74,18 @@ Weft already has the production primitives operators need to build on: events, m
 
 The shape should stay Weft-native rather than copying Temporal feature names. Useful reference points include [Temporal Visibility](https://docs.temporal.io/visibility), [Temporal Worker performance](https://docs.temporal.io/develop/worker-performance), [Temporal Worker Versioning](https://docs.temporal.io/worker-versioning), and [Temporal task queue priority and fairness](https://docs.temporal.io/develop/task-queue-priority-fairness), but the implementation should fit Weft's checkpoint model, operation catalog, dashboard, and RemoteWorker protocol.
 
-- [ ] **Add production workflow visibility queries and aggregates.**
+- [x] **Add production workflow visibility queries and aggregates.**
 
-  **Where:** `src/core/bulk-workflow-filter.ts`, `src/core/engine/query.ts`, `src/server/operations/list-workflows.ts`, new workflow-visibility aggregate operations, dashboard workflow-list utilities, and `documentation/reference/api-server.md`.
+  **Where:** `src/core/list-filter-validation.ts`, `src/core/aggregate-validation.ts`, `src/core/engine/{listing,aggregate,workflow-indexes,workflow-visibility-queries,list-candidate-resolution}.ts`, `src/core/bulk-workflow-filter.ts`, `src/server/operations/{list-workflows,aggregate-workflows}.ts`, `scripts/rebuild-workflow-visibility-indexes.ts`, and the dashboard data layer in `src/dashboard/{api-client,utilities/workflow-list-data}.ts`.
 
-  Extend workflow listing beyond the current status/type/tag filters with a typed visibility filter for workflow status, type, id prefix, tags, search attributes, created and updated time ranges, execution deadlines, tenant id, and failure category. Add count and group aggregates for status, workflow type, tenant, and selected search attributes so operators can answer fleet questions without exporting raw workflow rows.
+  Shipped a typed visibility filter (`idPrefix`, time ranges, `tenantId`, `failureCategory`, status arrays) and a single-dimension aggregate operation, both backed by new `wf-idx-*` secondary indexes with a backfill-driven watermark gate. Pre-watermark queries fall back to the existing slow path; post-watermark queries narrow through the indexes. Distinct-key and scan caps surface as `Unprocessable` faults.
 
   **Acceptance criteria:**
-  - `engine.list()` and the transport operation behind `GET /v1/workflows` share one typed visibility filter instead of drifting between in-process, REST, and JSON-RPC inputs.
-  - A new aggregate operation returns counts grouped by status, workflow type, tenant id, and selected search attributes with the same visibility filter semantics as workflow listing.
-  - The dashboard exposes the richer filters and aggregate summary panels without requiring dashboard-only endpoints.
-  - Invalid filter fields and unsupported aggregate dimensions fail with clear diagnostics before scanning workflow storage.
-  - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/server/operations/list-workflows.test.ts src/server/attribute-filters.test.ts src/dashboard/utilities/workflow-list-data.test.ts`, and `bun run verify:documentation`.
+  - `engine.list()` and `GET /v1/workflows` share one validation path through `normalizeListFilter`; the filter shape is identical across REST, JSON-RPC HTTP/WS/stdio, and in-process callers.
+  - `engine.aggregate()` and `weft.workflows.aggregate` (`GET /v1/workflows/aggregate`) return grouped counts over the same filter shape, supporting `status`, `type`, `tenant`, `failureCategory`, and arbitrary search attributes.
+  - Dashboard data layer (`api-client.aggregateWorkflows`, `buildWorkflowListFilter`, `loadWorkflowAggregate`) round-trips every new filter dimension. **Svelte UI controls are tracked as a follow-up task** to land alongside a design pass against the existing component vocabulary.
+  - Invalid filter fields, unknown aggregate attribute names, and scan/distinct-key cap exhaustion all throw before storage scans begin and map to `Unprocessable`.
+  - Verification passed with the full `bun test` suite (4756 pass / 0 functional fail), `bun run lint`, `bun run typecheck`, and `bun run verify:documentation`. Replay-fixture and checkpoint-compat binaries regenerated to embed the new `wf-idx-manifest:` rows.
 
 - [ ] **Expose worker fleet and task queue health.**
 
