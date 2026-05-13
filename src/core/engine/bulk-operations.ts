@@ -678,9 +678,10 @@ async function persistBulkOperationAuditEvent(
   affectedCount: number,
 ): Promise<BulkOperationAuditEvent> {
   const timestamp = internals.options.getNow();
+  const explicitRequestId = options.requestId?.trim();
   const requestId =
-    options.requestId?.trim() && options.requestId.trim().length > 0
-      ? options.requestId.trim()
+    explicitRequestId !== undefined && explicitRequestId.length > 0
+      ? explicitRequestId
       : preparation.preview.requestId;
   const auditEvent: BulkOperationAuditEvent = {
     type: 'bulk-operation:audit',

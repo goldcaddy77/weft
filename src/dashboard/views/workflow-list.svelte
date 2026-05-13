@@ -227,10 +227,12 @@
 
   function goToNextPage(): void {
     currentOffset += pageSize;
+    resetBulkPreview();
   }
 
   function goToPreviousPage(): void {
     currentOffset = Math.max(0, currentOffset - pageSize);
+    resetBulkPreview();
   }
 
   function handleRefresh(): void {

@@ -206,12 +206,17 @@ function createWorkflowListResult(
     createWorkflowSummary('workflow-1'),
     createWorkflowSummary('workflow-2'),
   ],
+  options: {
+    total?: number;
+    offset?: number;
+    limit?: number;
+  } = {},
 ): PaginatedResult<WorkflowSummary> {
   return {
     items,
-    total: items.length,
-    offset: 0,
-    limit: 20,
+    total: options.total ?? items.length,
+    offset: options.offset ?? 0,
+    limit: options.limit ?? 20,
   };
 }
 
@@ -556,6 +561,36 @@ describe('WorkflowList view', () => {
       expect(buttonWithText('Confirm').disabled).toBe(true);
 
       refreshResponse.resolve(createWorkflowListResult());
+      await settle();
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('invalidates the current preview synchronously when pagination changes', async () => {
+    const nextPageResponse = createDeferred<PaginatedResult<WorkflowSummary>>();
+    const apiClient = createWorkflowListApiClient({
+      workflowListResponses: [
+        Promise.resolve(createWorkflowListResult(undefined, { total: 40 })),
+        Promise.resolve(createWorkflowListResult(undefined, { total: 40 })),
+        nextPageResponse.promise,
+      ],
+    });
+    const { cleanup } = await mountWorkflowList(apiClient);
+    try {
+      await changeSelectValue(statusFilterSelect(), 'running');
+      await clickButton('Preview');
+      expect(buttonWithText('Cancel 2 workflows').disabled).toBe(false);
+
+      buttonWithText('Next').click();
+      flushSvelte();
+
+      expect(document.body.textContent).not.toContain(
+        'Preview ready: cancel will affect 2 workflows.',
+      );
+      expect(buttonWithText('Confirm').disabled).toBe(true);
+
+      nextPageResponse.resolve(createWorkflowListResult(undefined, { total: 40, offset: 20 }));
       await settle();
     } finally {
       await cleanup();
