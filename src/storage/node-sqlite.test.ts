@@ -389,6 +389,12 @@ it('supports the adapter behavior under Bun when a database constructor is injec
   expect(await storage.get('a:1')).toEqual(new Uint8Array([1]));
   expect(await storage.get('missing')).toBeNull();
 
+  const allKeys: string[] = [];
+  for await (const [key] of storage.scan('')) {
+    allKeys.push(key);
+  }
+  expect(allKeys).toEqual(['a:1', 'a:2', 'b:1']);
+
   const forward: [string, Uint8Array][] = [];
   for await (const entry of storage.scan('a:')) {
     forward.push(entry);

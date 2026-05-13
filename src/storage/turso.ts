@@ -1,7 +1,6 @@
 import { createClient, type Client, type InValue } from '@libsql/client';
 
 import {
-  resolvePrefixRangeEnd,
   storageValuesEqual,
   type BatchOperation,
   type ConditionalBatchCondition,
@@ -10,6 +9,20 @@ import {
 } from './interface';
 import { assertReadOnlyQuery } from './read-only-query';
 import { scopedStorage } from './scoped-storage';
+import {
+  SQLITE_COUNT_KEYS_BY_PREFIX,
+  SQLITE_CREATE_KEY_VALUE_TABLE,
+  SQLITE_DELETE_KEYS_BY_PREFIX,
+  SQLITE_DELETE_VALUE_BY_KEY,
+  SQLITE_SELECT_KEY_PRESENCE,
+  SQLITE_SELECT_VALUE_BY_KEY,
+  SQLITE_UPSERT_VALUE_BY_KEY,
+  buildSqliteKeyRangeSelect,
+  buildSqliteKeyValueRangeSelect,
+  buildSqlitePrefixRangeParameters,
+} from './sqlite-key-value-queries';
+
+const LIBSQL_CREATE_KEY_VALUE_TABLE_STATEMENT = `${SQLITE_CREATE_KEY_VALUE_TABLE};`;
 
 /**
  * Configuration for connecting to a Turso/libSQL database.
@@ -30,11 +43,6 @@ export type TursoStorageOptions = {
   /** Authentication token for remote Turso databases. */
   authToken?: string;
 };
-
-const TABLE_INIT = `CREATE TABLE IF NOT EXISTS kv (
-  key TEXT PRIMARY KEY,
-  value BLOB NOT NULL
-) WITHOUT ROWID;`;
 
 /**
  * Storage adapter backed by Turso/libSQL for distributed SQLite deployments.
@@ -68,7 +76,7 @@ export class TursoStorage implements Storage {
 
   async #ensureTable(): Promise<void> {
     if (this.#initialized) return;
-    await this.#client.executeMultiple(TABLE_INIT);
+    await this.#client.executeMultiple(LIBSQL_CREATE_KEY_VALUE_TABLE_STATEMENT);
     this.#initialized = true;
   }
 
@@ -76,7 +84,7 @@ export class TursoStorage implements Storage {
     await this.#ensureTable();
 
     const result = await this.#client.execute({
-      sql: 'SELECT value FROM kv WHERE key = ?',
+      sql: SQLITE_SELECT_VALUE_BY_KEY,
       args: [key],
     });
 
@@ -91,7 +99,7 @@ export class TursoStorage implements Storage {
     await this.#ensureTable();
 
     await this.#client.execute({
-      sql: 'INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+      sql: SQLITE_UPSERT_VALUE_BY_KEY,
       args: [key, value],
     });
   }
@@ -100,7 +108,7 @@ export class TursoStorage implements Storage {
     await this.#ensureTable();
 
     await this.#client.execute({
-      sql: 'DELETE FROM kv WHERE key = ?',
+      sql: SQLITE_DELETE_VALUE_BY_KEY,
       args: [key],
     });
   }
@@ -109,7 +117,7 @@ export class TursoStorage implements Storage {
     await this.#ensureTable();
 
     const result = await this.#client.execute({
-      sql: 'SELECT 1 AS present FROM kv WHERE key = ? LIMIT 1',
+      sql: SQLITE_SELECT_KEY_PRESENCE,
       args: [key],
     });
 
@@ -119,63 +127,21 @@ export class TursoStorage implements Storage {
   async deletePrefix(prefix: string): Promise<number> {
     await this.#ensureTable();
 
-    const prefixEnd = resolvePrefixRangeEnd(prefix);
+    const [rangeStart, rangeEnd] = buildSqlitePrefixRangeParameters(prefix);
     const result = await this.#client.execute({
-      sql: 'DELETE FROM kv WHERE key >= ? AND key < ?',
-      args: [prefix, prefixEnd],
+      sql: SQLITE_DELETE_KEYS_BY_PREFIX,
+      args: [rangeStart, rangeEnd],
     });
 
     return result.rowsAffected;
   }
 
-  #buildRangeQuery(
-    prefix: string,
-    options: ScanOptions = {},
-  ): {
-    parameters: InValue[];
-    sqlSuffix: string;
-  } {
-    const { limit, reverse, gt, lt, gte, lte } = options;
-    const prefixEnd = resolvePrefixRangeEnd(prefix);
-
-    const conditions: string[] = ['key >= ? AND key < ?'];
-    const parameters: InValue[] = [prefix, prefixEnd];
-
-    if (gt !== undefined) {
-      conditions.push('key > ?');
-      parameters.push(gt);
-    }
-    if (gte !== undefined) {
-      conditions.push('key >= ?');
-      parameters.push(gte);
-    }
-    if (lt !== undefined) {
-      conditions.push('key < ?');
-      parameters.push(lt);
-    }
-    if (lte !== undefined) {
-      conditions.push('key <= ?');
-      parameters.push(lte);
-    }
-
-    const direction = reverse ? 'DESC' : 'ASC';
-    const limitClause = limit !== undefined ? ' LIMIT ?' : '';
-    if (limit !== undefined) {
-      parameters.push(limit);
-    }
-
-    return {
-      parameters,
-      sqlSuffix: `WHERE ${conditions.join(' AND ')} ORDER BY key ${direction}${limitClause}`,
-    };
-  }
-
   async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
     await this.#ensureTable();
 
-    const { parameters, sqlSuffix } = this.#buildRangeQuery(prefix, options);
+    const { parameters, sql } = buildSqliteKeyValueRangeSelect(prefix, options);
     const result = await this.#client.execute({
-      sql: `SELECT key, value FROM kv ${sqlSuffix}`,
+      sql,
       args: parameters,
     });
 
@@ -190,9 +156,9 @@ export class TursoStorage implements Storage {
   async *keys(prefix: string, options: ScanOptions = {}): AsyncIterable<string> {
     await this.#ensureTable();
 
-    const { parameters, sqlSuffix } = this.#buildRangeQuery(prefix, options);
+    const { parameters, sql } = buildSqliteKeyRangeSelect(prefix, options);
     const result = await this.#client.execute({
-      sql: `SELECT key FROM kv ${sqlSuffix}`,
+      sql,
       args: parameters,
     });
 
@@ -204,10 +170,10 @@ export class TursoStorage implements Storage {
   async count(prefix: string): Promise<number> {
     await this.#ensureTable();
 
-    const prefixEnd = resolvePrefixRangeEnd(prefix);
+    const [rangeStart, rangeEnd] = buildSqlitePrefixRangeParameters(prefix);
     const result = await this.#client.execute({
-      sql: 'SELECT COUNT(*) AS count FROM kv WHERE key >= ? AND key < ?',
-      args: [prefix, prefixEnd],
+      sql: SQLITE_COUNT_KEYS_BY_PREFIX,
+      args: [rangeStart, rangeEnd],
     });
 
     return Number(result.rows[0]?.['count'] ?? 0);
@@ -226,12 +192,12 @@ export class TursoStorage implements Storage {
     const statements = operations.map((operation) => {
       if (operation.type === 'put') {
         return {
-          sql: 'INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+          sql: SQLITE_UPSERT_VALUE_BY_KEY,
           args: [operation.key, operation.value] as InValue[],
         };
       }
       return {
-        sql: 'DELETE FROM kv WHERE key = ?',
+        sql: SQLITE_DELETE_VALUE_BY_KEY,
         args: [operation.key] as InValue[],
       };
     });
@@ -247,11 +213,11 @@ export class TursoStorage implements Storage {
 
     const transaction = await this.#client.transaction('write');
     try {
-      await transaction.executeMultiple(TABLE_INIT);
+      await transaction.executeMultiple(LIBSQL_CREATE_KEY_VALUE_TABLE_STATEMENT);
 
       for (const condition of conditions) {
         const result = await transaction.execute({
-          sql: 'SELECT value FROM kv WHERE key = ?',
+          sql: SQLITE_SELECT_VALUE_BY_KEY,
           args: [condition.key],
         });
 
@@ -267,12 +233,12 @@ export class TursoStorage implements Storage {
       for (const operation of operations) {
         if (operation.type === 'put') {
           await transaction.execute({
-            sql: 'INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+            sql: SQLITE_UPSERT_VALUE_BY_KEY,
             args: [operation.key, operation.value],
           });
         } else {
           await transaction.execute({
-            sql: 'DELETE FROM kv WHERE key = ?',
+            sql: SQLITE_DELETE_VALUE_BY_KEY,
             args: [operation.key],
           });
         }

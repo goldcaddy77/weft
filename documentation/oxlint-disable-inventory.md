@@ -853,13 +853,6 @@ naming the alternative that was rejected.
 - **Symbol**: `deletePrefix`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
-## `storage-node-sqlite-delete-complexity`
-
-- **File**: `src/storage/node-sqlite.ts`
-- **Rule**: `complexity`
-- **Symbol**: `delete`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
 ## `testing-test-engine-run-n-complexity`
 
 - **File**: `src/testing/test-engine.ts`
