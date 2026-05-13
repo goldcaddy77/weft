@@ -5,6 +5,8 @@ import {
   accepts,
   DEFAULT_MCP_MAX_BODY_BYTES,
   isJsonContentType,
+  isMcpRequest,
+  isNotification,
   MCP_PROTOCOL_VERSION,
   parseMcpMessage,
   type McpResponse,
@@ -115,7 +117,7 @@ async function handleMcpPost(options: McpHttpRequestOptions): Promise<Response> 
     );
   }
 
-  const sessionResolution = resolvePostSession(options, methodName(parsed.value));
+  const sessionResolution = resolvePostSession(options, parsed.value);
   if (sessionResolution instanceof Response) return sessionResolution;
   const { session, createdSession, principal } = sessionResolution;
 
@@ -165,7 +167,7 @@ async function readMcpJsonBody(
 
 function resolvePostSession(
   options: McpHttpRequestOptions,
-  method: string | undefined,
+  message: unknown,
 ):
   | {
       readonly session: McpSession;
@@ -174,7 +176,7 @@ function resolvePostSession(
     }
   | Response {
   const sessionHeader = sessionIdFromHeaders(options.request.headers);
-  if (method === 'initialize' && sessionHeader === null) {
+  if (shouldCreateSessionForPost(message, sessionHeader)) {
     const principal = principalFromOptions(options);
     try {
       return {
@@ -201,6 +203,12 @@ function resolvePostSession(
   }
   options.sessionManager.touch(session);
   return { session, createdSession: false, principal };
+}
+
+function shouldCreateSessionForPost(message: unknown, sessionHeader: string | null): boolean {
+  if (sessionHeader !== null) return false;
+  if (!isMcpRequest(message)) return false;
+  return message.method === 'initialize' && !isNotification(message);
 }
 
 function handleMcpGet(options: McpHttpRequestOptions): Response {
@@ -262,12 +270,6 @@ function handleMcpDelete(options: McpHttpRequestOptions): Response {
   }
   options.sessionManager.delete(sessionId);
   return new Response(null, { status: 204, headers: noStoreHeaders() });
-}
-
-function methodName(value: unknown): string | undefined {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const method = (value as Record<string, unknown>)['method'];
-  return typeof method === 'string' ? method : undefined;
 }
 
 function sessionIdFromHeaders(headers: Headers): string | null {

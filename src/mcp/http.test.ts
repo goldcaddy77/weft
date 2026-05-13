@@ -909,6 +909,36 @@ describe('MCP Streamable HTTP transport', () => {
     }
   });
 
+  it('does not create a remote session for initialize notifications', async () => {
+    const engine = createEngine();
+    const sessionManager = createMcpSessionManager(engine, { maximumSessions: 1 });
+
+    try {
+      const initializeNotification = await handleMcpHttpRequest({
+        request: jsonRequest({
+          jsonrpc: '2.0',
+          method: 'initialize',
+          params: { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {} },
+        }),
+        engine,
+        sessionManager,
+        authRequired: false,
+      });
+      expect(initializeNotification.status).toBe(400);
+      expect(await initializeNotification.text()).toBe('Missing Mcp-Session-Id');
+
+      const initialized = await initializeDirectHandlerSession(engine, sessionManager);
+      expect(initialized.status).toBe(200);
+      expect(initialized.headers.get('Mcp-Session-Id')).toBeTruthy();
+
+      const rejected = await initializeDirectHandlerSession(engine, sessionManager);
+      expect(rejected.status).toBe(429);
+      expect(await rejected.text()).toBe('Too many MCP sessions');
+    } finally {
+      await sessionManager[Symbol.asyncDispose]();
+    }
+  });
+
   it('returns HTTP negotiation and session errors for invalid MCP transport requests', async () => {
     const engine = createEngine();
     const sessionManager = createMcpSessionManager(engine);
