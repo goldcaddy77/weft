@@ -139,7 +139,7 @@ describe('batch', () => {
 // ---------------------------------------------------------------------------
 
 describe('malformed inner payloads', () => {
-  it('rejects raw inner storage data without a compression header', async () => {
+  it('surfaces a deterministic failure for headerless stored data during get', async () => {
     const { storage, inner } = createStorage();
 
     const headerless = new Uint8Array([0x80, 0xa1, 0x61, 0x01]);
@@ -148,6 +148,22 @@ describe('malformed inner payloads', () => {
     await expect(storage.get('malformed-key')).rejects.toThrow(
       'Compression payload missing magic byte 0xC1.',
     );
+  });
+
+  it('yields framed values before rejecting headerless stored data during scan', async () => {
+    const { storage, inner } = createStorage();
+    const framedValue = new Uint8Array([1, 2, 3]);
+    const headerless = new Uint8Array([0x80, 0xa1, 0x61, 0x01]);
+
+    await storage.put('malformed:a', framedValue);
+    await inner.put('malformed:b', headerless);
+
+    const iterator = storage.scan('malformed:')[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: ['malformed:a', framedValue],
+    });
+    await expect(iterator.next()).rejects.toThrow('Compression payload missing magic byte 0xC1.');
   });
 });
 

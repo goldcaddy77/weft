@@ -126,10 +126,6 @@ const ALGORITHM_BROTLI = 0x02;
 /** The total header size: magic byte + algorithm byte. */
 const HEADER_SIZE = 2;
 
-function formatByte(byte: number): string {
-  return `0x${byte.toString(16).padStart(2, '0')}`;
-}
-
 // ---------------------------------------------------------------------------
 // Compressor factory
 // ---------------------------------------------------------------------------
@@ -279,7 +275,9 @@ export async function decompressPayload(data: Uint8Array): Promise<Uint8Array> {
 
     default:
       throw new Error(
-        `Compression payload uses unsupported algorithm byte ${formatByte(algorithm)}.`,
+        `Compression payload uses unsupported algorithm byte 0x${algorithm
+          .toString(16)
+          .padStart(2, '0')}.`,
       );
   }
 }
