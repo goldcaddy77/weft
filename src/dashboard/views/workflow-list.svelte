@@ -548,6 +548,7 @@
     bulkCommitLoading = true;
     bulkActionError = null;
     bulkActionErrorPhase = null;
+    bulkActionMessage = null;
     try {
       if (bulkPreviewedOperation.action === 'cancel') {
         const result = await apiClient.commitBulkCancelWorkflows(

@@ -101,7 +101,7 @@ export async function purge(
   );
 }
 
-export async function runBulkCancellation(
+async function runBulkCancellation(
   internals: EngineInternals,
   filter: ListFilter,
   options: BulkOperationOptions = {},
@@ -243,7 +243,7 @@ export async function signalAll(
   return withBulkAuditEvent(internals, preparation, options, result, signalled);
 }
 
-export async function runBulkDeletion(
+async function runBulkDeletion(
   internals: EngineInternals,
   filter: ListFilter,
   cleanupWaiters: CleanupWaiters,
@@ -315,7 +315,7 @@ export async function deleteAll(
   return runBulkDeletion(internals, filter, cleanupWaiters, options);
 }
 
-export async function runBulkTagAddition(
+async function runBulkTagAddition(
   internals: EngineInternals,
   filter: ListFilter,
   tags: string[],
@@ -351,7 +351,7 @@ export async function tagAll(
   return runBulkTagAddition(internals, filter, tags, options);
 }
 
-export async function runBulkTagRemoval(
+async function runBulkTagRemoval(
   internals: EngineInternals,
   filter: ListFilter,
   tags: string[],

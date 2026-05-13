@@ -711,4 +711,35 @@ describe('WorkflowList view', () => {
       await cleanup();
     }
   });
+
+  it('clears stale success messages before surfacing later commit failures', async () => {
+    let commitShouldFail = false;
+    const apiClient: WorkflowListApiClient = {
+      ...createWorkflowListApiClient(),
+      commitBulkCancelWorkflows: () => {
+        if (commitShouldFail) {
+          return Promise.reject(new Error('Transient bulk commit failure'));
+        }
+        return Promise.resolve({ cancelled: 2, failed: 0, errors: [] });
+      },
+    };
+    const { cleanup } = await mountWorkflowList(apiClient);
+    try {
+      await changeSelectValue(statusFilterSelect(), 'running');
+      await clickButton('Preview');
+      await clickButton('Cancel 2 workflows');
+
+      expect(document.body.textContent).toContain('Cancelled 2 workflows.');
+
+      commitShouldFail = true;
+      await clickButton('Preview');
+      await clickButton('Cancel 2 workflows');
+
+      expect(document.body.textContent).toContain('Bulk confirmation failed');
+      expect(document.body.textContent).toContain('Transient bulk commit failure');
+      expect(document.body.textContent).not.toContain('Cancelled 2 workflows.');
+    } finally {
+      await cleanup();
+    }
+  });
 });
