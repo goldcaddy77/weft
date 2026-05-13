@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'bun:test';
 
+import type { OperationFault } from '../operation-fault.ts';
+import {
+  invalidParamsFault,
+  shapeLegacyRestFaultWithRawEngineFailureMessage,
+  shapeRestFault,
+} from './operation-helpers.ts';
+
 const operationsDirectory = new URL('.', import.meta.url);
+
+async function expectJsonErrorResponse(
+  response: Response,
+  expectedStatus: number,
+  expectedMessage: string,
+): Promise<void> {
+  expect(response.status).toBe(expectedStatus);
+  expect(response.headers.get('Content-Type')).toBe('application/json');
+  expect(await response.json()).toEqual({ error: expectedMessage });
+}
 
 async function operationSourceFiles(): Promise<string[]> {
   const glob = new Bun.Glob('*.ts');
@@ -19,6 +36,50 @@ async function operationSourceFiles(): Promise<string[]> {
 }
 
 describe('REST fault shaper regressions', () => {
+  it('masks canonical EngineFailure responses while preserving mapped client faults', async () => {
+    const engineFailureFault: OperationFault = {
+      code: 'EngineFailure',
+      message: 'database password leaked by implementation detail',
+      data: {},
+    };
+    const invalidParamsFaultValue = invalidParamsFault('Filter must include a tenant');
+    const notFoundFault: OperationFault = {
+      code: 'NotFound',
+      message: 'Workflow not found',
+      data: { resource: 'workflow', identifier: 'workflow-1' },
+    };
+
+    await expectJsonErrorResponse(shapeRestFault(engineFailureFault), 500, 'Internal server error');
+    await expectJsonErrorResponse(
+      shapeRestFault(invalidParamsFaultValue),
+      400,
+      invalidParamsFaultValue.message,
+    );
+    await expectJsonErrorResponse(shapeRestFault(notFoundFault), 404, notFoundFault.message);
+  });
+
+  it('keeps the legacy raw-engine-message shaper explicit and separate', async () => {
+    const engineFailureFault: OperationFault = {
+      code: 'EngineFailure',
+      message: 'legacy raw engine failure',
+      data: {},
+    };
+
+    await expectJsonErrorResponse(
+      shapeLegacyRestFaultWithRawEngineFailureMessage(engineFailureFault),
+      500,
+      engineFailureFault.message,
+    );
+  });
+
+  it('constructs invalid-params faults in the shared operation helpers', () => {
+    expect(invalidParamsFault('Missing filter')).toEqual({
+      code: 'InvalidParams',
+      message: 'Missing filter',
+      data: { issues: [] },
+    });
+  });
+
   it('routes canonical JSON error envelopes through shared helpers', async () => {
     const allowedCustomEnvelopeFiles = new Set([
       // Recovery conflicts include machine-readable fields in addition to
@@ -44,7 +105,9 @@ describe('REST fault shaper regressions', () => {
   it('keeps invalid-params fault construction in operation helpers', async () => {
     const source = await Bun.file(new URL('bulk-filter-helpers.ts', operationsDirectory)).text();
 
-    expect(source).toContain("import { invalidParamsFault } from './operation-helpers.ts';");
+    expect(source).toMatch(
+      /import\s+\{\s*invalidParamsFault\s*\}\s+from\s+['"]\.\/operation-helpers\.ts['"]/u,
+    );
     expect(source).not.toContain('function invalidParamsFault');
     expect(source).not.toContain('export function invalidParamsFault');
   });
