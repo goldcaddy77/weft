@@ -9,6 +9,7 @@ import {
   WorkflowCompletedEvent,
 } from '../core/events.ts';
 import type { RetryPolicy, WorkflowContext } from '../core/types.ts';
+import { METRICS, MetricsCollector } from '../observability/metrics.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -16,6 +17,13 @@ import { DeadlineTracker } from './deadline-tracker.ts';
 import * as handlerModule from './handler.ts';
 import type { WeftServer } from './index.ts';
 import { serve, wireEventBroadcasting } from './index.ts';
+import { createOperationRegistry, executeOperation } from './operation-catalog.ts';
+import {
+  createGetTaskDiagnosticsOperation,
+  type GetTaskDiagnosticsOutput,
+} from './operations/get-task-diagnostics.ts';
+import { principalFromApiKey } from './principal.ts';
+import type { InflightRecord, QueuedRecord, ResolvedRecord } from './task-state.ts';
 
 class TokenEvent extends Event {
   static readonly type = 'stream:token';
@@ -847,6 +855,122 @@ describe('worker WebSocket protocol', () => {
 
     ws.close();
     await waitForRealTimersForTesting(50);
+  });
+
+  it('records task lifecycle metadata and low-cardinality metrics for WebSocket dispatches', async () => {
+    engine = createEngine();
+    const metricsCollector = new MetricsCollector();
+    server = serve({ engine, port: 0, metricsCollector });
+
+    const ws = await connectWorker(server);
+    await registerWorker(ws, { workerId: 'w-diagnostics', activities: ['charge'], concurrency: 1 });
+
+    ws.addEventListener('message', (event) => {
+      const message = JSON.parse(String(event.data)) as { type: string; operationId?: string };
+      if (message.type === 'task') {
+        ws.send(
+          JSON.stringify({
+            type: 'taskResult',
+            operationId: message.operationId,
+            status: 'completed',
+            value: 42,
+          }),
+        );
+      }
+    });
+
+    await server.dispatchTask({
+      operationId: 'diagnostic-ws-op',
+      activityName: 'charge',
+      input: null,
+      workflowId: 'workflow-diagnostics',
+    });
+
+    await waitFor(
+      async () => (await engine.storage.get(KEYS.operationResolved('diagnostic-ws-op'))) !== null,
+      { label: 'diagnostic-ws-op to resolve' },
+    );
+
+    const resolved = decode(
+      (await engine.storage.get(KEYS.operationResolved('diagnostic-ws-op')))!,
+    ) as {
+      workflowId?: string;
+      activityName?: string;
+      queue?: string;
+      workerId?: string;
+      firstQueuedAt?: number;
+      lastDispatchedAt?: number;
+      startedAt?: number;
+      completedAt?: number;
+      retryCount?: number;
+      requeueCount?: number;
+      resolutionReason?: string;
+      queueLatencyMs?: number;
+      executionLatencyMs?: number;
+    };
+    expect(resolved.workflowId).toBe('workflow-diagnostics');
+    expect(resolved.activityName).toBe('charge');
+    expect(resolved.queue).toBe('default');
+    expect(resolved.workerId).toBe('w-diagnostics');
+    expect(typeof resolved.firstQueuedAt).toBe('number');
+    expect(typeof resolved.lastDispatchedAt).toBe('number');
+    expect(typeof resolved.startedAt).toBe('number');
+    expect(typeof resolved.completedAt).toBe('number');
+    expect(resolved.retryCount).toBe(0);
+    expect(resolved.requeueCount).toBe(0);
+    expect(resolved.resolutionReason).toBe('completed');
+    expect(typeof resolved.queueLatencyMs).toBe('number');
+    expect(typeof resolved.executionLatencyMs).toBe('number');
+
+    const snapshot = metricsCollector.snapshot();
+    expect(snapshot[METRICS.taskQueueLatency.name]?.type).toBe('histogram');
+    expect(snapshot[METRICS.taskExecutionLatency.name]?.type).toBe('histogram');
+    expect(snapshot[METRICS.workerCapacitySaturation.name]).toEqual({ type: 'gauge', value: 0 });
+
+    ws.close();
+    await waitForRealTimersForTesting(50);
+  });
+
+  it('refreshes stale heartbeat metrics from runtime reconciliation scans', async () => {
+    engine = createEngine();
+    const metricsCollector = new MetricsCollector();
+    const now = Date.now();
+    const staleInflightRecord: InflightRecord = {
+      operationId: 'stale-heartbeat-metric-op',
+      workerId: 'worker-stale-heartbeat',
+      deadline: now + 60_000,
+      activityName: 'charge',
+      queue: 'default',
+      input: null,
+      attempt: 1,
+      visibilityTimeout: 30_000,
+      firstQueuedAt: now - 70_000,
+      lastQueuedAt: now - 70_000,
+      lastDispatchedAt: now - 65_000,
+      startedAt: now - 65_000,
+      lastHeartbeatAt: now - 61_000,
+      retryCount: 0,
+      requeueCount: 0,
+    };
+    await engine.storage.put(
+      KEYS.operationInflight(staleInflightRecord.operationId),
+      encode(staleInflightRecord),
+    );
+
+    server = serve({
+      engine,
+      port: 0,
+      metricsCollector,
+      visibilityPollIntervalMs: 10,
+    });
+
+    await waitFor(
+      () => {
+        const metric = metricsCollector.snapshot()[METRICS.taskStaleHeartbeats.name];
+        return metric?.type === 'gauge' && metric.value === 1;
+      },
+      { label: 'stale heartbeat metric to refresh', timeoutMs: 1000 },
+    );
   });
 
   it('extends persisted task visibility deadlines on heartbeat', async () => {
@@ -2487,6 +2611,110 @@ describe('long-poll endpoints (GET /v1/tasks/:queue, POST /v1/tasks/:queue/resul
     expect(task.activityName).toBe('charge');
   });
 
+  it('persists lifecycle metadata when a long-poll worker completes immediately after claim', async () => {
+    engine = createEngine();
+    const metricsCollector = new MetricsCollector();
+    server = serve({ engine, port: 0, metricsCollector });
+
+    await server.dispatchTask({
+      operationId: 'long-poll-diagnostics-op',
+      activityName: 'charge',
+      input: { amount: 100 },
+      workflowId: 'workflow-long-poll-diagnostics',
+    });
+
+    const pollResponse = await fetch(`${server.url}/v1/tasks/default?activity=charge&timeout=1000`);
+    expect(pollResponse.status).toBe(200);
+    const task = (await pollResponse.json()) as { operationId: string };
+    expect(task.operationId).toBe('long-poll-diagnostics-op');
+
+    const resultResponse = await fetch(`${server.url}/v1/tasks/default/result`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        operationId: 'long-poll-diagnostics-op',
+        status: 'completed',
+        value: { result: 42 },
+      }),
+    });
+    expect(resultResponse.status).toBe(200);
+
+    await waitFor(
+      async () =>
+        (await engine.storage.get(KEYS.operationResolved('long-poll-diagnostics-op'))) !== null,
+      { label: 'long-poll-diagnostics-op to resolve' },
+    );
+
+    const resolved = decode(
+      (await engine.storage.get(KEYS.operationResolved('long-poll-diagnostics-op')))!,
+    ) as ResolvedRecord;
+    expect(resolved.workflowId).toBe('workflow-long-poll-diagnostics');
+    expect(resolved.activityName).toBe('charge');
+    expect(resolved.queue).toBe('default');
+    expect(typeof resolved.firstQueuedAt).toBe('number');
+    expect(typeof resolved.lastQueuedAt).toBe('number');
+    expect(typeof resolved.lastDispatchedAt).toBe('number');
+    expect(typeof resolved.completedAt).toBe('number');
+    expect(resolved.retryCount).toBe(0);
+    expect(resolved.requeueCount).toBe(0);
+    expect(resolved.resolutionReason).toBe('completed');
+    expect(typeof resolved.queueLatencyMs).toBe('number');
+    expect(typeof resolved.executionLatencyMs).toBe('number');
+
+    const snapshot = metricsCollector.snapshot();
+    expect(snapshot[METRICS.taskQueueLatency.name]?.type).toBe('histogram');
+    expect(snapshot[METRICS.taskExecutionLatency.name]?.type).toBe('histogram');
+  });
+
+  it('refreshes lastQueuedAt when redispatching an existing queued record to long-poll', async () => {
+    const storage = new MemoryStorage();
+    engine = new Engine({ storage });
+    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+    server = serve({ engine, port: 0 });
+
+    await storage.put(
+      KEYS.operationQueued('long-poll-requeue-timing-op'),
+      encode({
+        operationId: 'long-poll-requeue-timing-op',
+        activityName: 'charge',
+        input: null,
+        queue: 'default',
+        attempt: 2,
+        visibilityTimeout: 30_000,
+        queuedAt: 1_000,
+        firstQueuedAt: 500,
+        lastQueuedAt: 1_000,
+        lastDispatchedAt: 750,
+        startedAt: 800,
+        retryCount: 1,
+        requeueCount: 1,
+        lastRequeueReason: 'visibility-timeout',
+      } satisfies QueuedRecord),
+    );
+
+    const beforeRedispatch = Date.now();
+    await server.dispatchTask({
+      operationId: 'long-poll-requeue-timing-op',
+      activityName: 'charge',
+      input: null,
+      attempt: 2,
+    });
+
+    const persisted = decode(
+      (await storage.get(KEYS.operationQueued('long-poll-requeue-timing-op')))!,
+    ) as QueuedRecord;
+    expect(persisted.firstQueuedAt).toBe(500);
+    expect(persisted.lastQueuedAt).toBe(persisted.queuedAt);
+    expect(persisted.lastQueuedAt).toBeGreaterThanOrEqual(beforeRedispatch);
+    expect(persisted.lastDispatchedAt).toBe(750);
+    expect(persisted.startedAt).toBe(800);
+
+    const pendingTask = server.taskQueue.peekPending('default')[0];
+    expect(pendingTask?.lastQueuedAt).toBe(persisted.lastQueuedAt);
+  });
+
   it('blocks until a task arrives within the timeout', async () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });
@@ -3593,6 +3821,77 @@ describe('worker disconnection triggers task reassignment', () => {
 
     // The task should be available via long-poll
     expect(server.taskQueue.pendingCount('default')).toBe(1);
+  });
+
+  it('records worker-disconnect requeue metadata and exposes it through diagnostics', async () => {
+    ({ engine, storage } = createEngineWithStorage());
+    server = serve({ engine, port: 0 });
+
+    const ws = await connectWorker(server);
+    await registerWorker(ws, { workerId: 'w-disconnect-diagnostics', activities: ['charge'] });
+
+    await server.dispatchTask({
+      operationId: 'disconnect-diagnostics-op',
+      activityName: 'charge',
+      input: null,
+      workflowId: 'workflow-disconnect-diagnostics',
+    });
+    await waitFor(
+      async () => (await storage.get(KEYS.operationInflight('disconnect-diagnostics-op'))) !== null,
+      { label: 'disconnect-diagnostics-op to be inflight' },
+    );
+
+    ws.close();
+    await waitFor(
+      async () =>
+        (await storage.get(KEYS.operationQueued('disconnect-diagnostics-op'))) !== null &&
+        server.taskQueue.pendingCount('default') === 1,
+      { label: 'disconnect-diagnostics-op to be requeued' },
+    );
+
+    const queued = decode(
+      (await storage.get(KEYS.operationQueued('disconnect-diagnostics-op')))!,
+    ) as QueuedRecord;
+    expect(queued.workflowId).toBe('workflow-disconnect-diagnostics');
+    expect(queued.attempt).toBe(2);
+    expect(queued.retryCount).toBe(1);
+    expect(queued.requeueCount).toBe(1);
+    expect(queued.lastRequeueReason).toBe('worker-disconnect');
+    expect(queued.lastHeartbeatAt).toBeUndefined();
+
+    const operation = createGetTaskDiagnosticsOperation({
+      registry: server.registry,
+      taskQueue: server.taskQueue,
+      now: () => Date.now() + 1_000,
+    });
+    const result = await executeOperation(
+      'weft.tasks.diagnostics',
+      {
+        operationId: 'disconnect-diagnostics-op',
+        retryStormMinimumAttempts: 1,
+        staleQueuedAfterMs: 0,
+        limit: 10,
+      },
+      {
+        principal: principalFromApiKey({ subject: 'operator', scopes: ['system:read'] }),
+        engine,
+        transport: 'jsonRpcStdio',
+        registry: createOperationRegistry([operation]),
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected task diagnostics result');
+    const diagnostics = result.value as GetTaskDiagnosticsOutput;
+    expect(diagnostics.items).toContainEqual(
+      expect.objectContaining({
+        kind: 'retry-storm',
+        operationId: 'disconnect-diagnostics-op',
+        retryCount: 1,
+        requeueCount: 1,
+        lastRequeueReason: 'worker-disconnect',
+      }),
+    );
   });
 
   it('reassigns multiple in-flight tasks when a worker disconnects', async () => {

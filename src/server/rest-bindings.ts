@@ -66,6 +66,11 @@ import {
   getSystemMetricsOperation,
 } from './operations/get-system-metrics.ts';
 import {
+  createGetTaskDiagnosticsOperation,
+  getTaskDiagnosticsOperation,
+  getTaskDiagnosticsRestBinding,
+} from './operations/get-task-diagnostics.ts';
+import {
   getTenantQuotaOperation,
   getTenantQuotaRestBinding,
 } from './operations/get-tenant-quota.ts';
@@ -243,6 +248,7 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
   resumeScheduleRestBinding,
   getStreamChunksRestBinding,
   streamWorkflowSseRestBinding,
+  getTaskDiagnosticsRestBinding,
   // Wave 1 — previously legacy direct handlers
   listSchedulesRestBinding,
   getScheduleRestBinding,
@@ -327,6 +333,17 @@ function buildListTaskQueuesOperationForRegistry(options: LiveOperationRegistryO
   });
 }
 
+function buildTaskDiagnosticsOperationForRegistry(options: LiveOperationRegistryOptions) {
+  if (options.workerRegistry === undefined || options.taskQueue === undefined) {
+    return getTaskDiagnosticsOperation;
+  }
+  return createGetTaskDiagnosticsOperation({
+    registry: options.workerRegistry,
+    taskQueue: options.taskQueue,
+    ...(options.clock !== undefined ? { now: options.clock } : {}),
+  });
+}
+
 export function createLiveOperationRegistry(
   options?: LiveOperationRegistryOptions,
 ): OperationRegistry {
@@ -371,6 +388,7 @@ export function createLiveOperationRegistry(
     getStreamChunksOperation,
     streamWorkflowSseOperation,
     workflowEventsSubscriptionOperation,
+    buildTaskDiagnosticsOperationForRegistry(resolved),
     // Wave 1 — previously legacy direct handlers
     listSchedulesOperation,
     getScheduleOperation,

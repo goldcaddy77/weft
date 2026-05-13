@@ -4,10 +4,17 @@ import { calculateBackoff } from '../../core/scheduler.ts';
 import { KEYS } from '../../storage/interface.ts';
 import type { ServeOptions, TaskDispatch } from '../index.ts';
 import { restoreExtendedDeadlineIfStillActive } from '../runtime-helpers.ts';
-import type { InflightRecord, QueuedRecord } from '../task-state.ts';
+import type { InflightRecord, QueuedRecord, TaskRequeueReason } from '../task-state.ts';
 import { transitionInflightToQueued, transitionInflightToResolved } from '../task-state.ts';
 import type { ServerContext } from './context.ts';
 import { dispatchTaskImpl, scheduleDelayedDispatch } from './task-dispatch.ts';
+import {
+  isTaskHeartbeatStaleForMetrics,
+  recordTaskRequeueMetric,
+  recordTaskRetryMetric,
+  recordTaskStaleHeartbeatMetric,
+  recordWorkerCapacitySaturationMetric,
+} from './task-metrics.ts';
 import { isInflightRecord } from './websocket-worker.ts';
 
 /**
@@ -21,39 +28,84 @@ export async function reassignOrExpireTask(
   options: ServeOptions,
   operationId: string,
   record: InflightRecord,
+  reason: TaskRequeueReason = 'visibility-timeout',
 ): Promise<void> {
   const nextAttempt = (record.attempt ?? 1) + 1;
   const policy = record.retryPolicy;
+  const nextRetryCount = Math.max(record.retryCount ?? 0, nextAttempt - 1);
 
-  if (policy && nextAttempt > policy.maxAttempts) {
-    await transitionInflightToResolved(options.engine.storage, operationId, 'failed');
-    options.engine.dispatchEvent(
-      new ActivityFailedEvent(
-        record.operationId,
-        record.workflowId ?? '',
-        record.activityName,
-        new Error(
-          `Activity "${record.activityName}" exhausted all ${policy.maxAttempts} retry attempts`,
-        ),
-        record.attempt ?? 1,
-      ),
-    );
+  if (hasExceededMaxAttempts(policy, nextAttempt)) {
+    await expireTaskAfterMaxAttempts(context, options, operationId, record, policy);
     return;
   }
 
-  const queuedRecord: QueuedRecord = {
+  const queuedRecord = createRequeuedRecord(record, nextAttempt, nextRetryCount, reason);
+  await transitionInflightToQueued(options.engine.storage, operationId, queuedRecord);
+  recordTaskRetryMetric(options.metricsCollector);
+  recordTaskRequeueMetric(options.metricsCollector);
+  recordWorkerCapacitySaturationMetric(options.metricsCollector, context.registry);
+
+  scheduleTaskRedispatch(context, options, createRequeuedTaskDispatch(record, nextAttempt), policy);
+}
+
+function hasExceededMaxAttempts(
+  policy: InflightRecord['retryPolicy'],
+  nextAttempt: number,
+): policy is NonNullable<InflightRecord['retryPolicy']> {
+  return policy !== undefined && nextAttempt > policy.maxAttempts;
+}
+
+async function expireTaskAfterMaxAttempts(
+  context: ServerContext,
+  options: ServeOptions,
+  operationId: string,
+  record: InflightRecord,
+  policy: NonNullable<InflightRecord['retryPolicy']>,
+): Promise<void> {
+  await transitionInflightToResolved(options.engine.storage, operationId, 'failed', {
+    record,
+    resolutionReason: 'max-attempts-exceeded',
+  });
+  recordWorkerCapacitySaturationMetric(options.metricsCollector, context.registry);
+  options.engine.dispatchEvent(
+    new ActivityFailedEvent(
+      record.operationId,
+      record.workflowId ?? '',
+      record.activityName,
+      new Error(
+        `Activity "${record.activityName}" exhausted all ${policy.maxAttempts} retry attempts`,
+      ),
+      record.attempt ?? 1,
+    ),
+  );
+}
+
+function createRequeuedRecord(
+  record: InflightRecord,
+  nextAttempt: number,
+  nextRetryCount: number,
+  reason: TaskRequeueReason,
+): QueuedRecord {
+  return {
     operationId: record.operationId,
     activityName: record.activityName,
     input: record.input,
     queue: record.queue,
     attempt: nextAttempt,
     visibilityTimeout: record.visibilityTimeout,
-    retryPolicy: policy,
+    retryPolicy: record.retryPolicy,
     queuedAt: Date.now(),
     workflowId: record.workflowId,
+    firstQueuedAt: record.firstQueuedAt,
+    lastDispatchedAt: record.lastDispatchedAt,
+    startedAt: record.startedAt,
+    retryCount: nextRetryCount,
+    requeueCount: (record.requeueCount ?? 0) + 1,
+    lastRequeueReason: reason,
   };
-  await transitionInflightToQueued(options.engine.storage, operationId, queuedRecord);
+}
 
+function createRequeuedTaskDispatch(record: InflightRecord, nextAttempt: number): TaskDispatch {
   const taskDispatch: TaskDispatch = {
     operationId: record.operationId,
     activityName: record.activityName,
@@ -62,15 +114,25 @@ export async function reassignOrExpireTask(
     attempt: nextAttempt,
     visibilityTimeout: record.visibilityTimeout,
     workflowId: record.workflowId,
-    ...(policy ? { retryPolicy: policy } : {}),
   };
+  if (record.retryPolicy !== undefined) {
+    taskDispatch.retryPolicy = record.retryPolicy;
+  }
+  return taskDispatch;
+}
 
+function scheduleTaskRedispatch(
+  context: ServerContext,
+  options: ServeOptions,
+  taskDispatch: TaskDispatch,
+  policy: InflightRecord['retryPolicy'],
+): void {
   if (policy) {
-    const delay = calculateBackoff(record.attempt ?? 1, policy);
+    const delay = calculateBackoff((taskDispatch.attempt ?? 1) - 1, policy);
     scheduleDelayedDispatch(context, options, taskDispatch, delay);
   } else {
     void dispatchTaskImpl(context, options, taskDispatch).catch((err) =>
-      console.error(`[weft] Redispatch failed for "${record.operationId}":`, err),
+      console.error(`[weft] Redispatch failed for "${taskDispatch.operationId}":`, err),
     );
   }
 }
@@ -158,10 +220,12 @@ export async function reconcileOrphanedRecords(
   context.reconciliationRunning = true;
   try {
     const now = Date.now();
+    let staleHeartbeatCount = 0;
     for await (const [, value] of options.engine.storage.scan('op:inflight:')) {
       try {
         const decoded = decode(value);
         if (!isInflightRecord(decoded)) continue;
+        if (isTaskHeartbeatStaleForMetrics(decoded, now)) staleHeartbeatCount += 1;
 
         if (decoded.deadline > now) {
           // Still valid — ensure it is tracked in the heap so the fast path
@@ -196,6 +260,7 @@ export async function reconcileOrphanedRecords(
         console.error('[weft] Failed to reconcile inflight record — skipping:', error);
       }
     }
+    recordTaskStaleHeartbeatMetric(options.metricsCollector, staleHeartbeatCount);
   } catch (error) {
     console.error('[weft] Reconciliation scanner error:', error);
   } finally {

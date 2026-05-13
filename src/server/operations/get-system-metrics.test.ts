@@ -15,7 +15,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../../core/engine.ts';
-import { MetricsCollector } from '../../observability/metrics.ts';
+import { METRICS, MetricsCollector } from '../../observability/metrics.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry, executeOperation } from '../operation-catalog.ts';
@@ -127,6 +127,39 @@ describe('weft.system.metrics — factory variant (with collector)', () => {
     expect(response.headers.get('content-type')).toBe('application/json');
     const body = (await response.json()) as Record<string, { type?: string; value?: number }>;
     expect(body['weft_test_counter']).toEqual({ type: 'counter', value: 7 });
+  });
+
+  it('returns task diagnostics metrics from the injected MetricsCollector', async () => {
+    engine = createEngine();
+
+    const collector = new MetricsCollector();
+    collector.gauge(METRICS.taskBacklog.name, 3);
+    collector.record(METRICS.taskQueueLatency.name, 125);
+    collector.record(METRICS.taskExecutionLatency.name, 250);
+    collector.increment(METRICS.taskRetries.name, 2);
+    collector.increment(METRICS.taskRequeues.name, 1);
+    collector.gauge(METRICS.taskStaleHeartbeats.name, 4);
+    collector.gauge(METRICS.workerCapacitySaturation.name, 1);
+
+    const operation = createGetSystemMetricsOperation({ metricsCollector: collector });
+    const registry = createOperationRegistry([operation]);
+    const binding = createGetSystemMetricsRestBinding();
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/metrics/json', { method: 'GET' }),
+      engine,
+      { operationRegistry: registry, restBindings: [binding], ...metricsAuthContext() },
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, { type?: string; value?: number }>;
+    expect(body[METRICS.taskBacklog.name]).toEqual({ type: 'gauge', value: 3 });
+    expect(body[METRICS.taskRetries.name]).toEqual({ type: 'counter', value: 2 });
+    expect(body[METRICS.taskRequeues.name]).toEqual({ type: 'counter', value: 1 });
+    expect(body[METRICS.taskStaleHeartbeats.name]).toEqual({ type: 'gauge', value: 4 });
+    expect(body[METRICS.workerCapacitySaturation.name]).toEqual({ type: 'gauge', value: 1 });
+    expect(body[METRICS.taskQueueLatency.name]?.type).toBe('histogram');
+    expect(body[METRICS.taskExecutionLatency.name]?.type).toBe('histogram');
   });
 
   it('returns an empty snapshot when no metricsCollector is injected via the factory', async () => {

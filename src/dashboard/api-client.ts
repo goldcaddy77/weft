@@ -161,6 +161,53 @@ export interface ReviewDecision {
   feedback?: string;
 }
 
+export type TaskDiagnosticKind =
+  | 'stuck-queued'
+  | 'stale-inflight'
+  | 'retry-storm'
+  | 'all-workers-at-capacity';
+
+export interface TaskDiagnosticItem {
+  kind: TaskDiagnosticKind;
+  state: 'queued' | 'inflight' | 'resolved' | 'capacity';
+  operationId?: string;
+  workflowId?: string;
+  activityName?: string;
+  queue?: string;
+  workerId?: string;
+  retryCount: number;
+  requeueCount: number;
+  queueLatencyMs?: number;
+  executionLatencyMs?: number;
+  heartbeatAgeMs?: number;
+  lastRequeueReason?: 'visibility-timeout' | 'worker-disconnect';
+  resolutionReason?: string;
+  evidence: string[];
+}
+
+export interface TaskDiagnosticsSummary {
+  stuckQueued: number;
+  staleInflight: number;
+  retryStorms: number;
+  allWorkersAtCapacity: number;
+}
+
+export interface TaskDiagnosticsResponse {
+  items: TaskDiagnosticItem[];
+  summary: TaskDiagnosticsSummary;
+  limit: number;
+}
+
+export interface TaskDiagnosticsFilter {
+  operationId?: string;
+  workflowId?: string;
+  queue?: string;
+  staleQueuedAfterMs?: number;
+  staleHeartbeatAfterMs?: number;
+  retryStormMinimumAttempts?: number;
+  limit?: number;
+}
+
 // ---------------------------------------------------------------------------
 // Error
 // ---------------------------------------------------------------------------
@@ -180,6 +227,26 @@ export class ApiError extends Error {
 // ---------------------------------------------------------------------------
 
 const BASE_PATH = '/v1';
+
+function setOptionalSearchParam(
+  params: URLSearchParams,
+  key: string,
+  value: string | number | undefined,
+): void {
+  if (value !== undefined) params.set(key, String(value));
+}
+
+function buildTaskDiagnosticsSearchParams(filter?: TaskDiagnosticsFilter): URLSearchParams {
+  const params = new URLSearchParams();
+  setOptionalSearchParam(params, 'operationId', filter?.operationId);
+  setOptionalSearchParam(params, 'workflowId', filter?.workflowId);
+  setOptionalSearchParam(params, 'queue', filter?.queue);
+  setOptionalSearchParam(params, 'staleQueuedAfterMs', filter?.staleQueuedAfterMs);
+  setOptionalSearchParam(params, 'staleHeartbeatAfterMs', filter?.staleHeartbeatAfterMs);
+  setOptionalSearchParam(params, 'retryStormMinimumAttempts', filter?.retryStormMinimumAttempts);
+  setOptionalSearchParam(params, 'limit', filter?.limit);
+  return params;
+}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(options?.headers);
@@ -273,6 +340,14 @@ export class ApiClient {
       `/workflows/${encodeURIComponent(id)}/timeline`,
     );
     return response ?? [];
+  }
+
+  /** Get bounded task diagnostics for workflow detail and operator views. */
+  async getTaskDiagnostics(filter?: TaskDiagnosticsFilter): Promise<TaskDiagnosticsResponse> {
+    const query = buildTaskDiagnosticsSearchParams(filter).toString();
+    const path = query ? `/tasks/diagnostics?${query}` : '/tasks/diagnostics';
+
+    return request<TaskDiagnosticsResponse>(path);
   }
 
   /** Reconstruct workflow state at a historical checkpoint step. */

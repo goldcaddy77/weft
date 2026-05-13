@@ -448,4 +448,46 @@ export const METRICS = {
     unit: 'workflows',
     type: 'counter' as const,
   },
+  taskBacklog: {
+    name: 'weft.task.backlog',
+    description: 'Number of queued tasks waiting for workers',
+    unit: 'tasks',
+    type: 'gauge' as const,
+  },
+  taskQueueLatency: {
+    name: 'weft.task.queue_latency',
+    description: 'Time tasks spend queued before dispatch in milliseconds',
+    unit: 'ms',
+    type: 'histogram' as const,
+  },
+  taskExecutionLatency: {
+    name: 'weft.task.execution_latency',
+    description: 'Time tasks spend executing after worker start in milliseconds',
+    unit: 'ms',
+    type: 'histogram' as const,
+  },
+  taskRetries: {
+    name: 'weft.task.retries',
+    description: 'Total task retry attempts after the first dispatch attempt',
+    unit: 'retries',
+    type: 'counter' as const,
+  },
+  taskRequeues: {
+    name: 'weft.task.requeues',
+    description: 'Total visibility-timeout or disconnect task requeues',
+    unit: 'requeues',
+    type: 'counter' as const,
+  },
+  taskStaleHeartbeats: {
+    name: 'weft.task.stale_heartbeats',
+    description: 'Number of in-flight tasks whose heartbeat age exceeds the diagnostic threshold',
+    unit: 'tasks',
+    type: 'gauge' as const,
+  },
+  workerCapacitySaturation: {
+    name: 'weft.worker.capacity_saturation',
+    description: 'Ratio of in-flight worker slots to total worker concurrency',
+    unit: 'ratio',
+    type: 'gauge' as const,
+  },
 } as const;

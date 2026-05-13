@@ -13,9 +13,16 @@ import {
 } from '../../worker/protocol.ts';
 import type { ServeOptions } from '../index.ts';
 import type { WebSocketData } from '../json-rpc-websocket-runtime.ts';
-import type { InflightRecord } from '../task-state.ts';
-import { transitionInflightToResolved } from '../task-state.ts';
+import {
+  isInflightRecord,
+  readInflightRecord,
+  transitionInflightToResolved,
+} from '../task-state.ts';
 import type { ServerContext } from './context.ts';
+import {
+  recordTaskExecutionLatencyMetric,
+  recordWorkerCapacitySaturationMetric,
+} from './task-metrics.ts';
 import { WORKER_STREAM_RE } from './websocket-upgrade.ts';
 
 const MAX_WORKER_CONCURRENCY = 1_000;
@@ -27,20 +34,7 @@ function isWorkerConnection(pathname: string): boolean {
   return WORKER_STREAM_RE.test(pathname);
 }
 
-/** Type guard for decoded storage records in the inflight state. */
-export function isInflightRecord(value: unknown): value is InflightRecord {
-  if (value === null || typeof value !== 'object') return false;
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record['operationId'] === 'string' &&
-    typeof record['activityName'] === 'string' &&
-    typeof record['queue'] === 'string' &&
-    typeof record['attempt'] === 'number' &&
-    typeof record['visibilityTimeout'] === 'number' &&
-    typeof record['workerId'] === 'string' &&
-    typeof record['deadline'] === 'number'
-  );
-}
+export { isInflightRecord } from '../task-state.ts';
 
 export async function withRetry<T>(
   operation: () => Promise<T>,
@@ -206,12 +200,21 @@ export function handleWorkerWebSocketMessage(
       context.registry.completeTask(operationId);
       context.deadlineTracker.remove(operationId);
       cleanupWorkflowIndex(operationId);
+      recordWorkerCapacitySaturationMetric(options.metricsCollector, context.registry);
 
-      transitionInflightToResolved(
-        options.engine.storage,
-        operationId,
-        resolveTaskResultStatus(message),
-      ).catch((error) => {
+      void (async () => {
+        const inflightRecord = await readInflightRecord(options.engine.storage, operationId);
+        const resolvedAt = Date.now();
+        const resolvedStatus = resolveTaskResultStatus(message);
+        await transitionInflightToResolved(options.engine.storage, operationId, resolvedStatus, {
+          ...(inflightRecord === null ? {} : { record: inflightRecord }),
+          resolvedAt,
+          resolutionReason: resolvedStatus,
+        });
+        if (inflightRecord !== null) {
+          recordTaskExecutionLatencyMetric(options.metricsCollector, inflightRecord, resolvedAt);
+        }
+      })().catch((error) => {
         console.error(
           `[weft] Failed to transition task "${operationId}" to resolved — inflight record may leak:`,
           error,
@@ -259,7 +262,7 @@ export function handleWorkerWebSocketMessage(
                   );
                   return;
                 }
-                const updated = { ...decoded, deadline: newDeadline };
+                const updated = { ...decoded, deadline: newDeadline, lastHeartbeatAt: Date.now() };
                 await options.engine.storage.put(inflightKey, encode(updated));
               }
             }, `extend visibility for task "${opId}"`).catch((error) => {
