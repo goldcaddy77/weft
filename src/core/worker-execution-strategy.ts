@@ -1,13 +1,5 @@
-/**
- * Worker-based execution strategy: runs workflows in Web Workers.
- *
- * Uses {@link WorkerPool} to manage a pool of workers. Each workflow is
- * assigned a dedicated worker for its lifetime. Messages are forwarded
- * between the engine and workers via the {@link WorkerInboundMessage} /
- * {@link WorkerOutboundMessage} protocol.
- *
- * @module core/worker-execution-strategy
- */
+/** Worker-based execution strategy that runs workflows in Web Workers.
+ * @module core/worker-execution-strategy */
 
 import type { WorkerPool } from '../workers/pool.ts';
 import type { ExecutionStrategy } from './execution-strategy.ts';
@@ -266,13 +258,19 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
       this.#attachWorkerListeners(worker);
       this.#postResumeMessage(worker, parameters);
     } catch (error) {
-      if (!this.#disposed) {
-        this.#emit({
-          type: 'failed',
-          workflowId: parameters.workflowId,
-          error: error instanceof Error ? error.message : String(error),
-        });
+      if (
+        this.#disposed ||
+        this.#parkedWorkersByWorkflowId.get(parameters.workflowId) !== parkedWorker
+      ) {
+        return;
       }
+
+      this.#parkedWorkersByWorkflowId.delete(parameters.workflowId);
+      this.#emit({
+        type: 'failed',
+        workflowId: parameters.workflowId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

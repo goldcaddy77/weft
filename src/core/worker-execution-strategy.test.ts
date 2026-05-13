@@ -50,7 +50,10 @@ function dispatchToMockWorker(worker: MockWorker, type: string, event: Event): v
 function createMockPool(workers: MockWorker[]): WorkerPool {
   const available = [...workers];
   const pending: Array<(worker: Worker) => void> = [];
-  const specificPending = new Map<MockWorker, Array<(worker: Worker) => void>>();
+  const specificPending = new Map<
+    MockWorker,
+    Array<{ resolve: (worker: Worker) => void; reject: (error: Error) => void }>
+  >();
   const released: MockWorker[] = [];
 
   return {
@@ -78,9 +81,9 @@ function createMockPool(workers: MockWorker[]): WorkerPool {
         return worker;
       }
 
-      return new Promise<Worker>((resolve) => {
+      return new Promise<Worker>((resolve, reject) => {
         const waiters = specificPending.get(mockWorker) ?? [];
-        waiters.push(resolve);
+        waiters.push({ resolve, reject });
         specificPending.set(mockWorker, waiters);
       });
     }),
@@ -93,7 +96,7 @@ function createMockPool(workers: MockWorker[]): WorkerPool {
         if (specificWaiters.length === 0) {
           specificPending.delete(mockWorker);
         }
-        nextSpecificWaiter?.(worker);
+        nextSpecificWaiter?.resolve(worker);
         return;
       }
 
@@ -110,7 +113,11 @@ function createMockPool(workers: MockWorker[]): WorkerPool {
       if (availableIndex >= 0) {
         available.splice(availableIndex, 1);
       }
+      const waiters = specificPending.get(mockWorker) ?? [];
       specificPending.delete(mockWorker);
+      for (const waiter of waiters) {
+        waiter.reject(new Error('Worker was discarded from this WorkerPool'));
+      }
       mockWorker.terminate();
     }),
     get availableCount() {
@@ -785,6 +792,68 @@ describe('WorkerExecutionStrategy', () => {
         workflowId: 'wf-parked',
       });
       expect(mockWorkers[1]?.postMessage).not.toHaveBeenCalled();
+    });
+
+    it('emits one failure when a parked worker crashes during queued resume', async () => {
+      setup();
+
+      strategy.startWorkflow({
+        workflowId: 'wf-parked-crash',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+
+      await sleepForTesting(10);
+
+      const worker = firstWorker();
+      dispatchToMockWorker(
+        worker,
+        'message',
+        new MessageEvent('message', {
+          data: {
+            type: 'checkpoint',
+            workflowId: 'wf-parked-crash',
+            checkpoint: new ArrayBuffer(0),
+            operationRequest: {
+              type: 'wait-signal',
+              operationId: 'op-wait',
+              signalName: 'llm-resume',
+            },
+          } satisfies WorkerOutboundMessage,
+        }),
+      );
+
+      strategy.startWorkflow({
+        workflowId: 'wf-second',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+
+      await sleepForTesting(10);
+
+      strategy.resumeWorkflow({
+        workflowId: 'wf-parked-crash',
+        checkpoint: new ArrayBuffer(4),
+        operationResult: { status: 'completed', value: 'resume payload' },
+      });
+
+      dispatchToMockWorker(
+        worker,
+        'error',
+        new ErrorEvent('error', {
+          message: 'parked worker crashed during resume',
+        }),
+      );
+
+      await sleepForTesting(10);
+
+      expect(
+        messages.filter(
+          (message) => message.type === 'failed' && message.workflowId === 'wf-parked-crash',
+        ),
+      ).toHaveLength(1);
     });
 
     it('releases the worker on completed messages', async () => {
