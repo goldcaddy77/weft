@@ -98,6 +98,15 @@ function assertKindAndEventSchemaAgree(operation: RegistrableOperation): void {
   }
 }
 
+function assertMcpMetadataAgrees(operation: RegistrableOperation): void {
+  if (!operation.mcpExposable) return;
+  if (operation.mcpTool === undefined) {
+    throw new Error(
+      `operation "${operation.name}" is mcpExposable but does not declare mcpTool.workflowType metadata`,
+    );
+  }
+}
+
 function freezeOperation(operation: RegistrableOperation): ErasedOperation {
   return Object.freeze({
     ...operation,
@@ -106,6 +115,9 @@ function freezeOperation(operation: RegistrableOperation): ErasedOperation {
       ? {}
       : { producibleFaults: Object.freeze([...operation.producibleFaults]) }),
     access: freezeAccessPolicy(operation.access),
+    ...(operation.mcpTool === undefined
+      ? {}
+      : { mcpTool: Object.freeze({ workflowType: operation.mcpTool.workflowType }) }),
     transports: Object.freeze({ ...operation.transports }),
     unknownKeyPolicy: Object.freeze({ ...operation.unknownKeyPolicy }),
   }) as ErasedOperation;
@@ -126,6 +138,7 @@ export function createOperationRegistry(
     validateOperationName(operation.name);
     assertSafeDeclaredKeys(operation);
     assertKindAndEventSchemaAgree(operation);
+    assertMcpMetadataAgrees(operation);
     byName.set(operation.name, freezeOperation(operation));
   }
   const ordered = Object.freeze([...byName.values()]);

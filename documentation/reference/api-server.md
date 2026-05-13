@@ -303,13 +303,13 @@ The operation catalog is the unified, transport-neutral registry of every operat
 
 **`GET /.well-known/mcp.json`** — minimal MCP discovery document. It points remote clients at the Streamable HTTP MCP endpoint (`POST`, `GET`, and `DELETE /mcp`), names `tools/list` as the canonical live tool introspection method, and includes the `weft-mcp` stdio command for local clients.
 
-Both documents enumerate operations from the unified catalog. To see which transports an operation is bound to, look at the `tags` and binding metadata in the document. To see the input/output schemas for an operation, follow the `$ref` links into `components.schemas`.
+The OpenAPI and OpenRPC documents enumerate operations from the unified catalog. To see which transports an operation is bound to, look at the `tags` and binding metadata in the document. To see the input/output schemas for an operation, follow the `$ref` links into `components.schemas`.
 
 ### MCP Server
 
 The MCP server exposes Weft workflows to [Model Context Protocol](https://modelcontextprotocol.io/) clients. It is not a fifth operation-catalog transport: `tools/list`, `tools/call`, and `resources/read` are MCP methods that adapt registered workflows and workflow resources into the MCP protocol.
 
-Discovery starts at `GET /.well-known/mcp.json`. The document advertises the live Streamable HTTP endpoint, the local `weft-mcp` stdio command, and the live MCP methods clients should call for tool and resource introspection.
+Discovery starts at `GET /.well-known/mcp.json`. The document advertises the live Streamable HTTP endpoint, the local `weft-mcp` stdio command, and the live MCP methods clients should call for tool and resource introspection. In production, configure `serve({ publicOrigin })` or `serve({ trustedHosts })` before serving this route because it emits absolute endpoint URLs.
 
 | Method   | Path   | Description                                             |
 | -------- | ------ | ------------------------------------------------------- |

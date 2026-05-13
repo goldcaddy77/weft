@@ -69,6 +69,17 @@ export type OperationInvocationResult<Output> =
   | SubscriptionOperationInvocation<unknown, Output>;
 
 /**
+ * Metadata that connects an operation-catalog entry to a live MCP tool.
+ *
+ * v1 only supports workflow-backed MCP tools. The exact MCP tool name is
+ * resolved from the live engine registry during discovery because `tools/list`
+ * owns collision handling.
+ */
+export type McpToolMetadata = {
+  readonly workflowType: string;
+};
+
+/**
  * Result of the parameter-aware `authorize` hook.
  *
  * **`reason` is wire-visible.** Hook authors must not embed secrets or
@@ -112,6 +123,7 @@ export type OperationContext<Input> = {
 type OperationDefinitionBase<Input, Output> = {
   readonly name: string;
   readonly mcpExposable: boolean;
+  readonly mcpTool?: McpToolMetadata;
   readonly summary: string;
   readonly tags: ReadonlyArray<string>;
   readonly inputSchema: z.ZodType<Input>;
@@ -202,6 +214,7 @@ export type OperationRegistry = {
 type RegistrableOperationBase = {
   readonly name: string;
   readonly mcpExposable: boolean;
+  readonly mcpTool?: McpToolMetadata;
   readonly summary: string;
   readonly tags: ReadonlyArray<string>;
   readonly inputSchema: z.ZodType;

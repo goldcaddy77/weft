@@ -85,6 +85,7 @@ export function catalogWorkflow<Input>(
   return {
     name: options.name,
     mcpExposable: options.mcpExposable,
+    ...(options.mcpExposable ? { mcpTool: { workflowType: options.workflowType } } : {}),
     summary: presentation.summary,
     tags: presentation.tags,
     inputSchema: presentation.inputSchema,

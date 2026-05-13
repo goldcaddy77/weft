@@ -49,6 +49,7 @@ export { isValidOperationName, validateOperationName } from './operation-catalog
 type OperationDefinitionInputBase<Input, Output> = {
   readonly name: string;
   readonly mcpExposable: boolean;
+  readonly mcpTool?: OperationDefinition<Input, Output>['mcpTool'];
   readonly summary: string;
   readonly tags?: ReadonlyArray<string>;
   readonly inputSchema: z.ZodType<Input>;
@@ -115,6 +116,9 @@ export function defineOperation<Input, Output>(
   const baseFields = {
     name: input.name,
     mcpExposable: input.mcpExposable,
+    ...(input.mcpTool === undefined
+      ? {}
+      : { mcpTool: { workflowType: input.mcpTool.workflowType } }),
     summary: input.summary,
     tags: [...(input.tags ?? [])],
     inputSchema: input.inputSchema,

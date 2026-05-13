@@ -9,7 +9,6 @@ import {
   resetPublicOriginWarningForTesting,
 } from './api-catalog.ts';
 import { handleRequest } from './handler.ts';
-import { generateMcpDiscovery } from './mcp-discovery.ts';
 
 function createEngine(): Engine {
   return new Engine({ storage: new MemoryStorage() });
@@ -50,42 +49,6 @@ describe('API catalog linkset', () => {
           ],
         },
       ],
-    });
-  });
-
-  it('generates an MCP discovery document with the live Streamable HTTP endpoint', () => {
-    const document = generateMcpDiscovery({ origin: 'https://api.example.com' });
-
-    expect(document).toEqual({
-      schemaVersion: 1,
-      protocol: 'model-context-protocol',
-      protocolVersion: '2025-11-25',
-      serverInfo: {
-        name: 'weft',
-        version: '0.1.0',
-      },
-      transports: {
-        streamableHttp: {
-          url: 'https://api.example.com/mcp',
-          methods: ['POST', 'GET', 'DELETE'],
-          sessionHeader: 'Mcp-Session-Id',
-          protocolVersionHeader: 'Mcp-Protocol-Version',
-        },
-        stdio: {
-          command: 'weft-mcp',
-        },
-      },
-      discovery: {
-        openRpc: 'https://api.example.com/openrpc.json',
-        tools: {
-          method: 'tools/list',
-          canonical: true,
-        },
-        resources: {
-          listMethod: 'resources/list',
-          templatesMethod: 'resources/templates/list',
-        },
-      },
     });
   });
 
@@ -165,6 +128,81 @@ describe('API catalog linkset', () => {
     expect(body.transports?.streamableHttp?.url).toBe('https://api.example.com/mcp');
     expect(body.transports?.streamableHttp?.methods).toEqual(['POST', 'GET', 'DELETE']);
     expect(body.discovery?.tools).toEqual({ method: 'tools/list', canonical: true });
+  });
+
+  it('serves /.well-known/mcp.json when trustedHosts contains the request Host', async () => {
+    engine = createEngine();
+    const response = await handleRequest(
+      new Request('https://api.example.com/.well-known/mcp.json'),
+      engine,
+      { trustedHosts: ['api.example.com'] },
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { transports?: { streamableHttp?: { url?: string } } };
+    expect(body.transports?.streamableHttp?.url).toBe('https://api.example.com/mcp');
+  });
+
+  it('returns 421 for /.well-known/mcp.json when trustedHosts rejects the request Host', async () => {
+    engine = createEngine();
+    const response = await handleRequest(
+      new Request('https://attacker.example/.well-known/mcp.json'),
+      engine,
+      { trustedHosts: ['api.example.com'] },
+    );
+
+    expect(response.status).toBe(421);
+    const body = (await response.json()) as { error?: string };
+    expect(body.error).toContain('trustedHosts');
+  });
+
+  it('returns 503 for /.well-known/mcp.json by default without publicOrigin or trustedHosts', async () => {
+    engine = createEngine();
+    const originalNodeEnv = Bun.env['NODE_ENV'];
+    const originalOverride = Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'];
+    delete Bun.env['NODE_ENV'];
+    delete Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'];
+    try {
+      const response = await handleRequest(
+        new Request('https://attacker.example/.well-known/mcp.json'),
+        engine,
+      );
+      expect(response.status).toBe(503);
+      const body = (await response.json()) as { error?: string };
+      expect(body.error).toContain('publicOrigin');
+      expect(body.error).toContain('trustedHosts');
+    } finally {
+      if (originalNodeEnv !== undefined) Bun.env['NODE_ENV'] = originalNodeEnv;
+      else delete Bun.env['NODE_ENV'];
+      if (originalOverride !== undefined) {
+        Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'] = originalOverride;
+      } else {
+        delete Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'];
+      }
+    }
+  });
+
+  it('serves /.well-known/mcp.json when the explicit untrusted-origin override is set', async () => {
+    engine = createEngine();
+    const originalNodeEnv = Bun.env['NODE_ENV'];
+    const originalOverride = Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'];
+    delete Bun.env['NODE_ENV'];
+    Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'] = '1';
+    try {
+      const response = await handleRequest(
+        new Request('https://api.example.com/.well-known/mcp.json'),
+        engine,
+      );
+      expect(response.status).toBe(200);
+    } finally {
+      if (originalNodeEnv !== undefined) Bun.env['NODE_ENV'] = originalNodeEnv;
+      else delete Bun.env['NODE_ENV'];
+      if (originalOverride !== undefined) {
+        Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'] = originalOverride;
+      } else {
+        delete Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'];
+      }
+    }
   });
 
   it('uses an explicit publicOrigin from handler options instead of request-derived origin', async () => {

@@ -1,4 +1,5 @@
 import type { Engine } from '../../core/engine.ts';
+import { listMcpTools } from '../../mcp/tools.ts';
 import {
   createMetricsCollectorExporter,
   type PrometheusExporter,
@@ -93,15 +94,17 @@ export interface HandlerOptions {
   discoveryInfo?: DiscoveryInfo;
   /**
    * Optional explicit public origin used when emitting absolute URLs in
-   * `/.well-known/api-catalog`. Recommended in production to avoid trusting
-   * attacker-controlled `Host` / `X-Forwarded-Proto` headers. Takes
-   * precedence over `trustedHosts`.
+   * discovery routes such as `/.well-known/api-catalog` and
+   * `/.well-known/mcp.json`. Recommended in production to avoid trusting
+   * attacker-controlled `Host` / `X-Forwarded-Proto` headers. Takes precedence
+   * over `trustedHosts`.
    */
   publicOrigin?: string;
   /**
    * Optional allowlist of `Host` values that are trusted as the source of
-   * absolute service-desc URLs in `/.well-known/api-catalog`. The route
-   * derives the origin from the incoming request and rejects (421
+   * absolute service-desc URLs in discovery routes such as
+   * `/.well-known/api-catalog` and `/.well-known/mcp.json`. The route derives
+   * the origin from the incoming request and rejects (421
    * Misdirected Request) if the resolved Host is not in this list.
    *
    * Either `publicOrigin` OR `trustedHosts` must be configured in
@@ -248,11 +251,12 @@ export const DIRECT_ROUTE_EXECUTORS: Record<DirectRouteHandlerName, RouteExecuto
         ...(options?.discoveryInfo !== undefined ? { discoveryInfo: options.discoveryInfo } : {}),
       }),
     ),
-  openRpcDocument: async ({ options }) =>
+  openRpcDocument: async ({ engine, options }) =>
     jsonResponse(
       generateOpenRpcDocument({
         registry: options?.operationRegistry ?? defaultOperationRegistry(),
         transports: ['http', 'websocket'],
+        mcpTools: listMcpTools(engine),
         ...(options?.discoveryInfo !== undefined ? { discoveryInfo: options.discoveryInfo } : {}),
       }),
     ),

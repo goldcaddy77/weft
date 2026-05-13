@@ -14,7 +14,10 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 import { z } from 'zod';
 
+import { Engine } from '../core/engine.ts';
 import type { StandardJSONSchemaV1 } from '../core/types/definition-schema.ts';
+import { listMcpTools } from '../mcp/tools.ts';
+import { MemoryStorage } from '../storage/memory.ts';
 import { OpenRpcDocumentSchema } from './openrpc-document-schema.ts';
 import { generateOpenRpcDocument } from './openrpc.ts';
 import {
@@ -27,6 +30,23 @@ import { createLiveOperationRegistry } from './rest-bindings.ts';
 
 function byString(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function createMcpEngine(): Engine {
+  const engine = new Engine({ storage: new MemoryStorage() });
+  engine.register('checkout flow', {
+    inputSchema: z.object({ orderId: z.string() }),
+    handler: async function* () {
+      return { ok: true };
+    },
+  });
+  engine.register('checkout-flow', {
+    inputSchema: z.object({ refundId: z.string() }),
+    handler: async function* () {
+      return { ok: true };
+    },
+  });
+  return engine;
 }
 
 function makeOp(
@@ -421,10 +441,12 @@ describe('generateOpenRpcDocument — info and servers', () => {
 
 describe('generateOpenRpcDocument — MCP metadata', () => {
   it('emits x-weft-mcp metadata for MCP-exposable operations and the live MCP discovery surface', () => {
+    const engine = createMcpEngine();
     const registry = createOperationRegistry([
       makeOp({
         name: 'weft.workflows.checkout.start',
         mcpExposable: true,
+        mcpTool: { workflowType: 'checkout flow' },
         inputSchema: z.object({ orderId: z.string() }),
         outputSchema: z.object({ workflowId: z.string(), status: z.string() }),
         discoverable: true,
@@ -440,38 +462,15 @@ describe('generateOpenRpcDocument — MCP metadata', () => {
     const document = generateOpenRpcDocument({
       registry,
       transports: ['http', 'websocket'],
+      mcpTools: listMcpTools(engine),
     });
     const metadata = document['x-weft-mcp'] as Record<string, unknown>;
 
-    expect(metadata).toMatchObject({
-      protocol: 'model-context-protocol',
-      protocolVersion: '2025-11-25',
+    expect(metadata).toEqual({
       discoveryPath: '/.well-known/mcp.json',
-      transports: {
-        streamableHttp: {
-          path: '/mcp',
-          methods: ['POST', 'GET', 'DELETE'],
-        },
-        stdio: {
-          command: 'weft-mcp',
-        },
-      },
-      liveDiscovery: {
-        tools: {
-          method: 'tools/list',
-          canonical: true,
-        },
-        resources: {
-          listMethod: 'resources/list',
-          templatesMethod: 'resources/templates/list',
-        },
-      },
+      toolDiscoveryMethod: 'tools/list',
+      toolNames: ['checkout_flow'],
     });
-    expect(metadata['operations']).toEqual([
-      {
-        operationName: 'weft.workflows.checkout.start',
-      },
-    ]);
 
     const methods = document['methods'] as Array<Record<string, unknown>>;
     const checkout = methods.find(
@@ -481,7 +480,8 @@ describe('generateOpenRpcDocument — MCP metadata', () => {
       (candidate) => candidate['name'] === 'weft.workflows.internal.start',
     );
     expect(checkout?.['x-weft-mcp']).toEqual({
-      operationName: 'weft.workflows.checkout.start',
+      workflowType: 'checkout flow',
+      toolName: 'checkout_flow',
       toolDiscovery: {
         method: 'tools/list',
         source: 'live',
@@ -490,11 +490,13 @@ describe('generateOpenRpcDocument — MCP metadata', () => {
     expect(internal?.['x-weft-mcp']).toBeUndefined();
   });
 
-  it('keeps the root MCP operation list in parity with method-level MCP metadata', () => {
+  it('keeps the root MCP tool list in parity with method-level live MCP tool names', () => {
+    const engine = createMcpEngine();
     const registry = createOperationRegistry([
       makeOp({
         name: 'weft.workflows.checkout.start',
         mcpExposable: true,
+        mcpTool: { workflowType: 'checkout flow' },
         inputSchema: z.object({ orderId: z.string() }),
         outputSchema: z.object({ workflowId: z.string(), status: z.string() }),
         discoverable: true,
@@ -502,32 +504,57 @@ describe('generateOpenRpcDocument — MCP metadata', () => {
       makeOp({
         name: 'weft.workflows.refund.start',
         mcpExposable: true,
+        mcpTool: { workflowType: 'checkout-flow' },
         inputSchema: z.object({ refundId: z.string() }),
         outputSchema: z.object({ workflowId: z.string(), status: z.string() }),
         discoverable: true,
       }),
     ]);
 
-    const document = generateOpenRpcDocument({ registry, transports: ['http'] });
-    const metadata = document['x-weft-mcp'] as { operations?: Array<{ operationName?: string }> };
-    const metadataOperationNames = (metadata.operations ?? []).flatMap((operation) =>
-      operation.operationName === undefined ? [] : [operation.operationName],
-    );
+    const liveToolNames = listMcpTools(engine).map((tool) => tool.name);
+    const document = generateOpenRpcDocument({
+      registry,
+      transports: ['http'],
+      mcpTools: listMcpTools(engine),
+    });
+    const metadata = document['x-weft-mcp'] as { toolNames?: string[] };
+    const metadataToolNames = metadata.toolNames ?? [];
     const methods = document['methods'] as Array<Record<string, unknown>>;
-    const methodOperationNames = methods
+    const methodToolNames = methods
       .flatMap((method) => {
         const extension = method['x-weft-mcp'];
         if (extension === undefined) return [];
-        const operationName = (extension as { operationName?: unknown }).operationName;
-        return typeof operationName === 'string' ? [operationName] : [];
+        const toolName = (extension as { toolName?: unknown }).toolName;
+        return typeof toolName === 'string' ? [toolName] : [];
       })
       .toSorted(byString);
 
-    expect(metadataOperationNames.toSorted(byString)).toEqual([
-      'weft.workflows.checkout.start',
-      'weft.workflows.refund.start',
+    expect(metadataToolNames.toSorted(byString)).toEqual(['checkout_flow', 'checkout_flow_2']);
+    expect(methodToolNames).toEqual(metadataToolNames.toSorted(byString));
+    for (const toolName of methodToolNames) {
+      expect(liveToolNames).toContain(toolName);
+    }
+  });
+
+  it('rejects MCP-exposable operations that cannot be mapped to live tools/list output', () => {
+    const registry = createOperationRegistry([
+      makeOp({
+        name: 'weft.workflows.missing.start',
+        mcpExposable: true,
+        mcpTool: { workflowType: 'missing-workflow' },
+        inputSchema: z.object({ id: z.string() }),
+        outputSchema: z.object({ workflowId: z.string(), status: z.string() }),
+        discoverable: true,
+      }),
     ]);
-    expect(metadataOperationNames.toSorted(byString)).toEqual(methodOperationNames);
+
+    expect(() =>
+      generateOpenRpcDocument({
+        registry,
+        transports: ['http'],
+        mcpTools: [],
+      }),
+    ).toThrow(/live MCP tools\/list/);
   });
 });
 
@@ -824,5 +851,6 @@ describe('OpenRPC document schema round-trip', () => {
       );
     }
     expect(parsed.success).toBe(true);
+    expect(parsed.data as unknown).toEqual(document);
   });
 });

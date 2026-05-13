@@ -4,17 +4,24 @@
  * @module server/mcp-discovery
  */
 
-import { MCP_PROTOCOL_VERSION } from '../mcp/protocol.ts';
+import {
+  MCP_PROTOCOL_VERSION,
+  MCP_RESOURCE_TEMPLATES_LIST_METHOD,
+  MCP_RESOURCES_LIST_METHOD,
+  MCP_TOOLS_LIST_METHOD,
+} from '../mcp/protocol.ts';
 import { VERSION } from '../version.ts';
 
-export { MCP_PROTOCOL_VERSION };
+export {
+  MCP_PROTOCOL_VERSION,
+  MCP_RESOURCE_TEMPLATES_LIST_METHOD,
+  MCP_RESOURCES_LIST_METHOD,
+  MCP_TOOLS_LIST_METHOD,
+};
 export const MCP_DISCOVERY_PATH = '/.well-known/mcp.json';
 export const MCP_STREAMABLE_HTTP_PATH = '/mcp';
 export const MCP_STREAMABLE_HTTP_METHODS = ['POST', 'GET', 'DELETE'] as const;
 export const MCP_STDIO_COMMAND = 'weft-mcp';
-export const MCP_TOOLS_LIST_METHOD = 'tools/list';
-export const MCP_RESOURCES_LIST_METHOD = 'resources/list';
-export const MCP_RESOURCE_TEMPLATES_LIST_METHOD = 'resources/templates/list';
 
 export type McpDiscoveryOptions = {
   /** Absolute server origin, e.g. `https://api.example.com`. */

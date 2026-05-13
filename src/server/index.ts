@@ -122,17 +122,19 @@ export interface ServeOptions {
    */
   discoveryInfo?: DiscoveryInfo;
   /**
-   * Explicit public origin used by `/.well-known/api-catalog` (e.g.
-   * `https://api.example.com`). Recommended in production. Either this
-   * or `trustedHosts` MUST be set or the catalog route returns 503.
+   * Explicit public origin used by discovery routes that emit absolute URLs,
+   * including `/.well-known/api-catalog` and `/.well-known/mcp.json` (e.g.
+   * `https://api.example.com`). Recommended in production. Either this or
+   * `trustedHosts` MUST be set or those discovery routes return 503.
    */
   publicOrigin?: string;
   /**
    * Allowlist of `Host` values trusted to source absolute URLs in
-   * `/.well-known/api-catalog`. Required (with `publicOrigin` as the
-   * alternative) in production — Bun.serve() resolves `request.url`
-   * from the incoming Host header so attackers can otherwise poison
-   * the discovery URLs.
+   * discovery routes that emit absolute URLs, including
+   * `/.well-known/api-catalog` and `/.well-known/mcp.json`. Required (with
+   * `publicOrigin` as the alternative) in production — Bun.serve() resolves
+   * `request.url` from the incoming Host header so attackers can otherwise
+   * poison the discovery URLs.
    */
   trustedHosts?: ReadonlyArray<string>;
 }
