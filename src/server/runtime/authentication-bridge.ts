@@ -3,7 +3,7 @@ import type { ServerWebSocket } from 'bun';
 import { decode } from '../../core/codec.ts';
 import type { Engine } from '../../core/engine.ts';
 import { handleMcpHttpRequest } from '../../mcp/http.ts';
-import type { MetricsCollector, PrometheusExporter } from '../../observability/metrics.ts';
+import type { PrometheusExporter } from '../../observability/metrics.ts';
 import { KEYS } from '../../storage/interface.ts';
 import type { AuthConfig, AuthContext } from '../authentication.ts';
 import type { HandlerOptions } from '../handler.ts';
@@ -26,7 +26,6 @@ import { handleWorkerWebSocketMessage, isInflightRecord } from './websocket-work
 type ServerFetchOptions = {
   engine: Engine;
   prometheusExporter?: PrometheusExporter;
-  metricsCollector?: MetricsCollector;
   discoveryInfo?: import('../discovery-info.ts').DiscoveryInfo;
   publicOrigin?: string;
   trustedHosts?: ReadonlyArray<string>;
@@ -183,9 +182,6 @@ function buildHandlerOptions(
       : {}),
     ...(options.prometheusExporter !== undefined
       ? { prometheusExporter: options.prometheusExporter }
-      : {}),
-    ...(options.metricsCollector !== undefined
-      ? { metricsCollector: options.metricsCollector }
       : {}),
     ...(options.discoveryInfo !== undefined ? { discoveryInfo: options.discoveryInfo } : {}),
     ...(options.publicOrigin !== undefined ? { publicOrigin: options.publicOrigin } : {}),

@@ -902,13 +902,6 @@ naming the alternative that was rejected.
 - **Symbol**: `pickFairShare`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
-## `server-index-serve-orchestration`
-
-- **File**: `src/server/index.ts`
-- **Rule**: `max-lines`
-- **Symbol**: entire module
-- **Reason**: `serve()` orchestrates [Bun.serve](https://bun.com/docs/api/http) setup, WebSocket upgrade, dashboard hosting, and shutdown sequencing. Splitting further would scatter the lifecycle, so the file is exempted while the structure remains intentional.
-
 ## `server-task-queue-includes-snapshot-projection`
 
 - **File**: `src/server/task-queue.ts`
