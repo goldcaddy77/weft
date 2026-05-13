@@ -2,8 +2,9 @@
  * Live registry of `RestBinding` instances for operation-backed REST routes.
  *
  * Each entry is a REST route whose dispatch flows through the shared
- * `executeOperation` pipeline. The router (handleRequest) matches
- * against these bindings before direct meta and discovery routes.
+ * `executeOperation` pipeline. The router (handleRequest) checks reserved
+ * direct meta and discovery routes first; remaining requests then match
+ * these operation-backed bindings.
  *
  * @module server/rest-bindings
  */

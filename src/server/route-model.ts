@@ -66,7 +66,7 @@ export type DirectHttpRouteDefinition = {
   tags: string[];
   /** Response metadata shared by dispatch documentation. */
   responses: readonly DirectRouteResponse[];
-  /** Direct routes are intentionally public authentication bypasses. */
+  /** Direct route access policy for authentication and OpenAPI metadata. */
   access: DirectRouteAccess;
 };
 
