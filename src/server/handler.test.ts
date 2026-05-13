@@ -2987,15 +2987,49 @@ describe('handleRequest', () => {
 
       expect(response.status).toBe(200);
       const body = (await json(response)) as {
-        items: Array<{ reviewId: string; status: string; workflowId: string }>;
+        items: unknown[];
       };
       expect(body.items).toEqual([
-        expect.objectContaining({
+        {
           reviewId: 'rev-completed-filter',
           status: 'completed',
           workflowId: 'wf-completed-filter',
-        }),
+          artifact: { text: 'review me' },
+          reviewType: 'manual',
+          reviewers: ['alice'],
+          allowPartial: false,
+          createdAt: 1_234,
+          decision: 'approved',
+          reviewer: 'alice',
+          timestamp: expect.any(Number),
+        },
       ]);
+    });
+
+    it('skips completed review records missing canonical request metadata', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+
+      await storage.put(
+        'review-decision:legacy-review',
+        encode({
+          reviewId: 'legacy-review',
+          decision: 'approved',
+          reviewer: 'legacy-bot',
+          feedback: 'stored by an older runtime',
+          timestamp: 9_000,
+        }),
+      );
+
+      const response = await handleRequest(
+        request('GET', '/v1/reviews?status=completed'),
+        engine,
+        reviewReadApiKeyAuth(),
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await json(response)) as { items: unknown[] };
+      expect(body.items).toEqual([]);
     });
 
     it('returns 400 for an invalid review status filter', async () => {
