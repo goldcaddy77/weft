@@ -139,11 +139,16 @@ async function waitForWorkerHeartbeat(
   if (heartbeatBefore === undefined) {
     throw new Error(`Worker ${workerId} disconnected before heartbeat readiness check`);
   }
-  await waitForCondition(
-    () => (server.registry.getWorker(workerId)?.lastHeartbeat ?? 0) > heartbeatBefore,
-    timeoutMs,
-    `worker ${workerId} heartbeat`,
-  );
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    const worker = server.registry.getWorker(workerId);
+    if (worker === undefined) {
+      throw new Error(`Worker ${workerId} disconnected while waiting for heartbeat`);
+    }
+    if (worker.lastHeartbeat > heartbeatBefore) return;
+    await Bun.sleep(25);
+  }
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for worker ${workerId} heartbeat`);
 }
 
 async function waitForWorkerIdle(
@@ -252,12 +257,7 @@ async function runConformanceChecks(
     );
     checks.push(createCheck('task completion', true, 'echo task resolved'));
 
-    const heartbeatBefore = registered?.lastHeartbeat ?? 0;
-    await waitForCondition(
-      () => (server.registry.getWorker(workerId)?.lastHeartbeat ?? 0) > heartbeatBefore,
-      timeoutMs,
-      'worker heartbeat',
-    );
+    await waitForWorkerHeartbeat(server, workerId, timeoutMs);
     await dispatchAndWait(
       server,
       storage,

@@ -1235,6 +1235,22 @@ describe('executeConformance', () => {
     });
   });
 
+  it('surfaces a worker that disconnects before heartbeat readiness', async () => {
+    const result = await executeConformance({
+      timeoutMs: 1_000,
+      json: true,
+      workerCommand: ['bun', './src/cli/__fixtures__/conformance-register-exit-worker.ts'],
+    });
+
+    expect(result.exitCode).toBe(1);
+    const report = JSON.parse(result.stdout) as {
+      ok: boolean;
+      checks: Array<{ name: string; ok: boolean; message: string }>;
+    };
+    expect(report.ok).toBe(false);
+    expect(report.checks[0]?.message).toContain('disconnected before heartbeat readiness check');
+  });
+
   it('surfaces a replacement worker that disconnects before graceful shutdown', async () => {
     const result = await executeConformance({
       timeoutMs: 1_000,
