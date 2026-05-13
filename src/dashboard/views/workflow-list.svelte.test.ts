@@ -8,6 +8,9 @@ import type { BunPlugin } from 'bun';
 import { JSDOM } from 'jsdom';
 
 import type {
+  AggregateFilter,
+  AggregateGroupBy,
+  AggregateResult,
   ApiClient,
   BulkCancelResult,
   BulkOperationDryRunResult,
@@ -33,6 +36,7 @@ type WorkflowListApiClient = Pick<
   | 'commitBulkSignalWorkflows'
   | 'previewBulkTagWorkflows'
   | 'commitBulkTagWorkflows'
+  | 'aggregateWorkflows'
 >;
 
 type SvelteClientModule = {
@@ -90,6 +94,7 @@ async function loadWorkflowListHarnessModule(): Promise<SvelteClientModule> {
       | 'commitBulkSignalWorkflows'
       | 'previewBulkTagWorkflows'
       | 'commitBulkTagWorkflows'
+      | 'aggregateWorkflows'
     >;
 
     export { flushSync };
@@ -254,16 +259,31 @@ function createPreview(requestId: string): BulkOperationDryRunResult {
 function createWorkflowListApiClient(
   options: {
     workflowListResponses?: Array<Promise<PaginatedResult<WorkflowSummary>>>;
+    aggregateResponses?: Array<Promise<AggregateResult>>;
     commitCancelResult?: Promise<BulkCancelResult>;
     commitCancelError?: Error;
-    onListWorkflows?: () => void;
+    onListWorkflows?: (filter: ListFilter | undefined) => void;
+    onAggregateWorkflows?: (
+      filter: AggregateFilter | undefined,
+      groupBy: AggregateGroupBy,
+      limit: number | undefined,
+    ) => void;
   } = {},
 ): WorkflowListApiClient {
   const workflowListResponses = [...(options.workflowListResponses ?? [])];
+  const aggregateResponses = [...(options.aggregateResponses ?? [])];
   const defaultWorkflowListResponse = Promise.resolve(createWorkflowListResult());
+  const defaultAggregateResponse = Promise.resolve({
+    total: 2,
+    groups: [
+      { key: 'running', count: 1 },
+      { key: 'failed', count: 1 },
+    ],
+    truncated: false,
+  } satisfies AggregateResult);
   return {
-    listWorkflows: () => {
-      options.onListWorkflows?.();
+    listWorkflows: (filter?: ListFilter) => {
+      options.onListWorkflows?.(filter);
       return workflowListResponses.shift() ?? defaultWorkflowListResponse;
     },
     listSchedules: () =>
@@ -302,6 +322,14 @@ function createWorkflowListApiClient(
         action: operation === 'add' ? 'tag:add' : 'tag:remove',
       }),
     commitBulkTagWorkflows: () => Promise.resolve({ modified: 2 }),
+    aggregateWorkflows: (
+      filter: AggregateFilter | undefined,
+      groupBy: AggregateGroupBy,
+      limit: number | undefined,
+    ) => {
+      options.onAggregateWorkflows?.(filter, groupBy, limit);
+      return aggregateResponses.shift() ?? defaultAggregateResponse;
+    },
   };
 }
 
@@ -331,9 +359,25 @@ function statusFilterSelect(): HTMLSelectElement {
   return select;
 }
 
+function inputByPlaceholder(placeholder: string): HTMLInputElement {
+  const input = [...document.querySelectorAll('input')].find(
+    (candidate) => candidate.placeholder === placeholder,
+  );
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error(`Expected to find input with placeholder "${placeholder}"`);
+  }
+  return input;
+}
+
 async function changeSelectValue(select: HTMLSelectElement, value: string): Promise<void> {
   select.value = value;
   select.dispatchEvent(new Event('change', { bubbles: true }));
+  await settle();
+}
+
+async function changeInputValue(input: HTMLInputElement, value: string): Promise<void> {
+  input.value = value;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
   await settle();
 }
 
@@ -738,6 +782,57 @@ describe('WorkflowList view', () => {
       expect(document.body.textContent).toContain('Bulk confirmation failed');
       expect(document.body.textContent).toContain('Transient bulk commit failure');
       expect(document.body.textContent).not.toContain('Cancelled 2 workflows.');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('sends visibility filters to the workflow list and renders status counts', async () => {
+    const listFilters: Array<ListFilter | undefined> = [];
+    const aggregateCalls: Array<{
+      filter: AggregateFilter | undefined;
+      groupBy: AggregateGroupBy;
+      limit: number | undefined;
+    }> = [];
+    const apiClient = createWorkflowListApiClient({
+      onListWorkflows: (filter) => {
+        listFilters.push(filter);
+      },
+      onAggregateWorkflows: (filter, groupBy, limit) => {
+        aggregateCalls.push({ filter, groupBy, limit });
+      },
+    });
+    const { cleanup } = await mountWorkflowList(apiClient);
+    try {
+      await changeInputValue(inputByPlaceholder('Filter by ID prefix...'), 'order-');
+      await changeInputValue(inputByPlaceholder('Tenant ID'), 'tenant-a');
+      await clickButton('Planning');
+      await changeInputValue(
+        document.querySelector<HTMLInputElement>('#created-at-gte')!,
+        '2026-05-13T09:30',
+      );
+
+      const lastFilter = listFilters.at(-1);
+      expect(lastFilter).toEqual(
+        expect.objectContaining({
+          idPrefix: 'order-',
+          tenantId: 'tenant-a',
+          failureCategory: 'planning',
+          createdAt: { gte: new Date('2026-05-13T09:30').getTime() },
+          limit: 20,
+          offset: 0,
+        }),
+      );
+
+      expect(document.body.textContent).toContain('Status counts');
+      expect(document.body.textContent).toContain('Running');
+      expect(document.body.textContent).toContain('1');
+      expect(document.body.textContent).toContain('Failed');
+
+      expect(aggregateCalls.some((call) => call.groupBy === 'tenant' && call.limit === 100)).toBe(
+        true,
+      );
+      expect(aggregateCalls.some((call) => call.groupBy === 'status')).toBe(true);
     } finally {
       await cleanup();
     }
