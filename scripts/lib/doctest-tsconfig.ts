@@ -27,7 +27,10 @@ export function createDoctestTsconfig(options: DoctestTsconfigOptions): DoctestT
   const doctestsDirectory = resolve(options.doctestsDirectory);
   const paths: Record<string, string[]> = {};
   for (const [importPath, sourceRel] of Object.entries(options.publicEntryPoints)) {
-    const sourcePath = resolve(repositoryRoot, validateDoctestSourcePath(importPath, sourceRel));
+    const sourcePath = resolve(
+      repositoryRoot,
+      validateDoctestSourcePath(importPath, repositoryRoot, sourceRel),
+    );
     paths[importPath] = [withoutTypeScriptExtension(toTsconfigPath(doctestsDirectory, sourcePath))];
   }
   return {
@@ -44,13 +47,22 @@ export function createDoctestTsconfig(options: DoctestTsconfigOptions): DoctestT
   };
 }
 
-function validateDoctestSourcePath(importPath: string, sourceRel: string): string {
+function validateDoctestSourcePath(
+  importPath: string,
+  repositoryRoot: string,
+  sourceRel: string,
+): string {
   const pathSegments = sourceRel.split(/[\\/]+/);
+  const sourcePath = resolve(repositoryRoot, sourceRel);
+  const repositoryRelativePath = relative(repositoryRoot, sourcePath);
   if (
     sourceRel.startsWith('/') ||
     sourceRel.includes('\\') ||
     pathSegments.includes('..') ||
-    !sourceRel.endsWith('.ts')
+    !sourceRel.endsWith('.ts') ||
+    repositoryRelativePath.startsWith('../') ||
+    repositoryRelativePath === '..' ||
+    repositoryRelativePath.includes(':')
   ) {
     throw new Error(
       `Invalid doctest source path for ${importPath}: expected a repository-relative TypeScript path, received ${sourceRel}`,

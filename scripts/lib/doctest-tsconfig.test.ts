@@ -113,6 +113,15 @@ describe('doctest tsconfig generation', () => {
         },
       }),
     ).toThrow('Invalid doctest source path for weft');
+    expect(() =>
+      createDoctestTsconfig({
+        repositoryRoot,
+        doctestsDirectory,
+        publicEntryPoints: {
+          weft: 'C:/tmp/outside.ts',
+        },
+      }),
+    ).toThrow('Invalid doctest source path for weft');
   });
 
   it('rejects doctest source paths that are not TypeScript source files', () => {
