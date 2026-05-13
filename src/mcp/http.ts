@@ -176,6 +176,9 @@ function resolvePostSession(
     }
   | Response {
   const sessionHeader = sessionIdFromHeaders(options.request.headers);
+  const versionFailure = validateProtocolVersion(options.request.headers);
+  if (versionFailure !== null) return versionFailure;
+
   if (shouldCreateSessionForPost(message, sessionHeader)) {
     const principal = principalFromOptions(options);
     try {
@@ -192,8 +195,6 @@ function resolvePostSession(
     }
   }
 
-  const versionFailure = validateProtocolVersion(options.request.headers);
-  if (versionFailure !== null) return versionFailure;
   if (sessionHeader === null) return new Response('Missing Mcp-Session-Id', { status: 400 });
   const session = options.sessionManager.get(sessionHeader);
   if (session === undefined) return new Response('MCP session not found', { status: 404 });
@@ -302,8 +303,10 @@ function principalFromOptions(options: McpHttpRequestOptions): Principal {
 }
 
 function isSameSessionOwner(left: Principal, right: Principal): boolean {
+  if (left === right) return true;
   if (left.method !== right.method) return false;
   if (!isAuthenticated(left) || !isAuthenticated(right)) return left.method === right.method;
+  if (left.subject === undefined || right.subject === undefined) return false;
   return left.subject === right.subject && left.tenantId === right.tenantId;
 }
 

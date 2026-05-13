@@ -1,5 +1,7 @@
 import type { Engine } from '../core/engine.ts';
-import { buildRegistrySnapshot } from '../core/registry-snapshot.ts';
+import { RegistrySchemaConversionError } from '../core/registry-snapshot.ts';
+import { definitionSchemaToJsonSchema } from '../core/types/definition-schema-to-json.ts';
+import type { DefinitionSchema } from '../core/types/definition-schema.ts';
 import {
   McpToolExecutionError,
   applyPrincipalTenantToInput,
@@ -69,8 +71,14 @@ export async function callMcpTool(
     const value = await tool.call(argumentsValue ?? {}, context);
     return toolSuccess(value);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return toolError(message);
+    if (error instanceof McpToolExecutionError) {
+      return toolError(error.message);
+    }
+    if (error instanceof Error && error.message === 'Workflow cancelled') {
+      return toolError(error.message);
+    }
+    console.warn('MCP tool execution failed:', error);
+    return toolError('Tool execution failed');
   }
 }
 
@@ -122,19 +130,19 @@ function toolRegistrySignaturesEqual(
 
 function buildToolImplementations(engine: Engine): ToolImplementation[] {
   const tools = [...builtInTools()];
-  const snapshot = buildRegistrySnapshot(engine);
-
   const usedNames = new Set(tools.map((tool) => tool.definition.name));
-  for (const [workflowType, entry] of Object.entries(snapshot.workflows)) {
-    if (entry.inputSchema === undefined) continue;
-    const name = uniqueToolName(toolNameFromWorkflowType(workflowType), usedNames);
+  for (const definition of engine
+    .listWorkflowDefinitions()
+    .toSorted((left, right) => (left.type < right.type ? -1 : left.type > right.type ? 1 : 0))) {
+    if (definition.inputSchema === undefined) continue;
+    const name = uniqueToolName(toolNameFromWorkflowType(definition.type), usedNames);
     usedNames.add(name);
     tools.push({
       definition: {
         name,
-        title: workflowType,
-        description: entry.description ?? `Run Weft workflow ${workflowType}.`,
-        inputSchema: entry.inputSchema,
+        title: definition.type,
+        description: definition.description ?? `Run Weft workflow ${definition.type}.`,
+        inputSchema: convertWorkflowInputSchema(definition.type, definition.inputSchema),
       },
       call: async (argumentsValue, context) => {
         assertScope(context, 'workflows:write', 'Calling workflow tools');
@@ -143,9 +151,9 @@ function buildToolImplementations(engine: Engine): ToolImplementation[] {
         context.session.trackRequest(context.requestId, workflowId);
         try {
           if (context.session.isRequestCancelled(context.requestId)) {
-            throw new Error('Workflow cancelled');
+            throw new McpToolExecutionError('Workflow cancelled');
           }
-          const handle = await context.engine.start(workflowType, input, { id: workflowId });
+          const handle = await context.engine.start(definition.type, input, { id: workflowId });
           if (context.session.isRequestCancelled(context.requestId)) {
             await context.engine.cancel(handle.id);
           }
@@ -159,6 +167,17 @@ function buildToolImplementations(engine: Engine): ToolImplementation[] {
   }
 
   return tools.toSorted((left, right) => (left.definition.name < right.definition.name ? -1 : 1));
+}
+
+function convertWorkflowInputSchema(
+  workflowType: string,
+  schema: DefinitionSchema,
+): Record<string, unknown> {
+  try {
+    return definitionSchemaToJsonSchema(schema, 'input');
+  } catch (cause) {
+    throw new RegistrySchemaConversionError('workflow', workflowType, 'inputSchema', cause);
+  }
 }
 
 function builtInTools(): ToolImplementation[] {

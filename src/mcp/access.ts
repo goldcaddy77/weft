@@ -58,7 +58,7 @@ export async function getVisibleWorkflowState(
   return canAccessWorkflowState(principal, state) ? state : null;
 }
 
-/** List workflows and apply tenant visibility when the engine list API cannot. */
+/** List workflows and apply tenant visibility using summary metadata. */
 export async function listVisibleWorkflows(
   engine: Engine,
   principal: Principal,
@@ -70,11 +70,7 @@ export async function listVisibleWorkflows(
   );
   if (tenantId === undefined) return result;
 
-  const visible: WorkflowSummary[] = [];
-  for (const item of result.items) {
-    const state = await engine.get(item.id);
-    if (state?.tenant?.id === tenantId) visible.push(item);
-  }
+  const visible = result.items.filter((item) => item.tenant?.id === tenantId);
 
   return {
     items: visible.slice(resultOffset(filter), resultOffset(filter) + resultLimit(filter, visible)),

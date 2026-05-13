@@ -6,7 +6,7 @@ import { tenantFromInputField } from '../core/tenant.ts';
 import type { DefinitionSchema, WorkflowContext } from '../core/types.ts';
 import { signJWT } from '../server/authentication.ts';
 import { serve, type WeftServer } from '../server/index.ts';
-import { anonymousPrincipal } from '../server/principal.ts';
+import { anonymousPrincipal, principalFromJwtClaims } from '../server/principal.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { waitForCondition } from '../testing/fake-timers.ts';
 import { handleMcpHttpRequest } from './http.ts';
@@ -383,6 +383,54 @@ describe('MCP Streamable HTTP transport', () => {
     ).map((tool) => tool.name);
     expect(names).toContain('late_tool');
     expect(inputConversions).toBe(3);
+  });
+
+  it('does not let broken activity schemas break MCP workflow tools', async () => {
+    const engine = createEngine();
+    engine.registerActivity('broken-activity', async () => undefined, {
+      inputSchema: makeBrokenSchema('activity'),
+    });
+    server = serve({ engine, port: 0 });
+    const sessionId = await initialize(server);
+
+    const tools = await mcpJson(server, sessionId, {
+      jsonrpc: '2.0',
+      id: 'tools-with-broken-activity',
+      method: 'tools/list',
+      params: {},
+    });
+
+    const names = ((tools.result as { tools: Array<{ name: string }> }).tools ?? []).map(
+      (tool) => tool.name,
+    );
+    expect(names).toContain('greet_customer');
+    expect(names).not.toContain('broken_activity');
+  });
+
+  it('masks unexpected workflow tool failures while preserving domain errors', async () => {
+    const engine = createEngine();
+    engine.register('explode-secretly', {
+      inputSchema: z.object({}),
+      handler: async function* () {
+        throw new Error('secret implementation detail');
+      },
+    });
+    const session = new McpSession('mask-errors-session', anonymousPrincipal());
+
+    const result = await callMcpTool(
+      'explode_secretly',
+      {},
+      {
+        engine,
+        session,
+        principal: anonymousPrincipal(),
+        authRequired: false,
+        requestId: 'mask-errors',
+      },
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe('Tool execution failed');
   });
 
   it('reads workflow resources and emits resource update notifications for subscriptions', async () => {
@@ -1020,6 +1068,18 @@ describe('MCP Streamable HTTP transport', () => {
       });
       expect(oversize.status).toBe(413);
 
+      const wrongInitialVersion = await handleMcpHttpRequest({
+        request: jsonRequest(
+          { jsonrpc: '2.0', id: 'wrong-initial-version', method: 'initialize', params: {} },
+          undefined,
+          { 'Mcp-Protocol-Version': '1999-01-01' },
+        ),
+        engine,
+        sessionManager,
+        authRequired: false,
+      });
+      expect(wrongInitialVersion.status).toBe(400);
+
       const initialized = await initializeDirectHandlerSession(engine, sessionManager);
       const sessionId = initialized.headers.get('Mcp-Session-Id');
       expect(sessionId).toBeTruthy();
@@ -1067,6 +1127,54 @@ describe('MCP Streamable HTTP transport', () => {
         authRequired: false,
       });
       expect(getAfterDelete.status).toBe(404);
+    } finally {
+      await sessionManager[Symbol.asyncDispose]();
+    }
+  });
+
+  it('does not treat authenticated principals with missing subjects as the same session owner', async () => {
+    const engine = createEngine();
+    const sessionManager = createMcpSessionManager(engine);
+    const originalPrincipal = principalFromJwtClaims({ scope: 'workflows:read' });
+    const otherPrincipal = principalFromJwtClaims({ scope: 'workflows:read' });
+
+    try {
+      const initialized = await handleMcpHttpRequest({
+        request: jsonRequest({
+          jsonrpc: '2.0',
+          id: 'init',
+          method: 'initialize',
+          params: { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {} },
+        }),
+        engine,
+        sessionManager,
+        principal: originalPrincipal,
+        authRequired: true,
+      });
+      expect(initialized.status).toBe(200);
+      const sessionId = initialized.headers.get('Mcp-Session-Id');
+      expect(sessionId).toBeTruthy();
+
+      const ready = await handleMcpHttpRequest({
+        request: jsonRequest({ jsonrpc: '2.0', method: 'notifications/initialized' }, sessionId!),
+        engine,
+        sessionManager,
+        principal: originalPrincipal,
+        authRequired: true,
+      });
+      expect(ready.status).toBe(202);
+
+      const otherOwner = await handleMcpHttpRequest({
+        request: jsonRequest(
+          { jsonrpc: '2.0', id: 'other-owner', method: 'tools/list', params: {} },
+          sessionId!,
+        ),
+        engine,
+        sessionManager,
+        principal: otherPrincipal,
+        authRequired: true,
+      });
+      expect(otherOwner.status).toBe(403);
     } finally {
       await sessionManager[Symbol.asyncDispose]();
     }
@@ -1186,4 +1294,14 @@ function sendDirectInitializedNotification(
     sessionManager,
     authRequired: false,
   });
+}
+
+function makeBrokenSchema(label: string): DefinitionSchema {
+  return {
+    '~standard': {
+      version: 1,
+      vendor: `unknown-${label}`,
+      validate: (value: unknown) => ({ value }),
+    },
+  };
 }

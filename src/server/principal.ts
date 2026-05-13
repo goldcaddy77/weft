@@ -49,10 +49,10 @@ export type JwtClaims = Record<string, unknown>;
  * set and a `hasScope` accessor; downstream code should narrow to this shape
  * via `isAuthenticated` before calling `hasScope`.
  *
- * The privileged `'stdio-local'` principal is deferred to the Phase 13 CLI
- * admission module (see plan design decision 11). Its factory stays
- * co-located with the admission check so transport adapters do not mint the
- * privileged principal out-of-band.
+ * The privileged `'stdio-local'` principal is for local stdio admission and
+ * carries the full local-admin scope set. It is exported for embedders that
+ * implement their own local admission gate; public transports should not mint
+ * it for remote callers.
  *
  * @example
  * ```ts
