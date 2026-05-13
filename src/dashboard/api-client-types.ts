@@ -8,6 +8,15 @@ export type WorkflowStatus =
   | 'cancelled'
   | 'timed-out';
 
+export type FailureCategory = 'memory' | 'reflection' | 'planning' | 'action' | 'system';
+
+export interface TimeRange {
+  gte?: number;
+  gt?: number;
+  lte?: number;
+  lt?: number;
+}
+
 export interface WorkflowState {
   id: string;
   type: string;
@@ -30,6 +39,9 @@ export interface WorkflowSummary {
   version: string;
   createdAt: number;
   updatedAt: number;
+  tenantId?: string;
+  executionDeadline?: number;
+  failureCategory?: FailureCategory;
 }
 
 export interface PaginatedResult<T> {
@@ -61,15 +73,41 @@ export interface RetentionOverview {
 }
 
 export interface ListFilter {
-  status?: WorkflowStatus;
+  status?: WorkflowStatus | WorkflowStatus[];
   type?: string;
   tags?: string[];
   limit?: number;
   offset?: number;
+  idPrefix?: string;
+  createdAt?: TimeRange;
+  updatedAt?: TimeRange;
+  executionDeadline?: TimeRange;
+  tenantId?: string | string[];
+  failureCategory?: FailureCategory | FailureCategory[];
 }
 
 export type BulkWorkflowFilter = CoreListFilter;
 export type BulkTagMutationOperation = 'add' | 'remove';
+
+export type AggregateGroupBy =
+  | 'status'
+  | 'type'
+  | 'tenant'
+  | 'failureCategory'
+  | { attribute: string };
+
+export interface AggregateGroup {
+  key: string | null;
+  count: number;
+}
+
+export interface AggregateResult {
+  total: number;
+  groups: AggregateGroup[];
+  truncated: boolean;
+}
+
+export type AggregateFilter = Omit<ListFilter, 'limit' | 'offset'>;
 
 /** Routing strategy the server selects when assigning tasks to workers. */
 export type WorkerRoutingPolicy = 'least-loaded' | 'round-robin' | 'fair-share';

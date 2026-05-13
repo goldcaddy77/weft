@@ -307,6 +307,41 @@ naming the alternative that was rejected.
 - **Symbol**: `line-5082`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
+## `core-engine-list-complexity`
+
+- **File**: `src/core/engine/listing.ts`
+- **Rule**: `complexity`
+- **Symbol**: `list`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-bulk-workflow-filter-has-scoped-complexity`
+
+- **File**: `src/core/bulk-workflow-filter.ts`
+- **Rule**: `complexity`
+- **Symbol**: `hasScopedBulkWorkflowFilter`
+- **Reason**: Single safety gate that enumerates every valid bulk scope (status, type, tags, attributes, tenantId, idPrefix length floor). Each branch is a one-liner mapping one filter dimension to "would this narrow the bulk operation enough to be safe?" — splitting the function would fragment the per-dimension contract that the tests assert against a single point of truth.
+
+## `core-engine-aggregate-complexity`
+
+- **File**: `src/core/engine/aggregate.ts`
+- **Rule**: `complexity`
+- **Symbol**: `aggregate`
+- **Reason**: Single function orchestrates validation, watermark gating, candidate resolution, scan-cap enforcement, dimension key extraction, distinct-key cap enforcement, and sort/truncate finalization. Each branch maps to one step of the documented aggregate pipeline; splitting them would scatter the per-step contract.
+
+## `core-engine-matches-list-filter-complexity`
+
+- **File**: `src/core/engine/state-utilities.ts`
+- **Rule**: `complexity`
+- **Symbol**: `matchesListFilter`
+- **Reason**: Single defensive post-filter for the workflow visibility surface — each branch maps to one indexed filter dimension (status, type, tenant, idPrefix, createdAt, updatedAt, executionDeadline, failureCategory). Splitting the function would scatter the per-dimension contract that the index helpers and tests assert against a single point of truth.
+
+## `core-engine-resolve-list-candidate-ids`
+
+- **File**: `src/core/engine/listing.ts`
+- **Rule**: `complexity`
+- **Symbol**: `resolveListCandidateIds`
+- **Reason**: Single dispatcher that fans every supported ListFilter dimension out to its visibility-index query helper, then intersects the resulting sets with the existing tag/attribute resolution. Each branch is a one-liner mapping one filter field to one query — splitting them would only move the same branching one frame down the stack and obscure the watermark short-circuit.
+
 ## `core-engine-matches-schedule-filter-complexity`
 
 - **File**: `src/core/engine/index.ts`
@@ -535,12 +570,19 @@ naming the alternative that was rejected.
 - **Symbol**: `diffWorkflowVersionTuples`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
-## `dashboard-api-client-list-workflows-complexity`
+## `dashboard-api-client-build-workflow-filter-params`
 
 - **File**: `src/dashboard/api-client.ts`
 - **Rule**: `complexity`
-- **Symbol**: `listWorkflows`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+- **Symbol**: `buildWorkflowFilterSearchParams`
+- **Reason**: Shared serializer for every supported ListFilter dimension. Each branch is a one-liner mapping one field to its query-parameter shape — splitting the function would fragment the per-field contract that the API-client tests assert against a single point of truth.
+
+## `dashboard-build-workflow-list-filter`
+
+- **File**: `src/dashboard/utilities/workflow-list-data.ts`
+- **Rule**: `complexity`
+- **Symbol**: `buildWorkflowListFilter`
+- **Reason**: Mirrors `buildWorkflowFilterSearchParams` on the application side — one branch per `WorkflowListFilters` field deciding whether to round-trip it. Splitting would not reduce branch count, just move it elsewhere.
 
 ## `dashboard-fragments-workflow-execution-timeline-collect-value-diffs-complexity`
 
@@ -804,13 +846,6 @@ naming the alternative that was rejected.
 - **Symbol**: `invoke`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
-## `server-operations-list-workflows-extract-list-workflows-input-complexity`
-
-- **File**: `src/server/operations/list-workflows.ts`
-- **Rule**: `complexity`
-- **Symbol**: `extractListWorkflowsInput`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
 ## `server-operations-list-schedules-validation-complexity`
 
 - **File**: `src/server/operations/list-schedules.ts`
@@ -915,3 +950,17 @@ naming the alternative that was rejected.
 - **Rule**: `max-lines`
 - **Symbol**: entire module
 - **Reason**: `TaskQueue` carries its data structures plus a stable snapshot projection (`getQueueSummaries`) used by the public `weft.task.queues.list` operation. Keeping the projection beside the state it reads is more honest than exposing private fields through a sibling module.
+
+## `dashboard-api-client-max-lines`
+
+- **File**: `src/dashboard/api-client.ts`
+- **Rule**: `max-lines`
+- **Symbol**: entire module
+- **Reason**: Single typed fetch wrapper for the Weft REST API. The file is dominated by interface/type declarations describing the API surface; splitting them across multiple files would scatter the contract that dashboard call sites import from one place. Method bodies are short and the file is read top-to-bottom as a directory of REST routes.
+
+## `server-operations-extract-list-filter-from-query`
+
+- **File**: `src/server/operations/list-filter-query-extractor.ts`
+- **Rule**: `complexity`
+- **Symbol**: `extractListFilterFromQuery`
+- **Reason**: Single shared dispatcher that parses every supported `ListFilter` dimension from REST query parameters (status, type, tags, attributes, idPrefix, tenantId, failureCategory, createdAt, updatedAt, executionDeadline). Each branch is a one-liner mapping one filter field to one parser — splitting would scatter the per-dimension contract that both `list-workflows` and `aggregate-workflows` rely on.

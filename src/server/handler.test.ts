@@ -905,6 +905,80 @@ describe('handleRequest', () => {
     expect(body.total).toBe(0);
   });
 
+  it('GET /v1/workflows?id_prefix=order- narrows by workflow id prefix', async () => {
+    engine = createEngine();
+
+    await handleRequest(
+      request('POST', '/v1/workflows', { type: 'echo', input: 1, id: 'order-1' }),
+      engine,
+    );
+    await handleRequest(
+      request('POST', '/v1/workflows', { type: 'echo', input: 1, id: 'order-2' }),
+      engine,
+    );
+    await handleRequest(
+      request('POST', '/v1/workflows', { type: 'echo', input: 1, id: 'payment-1' }),
+      engine,
+    );
+    await flush();
+
+    const response = await handleRequest(request('GET', '/v1/workflows?id_prefix=order-'), engine);
+
+    expect(response.status).toBe(200);
+    const body = (await json(response)) as { items: { id: string }[]; total: number };
+    expect(body.items.map((item) => item.id).toSorted()).toEqual(['order-1', 'order-2']);
+    expect(body.total).toBe(2);
+  });
+
+  it('GET /v1/workflows?id_prefix=a:b is rejected by normalizeListFilter as Unprocessable', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(request('GET', '/v1/workflows?id_prefix=a:b'), engine);
+
+    expect(response.status).toBe(400);
+    const body = (await json(response)) as { error: string };
+    expect(body.error).toContain('idPrefix');
+  });
+
+  it('GET /v1/workflows?created_at_gte=… narrows by createdAt range', async () => {
+    engine = createEngine();
+
+    await handleRequest(
+      request('POST', '/v1/workflows', { type: 'echo', input: 1, id: 'wf-x' }),
+      engine,
+    );
+    await flush();
+
+    // gte at 0 includes everything; gte at a huge future time excludes everything.
+    const futureBound = Date.now() + 60 * 60 * 1000;
+
+    const inclusive = await handleRequest(request('GET', '/v1/workflows?created_at_gte=0'), engine);
+    expect(inclusive.status).toBe(200);
+    const inclusiveBody = (await json(inclusive)) as { total: number };
+    expect(inclusiveBody.total).toBeGreaterThanOrEqual(1);
+
+    const exclusive = await handleRequest(
+      request('GET', `/v1/workflows?created_at_gte=${futureBound}`),
+      engine,
+    );
+    expect(exclusive.status).toBe(200);
+    const exclusiveBody = (await json(exclusive)) as { total: number };
+    expect(exclusiveBody.total).toBe(0);
+  });
+
+  it('GET /v1/workflows?created_at_gte=0&created_at_gt=0 is rejected (conflicting bounds)', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows?created_at_gte=0&created_at_gt=0'),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await json(response)) as { error: string };
+    expect(body.error).toContain('createdAt');
+  });
+
   // 10. Unknown route returns 404
   it('unknown route returns 404', async () => {
     engine = createEngine();
@@ -1441,7 +1515,8 @@ describe('handleRequest', () => {
 
       expect(missingFilterResponse.status).toBe(400);
       expect(await json(missingFilterResponse)).toEqual({
-        error: 'Field "filter" must include at least one of status, type, tags, or attributes',
+        error:
+          'Field "filter" must include at least one of status, type, tags, attributes, tenantId, idPrefix (≥3 chars), or failureCategory paired with status',
       });
 
       const emptyTagsResponse = await handleRequest(
@@ -1454,7 +1529,8 @@ describe('handleRequest', () => {
 
       expect(emptyTagsResponse.status).toBe(400);
       expect(await json(emptyTagsResponse)).toEqual({
-        error: 'Field "filter" must include at least one of status, type, tags, or attributes',
+        error:
+          'Field "filter" must include at least one of status, type, tags, attributes, tenantId, idPrefix (≥3 chars), or failureCategory paired with status',
       });
 
       const emptyAttributesResponse = await handleRequest(
@@ -1467,7 +1543,8 @@ describe('handleRequest', () => {
 
       expect(emptyAttributesResponse.status).toBe(400);
       expect(await json(emptyAttributesResponse)).toEqual({
-        error: 'Field "filter" must include at least one of status, type, tags, or attributes',
+        error:
+          'Field "filter" must include at least one of status, type, tags, attributes, tenantId, idPrefix (≥3 chars), or failureCategory paired with status',
       });
 
       const blankAttributeKeyResponse = await handleRequest(
@@ -1480,7 +1557,8 @@ describe('handleRequest', () => {
 
       expect(blankAttributeKeyResponse.status).toBe(400);
       expect(await json(blankAttributeKeyResponse)).toEqual({
-        error: 'Field "filter" must include at least one of status, type, tags, or attributes',
+        error:
+          'Field "filter" must include at least one of status, type, tags, attributes, tenantId, idPrefix (≥3 chars), or failureCategory paired with status',
       });
     });
   });

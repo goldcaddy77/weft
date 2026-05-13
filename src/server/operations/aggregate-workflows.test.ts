@@ -1,0 +1,42 @@
+import { describe, expect, it } from 'bun:test';
+
+import { Engine } from '../../core/engine.ts';
+import { MemoryStorage } from '../../storage/memory.ts';
+import { handleRequest } from '../handler.ts';
+import { createOperationRegistry } from '../operation-catalog.ts';
+import {
+  aggregateWorkflowsOperation,
+  aggregateWorkflowsRestBinding,
+} from './aggregate-workflows.ts';
+
+const registry = createOperationRegistry([aggregateWorkflowsOperation]);
+const bindings = [aggregateWorkflowsRestBinding];
+
+describe('weft.workflows.aggregate', () => {
+  it('maps unknown aggregate attributes to Unprocessable instead of EngineFailure', async () => {
+    const engine = new Engine({ storage: new MemoryStorage() });
+    engine.register('typed', {
+      handler: async function* () {
+        return 'ok';
+      },
+      searchAttributes: { knownAttribute: { type: 'string' } },
+    });
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/workflows/aggregate?group_by=attribute:unknownAttribute', {
+        method: 'GET',
+      }),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get('content-type')).toBe('application/json');
+    expect(await response.json()).toEqual({
+      error:
+        'Unknown search attribute "unknownAttribute". Aggregate groupBy requires a declared attribute.',
+    });
+
+    engine[Symbol.dispose]();
+  });
+});

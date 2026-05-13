@@ -3,7 +3,7 @@ import type { Storage as WeftStorage } from '../../storage/interface.ts';
 import type { CompressionOptions } from '../compression.ts';
 import type { Interceptor } from '../interceptor.ts';
 import type { TenantResolver } from '../tenant.ts';
-import type { WorkflowStatus } from './identity.ts';
+import type { FailureCategory, WorkflowStatus } from './identity.ts';
 import type { Duration, RetentionPolicy } from './retry-retention.ts';
 import type { SearchAttributeHandle, SearchAttributeValue } from './search-attributes.ts';
 import type { Serializer } from './serializer.ts';
@@ -207,13 +207,81 @@ export interface EngineOptions {
  * console.log(result.items.length);
  * ```
  */
+/**
+ * Numeric half-open range bound, used by visibility filters that match a
+ * stored numeric field (timestamps, deadlines). Provide at least one of the
+ * four bounds. `gt`/`gte` are mutually exclusive on the lower side; `lt`/`lte`
+ * are mutually exclusive on the upper side.
+ */
+export interface TimeRange {
+  gte?: number;
+  lte?: number;
+  gt?: number;
+  lt?: number;
+}
+
+/**
+ * Filter passed to {@link Engine.list} (and equivalent visibility transports)
+ * to narrow which {@link WorkflowSummary} entries are returned. Every field
+ * is optional; combining fields applies them as AND.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type ListFilter } from 'weft';
+ *
+ * const engine = new Engine();
+ * const filter: ListFilter = {
+ *   status: ['running', 'failed'],
+ *   tenantId: 'acme',
+ *   createdAt: { gte: Date.now() - 60_000 },
+ * };
+ *
+ * const page = await engine.list(filter);
+ * ```
+ */
 export interface ListFilter {
+  /** Match workflows whose {@link WorkflowState.status} is one of the listed values. */
   status?: WorkflowStatus | WorkflowStatus[];
+  /**
+   * Match workflows by registered workflow type (e.g. `'order-fulfillment'`).
+   *
+   * @example
+   * ```ts
+   * import type { ListFilter } from 'weft';
+   * const filter: ListFilter = { type: 'order-fulfillment' };
+   * ```
+   */
   type?: string;
+  /** Match workflows that carry every listed tag. */
   tags?: string[];
+  /** Filter on indexed search attributes (equality or range). */
   attributes?: readonly AttributeFilter[];
+  /** Maximum number of summaries to return. Server enforces an upper bound. */
   limit?: number;
+  /** Number of summaries to skip before returning results. */
   offset?: number;
+  /**
+   * Workflow id prefix. Restricted to `[A-Za-z0-9_-]+`; values containing
+   * other characters are rejected during validation. Matches by raw
+   * `state.id.startsWith(idPrefix)` after candidate enumeration.
+   */
+  idPrefix?: string;
+  /** Range filter on `WorkflowState.createdAt` (ms epoch). */
+  createdAt?: TimeRange;
+  /** Range filter on `WorkflowState.updatedAt` (ms epoch). */
+  updatedAt?: TimeRange;
+  /** Range filter on `WorkflowState.executionDeadline` (ms epoch). */
+  executionDeadline?: TimeRange;
+  /** Match workflows by `state.tenant?.id`. */
+  tenantId?: string | string[];
+  /**
+   * Match by the workflow's `failureCategory`. Applied as a post-filter
+   * against `WorkflowState.failureCategory` rather than via an index, so
+   * pair this with another scoped dimension (e.g. `status`) on large
+   * workflow populations for acceptable performance. A follow-up will
+   * lower this into the attributes index path.
+   */
+  failureCategory?: FailureCategory | FailureCategory[];
 }
 
 export type AttributeFilterKey = string | SearchAttributeHandle;

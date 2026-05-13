@@ -46,43 +46,6 @@ export async function* streamMatchingWorkflowStates(
   }
 }
 
-/** Collect decoded workflow states that match a list filter. */
-export async function collectMatchingWorkflowStates(
-  internals: EngineInternals,
-  filter?: ListFilter,
-): Promise<WorkflowState[]> {
-  const normalizedTagFilters = normalizeWorkflowTags(filter?.tags);
-  const constrainedIds = await resolveConstrainedIds(internals, filter, normalizedTagFilters);
-
-  if (constrainedIds !== null) {
-    const orderedIds = [...constrainedIds];
-    const states = await Promise.all(
-      orderedIds.map((workflowId) =>
-        loadMatchingWorkflowState(
-          internals,
-          workflowId,
-          filter,
-          constrainedIds,
-          normalizedTagFilters,
-        ),
-      ),
-    );
-
-    return states.filter((state): state is WorkflowState => state !== null);
-  }
-
-  const states: WorkflowState[] = [];
-  for await (const [key, value] of internals.storage.scan('wf:')) {
-    if (!isTopLevelWorkflowStateKey(key)) continue;
-
-    const state = decodeWorkflowState(value);
-    if (!matchesListFilter(state, filter, constrainedIds, normalizedTagFilters)) continue;
-    states.push(state);
-  }
-
-  return states;
-}
-
 async function loadMatchingWorkflowState(
   internals: EngineInternals,
   workflowId: string,
@@ -100,7 +63,7 @@ async function loadMatchingWorkflowState(
 
 /** Resolve the indexed workflow IDs implied by tag and search-attribute filters. */
 // oxlint-disable-next-line complexity -- ID:core-engine-resolve-constrained-ids-complexity
-async function resolveConstrainedIds(
+export async function resolveConstrainedIds(
   internals: EngineInternals,
   filter: ListFilter | undefined,
   normalizedTagFilters: readonly string[] | undefined,
@@ -220,7 +183,7 @@ async function queryTagIndex(internals: EngineInternals, tag: string): Promise<S
   return ids;
 }
 
-function isTopLevelWorkflowStateKey(key: string): boolean {
+export function isTopLevelWorkflowStateKey(key: string): boolean {
   const idPart = key.slice(3);
   return !idPart.includes(':');
 }

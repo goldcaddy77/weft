@@ -1,3 +1,4 @@
+/* oxlint-disable max-lines -- ID:dashboard-api-client-max-lines */
 /**
  * Typed fetch wrapper for the Weft REST API.
  *
@@ -9,6 +10,9 @@
 
 import { buildScheduleListSearchParams } from '../client/schedule-list-search-params.ts';
 import type {
+  AggregateFilter,
+  AggregateGroupBy,
+  AggregateResult,
   BulkCancelResult,
   BulkDeleteResult,
   BulkOperationDryRunResult,
@@ -28,6 +32,7 @@ import type {
   TaskDiagnosticsFilter,
   TaskDiagnosticsResponse,
   TenantQuotaUsage,
+  TimeRange,
   WorkerDrainMutationResponse,
   WorkflowEvent,
   WorkflowReplay,
@@ -36,6 +41,10 @@ import type {
   WorkflowTimelineEntry,
 } from './api-client-types.ts';
 export type {
+  AggregateFilter,
+  AggregateGroup,
+  AggregateGroupBy,
+  AggregateResult,
   BulkCancelResult,
   BulkDeleteResult,
   BulkOperationAuditEvent,
@@ -45,6 +54,7 @@ export type {
   BulkTagMutationOperation,
   BulkTagResult,
   BulkWorkflowFilter,
+  FailureCategory,
   ListFilter,
   ListTaskQueuesResponse,
   ListWorkersResponse,
@@ -65,6 +75,7 @@ export type {
   TenantQuotaMetricUsage,
   TenantQuotaUsage,
   TenantWorkflowCreationRateUsage,
+  TimeRange,
   WorkerCapabilities,
   WorkerDeploymentSummary,
   WorkerDrainMutationResponse,
@@ -145,19 +156,67 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+/**
+ * Build the URLSearchParams for the workflow filter shape shared by
+ * `listWorkflows` and `aggregateWorkflows`. The `limit`/`offset`
+ * parameters are caller-controlled — `listWorkflows` appends them,
+ * `aggregateWorkflows` ignores them and uses `limit` for groups
+ * instead.
+ */
+// oxlint-disable-next-line complexity -- ID:dashboard-api-client-build-workflow-filter-params
+function buildWorkflowFilterSearchParams(filter: ListFilter | undefined): URLSearchParams {
+  const params = new URLSearchParams();
+  if (filter === undefined) return params;
+
+  if (filter.status !== undefined) {
+    if (Array.isArray(filter.status)) {
+      for (const status of filter.status) params.append('status', status);
+    } else {
+      params.set('status', filter.status);
+    }
+  }
+  if (filter.type !== undefined) params.set('type', filter.type);
+  if (filter.tags !== undefined) {
+    for (const tag of filter.tags) params.append('tag', tag);
+  }
+  if (filter.idPrefix !== undefined) params.set('id_prefix', filter.idPrefix);
+  if (filter.tenantId !== undefined) {
+    if (Array.isArray(filter.tenantId)) {
+      for (const tenantId of filter.tenantId) params.append('tenant_id', tenantId);
+    } else {
+      params.set('tenant_id', filter.tenantId);
+    }
+  }
+  if (filter.failureCategory !== undefined) {
+    const categories = Array.isArray(filter.failureCategory)
+      ? filter.failureCategory
+      : [filter.failureCategory];
+    for (const category of categories) params.append('failure_category', category);
+  }
+
+  appendTimeRangeParams(params, 'created_at', filter.createdAt);
+  appendTimeRangeParams(params, 'updated_at', filter.updatedAt);
+  appendTimeRangeParams(params, 'execution_deadline', filter.executionDeadline);
+
+  return params;
+}
+
+function appendTimeRangeParams(
+  params: URLSearchParams,
+  prefix: 'created_at' | 'updated_at' | 'execution_deadline',
+  range: TimeRange | undefined,
+): void {
+  if (range === undefined) return;
+  if (range.gte !== undefined) params.set(`${prefix}_gte`, String(range.gte));
+  if (range.gt !== undefined) params.set(`${prefix}_gt`, String(range.gt));
+  if (range.lte !== undefined) params.set(`${prefix}_lte`, String(range.lte));
+  if (range.lt !== undefined) params.set(`${prefix}_lt`, String(range.lt));
+}
+
 export class ApiClient {
   /** List workflows with optional filtering. */
-  // oxlint-disable-next-line complexity -- ID:dashboard-api-client-list-workflows-complexity
   async listWorkflows(filter?: ListFilter): Promise<PaginatedResult<WorkflowSummary>> {
-    const params = new URLSearchParams();
-
-    if (filter?.status !== undefined) params.set('status', filter.status);
-    if (filter?.type !== undefined) params.set('type', filter.type);
-    if (filter?.tags !== undefined) {
-      for (const tag of filter.tags) {
-        params.append('tag', tag);
-      }
-    }
+    const params = buildWorkflowFilterSearchParams(filter);
     if (filter?.limit !== undefined) params.set('limit', String(filter.limit));
     if (filter?.offset !== undefined) params.set('offset', String(filter.offset));
 
@@ -165,6 +224,29 @@ export class ApiClient {
     const path = query ? `/workflows?${query}` : '/workflows';
 
     return request<PaginatedResult<WorkflowSummary>>(path);
+  }
+
+  /**
+   * Aggregate workflows by a single dimension. The filter shape matches
+   * `listWorkflows` except `limit` and `offset` are not used; `limit`
+   * caps the number of groups returned.
+   */
+  async aggregateWorkflows(
+    filter: AggregateFilter | undefined,
+    groupBy: AggregateGroupBy,
+    limit?: number,
+  ): Promise<AggregateResult> {
+    const params = buildWorkflowFilterSearchParams(filter);
+    if (typeof groupBy === 'string') {
+      params.set('group_by', groupBy);
+    } else {
+      params.set('group_by', `attribute:${groupBy.attribute}`);
+    }
+    if (limit !== undefined) params.set('limit', String(limit));
+
+    const query = params.toString();
+    const path = query ? `/workflows/aggregate?${query}` : '/workflows/aggregate';
+    return request<AggregateResult>(path);
   }
 
   /** Get the full state of a single workflow. */

@@ -1,21 +1,28 @@
 import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
+import { WorkflowListScanCapExceededError } from '../../core/engine/workflow-indexes.ts';
+import {
+  ListFilterValidationError,
+  normalizeListFilter,
+} from '../../core/list-filter-validation.ts';
 import { coerceStartWorkflowTags } from '../../core/start-workflow-validation.ts';
 import type {
+  FailureCategory,
   ListFilter,
   PaginatedResult,
   SearchAttributeValue,
   WorkflowStatus,
   WorkflowSummary,
 } from '../../core/types.ts';
-import { parseAttributeFilters } from '../attribute-filters.ts';
 import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
+import { extractListFilterFromQuery } from './list-filter-query-extractor.ts';
 import { jsonErrorResponse, shapeRestFault } from './operation-helpers.ts';
 
 const workflowStatusSchema = z.custom<WorkflowStatus>((value) => typeof value === 'string');
+const failureCategorySchema = z.custom<FailureCategory>((value) => typeof value === 'string');
 const searchAttributeValueSchema = z.custom<SearchAttributeValue>((value) => {
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     return true;
@@ -31,6 +38,12 @@ const attributeFilterSchema = z.object({
   gte: searchAttributeValueSchema.optional(),
   lte: searchAttributeValueSchema.optional(),
 });
+const timeRangeSchema = z.object({
+  gte: z.number().optional(),
+  gt: z.number().optional(),
+  lte: z.number().optional(),
+  lt: z.number().optional(),
+});
 
 const listWorkflowsInput = z.object({
   status: z.union([workflowStatusSchema, z.array(workflowStatusSchema)]).optional(),
@@ -39,6 +52,12 @@ const listWorkflowsInput = z.object({
   attributes: z.array(attributeFilterSchema).optional(),
   limit: z.number().int().min(1).max(1000).optional(),
   offset: z.number().int().min(0).optional(),
+  idPrefix: z.string().optional(),
+  createdAt: timeRangeSchema.optional(),
+  updatedAt: timeRangeSchema.optional(),
+  executionDeadline: timeRangeSchema.optional(),
+  tenantId: z.union([z.string(), z.array(z.string())]).optional(),
+  failureCategory: z.union([failureCategorySchema, z.array(failureCategorySchema)]).optional(),
 });
 const listWorkflowsOutput = z.unknown();
 
@@ -69,59 +88,38 @@ export const listWorkflowsOperation = defineOperation<ListWorkflowsInput, ListWo
       try {
         validatedTags = coerceStartWorkflowTags(input.tags, 'tags');
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        const fault: OperationFault = {
-          code: 'Unprocessable',
-          message,
-          data: { reason: message },
-        };
-        throw fault;
+        throw toUnprocessable(error);
       }
     }
 
-    // `ListWorkflowsInput` is structurally identical to `ListFilter`
-    // (see `core/types.ts`) — every field name and shape matches.
-    // The cast is a Zod-inference / hand-written-interface bridge:
-    // `z.infer` produces a structural type that TypeScript treats as
-    // distinct from `ListFilter` even though every member aligns.
-    // If `ListFilter` ever gains a field, the schema must add the
-    // matching shape; the unit tests for this operation cover the
-    // request-to-engine.list round-trip end-to-end so a real drift
-    // would surface immediately.
-    const filter: ListFilter = {
-      ...(input as ListFilter),
-      ...(validatedTags !== undefined ? { tags: validatedTags } : {}),
-    };
-    return await e.list(filter);
+    let filter: ListFilter;
+    try {
+      filter = normalizeListFilter({
+        ...input,
+        ...(validatedTags !== undefined ? { tags: validatedTags } : {}),
+      });
+    } catch (error) {
+      if (error instanceof ListFilterValidationError) throw toUnprocessable(error);
+      throw error;
+    }
+
+    try {
+      return await e.list(filter);
+    } catch (error) {
+      if (error instanceof WorkflowListScanCapExceededError) throw toUnprocessable(error);
+      throw error;
+    }
   },
 });
 
-// oxlint-disable-next-line complexity -- ID:server-operations-list-workflows-extract-list-workflows-input-complexity
+function toUnprocessable(error: unknown): OperationFault {
+  const message = error instanceof Error ? error.message : String(error);
+  return { code: 'Unprocessable', message, data: { reason: message } };
+}
+
 function extractListWorkflowsInput(request: Request): ListWorkflowsInput {
   const url = new URL(request.url);
-  const filter: ListWorkflowsInput = {};
-
-  const statuses = url.searchParams.getAll('status') as WorkflowStatus[];
-  if (statuses.length === 1) {
-    filter.status = statuses[0]!;
-  } else if (statuses.length > 1) {
-    filter.status = statuses;
-  }
-
-  const type = url.searchParams.get('type');
-  if (type !== null) {
-    filter.type = type;
-  }
-
-  // Pass raw tag values through; `invoke` runs `coerceStartWorkflowTags`
-  // so every transport (REST, JSON-RPC) hits the same validation rather
-  // than only REST. Empty / whitespace tags from the query string flow
-  // here untouched — the operation's `invoke` rejects them with an
-  // `Unprocessable` fault that `shapeFault` maps to 400.
-  const tags = url.searchParams.getAll('tag');
-  if (tags.length > 0) {
-    filter.tags = tags;
-  }
+  const filter = extractListFilterFromQuery(url) as ListWorkflowsInput;
 
   const limit = url.searchParams.get('limit');
   if (limit !== null) {
@@ -137,18 +135,6 @@ function extractListWorkflowsInput(request: Request): ListWorkflowsInput {
     if (Number.isFinite(parsed) && parsed >= 0) {
       filter.offset = Math.floor(parsed);
     }
-  }
-
-  const attributeFilters = parseAttributeFilters(url.searchParams);
-  if (attributeFilters.length > 0) {
-    filter.attributes = attributeFilters.map((attribute) => ({
-      key: attribute.key,
-      ...(attribute.value === undefined ? {} : { value: attribute.value }),
-      ...(attribute.gt === undefined ? {} : { gt: attribute.gt }),
-      ...(attribute.lt === undefined ? {} : { lt: attribute.lt }),
-      ...(attribute.gte === undefined ? {} : { gte: attribute.gte }),
-      ...(attribute.lte === undefined ? {} : { lte: attribute.lte }),
-    }));
   }
 
   return filter;

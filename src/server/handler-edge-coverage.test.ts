@@ -211,7 +211,8 @@ describe('handleRequest edge coverage', () => {
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({
-      error: 'Field "filter" must include at least one of status, type, tags, or attributes',
+      error:
+        'Field "filter" must include at least one of status, type, tags, attributes, tenantId, idPrefix (≥3 chars), or failureCategory paired with status',
     });
 
     response = await handleRequest(
@@ -232,7 +233,8 @@ describe('handleRequest edge coverage', () => {
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({
-      error: 'Field "filter" must include at least one of status, type, tags, or attributes',
+      error:
+        'Field "filter" must include at least one of status, type, tags, attributes, tenantId, idPrefix (≥3 chars), or failureCategory paired with status',
     });
 
     response = await handleRequest(
@@ -254,7 +256,8 @@ describe('handleRequest edge coverage', () => {
     );
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({
-      error: 'Field "filter" must include at least one of status, type, tags, or attributes',
+      error:
+        'Field "filter" must include at least one of status, type, tags, attributes, tenantId, idPrefix (≥3 chars), or failureCategory paired with status',
     });
 
     response = await handleRequest(

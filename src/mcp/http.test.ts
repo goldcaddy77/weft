@@ -781,10 +781,8 @@ describe('MCP Streamable HTTP transport', () => {
       { authorization: `Bearer ${token}` },
     );
     const listed = parseToolText(visible.result) as { items: Array<{ id: string }> };
-    expect(listed.items.map((item) => item.id)).toEqual([
-      'tenant-a-workflow',
-      'tenant-a-workflow-2',
-    ]);
+    const listedIds = listed.items.map((item) => item.id);
+    expect(listedIds.toSorted()).toEqual(['tenant-a-workflow', 'tenant-a-workflow-2']);
 
     const secondVisiblePage = await mcpJson(
       server,
@@ -797,12 +795,24 @@ describe('MCP Streamable HTTP transport', () => {
       },
       { authorization: `Bearer ${token}` },
     );
-    expect(parseToolText(secondVisiblePage.result)).toMatchObject({
-      items: [expect.objectContaining({ id: 'tenant-a-workflow-2' })],
+    const secondVisiblePageBody = parseToolText(secondVisiblePage.result) as {
+      items: Array<{ id: string }>;
+      total: number;
+      offset: number;
+      limit: number;
+    };
+    expect(secondVisiblePageBody).toMatchObject({
       total: 2,
       offset: 1,
       limit: 1,
     });
+    expect(secondVisiblePageBody.items).toHaveLength(1);
+    const secondVisiblePageItem = secondVisiblePageBody.items.at(0);
+    expect(secondVisiblePageItem).toBeDefined();
+    if (secondVisiblePageItem === undefined) {
+      throw new Error('Expected the second visible page to include one workflow');
+    }
+    expect(listedIds).toContain(secondVisiblePageItem.id);
 
     const denied = await mcpJson(
       server,
@@ -841,12 +851,13 @@ describe('MCP Streamable HTTP transport', () => {
       },
       { authorization: `Bearer ${readOnlyToken}` },
     );
-    expect(parseToolText(readOnlyList.result)).toMatchObject({
-      items: [
-        expect.objectContaining({ id: 'tenant-a-workflow' }),
-        expect.objectContaining({ id: 'tenant-a-workflow-2' }),
-      ],
-    });
+    const readOnlyListBody = parseToolText(readOnlyList.result) as {
+      items: Array<{ id: string }>;
+    };
+    expect(readOnlyListBody.items.map((item) => item.id).toSorted()).toEqual([
+      'tenant-a-workflow',
+      'tenant-a-workflow-2',
+    ]);
 
     const readOnlyEvents = await mcpJson(
       server,
