@@ -33,7 +33,11 @@
     formatTenantQuotaBytes,
     formatTenantQuotaWindow,
   } from '../utilities/tenant-quota.ts';
-  import { loadWorkflowAggregate, loadWorkflowListData } from '../utilities/workflow-list-data.ts';
+  import {
+    buildWorkflowListFilter,
+    loadWorkflowAggregate,
+    loadWorkflowListData,
+  } from '../utilities/workflow-list-data.ts';
   import { buildWorkflowRetentionRows } from '../utilities/workflow-retention.ts';
   import { collectWorkflowTags, toggleWorkflowTagSelection } from '../utilities/workflow-tags.ts';
 
@@ -182,11 +186,12 @@
   }
 
   function visibilityFilters(options: { includeTenantId: boolean }): Omit<FetchFilters, 'offset'> {
+    const normalizedType = typeFilter.trim();
     const normalizedIdPrefix = idPrefixFilter.trim();
     const normalizedTenantId = options.includeTenantId ? tenantIdFilter.trim() : '';
     return {
       status: statusFilter,
-      type: typeFilter,
+      type: normalizedType,
       tags: selectedTags,
       ...(normalizedIdPrefix.length > 0 ? { idPrefix: normalizedIdPrefix } : {}),
       ...(createdAtGte !== undefined || createdAtLte !== undefined
@@ -460,34 +465,12 @@
   }
 
   const bulkFilter = $derived.by((): ListFilter => {
-    const filter: ListFilter = {};
-    if (statusFilter !== 'all') filter.status = statusFilter;
-    const normalizedType = typeFilter.trim();
-    const normalizedIdPrefix = idPrefixFilter.trim();
-    const normalizedTenantId = tenantIdFilter.trim();
-    if (normalizedType.length > 0) filter.type = normalizedType;
-    if (selectedTags.length > 0) filter.tags = [...selectedTags];
-    if (normalizedIdPrefix.length > 0) {
-      filter.idPrefix = normalizedIdPrefix;
-    }
-    if (normalizedTenantId.length > 0) filter.tenantId = normalizedTenantId;
-    if (failureCategoryFilters.length === 1) {
-      filter.failureCategory = failureCategoryFilters[0];
-    } else if (failureCategoryFilters.length > 1) {
-      filter.failureCategory = [...failureCategoryFilters];
-    }
-    if (createdAtGte !== undefined || createdAtLte !== undefined) {
-      filter.createdAt = { gte: createdAtGte, lte: createdAtLte };
-    }
-    if (updatedAtGte !== undefined || updatedAtLte !== undefined) {
-      filter.updatedAt = { gte: updatedAtGte, lte: updatedAtLte };
-    }
-    if (executionDeadlineGte !== undefined || executionDeadlineLte !== undefined) {
-      filter.executionDeadline = {
-        gte: executionDeadlineGte,
-        lte: executionDeadlineLte,
-      };
-    }
+    const { limit: _dropLimit, offset: _dropOffset, ...filter } = buildWorkflowListFilter(
+      { ...visibilityFilters({ includeTenantId: true }), offset: 0 },
+      0,
+    );
+    void _dropLimit;
+    void _dropOffset;
     return filter;
   });
 
