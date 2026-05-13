@@ -29,6 +29,18 @@ import {
  * decisions.** Use `principal.tenantId`, `principal.subject`, and
  * `principal.scopes` (all derived and normalized at construction time)
  * instead. The `claims` bag is preserved for debugging and pass-through.
+ *
+ * @example
+ * ```ts
+ * import { principalFromJwtClaims, type JwtClaims } from 'weft/mcp';
+ *
+ * const claims: JwtClaims = {
+ *   sub: 'user-123',
+ *   scope: 'workflows:read',
+ * };
+ * const principal = principalFromJwtClaims(claims);
+ * console.log(principal.subject);
+ * ```
  */
 export type JwtClaims = Record<string, unknown>;
 
@@ -37,11 +49,21 @@ export type JwtClaims = Record<string, unknown>;
  * set and a `hasScope` accessor; downstream code should narrow to this shape
  * via `isAuthenticated` before calling `hasScope`.
  *
- * The privileged `'stdio-local'` principal is deferred to the Phase 13 CLI
- * admission module (see plan design decision 11). That module will extend
- * this union with its own `method` literal when it lands, co-located with
- * the admission check so no transport adapter can mint the privileged
- * principal out-of-band. No factory for stdio-local exists in this PR.
+ * The privileged `'stdio-local'` principal is for local stdio admission and
+ * carries the full local-admin scope set. It is exported for embedders that
+ * implement their own local admission gate; public transports should not mint
+ * it for remote callers.
+ *
+ * @example
+ * ```ts
+ * import { principalFromApiKey, type AuthenticatedPrincipal } from 'weft/mcp';
+ *
+ * const principal: AuthenticatedPrincipal = principalFromApiKey({
+ *   subject: 'local-tool',
+ *   scopes: ['workflows:read'],
+ * });
+ * console.log(principal.method);
+ * ```
  */
 export type AuthenticatedPrincipal = {
   readonly method: 'jwt' | 'api-key' | 'mtls' | 'stdio-local';
@@ -56,15 +78,47 @@ export type AuthenticatedPrincipal = {
  * An unauthenticated caller. Has no scopes and no `hasScope` method —
  * deliberate, so callers MUST narrow via `isAuthenticated` before any
  * scope-bearing access.
+ *
+ * @example
+ * ```ts
+ * import { anonymousPrincipal, type UnauthenticatedPrincipal } from 'weft/mcp';
+ *
+ * const principal: UnauthenticatedPrincipal = anonymousPrincipal();
+ * console.log(principal.method);
+ * ```
  */
 export type UnauthenticatedPrincipal = {
   readonly method: 'unauthenticated';
 };
 
-/** The full principal union used everywhere below the transport edge. */
+/**
+ * The full principal union used everywhere below the transport edge.
+ *
+ * @example
+ * ```ts
+ * import { anonymousPrincipal, type Principal } from 'weft/mcp';
+ *
+ * const principal: Principal = anonymousPrincipal();
+ * console.log(principal.method);
+ * ```
+ */
 export type Principal = AuthenticatedPrincipal | UnauthenticatedPrincipal;
 
-/** Build an `AuthenticatedPrincipal` from a JWT claims payload. */
+/**
+ * Build an `AuthenticatedPrincipal` from a JWT claims payload.
+ *
+ * @example
+ * ```ts
+ * import { principalFromJwtClaims } from 'weft/mcp';
+ *
+ * const principal = principalFromJwtClaims({
+ *   sub: 'user-123',
+ *   tenantId: 'tenant-a',
+ *   scope: 'workflows:read workflows:write',
+ * });
+ * console.log(principal.hasScope('workflows:read'));
+ * ```
+ */
 export function principalFromJwtClaims(claims: JwtClaims): AuthenticatedPrincipal {
   const scopes = extractScopesFromClaims(claims);
   const tenantId = extractTenantId(claims);
@@ -82,7 +136,21 @@ export function principalFromJwtClaims(claims: JwtClaims): AuthenticatedPrincipa
   };
 }
 
-/** Build an `AuthenticatedPrincipal` from an API-key admission result. */
+/**
+ * Build an `AuthenticatedPrincipal` from an API-key admission result.
+ *
+ * @example
+ * ```ts
+ * import { principalFromApiKey } from 'weft/mcp';
+ *
+ * const principal = principalFromApiKey({
+ *   subject: 'automation',
+ *   tenantId: 'tenant-a',
+ *   scopes: ['workflows:read'],
+ * });
+ * console.log(principal.subject);
+ * ```
+ */
 export function principalFromApiKey(options: {
   subject: string;
   scopes: ReadonlyArray<AuthorizationScope>;
@@ -101,7 +169,20 @@ export function principalFromApiKey(options: {
   };
 }
 
-/** Build an `AuthenticatedPrincipal` from an mTLS admission result. */
+/**
+ * Build an `AuthenticatedPrincipal` from an mTLS admission result.
+ *
+ * @example
+ * ```ts
+ * import { principalFromMutualTls } from 'weft/mcp';
+ *
+ * const principal = principalFromMutualTls({
+ *   subject: 'client-cert-subject',
+ *   scopes: ['system:read'],
+ * });
+ * console.log(principal.method);
+ * ```
+ */
 export function principalFromMutualTls(options: {
   subject: string;
   scopes: ReadonlyArray<AuthorizationScope>;
@@ -120,7 +201,17 @@ export function principalFromMutualTls(options: {
   };
 }
 
-/** The single unauthenticated principal. */
+/**
+ * The single unauthenticated principal.
+ *
+ * @example
+ * ```ts
+ * import { anonymousPrincipal } from 'weft/mcp';
+ *
+ * const principal = anonymousPrincipal();
+ * console.log(principal.method);
+ * ```
+ */
 export function anonymousPrincipal(): UnauthenticatedPrincipal {
   return ANONYMOUS;
 }
@@ -131,6 +222,14 @@ export function anonymousPrincipal(): UnauthenticatedPrincipal {
  * (`--startup-token <hex>` or `--allow-unauthenticated-local-admin`);
  * once admitted, the session has every scope because it's running as
  * a local process that can already invoke the binary directly.
+ *
+ * @example
+ * ```ts
+ * import { principalFromStdioLocal } from 'weft/mcp';
+ *
+ * const principal = principalFromStdioLocal();
+ * console.log(principal.hasScope('workflows:write'));
+ * ```
  */
 export function principalFromStdioLocal(): AuthenticatedPrincipal {
   const scopes = new Set<AuthorizationScope>(AUTHORIZATION_SCOPES);

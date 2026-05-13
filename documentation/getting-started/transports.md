@@ -1,6 +1,6 @@
 # Choosing a transport
 
-Weft exposes runtime operations over four transports. They all route through the same operation catalog, so the operation you call and the result you get back are the same regardless of which one you pick. The choice is about what fits your deployment.
+Weft exposes runtime operations over four operation-catalog transports, plus a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) surface for external MCP clients. The operation-catalog transports route through the same operation registry, so the operation you call and the result you get back are the same regardless of which one you pick. MCP is different: it maps registered workflows and workflow resources into the Model Context Protocol.
 
 ## REST (`/v1/*`)
 
@@ -93,6 +93,23 @@ Opt-in, disabled by default. Newline-delimited JSON over standard input/output. 
 - You don't want to run an HTTP server
 
 Enable it explicitly in `serve()`—it is not started automatically. Local process boundaries are the default authorization guard; optional startup-token hardening is available for stricter deployments.
+
+## MCP over Streamable HTTP and stdio
+
+Use MCP when an MCP client should treat Weft workflows as durable tools and resources.
+
+Remote MCP is mounted at `POST /mcp`, `GET /mcp`, and `DELETE /mcp` when you start the Weft server. `initialize` creates a session and returns `Mcp-Session-Id`; subsequent POST, GET, and DELETE requests send that header plus the negotiated `Mcp-Protocol-Version`. POST carries client-to-server JSON-RPC messages, GET opens the server-to-client event stream, and DELETE closes the session.
+
+Local MCP is exposed through the `weft-mcp` binary. It runs an embedded Weft engine over newline-delimited stdio frames. Admission is mandatory: pass `--startup-token <token>` and send `weft.authenticate` as the first frame, or use `--allow-unauthenticated-local-admin` only for trusted local process boundaries.
+
+MCP exposes:
+
+- Registered workflows with an `inputSchema` as lowercase-underscore tools
+- Engine-control tools such as `start_workflow`, `cancel_workflow`, and `get_workflow_state`
+- Workflow state, events, checkpoints, and workflow-search resources
+- Resource update notifications for subscribed workflow resources
+
+Activities are not exposed as MCP tools. A workflow without an `inputSchema` is intentionally omitted from MCP tool discovery.
 
 ## What's not on the parity surface
 

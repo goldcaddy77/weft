@@ -245,6 +245,31 @@ The operation catalog is the unified, transport-neutral registry of every operat
 
 Both documents enumerate operations from the unified catalog. To see which transports an operation is bound to, look at the `tags` and binding metadata in the document. To see the input/output schemas for an operation, follow the `$ref` links into `components.schemas`.
 
+### MCP Server
+
+The MCP server exposes Weft workflows to [Model Context Protocol](https://modelcontextprotocol.io/) clients. It is not a fifth operation-catalog transport: `tools/list`, `tools/call`, and `resources/read` are MCP methods that adapt registered workflows and workflow resources into the MCP protocol.
+
+| Method   | Path   | Description                                             |
+| -------- | ------ | ------------------------------------------------------- |
+| `POST`   | `/mcp` | Client-to-server MCP JSON-RPC messages                  |
+| `GET`    | `/mcp` | Server-to-client event stream for session notifications |
+| `DELETE` | `/mcp` | Close an MCP session identified by `Mcp-Session-Id`     |
+
+`POST /mcp` accepts `initialize` without an existing session and returns `Mcp-Session-Id`. Every subsequent POST, GET, or DELETE request sends that session id. Requests may also send `Mcp-Protocol-Version`; unsupported versions return `400`.
+
+When server authentication is enabled, MCP requests pass through the same authentication bridge as REST and JSON-RPC before they reach the MCP dispatcher. The authenticated principal is bound to the MCP session created by `initialize`, and tenant-scoped sessions can only list, read, or mutate workflows in their tenant. Cross-tenant workflow resources are reported as not found.
+
+MCP tool discovery includes:
+
+- Built-in workflow-control tools: `start_workflow`, `signal_workflow`, `update_workflow`, `query_workflow`, `cancel_workflow`, `list_workflows`, and `get_workflow_state`
+- Registered workflows that provide an `inputSchema`; tool names are lowercase with underscores
+
+Activities are never exposed as standalone MCP tools. Workflow tool failures are returned as MCP tool results with `isError: true` instead of JSON-RPC protocol errors.
+
+MCP resource discovery includes workflow state, event log, checkpoint history, and workflow-search templates. Subscribing to a workflow resource sends `notifications/resources/updated` over the GET event stream when that workflow changes.
+
+The `weft/mcp` subpath exports the server helpers for embedding, and the `weft-mcp` binary runs a local MCP stdio session against memory or SQLite storage. Local stdio admission is explicit: use `--startup-token <token>` for a first-frame authentication gate, or `--allow-unauthenticated-local-admin` only for trusted local process boundaries.
+
 ### Storage Operations
 
 > [!NOTE]

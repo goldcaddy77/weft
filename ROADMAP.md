@@ -68,9 +68,9 @@ The shape should stay Weft-native rather than copying Temporal feature names. Us
 
 ## 3. MCP Server Support
 
-Per the AI Surface Shrinkage decision, Weft does not ship an MCP client. Weft's workflow surface is a separate concern: registered workflows can be exposed as durable MCP tools and resources to external MCP clients.
+Per the AI Surface Shrinkage decision, Weft does not ship a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) client. Weft's workflow surface is a separate concern: registered workflows can be exposed as durable MCP tools and resources to external MCP clients.
 
-- [ ] **Implement an MCP server exposing Weft as a first-class MCP service.**
+- [x] **Implement an MCP server exposing Weft as a first-class MCP service.**
 
   **Deployment shapes:**
   - **Remote MCP over Streamable HTTP:** add an authenticated MCP endpoint to the existing server transport surface. Support client-to-server POST, server-to-client GET/SSE, and session resumption via `Mcp-Session-Id`.
