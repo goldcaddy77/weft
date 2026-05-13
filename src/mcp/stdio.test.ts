@@ -495,4 +495,42 @@ describe('runMcpStdioSession', () => {
     const result = await session;
     expect(result.exitCode).toBe(0);
   });
+
+  it('ignores invalid cancellation notifications and keeps the stdio session alive', async () => {
+    const input = controllableInput();
+    const output = collectingOutput();
+
+    const session = runMcpStdioSession({
+      input: input.stream,
+      output: output.stream,
+      engine: createEngine(),
+      admission: { kind: 'allow-unauthenticated-local-admin' },
+    });
+
+    input.send({
+      jsonrpc: '2.0',
+      id: 'init',
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-11-25',
+        capabilities: {},
+        clientInfo: { name: 'stdio-test', version: '1.0.0' },
+      },
+    });
+    await waitForLine(output, (line) => line.id === 'init');
+    input.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+
+    input.send({
+      jsonrpc: '2.0',
+      method: 'notifications/cancelled',
+      params: [],
+    });
+    input.send({ jsonrpc: '2.0', id: 'tools', method: 'tools/list', params: {} });
+
+    const toolsLine = await waitForLine(output, (line) => line.id === 'tools');
+    expect(toolsLine.result).toBeDefined();
+
+    input.close();
+    expect(await session).toEqual({ exitCode: 0 });
+  });
 });

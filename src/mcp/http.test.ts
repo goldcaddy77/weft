@@ -631,6 +631,27 @@ describe('MCP Streamable HTTP transport', () => {
     expect(toolResult.content[0]?.text).toContain('cancelled');
   });
 
+  it('accepts invalid cancellation notifications without failing the session', async () => {
+    const engine = createEngine();
+    server = serve({ engine, port: 0 });
+    const sessionId = await initialize(server);
+
+    const notification = await mcpPost(server, sessionId, {
+      jsonrpc: '2.0',
+      method: 'notifications/cancelled',
+      params: [],
+    });
+    expect(notification.status).toBe(202);
+
+    const tools = await mcpJson(server, sessionId, {
+      jsonrpc: '2.0',
+      id: 'tools-after-invalid-notification',
+      method: 'tools/list',
+      params: {},
+    });
+    expect((tools.result as { tools: Array<{ name: string }> }).tools.length).toBeGreaterThan(0);
+  });
+
   it('scopes workflow resources to the authenticated tenant stored on the MCP session', async () => {
     const engine = createEngine();
     const tenantA = await engine.start(

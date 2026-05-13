@@ -46,7 +46,11 @@ export async function dispatchMcpMessage(
   }
 
   if (isNotification(message)) {
-    await dispatchNotification(message, context);
+    try {
+      await dispatchNotification(message, context);
+    } catch (error) {
+      console.error(`[weft.mcp] Ignored MCP notification error for ${message.method}:`, error);
+    }
     return { kind: 'accepted' };
   }
 
