@@ -52,14 +52,14 @@ function validateDoctestSourcePath(
   repositoryRoot: string,
   sourceRel: string,
 ): string {
-  const pathSegments = sourceRel.split(/[\\/]+/);
-  const sourcePath = resolve(repositoryRoot, sourceRel);
+  const normalizedSourceRel = sourceRel.replaceAll('\\', '/');
+  const pathSegments = normalizedSourceRel.split('/');
+  const sourcePath = resolve(repositoryRoot, normalizedSourceRel);
   const repositoryRelativePath = relative(repositoryRoot, sourcePath);
   if (
-    sourceRel.startsWith('/') ||
-    sourceRel.includes('\\') ||
+    normalizedSourceRel.startsWith('/') ||
     pathSegments.includes('..') ||
-    !sourceRel.endsWith('.ts') ||
+    !normalizedSourceRel.endsWith('.ts') ||
     repositoryRelativePath.startsWith('../') ||
     repositoryRelativePath === '..' ||
     repositoryRelativePath.includes(':')
@@ -68,7 +68,7 @@ function validateDoctestSourcePath(
       `Invalid doctest source path for ${importPath}: expected a repository-relative TypeScript path, received ${sourceRel}`,
     );
   }
-  return sourceRel;
+  return normalizedSourceRel;
 }
 
 function toTsconfigPath(fromDirectory: string, toPath: string): string {

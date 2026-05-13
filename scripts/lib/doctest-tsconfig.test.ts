@@ -64,6 +64,26 @@ describe('doctest tsconfig generation', () => {
     });
   });
 
+  it('normalizes Windows source separators from the manifest', () => {
+    expect(
+      createDoctestTsconfig({
+        repositoryRoot,
+        doctestsDirectory,
+        publicEntryPoints: {
+          weft: 'src\\index.ts',
+        },
+      }),
+    ).toEqual({
+      ...expectedTsconfig,
+      compilerOptions: {
+        ...expectedTsconfig.compilerOptions,
+        paths: {
+          weft: ['../../src/index'],
+        },
+      },
+    });
+  });
+
   it('formats the tsconfig with one trailing newline', () => {
     const formatted = formatDoctestTsconfig({
       repositoryRoot,
@@ -109,7 +129,25 @@ describe('doctest tsconfig generation', () => {
         repositoryRoot,
         doctestsDirectory,
         publicEntryPoints: {
-          weft: 'src\\index.ts',
+          weft: '..\\outside.ts',
+        },
+      }),
+    ).toThrow('Invalid doctest source path for weft');
+    expect(() =>
+      createDoctestTsconfig({
+        repositoryRoot,
+        doctestsDirectory,
+        publicEntryPoints: {
+          weft: 'src\\..\\index.ts',
+        },
+      }),
+    ).toThrow('Invalid doctest source path for weft');
+    expect(() =>
+      createDoctestTsconfig({
+        repositoryRoot,
+        doctestsDirectory,
+        publicEntryPoints: {
+          weft: 'C:\\tmp\\outside.ts',
         },
       }),
     ).toThrow('Invalid doctest source path for weft');

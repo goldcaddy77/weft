@@ -15,7 +15,7 @@ export function parseMarkdownDoctestSkipCounts(
     throw new Error(`${sourcePath} must contain a JSON object`);
   }
 
-  const counts: MarkdownDoctestSkipCounts = {};
+  const counts: MarkdownDoctestSkipCounts = Object.create(null);
   for (const [reason, count] of Object.entries(parsed)) {
     if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) {
       throw new Error(`${sourcePath} value for "${reason}" must be a non-negative integer`);

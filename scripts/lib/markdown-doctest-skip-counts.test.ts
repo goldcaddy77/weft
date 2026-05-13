@@ -12,6 +12,13 @@ describe('markdown doctest skip counts', () => {
     });
   });
 
+  it('returns a null-prototype record for special keys', () => {
+    const counts = parseMarkdownDoctestSkipCounts('{"__proto__": 1}', sourcePath);
+
+    expect(Object.getPrototypeOf(counts)).toBeNull();
+    expect(counts['__proto__']).toBe(1);
+  });
+
   it('rejects malformed JSON', () => {
     expect(() => parseMarkdownDoctestSkipCounts('{"setup":', sourcePath)).toThrow(
       `${sourcePath} must contain valid JSON`,
