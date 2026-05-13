@@ -800,6 +800,22 @@ describe('MCP Streamable HTTP transport', () => {
       ],
     });
 
+    const readOnlyEvents = await mcpJson(
+      server,
+      sessionId,
+      {
+        jsonrpc: '2.0',
+        id: 'readonly-events',
+        method: 'resources/read',
+        params: { uri: 'weft://workflows/tenant-a-workflow/events' },
+      },
+      { authorization: `Bearer ${readOnlyToken}` },
+    );
+    expect(readOnlyEvents.error).toMatchObject({
+      code: -32011,
+      message: 'Reading workflow events requires events:read',
+    });
+
     const readOnlyWrite = await mcpJson(
       server,
       sessionId,

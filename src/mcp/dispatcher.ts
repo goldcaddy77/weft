@@ -1,6 +1,7 @@
 import type { Engine } from '../core/engine.ts';
 import { JSON_RPC_ERROR_CODES, type JsonRpcId } from '../server/json-rpc-protocol.ts';
 import { isAuthenticated, type Principal } from '../server/principal.ts';
+import { McpToolExecutionError } from './access.ts';
 import {
   forbidden,
   internalError,
@@ -61,6 +62,9 @@ export async function dispatchMcpMessage(
   } catch (error) {
     if (error instanceof McpProtocolError || error instanceof McpResponseError) {
       return { kind: 'response', response: error.toResponse(id) };
+    }
+    if (error instanceof McpToolExecutionError) {
+      return { kind: 'response', response: forbidden(id, error.message) };
     }
     console.error('[weft.mcp] Unhandled MCP dispatcher error:', error);
     return { kind: 'response', response: internalError(id) };
