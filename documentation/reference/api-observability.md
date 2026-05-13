@@ -112,7 +112,7 @@ const METRICS: {
 | -------------------------- | --------------------------------- | ----------- | ----------- | ------------------------------------------------------------- |
 | `workflowDuration`         | `weft.workflow.duration`          | `histogram` | `ms`        | Duration of workflow execution                                |
 | `activityDuration`         | `weft.activity.duration`          | `histogram` | `ms`        | Duration of activity execution                                |
-| `activityAttempts`         | `weft.activity.attempts`          | `histogram` | `attempts`  | Number of attempts per activity                               |
+| `activityAttempts`         | `weft.activity.attempts`          | `counter`   | `attempts`  | Number of attempts per activity                               |
 | `workflowActive`           | `weft.workflow.active`            | `gauge`     | `workflows` | Currently active workflows                                    |
 | `workflowStarted`          | `weft.workflow.started`           | `counter`   | `workflows` | Total workflows started                                       |
 | `workflowCompleted`        | `weft.workflow.completed`         | `counter`   | `workflows` | Total workflows completed                                     |

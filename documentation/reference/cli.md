@@ -66,12 +66,12 @@ weft conformance --timeout 30000 --json -- ./bin/my-worker --queue default
 
 The worker command receives these environment variables:
 
-| Variable                       | Description                                       |
-| ------------------------------ | ------------------------------------------------- |
-| `WEFT_WORKER_URL`              | Temporary server URL the worker should connect to |
-| `WEFT_WORKER_QUEUE`            | Queue name assigned to the conformance run        |
-| `WEFT_WORKER_ACTIVITIES`       | JSON list of activities the worker should expose  |
-| `WEFT_WORKER_PROTOCOL_VERSION` | Protocol version expected by the harness          |
+| Variable                       | Description                                                      |
+| ------------------------------ | ---------------------------------------------------------------- |
+| `WEFT_WORKER_URL`              | Temporary WebSocket task-stream URL the worker should connect to |
+| `WEFT_WORKER_QUEUE`            | Queue name assigned to the conformance run                       |
+| `WEFT_WORKER_ACTIVITIES`       | Comma-separated activity names the worker should expose          |
+| `WEFT_WORKER_PROTOCOL_VERSION` | Protocol version expected by the harness                         |
 
 **Options:**
 
