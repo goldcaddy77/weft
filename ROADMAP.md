@@ -34,26 +34,7 @@ These items are still present in `reference/architecture.md` and are not complet
   - `reference/IMPORTANT.md` and `documentation/architecture/performance.md` record the latest measured ratio and link to the benchmark command.
   - Verification passes with `bun run lint`, `bun run typecheck`, `bun run benchmark:temporal-workflow-starts` in an environment with Temporal available, and `bun run verify:documentation`.
 
-## 2. Production Visibility and Fleet Tooling
-
-Weft already has the production primitives operators need to build on: events, metrics, workflow timelines, search attributes, worker registries, task queues, bulk operations, schedules, retention controls, and a built-in dashboard. The remaining gap is turning those primitives into a robust operator control plane for live workflow fleets and remote workers.
-
-The shape should stay Weft-native rather than copying Temporal feature names. Useful reference points include [Temporal Visibility](https://docs.temporal.io/visibility), [Temporal Worker performance](https://docs.temporal.io/develop/worker-performance), [Temporal Worker Versioning](https://docs.temporal.io/worker-versioning), and [Temporal task queue priority and fairness](https://docs.temporal.io/develop/task-queue-priority-fairness), but the implementation should fit Weft's checkpoint model, operation catalog, dashboard, and RemoteWorker protocol.
-
-- [x] **Add production workflow visibility queries and aggregates.**
-
-  **Where:** `src/core/list-filter-validation.ts`, `src/core/aggregate-validation.ts`, `src/core/engine/{listing,aggregate,workflow-indexes,workflow-visibility-queries,list-candidate-resolution}.ts`, `src/core/bulk-workflow-filter.ts`, `src/server/operations/{list-workflows,aggregate-workflows}.ts`, `scripts/rebuild-workflow-visibility-indexes.ts`, and the dashboard data layer in `src/dashboard/{api-client,utilities/workflow-list-data}.ts`.
-
-  Shipped a typed visibility filter (`idPrefix`, time ranges, `tenantId`, `failureCategory`, status arrays) and a single-dimension aggregate operation, both backed by new `wf-idx-*` secondary indexes with a backfill-driven watermark gate. Pre-watermark queries fall back to the existing slow path; post-watermark queries narrow through the indexes. Distinct-key and scan caps surface as `Unprocessable` faults.
-
-  **Acceptance criteria:**
-  - `engine.list()` and `GET /v1/workflows` share one validation path through `normalizeListFilter`; the filter shape is identical across REST, JSON-RPC HTTP/WS/stdio, and in-process callers.
-  - `engine.aggregate()` and `weft.workflows.aggregate` (`GET /v1/workflows/aggregate`) return grouped counts over the same filter shape, supporting `status`, `type`, `tenant`, `failureCategory`, and arbitrary search attributes.
-  - Dashboard data layer (`api-client.aggregateWorkflows`, `buildWorkflowListFilter`, `loadWorkflowAggregate`) round-trips every new filter dimension. **Svelte UI controls are tracked as a follow-up task** to land alongside a design pass against the existing component vocabulary.
-  - Invalid filter fields, unknown aggregate attribute names, and scan/distinct-key cap exhaustion all throw before storage scans begin and map to `Unprocessable`.
-  - Verification passed with the full `bun test` suite (4756 pass / 0 functional fail), `bun run lint`, `bun run typecheck`, and `bun run verify:documentation`. Replay-fixture and checkpoint-compat binaries regenerated to embed the new `wf-idx-manifest:` rows.
-
-## 3. MCP Server Support
+## 2. MCP Server Support
 
 Per the AI Surface Shrinkage decision, Weft does not ship a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) client. Weft's workflow surface is a separate concern: registered workflows can be exposed as durable MCP tools and resources to external MCP clients.
 
