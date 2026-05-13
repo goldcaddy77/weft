@@ -1,11 +1,21 @@
 import type { ServeOptions } from '../index.ts';
 import type { PendingTask } from '../task-queue.ts';
 import type { InflightRecord } from '../task-state.ts';
-import { transitionInflightToResolved, transitionQueuedToInflight } from '../task-state.ts';
+import {
+  readInflightRecord,
+  transitionInflightToResolved,
+  transitionQueuedToInflight,
+} from '../task-state.ts';
 import type { ServerContext } from './context.ts';
+import {
+  recordTaskBacklogMetric,
+  recordTaskExecutionLatencyMetric,
+  recordTaskQueueLatencyMetric,
+} from './task-metrics.ts';
 
 const TASK_POLL_RE = /^\/v1\/tasks\/([\w-]+)$/;
 const TASK_RESULT_RE = /^\/v1\/tasks\/([\w-]+)\/result$/;
+const TASK_DIAGNOSTICS_PATH = '/v1/tasks/diagnostics';
 
 const MAX_POLL_TIMEOUT = 60_000;
 const DEFAULT_POLL_TIMEOUT = 30_000;
@@ -20,8 +30,9 @@ async function parseTaskResultBody(request: Request): Promise<Record<string, unk
 }
 
 export function createLongPollInflightRecord(queue: string, task: PendingTask): InflightRecord {
+  const now = Date.now();
   const visibilityTimeout = task.visibilityTimeout ?? DEFAULT_VISIBILITY_TIMEOUT;
-  const deadline = Date.now() + visibilityTimeout;
+  const deadline = now + visibilityTimeout;
 
   return {
     operationId: task.operationId,
@@ -33,21 +44,35 @@ export function createLongPollInflightRecord(queue: string, task: PendingTask): 
     attempt: task.attempt ?? 1,
     visibilityTimeout,
     retryPolicy: task.retryPolicy,
+    workflowId: task.workflowId,
+    firstQueuedAt: task.firstQueuedAt ?? task.enqueuedAt ?? now,
+    lastQueuedAt: task.lastQueuedAt ?? task.enqueuedAt ?? now,
+    lastDispatchedAt: now,
+    startedAt: now,
+    retryCount: task.retryCount ?? Math.max(0, (task.attempt ?? 1) - 1),
+    requeueCount: task.requeueCount ?? 0,
+    lastRequeueReason: task.lastRequeueReason,
   };
 }
 
-export function markTaskClaimedByLongPollWorker(
+export async function markTaskClaimedByLongPollWorker(
   context: ServerContext,
   options: ServeOptions,
   queue: string,
   task: PendingTask,
-): void {
+): Promise<void> {
   const inflightRecord = createLongPollInflightRecord(queue, task);
   context.deadlineTracker.add({
     operationId: task.operationId,
     deadline: inflightRecord.deadline,
   });
-  void transitionQueuedToInflight(options.engine.storage, task.operationId, inflightRecord);
+  const normalizedInflightRecord = await transitionQueuedToInflight(
+    options.engine.storage,
+    task.operationId,
+    inflightRecord,
+  );
+  recordTaskQueueLatencyMetric(options.metricsCollector, normalizedInflightRecord);
+  recordTaskBacklogMetric(options.metricsCollector, context.taskQueue);
 }
 
 export async function handleTaskPollRequest(
@@ -57,6 +82,10 @@ export async function handleTaskPollRequest(
   url: URL,
 ): Promise<Response | null> {
   if (request.method !== 'GET') {
+    return null;
+  }
+
+  if (url.pathname === TASK_DIAGNOSTICS_PATH) {
     return null;
   }
 
@@ -82,7 +111,7 @@ export async function handleTaskPollRequest(
 
   const task = await context.taskQueue.poll(queue, activities, timeout);
   if (task !== null) {
-    markTaskClaimedByLongPollWorker(context, options, queue, task);
+    await markTaskClaimedByLongPollWorker(context, options, queue, task);
     return Response.json(task);
   }
 
@@ -132,14 +161,23 @@ export async function handleTaskResultRequest(
 
   context.deadlineTracker.remove(operationId);
   const resolvedStatus = status === 'failed' ? 'failed' : ('completed' as const);
-  transitionInflightToResolved(options.engine.storage, operationId, resolvedStatus).catch(
-    (error) => {
-      console.error(
-        `[weft] Failed to transition task "${operationId}" to resolved — inflight record may leak:`,
-        error,
-      );
-    },
-  );
+  try {
+    const inflightRecord = await readInflightRecord(options.engine.storage, operationId);
+    const resolvedAt = Date.now();
+    await transitionInflightToResolved(options.engine.storage, operationId, resolvedStatus, {
+      ...(inflightRecord === null ? {} : { record: inflightRecord }),
+      resolvedAt,
+      resolutionReason: resolvedStatus,
+    });
+    if (inflightRecord !== null) {
+      recordTaskExecutionLatencyMetric(options.metricsCollector, inflightRecord, resolvedAt);
+    }
+  } catch (error) {
+    console.error(
+      `[weft] Failed to transition task "${operationId}" to resolved — inflight record may leak:`,
+      error,
+    );
+  }
 
   return Response.json({ ok: true });
 }

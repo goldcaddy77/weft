@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { sleepForTesting, waitForCondition } from '../testing/fake-timers.ts';
 
-import { encode } from '../core/codec.ts';
+import { decode, encode } from '../core/codec.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import type { WeftServer } from './index.ts';
 import { serve } from './index.ts';
-import type { InflightRecord, QueuedRecord } from './task-state.ts';
+import type { InflightRecord, QueuedRecord, ResolvedRecord } from './task-state.ts';
 import {
   getExclusiveTaskState,
   getTaskState,
@@ -48,6 +48,19 @@ function makeInflightRecord(overrides: Partial<InflightRecord> = {}): InflightRe
     visibilityTimeout: 30_000,
     ...overrides,
   };
+}
+
+class GetCountingStorage extends MemoryStorage {
+  readonly getCounts = new Map<string, number>();
+
+  override async get(key: string): Promise<Uint8Array | null> {
+    this.getCounts.set(key, (this.getCounts.get(key) ?? 0) + 1);
+    return super.get(key);
+  }
+
+  getCount(key: string): number {
+    return this.getCounts.get(key) ?? 0;
+  }
 }
 
 function createEngine(storage?: MemoryStorage): Engine {
@@ -172,6 +185,37 @@ describe('state transitions', () => {
     expect(await getExclusiveTaskState(storage, 'op-1')).toBe('inflight');
   });
 
+  it('uses a provided queued record without rereading storage', async () => {
+    const storage = new GetCountingStorage();
+    const queuedRecord = makeQueuedRecord({
+      firstQueuedAt: 1_000,
+      lastQueuedAt: 1_000,
+      retryCount: 2,
+      requeueCount: 1,
+    });
+    await markQueued(storage, queuedRecord);
+
+    const transitionedRecord = await transitionQueuedToInflight(
+      storage,
+      'op-1',
+      makeInflightRecord(),
+      {
+        queuedRecord,
+      },
+    );
+
+    expect(storage.getCount(KEYS.operationQueued('op-1'))).toBe(0);
+    expect(transitionedRecord.firstQueuedAt).toBe(1_000);
+    expect(transitionedRecord.retryCount).toBe(2);
+    expect(transitionedRecord.requeueCount).toBe(1);
+    const inflightRecord = decode(
+      (await storage.get(KEYS.operationInflight('op-1')))!,
+    ) as InflightRecord;
+    expect(inflightRecord.firstQueuedAt).toBe(1_000);
+    expect(inflightRecord.retryCount).toBe(2);
+    expect(inflightRecord.requeueCount).toBe(1);
+  });
+
   it('inflight → resolved is atomic (inflight key deleted, resolved key written)', async () => {
     const storage = new MemoryStorage();
     await markInflight(storage, makeInflightRecord());
@@ -179,7 +223,12 @@ describe('state transitions', () => {
     await transitionInflightToResolved(storage, 'op-1', 'completed');
 
     expect(await storage.get(KEYS.operationInflight('op-1'))).toBeNull();
-    expect(await storage.get(KEYS.operationResolved('op-1'))).not.toBeNull();
+    const resolvedValue = await storage.get(KEYS.operationResolved('op-1'));
+    expect(resolvedValue).not.toBeNull();
+    const resolvedRecord = decode(resolvedValue!) as ResolvedRecord;
+    expect(
+      await storage.get(KEYS.operationResolvedByTime(resolvedRecord.resolvedAt, 'op-1')),
+    ).not.toBeNull();
     expect(await getExclusiveTaskState(storage, 'op-1')).toBe('resolved');
   });
 
@@ -240,6 +289,105 @@ describe('state transitions', () => {
 
     const state = await getTaskState(storage, 'op-1');
     expect(state).toBe('resolved');
+  });
+
+  it('preserves lifecycle timings and retry counters through requeue and resolution', async () => {
+    const storage = new MemoryStorage();
+    const firstQueuedAt = 1_000;
+
+    await markQueued(
+      storage,
+      makeQueuedRecord({
+        operationId: 'metadata-op',
+        queuedAt: firstQueuedAt,
+        firstQueuedAt,
+        lastQueuedAt: firstQueuedAt,
+        retryCount: 0,
+        requeueCount: 0,
+      }),
+    );
+
+    await transitionQueuedToInflight(
+      storage,
+      'metadata-op',
+      makeInflightRecord({
+        operationId: 'metadata-op',
+        firstQueuedAt,
+        lastQueuedAt: firstQueuedAt,
+        lastDispatchedAt: 1_100,
+        startedAt: 1_120,
+        lastHeartbeatAt: 1_180,
+        retryCount: 0,
+        requeueCount: 0,
+      }),
+    );
+
+    await transitionInflightToQueued(
+      storage,
+      'metadata-op',
+      makeQueuedRecord({
+        operationId: 'metadata-op',
+        attempt: 2,
+        queuedAt: 1_300,
+        firstQueuedAt,
+        lastQueuedAt: 1_300,
+        lastDispatchedAt: 1_100,
+        startedAt: 1_120,
+        retryCount: 1,
+        requeueCount: 1,
+        lastRequeueReason: 'visibility-timeout',
+      }),
+    );
+
+    const queued = decode(
+      (await storage.get(KEYS.operationQueued('metadata-op')))!,
+    ) as QueuedRecord;
+    expect(queued.firstQueuedAt).toBe(firstQueuedAt);
+    expect(queued.lastQueuedAt).toBe(1_300);
+    expect(queued.lastDispatchedAt).toBe(1_100);
+    expect(queued.startedAt).toBe(1_120);
+    expect(queued.lastHeartbeatAt).toBeUndefined();
+    expect(queued.retryCount).toBe(1);
+    expect(queued.requeueCount).toBe(1);
+    expect(queued.lastRequeueReason).toBe('visibility-timeout');
+
+    await transitionQueuedToInflight(
+      storage,
+      'metadata-op',
+      makeInflightRecord({
+        operationId: 'metadata-op',
+        workerId: 'worker-2',
+        attempt: 2,
+        firstQueuedAt,
+        lastQueuedAt: 1_300,
+        lastDispatchedAt: 1_500,
+        startedAt: 1_520,
+        retryCount: 1,
+        requeueCount: 1,
+        lastRequeueReason: 'visibility-timeout',
+      }),
+    );
+
+    await transitionInflightToResolved(storage, 'metadata-op', 'completed', {
+      resolutionReason: 'completed',
+      resolvedAt: 1_900,
+    });
+
+    const resolved = decode(
+      (await storage.get(KEYS.operationResolved('metadata-op')))!,
+    ) as ResolvedRecord;
+    expect(await storage.get(KEYS.operationResolvedByTime(1_900, 'metadata-op'))).not.toBeNull();
+    expect(resolved.firstQueuedAt).toBe(firstQueuedAt);
+    expect(resolved.lastQueuedAt).toBe(1_300);
+    expect(resolved.lastDispatchedAt).toBe(1_500);
+    expect(resolved.startedAt).toBe(1_520);
+    expect(resolved.completedAt).toBe(1_900);
+    expect(resolved.lastHeartbeatAt).toBeUndefined();
+    expect(resolved.retryCount).toBe(1);
+    expect(resolved.requeueCount).toBe(1);
+    expect(resolved.resolutionReason).toBe('completed');
+    expect(resolved.queueLatencyMs).toBe(200);
+    expect(resolved.executionLatencyMs).toBe(380);
   });
 });
 

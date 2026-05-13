@@ -371,6 +371,19 @@ describe('queue statistics', () => {
     expect(defaultQueue!.inflightCount).toBe(2);
   });
 
+  it('ignores resolved task indexes when counting pending queues', async () => {
+    const storage = new MemoryStorage();
+
+    await storage.put(
+      KEYS.operationResolvedByTime(1_234, 'op1'),
+      encode({ queue: 'default', id: 'op1' }),
+    );
+
+    const report = await collectDiagnostics(storage, ':memory:');
+
+    expect(report.queues).toEqual([]);
+  });
+
   it('handles multiple queues', async () => {
     const storage = new MemoryStorage();
 

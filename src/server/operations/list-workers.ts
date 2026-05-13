@@ -24,7 +24,14 @@
 
 import { z } from 'zod';
 
-import type { RoutingPolicy, WorkerRegistry, WorkerSummary } from '../../worker/registry.ts';
+import type { RemoteWorkerJsonValue } from '../../worker/protocol.ts';
+import type {
+  RoutingPolicy,
+  WorkerDeploymentSummary,
+  WorkerHealth,
+  WorkerRegistry,
+  WorkerSummary,
+} from '../../worker/registry.ts';
 import { shapeOperationFaultAsJson } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
@@ -37,6 +44,19 @@ const routingPolicySchema = z.enum([
   'fair-share',
 ]) as z.ZodType<RoutingPolicy>;
 
+const workerHealthSchema = z.enum(['active', 'draining', 'drained']) as z.ZodType<WorkerHealth>;
+
+const remoteWorkerJsonValueSchema: z.ZodType<RemoteWorkerJsonValue> = z.lazy(() =>
+  z.union([
+    z.null(),
+    z.boolean(),
+    z.number(),
+    z.string(),
+    z.array(remoteWorkerJsonValueSchema),
+    z.record(z.string(), remoteWorkerJsonValueSchema),
+  ]),
+);
+
 const workerSummarySchema = z.object({
   id: z.string(),
   queue: z.string(),
@@ -47,16 +67,39 @@ const workerSummarySchema = z.object({
   connectedAt: z.number(),
   lastHeartbeatAt: z.number(),
   heartbeatAgeMs: z.number(),
+  startedAt: z.number(),
+  capabilities: z.record(z.string(), remoteWorkerJsonValueSchema),
+  health: workerHealthSchema,
+  deploymentName: z.string().optional(),
+  buildId: z.string().optional(),
+  runtimeVersion: z.string().optional(),
+  gitSha: z.string().optional(),
 }) satisfies z.ZodType<WorkerSummary>;
+
+const workerDeploymentSummarySchema = z.object({
+  deploymentName: z.string().nullable(),
+  buildId: z.string().nullable(),
+  runtimeVersion: z.string().nullable(),
+  gitSha: z.string().nullable(),
+  health: workerHealthSchema,
+  workers: z.number(),
+  activeWorkers: z.number(),
+  drainingWorkers: z.number(),
+  drainedWorkers: z.number(),
+  inFlight: z.number(),
+  oldestStartedAt: z.number().nullable(),
+}) satisfies z.ZodType<WorkerDeploymentSummary>;
 
 const listWorkersOutput = z.object({
   items: z.array(workerSummarySchema),
+  deployments: z.array(workerDeploymentSummarySchema),
   routingPolicy: routingPolicySchema,
 }) satisfies z.ZodType<ListWorkersOutput>;
 
 export type ListWorkersInput = z.infer<typeof listWorkersInput>;
 export type ListWorkersOutput = {
   items: WorkerSummary[];
+  deployments: WorkerDeploymentSummary[];
   routingPolicy: RoutingPolicy;
 };
 
@@ -97,6 +140,7 @@ export function createListWorkersOperation(options?: ListWorkersOptions) {
       const now = clock();
       return {
         items: registry.getWorkerSummaries(now),
+        deployments: registry.getDeploymentSummaries(now),
         routingPolicy: registry.policy,
       };
     },

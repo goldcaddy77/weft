@@ -180,6 +180,56 @@ describe('RemoteWorker', () => {
     await worker.disconnect();
   });
 
+  it('sends deployment identity and capabilities in the register message when configured', async () => {
+    const messages: any[] = [];
+
+    server = createTestServer({
+      onMessage(_ws, message) {
+        messages.push(JSON.parse(message));
+      },
+    });
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      workerId: 'identity-worker',
+      activities: {
+        processOrder: async (input) => input,
+      },
+      deploymentName: 'payments',
+      buildId: 'build-2026-05-12',
+      runtimeVersion: 'bun-1.2.13',
+      gitSha: '0123456789abcdef',
+      startedAt: 1_778_608_000_000,
+      capabilities: {
+        region: 'us-west',
+        canary: true,
+      },
+    });
+
+    await worker.connect();
+
+    await waitForCondition(() => messages.some((message) => message.type === 'register'), {
+      timeoutMs: 1_000,
+      label: 'identity register message',
+    });
+    const registerMessage = messages.find((message) => message.type === 'register');
+    expect(registerMessage).toMatchObject({
+      type: 'register',
+      workerId: 'identity-worker',
+      deploymentName: 'payments',
+      buildId: 'build-2026-05-12',
+      runtimeVersion: 'bun-1.2.13',
+      gitSha: '0123456789abcdef',
+      startedAt: 1_778_608_000_000,
+      capabilities: {
+        region: 'us-west',
+        canary: true,
+      },
+    });
+
+    await worker.disconnect();
+  });
+
   it('connect() rejects when registration is rejected', async () => {
     server = createTestServer({
       autoRegisterAck: false,

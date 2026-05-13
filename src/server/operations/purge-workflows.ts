@@ -3,18 +3,18 @@ import { z } from 'zod';
 import type { Engine } from '../../core/engine.ts';
 import { coerceStartWorkflowTags } from '../../core/start-workflow-validation.ts';
 import type { PurgeResult } from '../../core/types.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 import {
   bulkListFilterInputSchema,
   faultMessage,
-  invalidParamsFault,
   listFilterFromBulkInput,
   parseBulkListFilterFromBody,
   readOptionalJsonBody,
   type BulkListFilterInput,
 } from './bulk-filter-helpers.ts';
+import { invalidParamsFault, shapeRestFault } from './operation-helpers.ts';
 
 const purgeWorkflowsOutput = z.unknown();
 
@@ -64,17 +64,7 @@ function shapePurgeWorkflowsSuccess(result: PurgeWorkflowsOutput): Response {
 }
 
 function shapePurgeWorkflowsFault(fault: OperationFault): Response {
-  if (fault.code === 'EngineFailure') {
-    return new Response(JSON.stringify({ error: 'Internal server error' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  return new Response(JSON.stringify({ error: fault.message }), {
-    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return shapeRestFault(fault);
 }
 
 export const purgeWorkflowsRestBinding: UnknownRestBinding = {

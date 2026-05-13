@@ -24,6 +24,7 @@ import { KEYS, storageConditionalBatch, storageValuesEqual } from './interface';
 import { MemoryStorage } from './memory';
 import { resolveStorage } from './resolve';
 import { ScopedStorage, scopedStorage } from './scoped-storage';
+import { textValueStore } from './text-value-store';
 import { jsonCodec, msgpackCodec, withCodec } from './typed-storage';
 
 // Bun 1.3.13 minifier workaround: pure re-export barrels
@@ -145,6 +146,19 @@ const exportedStorageConditionalBatch = storageConditionalBatch;
 const exportedStorageValuesEqual = storageValuesEqual;
 
 /**
+ * Re-exported {@link textValueStore}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, textValueStore } from 'weft/storage';
+ * await using base = new MemoryStorage();
+ * const store = textValueStore(base);
+ * void store;
+ * ```
+ */
+const exportedTextValueStore = textValueStore;
+
+/**
  * Re-exported {@link withCodec}. See the original declaration for full docs.
  *
  * @example
@@ -159,6 +173,7 @@ const exportedWithCodec = withCodec;
 
 export type { BatchOperation, ConditionalBatchCondition, ScanOptions, Storage } from './interface';
 export type { StorageConfiguration } from './resolve';
+export type { TextValueStore } from './text-value-store';
 export type {
   JsonValue,
   MessagePackValue,
@@ -177,5 +192,6 @@ export {
   exportedScopedStorageFactory as scopedStorage,
   exportedStorageConditionalBatch as storageConditionalBatch,
   exportedStorageValuesEqual as storageValuesEqual,
+  exportedTextValueStore as textValueStore,
   exportedWithCodec as withCodec,
 };

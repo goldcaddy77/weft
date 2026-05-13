@@ -142,6 +142,12 @@ class RemoteWorker implements Disposable {
 | `queue`               | `string`                                                                                | `'default'`           | Task queue to subscribe to                                                                                       |
 | `disconnectTimeoutMs` | `number`                                                                                | `30_000`              | Time to wait for in-flight tasks before force-closing on disconnect                                              |
 | `interceptors`        | `ActivityInterceptor[]`                                                                 | `[]`                  | Activity interceptors applied to all tasks processed by this worker                                              |
+| `deploymentName`      | `string`                                                                                | --                    | Operator-defined deployment group reported during registration                                                   |
+| `buildId`             | `string`                                                                                | --                    | Build or release identifier reported during registration                                                         |
+| `runtimeVersion`      | `string`                                                                                | --                    | Runtime or SDK version reported during registration                                                              |
+| `gitSha`              | `string`                                                                                | --                    | Source revision reported during registration                                                                     |
+| `startedAt`           | `number`                                                                                | `Date.now()`          | Worker process start time in epoch milliseconds                                                                  |
+| `capabilities`        | `Record<string, JSON value>`                                                            | `{}`                  | JSON metadata such as region, hardware class, or feature flags                                                   |
 
 The worker sends heartbeats every 10 seconds after registration is acknowledged and handles server-initiated `shutdown` messages gracefully. `connect()` rejects if the server sends `registerError` or if the socket closes before acknowledgement.
 
@@ -263,12 +269,24 @@ class WorkerRegistry {
   taskAssigned(workerId: string): void;
   taskCompleted(workerId: string): void;
   findWorker(activityName: string, options?: RoutingOptions): WorkerInfo | undefined;
+  markWorkerDraining(
+    workerId: string,
+    options?: WorkerDrainOptions,
+  ): WorkerDrainMutationResult | undefined;
+  clearWorkerDrain(workerId: string): WorkerDrainMutationResult | undefined;
+  markDeploymentDraining(
+    deploymentName: string,
+    options?: WorkerDrainOptions,
+  ): WorkerDrainMutationResult;
+  clearDeploymentDrain(deploymentName: string): WorkerDrainMutationResult;
 
   assignTask(workerId: string, operationId: string, visibilityTimeout: number): void;
   checkExpiredTasks(now: number): InFlightTask[];
   extendVisibility(operationId: string, extension: number): void;
 
   getAll(): WorkerInfo[];
+  getWorkerSummaries(now: number): WorkerSummary[];
+  getDeploymentSummaries(now: number): WorkerDeploymentSummary[];
   get size(): number;
 }
 ```
@@ -296,6 +314,12 @@ interface WorkerInfo {
   inFlight: number;
   connectedAt: number;
   lastHeartbeat: number;
+  startedAt: number;
+  capabilities: Record<string, unknown>;
+  deploymentName?: string;
+  buildId?: string;
+  runtimeVersion?: string;
+  gitSha?: string;
 }
 ```
 
@@ -310,6 +334,19 @@ interface RoutingOptions {
 ```
 
 `findWorker()` applies the configured `RoutingPolicy` (least-loaded by default; supports `'round-robin'` and `'fair-share'`). It filters workers that can handle the activity and have capacity. For `'least-loaded'`, it returns the worker with the lowest `inFlight` count. If `sticky` is set and that worker has capacity, it is preferred.
+
+Draining workers are excluded from `findWorker()` so no new tasks are assigned to them. In-flight tasks remain tracked and finish normally, expire through the existing visibility timeout path, or requeue through the existing disconnection/shutdown path.
+
+#### `WorkerDrainOptions`
+
+```ts
+interface WorkerDrainOptions {
+  reason?: string;
+  updatedAt?: number;
+}
+```
+
+`updatedAt` records the drain start time in epoch milliseconds. When omitted, the registry uses `Date.now()`.
 
 #### `InFlightTask`
 
@@ -333,7 +370,7 @@ principals receive a 403. Workers and task queues are server-wide
 infrastructure, not tenant-partitioned, so there is no tenant filter to
 apply.
 
-The same operations are reachable over
+The read operations are reachable over
 [JSON-RPC](https://www.jsonrpc.org/specification)
 ([HTTP](https://developer.mozilla.org/en-US/docs/Web/HTTP),
 [WebSocket](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API),
@@ -345,13 +382,18 @@ The same operations are reachable over
 
 Returns every connected worker with its queue assignment, advertised
 activities, concurrency, in-flight count, available capacity, connect
-time, last heartbeat, and heartbeat age. The top-level `routingPolicy`
-field reports the routing strategy the server was configured with.
+time, last heartbeat, heartbeat age, deployment identity, capabilities,
+start time, and drain health. The top-level `routingPolicy` field reports
+the routing strategy the server was configured with. The top-level
+`deployments` field groups connected workers by reported deployment
+identity and summarizes active, draining, and drained workers.
 
 The server snapshots `Date.now()` exactly once per request, so every
 `heartbeatAgeMs` in the response is consistent.
 
 ```ts
+type WorkerHealth = 'active' | 'draining' | 'drained';
+
 type ListWorkersResponse = {
   items: Array<{
     id: string;
@@ -363,12 +405,96 @@ type ListWorkersResponse = {
     connectedAt: number; // epoch ms
     lastHeartbeatAt: number; // epoch ms
     heartbeatAgeMs: number; // now - lastHeartbeatAt at snapshot time
+    startedAt: number; // epoch ms
+    capabilities: Record<string, unknown>;
+    health: WorkerHealth;
+    deploymentName?: string;
+    buildId?: string;
+    runtimeVersion?: string;
+    gitSha?: string;
+  }>;
+  deployments: Array<{
+    deploymentName: string | null;
+    buildId: string | null;
+    runtimeVersion: string | null;
+    gitSha: string | null;
+    health: WorkerHealth;
+    workers: number;
+    activeWorkers: number;
+    drainingWorkers: number;
+    drainedWorkers: number;
+    inFlight: number;
+    oldestStartedAt: number | null;
   }>;
   routingPolicy: 'least-loaded' | 'round-robin' | 'fair-share';
 };
 ```
 
 Workers are sorted by `id` ascending.
+
+`health` is derived from drain state and in-flight work:
+
+- `active`: the worker is eligible for new assignments.
+- `draining`: drain state is set and the worker still has in-flight tasks.
+- `drained`: drain state is set and the worker has no in-flight tasks.
+
+### `POST /v1/workers/:workerId/drain`
+
+Marks a connected worker as draining. Requires `system:admin`. The optional
+JSON request body may include a non-empty `reason`.
+
+```json
+{ "reason": "maintenance" }
+```
+
+Response:
+
+```ts
+type WorkerDrainResponse = {
+  target: 'worker';
+  workerId: string;
+  affectedWorkers: 1;
+  inFlight: number;
+  health: WorkerHealth;
+};
+```
+
+The JSON-RPC operation name is `weft.workers.drain`.
+
+### `DELETE /v1/workers/:workerId/drain`
+
+Clears the explicit drain marker for one worker. Requires `system:admin`.
+If a deployment-level drain still applies, the worker remains drained by
+that deployment.
+
+The JSON-RPC operation name is `weft.workers.resume`.
+
+### `POST /v1/worker-deployments/:deploymentName/drain`
+
+Marks every current and future worker that reports `deploymentName` as
+draining. Requires `system:admin`. The optional JSON request body may
+include a non-empty `reason`.
+
+Response:
+
+```ts
+type DeploymentDrainResponse = {
+  target: 'deployment';
+  deploymentName: string;
+  affectedWorkers: number;
+  inFlight: number;
+  health: WorkerHealth;
+};
+```
+
+The JSON-RPC operation name is `weft.worker.deployments.drain`.
+
+### `DELETE /v1/worker-deployments/:deploymentName/drain`
+
+Clears the deployment-level drain marker. Requires `system:admin`. Any
+worker-specific drain markers remain in effect.
+
+The JSON-RPC operation name is `weft.worker.deployments.resume`.
 
 ### `GET /v1/task-queues`
 
@@ -402,6 +528,7 @@ Queues are sorted by `queue` ascending.
 ### Dashboard view
 
 The bundled dashboard ships a "Workers" page at `/ui/workers` that
-renders both responses side-by-side and polls every five seconds.
+renders workers, deployment aggregates, task queues, and drain controls
+side-by-side and polls every five seconds.
 Polling pauses while the tab is hidden and resumes when it becomes
 visible again.

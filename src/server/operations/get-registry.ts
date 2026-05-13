@@ -24,9 +24,10 @@ import {
   RegistrySchemaConversionError,
   type RegistrySnapshot,
 } from '../../core/registry-snapshot.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
+import { shapeRestFault } from './operation-helpers.ts';
 
 const getRegistryInput = z.object({});
 
@@ -94,22 +95,9 @@ export const getRegistryOperation = defineOperation<GetRegistryInput, GetRegistr
 });
 
 function shapeGetRegistryFault(fault: OperationFault): Response {
-  if (fault.code === 'EngineFailure') {
-    // Mask internal error details from the wire. When the failure was a
-    // `RegistrySchemaConversionError`, the entity name and direction were
-    // logged via `console.error` inside `invoke` before the pipeline
-    // reduced the error to this generic fault — operators can locate the
-    // bad registration via server logs without exposing schema layout to
-    // clients.
-    return new Response(JSON.stringify({ error: 'Internal server error' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  return new Response(JSON.stringify({ error: fault.message }), {
-    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
-    headers: { 'Content-Type': 'application/json' },
-  });
+  // `RegistrySchemaConversionError` details are logged in `invoke`; the
+  // shared REST shaper keeps the wire response masked.
+  return shapeRestFault(fault);
 }
 
 export const getRegistryRestBinding: UnknownRestBinding = {

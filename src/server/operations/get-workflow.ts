@@ -13,9 +13,10 @@ import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
 import type { WorkflowState } from '../../core/types.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
+import { shapeRestFault } from './operation-helpers.ts';
 
 const getWorkflowInput = z.object({
   workflowId: z.string().min(1),
@@ -92,16 +93,7 @@ function shapeGetWorkflowSuccess(state: WorkflowState): Response {
  * sourced across the REST and JSON-RPC adapters.
  */
 function shapeGetWorkflowFault(fault: OperationFault): Response {
-  if (fault.code === 'EngineFailure') {
-    return new Response(JSON.stringify({ error: 'Internal server error' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  return new Response(JSON.stringify({ error: fault.message }), {
-    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return shapeRestFault(fault);
 }
 
 /**

@@ -87,7 +87,7 @@ The shape should stay Weft-native rather than copying Temporal feature names. Us
   - Authorization requires a system-level read scope and preserves tenant isolation where tenant-scoped queue data is exposed.
   - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/worker/registry.test.ts src/server/task-queue.test.ts src/server/operations/list-workers.test.ts src/server/operations/list-task-queues.test.ts src/dashboard/api-client.test.ts`, and `bun run verify:documentation`.
 
-- [ ] **Add task latency, retry, and stuck-work diagnostics.**
+- [x] **Add task latency, retry, and stuck-work diagnostics.**
 
   **Where:** `src/server/task-state.ts`, `src/server/runtime/task-dispatch.ts`, `src/server/runtime/task-polling.ts`, `src/server/runtime/task-reconciliation.ts`, `src/observability/metrics.ts`, new task-diagnostics operations, and dashboard diagnostics utilities.
 
@@ -112,19 +112,6 @@ The shape should stay Weft-native rather than copying Temporal feature names. Us
   - Every committed bulk action emits durable audit events containing the caller principal, filter summary, action type, affected count, sampled ids, and request id.
   - Dashboard bulk-action flows force preview before commit and make tenant scope, filters, and affected counts visible before confirmation.
   - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/core/bulk-operations.test.ts src/server/operations/bulk-cancel-workflows.test.ts src/server/operations/bulk-delete-workflows.test.ts src/server/operations/bulk-signal-workflows.test.ts src/server/operations/bulk-mutate-workflow-tags.test.ts`, and `bun run verify:documentation`.
-
-- [ ] **Track worker deployments, build identities, and draining health.**
-
-  **Where:** `src/worker/protocol.ts`, `src/worker/index.ts`, `src/worker/registry.ts`, `src/server/runtime/websocket-worker.ts`, task routing, new deployment drain operations, and `documentation/reference/remote-worker-protocol.md`.
-
-  Extend `RemoteWorker` registration to include optional deployment name, build id, runtime version, git SHA, started-at timestamp, and declared worker capabilities. Surface deployment versions in worker fleet APIs and dashboard views, including active, draining, and drained-style health derived from connected workers and in-flight tasks. Add graceful drain tooling so operators can stop assigning new tasks to a worker or deployment while existing tasks finish or requeue safely.
-
-  **Acceptance criteria:**
-  - RemoteWorker protocol v1 accepts optional deployment identity fields without breaking existing worker registrations.
-  - Worker registry records deployment identity, worker capabilities, start time, drain state, and per-deployment aggregate health.
-  - Routing excludes draining workers from new assignments while allowing in-flight tasks to finish or requeue according to existing visibility and shutdown semantics.
-  - Public operations can mark a worker or deployment as draining, clear drain state, and report active/draining/drained health for dashboard consumption.
-  - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/worker/protocol.test.ts src/worker/registry.test.ts src/server/runtime/websocket-worker.test.ts src/server/task-queue-scheduling.test.ts`, and `bun run verify:documentation`.
 
 ## 4. MCP Server Support
 

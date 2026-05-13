@@ -91,6 +91,12 @@ export interface ListFilter {
 /** Routing strategy the server selects when assigning tasks to workers. */
 export type WorkerRoutingPolicy = 'least-loaded' | 'round-robin' | 'fair-share';
 
+/** Health state used by routing and drain controls for connected workers. */
+export type WorkerHealth = 'active' | 'draining' | 'drained';
+
+/** JSON-serializable capability metadata a remote worker reports at registration. */
+export type WorkerCapabilities = Record<string, unknown>;
+
 /** Scheduling strategy a task queue applies when ordering pending tasks. */
 export type TaskQueueSchedulingPolicy = 'priority' | 'fifo' | 'lifo';
 
@@ -105,11 +111,51 @@ export type WorkerSummary = {
   connectedAt: number;
   lastHeartbeatAt: number;
   heartbeatAgeMs: number;
+  startedAt: number;
+  capabilities: WorkerCapabilities;
+  health: WorkerHealth;
+  deploymentName?: string;
+  buildId?: string;
+  runtimeVersion?: string;
+  gitSha?: string;
 };
+
+/** Per-deployment aggregate reported by `GET /v1/workers`. */
+export type WorkerDeploymentSummary = {
+  deploymentName: string | null;
+  buildId: string | null;
+  runtimeVersion: string | null;
+  gitSha: string | null;
+  health: WorkerHealth;
+  workers: number;
+  activeWorkers: number;
+  drainingWorkers: number;
+  drainedWorkers: number;
+  inFlight: number;
+  oldestStartedAt: number | null;
+};
+
+/** Response from worker/deployment drain mutation endpoints. */
+export type WorkerDrainMutationResponse =
+  | {
+      target: 'worker';
+      workerId: string;
+      affectedWorkers: number;
+      inFlight: number;
+      health: WorkerHealth;
+    }
+  | {
+      target: 'deployment';
+      deploymentName: string;
+      affectedWorkers: number;
+      inFlight: number;
+      health: WorkerHealth;
+    };
 
 /** Top-level response shape for `GET /v1/workers`. */
 export type ListWorkersResponse = {
   items: WorkerSummary[];
+  deployments: WorkerDeploymentSummary[];
   routingPolicy: WorkerRoutingPolicy;
 };
 
@@ -161,6 +207,53 @@ export interface ReviewDecision {
   feedback?: string;
 }
 
+export type TaskDiagnosticKind =
+  | 'stuck-queued'
+  | 'stale-inflight'
+  | 'retry-storm'
+  | 'all-workers-at-capacity';
+
+export interface TaskDiagnosticItem {
+  kind: TaskDiagnosticKind;
+  state: 'queued' | 'inflight' | 'resolved' | 'capacity';
+  operationId?: string;
+  workflowId?: string;
+  activityName?: string;
+  queue?: string;
+  workerId?: string;
+  retryCount: number;
+  requeueCount: number;
+  queueLatencyMs?: number;
+  executionLatencyMs?: number;
+  heartbeatAgeMs?: number;
+  lastRequeueReason?: 'visibility-timeout' | 'worker-disconnect';
+  resolutionReason?: string;
+  evidence: string[];
+}
+
+export interface TaskDiagnosticsSummary {
+  stuckQueued: number;
+  staleInflight: number;
+  retryStorms: number;
+  allWorkersAtCapacity: number;
+}
+
+export interface TaskDiagnosticsResponse {
+  items: TaskDiagnosticItem[];
+  summary: TaskDiagnosticsSummary;
+  limit: number;
+}
+
+export interface TaskDiagnosticsFilter {
+  operationId?: string;
+  workflowId?: string;
+  queue?: string;
+  staleQueuedAfterMs?: number;
+  staleHeartbeatAfterMs?: number;
+  retryStormMinimumAttempts?: number;
+  limit?: number;
+}
+
 // ---------------------------------------------------------------------------
 // Error
 // ---------------------------------------------------------------------------
@@ -180,6 +273,26 @@ export class ApiError extends Error {
 // ---------------------------------------------------------------------------
 
 const BASE_PATH = '/v1';
+
+function setOptionalSearchParam(
+  params: URLSearchParams,
+  key: string,
+  value: string | number | undefined,
+): void {
+  if (value !== undefined) params.set(key, String(value));
+}
+
+function buildTaskDiagnosticsSearchParams(filter?: TaskDiagnosticsFilter): URLSearchParams {
+  const params = new URLSearchParams();
+  setOptionalSearchParam(params, 'operationId', filter?.operationId);
+  setOptionalSearchParam(params, 'workflowId', filter?.workflowId);
+  setOptionalSearchParam(params, 'queue', filter?.queue);
+  setOptionalSearchParam(params, 'staleQueuedAfterMs', filter?.staleQueuedAfterMs);
+  setOptionalSearchParam(params, 'staleHeartbeatAfterMs', filter?.staleHeartbeatAfterMs);
+  setOptionalSearchParam(params, 'retryStormMinimumAttempts', filter?.retryStormMinimumAttempts);
+  setOptionalSearchParam(params, 'limit', filter?.limit);
+  return params;
+}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(options?.headers);
@@ -275,6 +388,14 @@ export class ApiClient {
     return response ?? [];
   }
 
+  /** Get bounded task diagnostics for workflow detail and operator views. */
+  async getTaskDiagnostics(filter?: TaskDiagnosticsFilter): Promise<TaskDiagnosticsResponse> {
+    const query = buildTaskDiagnosticsSearchParams(filter).toString();
+    const path = query ? `/tasks/diagnostics?${query}` : '/tasks/diagnostics';
+
+    return request<TaskDiagnosticsResponse>(path);
+  }
+
   /** Reconstruct workflow state at a historical checkpoint step. */
   async replayWorkflowTo(id: string, step: number): Promise<WorkflowReplay | null> {
     try {
@@ -337,6 +458,43 @@ export class ApiClient {
   /** List connected workers with capacity, heartbeat, and routing policy. */
   async listWorkers(): Promise<ListWorkersResponse> {
     return request<ListWorkersResponse>('/workers');
+  }
+
+  /** Mark one connected worker as draining. */
+  async drainWorker(workerId: string, reason?: string): Promise<WorkerDrainMutationResponse> {
+    return request<WorkerDrainMutationResponse>(`/workers/${encodeURIComponent(workerId)}/drain`, {
+      method: 'POST',
+      body: JSON.stringify(reason === undefined ? {} : { reason }),
+    });
+  }
+
+  /** Clear one worker's explicit drain marker. */
+  async clearWorkerDrain(workerId: string): Promise<WorkerDrainMutationResponse> {
+    return request<WorkerDrainMutationResponse>(`/workers/${encodeURIComponent(workerId)}/drain`, {
+      method: 'DELETE',
+    });
+  }
+
+  /** Mark every current and future worker for a deployment as draining. */
+  async drainDeployment(
+    deploymentName: string,
+    reason?: string,
+  ): Promise<WorkerDrainMutationResponse> {
+    return request<WorkerDrainMutationResponse>(
+      `/worker-deployments/${encodeURIComponent(deploymentName)}/drain`,
+      {
+        method: 'POST',
+        body: JSON.stringify(reason === undefined ? {} : { reason }),
+      },
+    );
+  }
+
+  /** Clear the deployment-level drain marker. */
+  async clearDeploymentDrain(deploymentName: string): Promise<WorkerDrainMutationResponse> {
+    return request<WorkerDrainMutationResponse>(
+      `/worker-deployments/${encodeURIComponent(deploymentName)}/drain`,
+      { method: 'DELETE' },
+    );
   }
 
   /** List per-queue health: backlog, oldest age, waiting pollers, in-flight. */

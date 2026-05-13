@@ -1,9 +1,13 @@
 import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
+import {
+  jsonErrorResponse,
+  shapeLegacyRestFaultWithRawEngineFailureMessage,
+} from './operation-helpers.ts';
 
 const getWorkflowResultInput = z.object({
   workflowId: z.string().min(1),
@@ -112,23 +116,8 @@ function shapeGetWorkflowResultSuccess(result: GetWorkflowResultOutput): Respons
 }
 
 function shapeGetWorkflowResultFault(fault: OperationFault): Response {
-  if (fault.code === 'NotFound') {
-    return new Response(JSON.stringify({ error: fault.message }), {
-      status: 404,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  if (fault.code === 'Unprocessable') {
-    return new Response(JSON.stringify({ error: fault.message }), {
-      status: 422,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
   if (fault.code === 'Timeout') {
-    return new Response(JSON.stringify({ error: 'Timeout waiting for workflow result' }), {
-      status: 408,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return jsonErrorResponse('Timeout waiting for workflow result', 408);
   }
   // Preserve the legacy 500 body verbatim (raw engine error
   // message). Sanitizing internal errors is a deliberate behavior
@@ -136,10 +125,7 @@ function shapeGetWorkflowResultFault(fault: OperationFault): Response {
   // operation migration. EngineFailure has no special override
   // here — it falls through to the generic `error: fault.message`
   // shape with the canonical 500 status from the fault map.
-  return new Response(JSON.stringify({ error: fault.message }), {
-    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return shapeLegacyRestFaultWithRawEngineFailureMessage(fault);
 }
 
 export const getWorkflowResultRestBinding: UnknownRestBinding = {
