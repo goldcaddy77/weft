@@ -126,19 +126,6 @@ The shape should stay Weft-native rather than copying Temporal feature names. Us
   - Dashboard bulk-action flows force preview before commit and make tenant scope, filters, and affected counts visible before confirmation.
   - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/core/bulk-operations.test.ts src/server/operations/bulk-cancel-workflows.test.ts src/server/operations/bulk-delete-workflows.test.ts src/server/operations/bulk-signal-workflows.test.ts src/server/operations/bulk-mutate-workflow-tags.test.ts`, and `bun run verify:documentation`.
 
-- [ ] **Track worker deployments, build identities, and draining health.**
-
-  **Where:** `src/worker/protocol.ts`, `src/worker/index.ts`, `src/worker/registry.ts`, `src/server/runtime/websocket-worker.ts`, task routing, new deployment drain operations, and `documentation/reference/remote-worker-protocol.md`.
-
-  Extend `RemoteWorker` registration to include optional deployment name, build id, runtime version, git SHA, started-at timestamp, and declared worker capabilities. Surface deployment versions in worker fleet APIs and dashboard views, including active, draining, and drained-style health derived from connected workers and in-flight tasks. Add graceful drain tooling so operators can stop assigning new tasks to a worker or deployment while existing tasks finish or requeue safely.
-
-  **Acceptance criteria:**
-  - RemoteWorker protocol v1 accepts optional deployment identity fields without breaking existing worker registrations.
-  - Worker registry records deployment identity, worker capabilities, start time, drain state, and per-deployment aggregate health.
-  - Routing excludes draining workers from new assignments while allowing in-flight tasks to finish or requeue according to existing visibility and shutdown semantics.
-  - Public operations can mark a worker or deployment as draining, clear drain state, and report active/draining/drained health for dashboard consumption.
-  - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/worker/protocol.test.ts src/worker/registry.test.ts src/server/runtime/websocket-worker.test.ts src/server/task-queue-scheduling.test.ts`, and `bun run verify:documentation`.
-
 ## 4. MCP Server Support
 
 Per the AI Surface Shrinkage decision, Weft does not ship an MCP client. Weft's workflow surface is a separate concern: registered workflows can be exposed as durable MCP tools and resources to external MCP clients.

@@ -182,6 +182,20 @@ import {
   updateWorkflowOperation,
   updateWorkflowRestBinding,
 } from './operations/update-workflow.ts';
+import {
+  clearDeploymentDrainOperation,
+  clearWorkerDrainOperation,
+  createClearDeploymentDrainOperation,
+  createClearDeploymentDrainRestBinding,
+  createClearWorkerDrainOperation,
+  createClearWorkerDrainRestBinding,
+  createDrainDeploymentOperation,
+  createDrainDeploymentRestBinding,
+  createDrainWorkerOperation,
+  createDrainWorkerRestBinding,
+  drainDeploymentOperation,
+  drainWorkerOperation,
+} from './operations/worker-drain.ts';
 import { workflowEventsSubscriptionOperation } from './operations/workflow-events-subscription.ts';
 import type { RestBinding } from './rest-binding.ts';
 import type { TaskQueue } from './task-queue.ts';
@@ -274,6 +288,10 @@ export function createLiveRestBindings(): ReadonlyArray<UnknownRestBinding> {
     ...REST_BINDINGS,
     createGetSystemMetricsRestBinding(),
     createListWorkersRestBinding(),
+    createDrainWorkerRestBinding(),
+    createClearWorkerDrainRestBinding(),
+    createDrainDeploymentRestBinding(),
+    createClearDeploymentDrainRestBinding(),
     createListTaskQueuesRestBinding(),
   ];
 }
@@ -320,6 +338,32 @@ function buildListWorkersOperationForRegistry(options: LiveOperationRegistryOpti
     workerRegistry: options.workerRegistry,
     ...(options.clock !== undefined ? { clock: options.clock } : {}),
   });
+}
+
+function buildDrainWorkerOperationForRegistry(options: LiveOperationRegistryOptions) {
+  if (options.workerRegistry === undefined) return drainWorkerOperation;
+  return createDrainWorkerOperation({
+    workerRegistry: options.workerRegistry,
+    ...(options.clock !== undefined ? { clock: options.clock } : {}),
+  });
+}
+
+function buildClearWorkerDrainOperationForRegistry(options: LiveOperationRegistryOptions) {
+  if (options.workerRegistry === undefined) return clearWorkerDrainOperation;
+  return createClearWorkerDrainOperation({ workerRegistry: options.workerRegistry });
+}
+
+function buildDrainDeploymentOperationForRegistry(options: LiveOperationRegistryOptions) {
+  if (options.workerRegistry === undefined) return drainDeploymentOperation;
+  return createDrainDeploymentOperation({
+    workerRegistry: options.workerRegistry,
+    ...(options.clock !== undefined ? { clock: options.clock } : {}),
+  });
+}
+
+function buildClearDeploymentDrainOperationForRegistry(options: LiveOperationRegistryOptions) {
+  if (options.workerRegistry === undefined) return clearDeploymentDrainOperation;
+  return createClearDeploymentDrainOperation({ workerRegistry: options.workerRegistry });
 }
 
 function buildListTaskQueuesOperationForRegistry(options: LiveOperationRegistryOptions) {
@@ -402,6 +446,10 @@ export function createLiveOperationRegistry(
     storageConditionalBatchOperation,
     buildSystemMetricsOperation(resolved),
     buildListWorkersOperationForRegistry(resolved),
+    buildDrainWorkerOperationForRegistry(resolved),
+    buildClearWorkerDrainOperationForRegistry(resolved),
+    buildDrainDeploymentOperationForRegistry(resolved),
+    buildClearDeploymentDrainOperationForRegistry(resolved),
     buildListTaskQueuesOperationForRegistry(resolved),
   ]);
 }

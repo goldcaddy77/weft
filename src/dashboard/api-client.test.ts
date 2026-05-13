@@ -479,6 +479,28 @@ describe('ApiClient', () => {
               connectedAt: 1_000,
               lastHeartbeatAt: 2_000,
               heartbeatAgeMs: 500,
+              deploymentName: 'payments',
+              buildId: 'build-1',
+              runtimeVersion: 'bun-1.2.13',
+              gitSha: 'abc',
+              startedAt: 900,
+              capabilities: { region: 'us-west' },
+              health: 'active',
+            },
+          ],
+          deployments: [
+            {
+              deploymentName: 'payments',
+              buildId: 'build-1',
+              runtimeVersion: 'bun-1.2.13',
+              gitSha: 'abc',
+              health: 'active',
+              workers: 1,
+              activeWorkers: 1,
+              drainingWorkers: 0,
+              drainedWorkers: 0,
+              inFlight: 1,
+              oldestStartedAt: 900,
             },
           ],
           routingPolicy: 'least-loaded',
@@ -493,9 +515,50 @@ describe('ApiClient', () => {
 
     expect(requestedUrls).toEqual(['/v1/workers']);
     expect(response.routingPolicy).toBe('least-loaded');
+    expect(response.deployments[0]?.deploymentName).toBe('payments');
     expect(response.items).toEqual([
-      expect.objectContaining({ id: 'worker-1', availableCapacity: 3, heartbeatAgeMs: 500 }),
+      expect.objectContaining({
+        id: 'worker-1',
+        availableCapacity: 3,
+        heartbeatAgeMs: 500,
+        deploymentName: 'payments',
+        health: 'active',
+      }),
     ]);
+  });
+
+  it('calls worker and deployment drain mutation endpoints', async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestInputToUrl(input);
+      requests.push(init === undefined ? { url } : { url, init });
+      return Response.json({
+        target: url.includes('worker-deployments') ? 'deployment' : 'worker',
+        affectedWorkers: 1,
+        inFlight: 0,
+        health: 'drained',
+      });
+    }) as typeof fetch;
+
+    const client = new ApiClient();
+    await client.drainWorker('worker/1', 'maintenance');
+    await client.clearWorkerDrain('worker/1');
+    await client.drainDeployment('payments/canary', 'rollback');
+    await client.clearDeploymentDrain('payments/canary');
+
+    expect(requests.map((entry) => entry.url)).toEqual([
+      '/v1/workers/worker%2F1/drain',
+      '/v1/workers/worker%2F1/drain',
+      '/v1/worker-deployments/payments%2Fcanary/drain',
+      '/v1/worker-deployments/payments%2Fcanary/drain',
+    ]);
+    expect(requests[0]?.init?.method).toBe('POST');
+    expect(requests[0]?.init?.body).toBe(JSON.stringify({ reason: 'maintenance' }));
+    expect(requests[1]?.init?.method).toBe('DELETE');
+    expect(requests[2]?.init?.method).toBe('POST');
+    expect(requests[2]?.init?.body).toBe(JSON.stringify({ reason: 'rollback' }));
+    expect(requests[3]?.init?.method).toBe('DELETE');
   });
 
   it('fetches per-queue health from GET /v1/task-queues', async () => {
