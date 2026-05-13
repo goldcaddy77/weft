@@ -202,7 +202,7 @@ export function createActivityWorkerEntryUrl(
 const activities = new Map();
 ${registrationEntries}
 
-import { initializeActivityWorkerMessageLoop } from '${import.meta.url.replace(/activity-worker-entry\.[^/]+$/, 'activity-worker-entry.ts')}';
+import { initializeActivityWorkerMessageLoop } from '${import.meta.url}';
 initializeActivityWorkerMessageLoop((name) => activities.get(name));
 `;
 

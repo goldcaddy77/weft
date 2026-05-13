@@ -36,7 +36,7 @@ interface ServeOptions {
 
 ## Dashboard
 
-The built-in dashboard is served at `/ui` when you pass a dashboard HTML/module import to `serve({ dashboard })`. The CLI loads the bundled dashboard by default and prints the dashboard URL after startup; pass `--no-ui` to run only the API and worker endpoints. For production, do not expose a CLI-started dashboard directly on a public interface unless access is controlled in front of Weft. Use an authenticated reverse proxy, or embed the server yourself with `serve({ auth, dashboard })` so the same authentication policy protects API and dashboard requests. During dashboard development, `bun run dev:dashboard` starts the server with the dashboard artifact from `src/dashboard/index.html`, which is the same kind of value you can pass through `ServeOptions.dashboard` in an embedded server.
+The built-in dashboard is served at `/ui` when you pass a dashboard HTML/module import to `serve({ dashboard })`. The CLI loads the bundled dashboard by default and prints the dashboard URL after startup; pass `--no-ui` to run only the API and worker endpoints. For production, do not expose a CLI-started dashboard directly on a public interface unless access is controlled in front of Weft. Put an authenticated reverse proxy or custom wrapper in front of `/ui` before exposing it beyond a trusted operator network. During dashboard development, `bun run dev:dashboard` starts the server with the dashboard artifact from `src/dashboard/index.html`, which is the same kind of value you can pass through `ServeOptions.dashboard` in an embedded server.
 
 ## The WeftServer handle
 

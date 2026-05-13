@@ -109,7 +109,7 @@ console.log(`Weft server running at ${server.url}`);
 
 ## Environment Variables
 
-Weft's library API does not require environment variables. These variables are read by specific runtime, CLI, or conformance paths when you opt into those features.
+Weft's library API does not require environment variables. These variables are read by user-facing runtime, CLI, or conformance paths when you opt into those features. Internal benchmark, coverage, and smoke-test toggles are intentionally documented near the tests and scripts that consume them instead of in this runtime configuration reference.
 
 | Variable                                  | Consumed by                                   | Description                                                                                                                                                       |
 | ----------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
