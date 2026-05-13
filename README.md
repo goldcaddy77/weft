@@ -258,7 +258,7 @@ await using server = serve({ engine, port: 7233 });
 // server.url is e.g. "http://0.0.0.0:7233"
 ```
 
-Endpoints under `/v1/` cover the full lifecycle: start workflows, list, signal, update, query, cancel, fork, and stream events. Content negotiation supports JSON and MessagePack. The server can also serve the built-in dashboard at `/ui`; see the [server guide](documentation/guides/server.md#dashboard) for the enable, access-control, and disable paths.
+Endpoints under `/v1/` cover the full lifecycle: start workflows, list, signal, update, query, cancel, fork, and stream events. Content negotiation supports JSON and MessagePack. The server can also serve the built-in dashboard at `/ui`; see the [server guide](documentation/guides/server.md#dashboard) for how to enable it, lock it down, and disable it.
 
 ### Remote Workers
 

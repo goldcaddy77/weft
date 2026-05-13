@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Most configuration flows through typed option objects rather than environment variables. Some integrations (OpenTelemetry, observability exporters) may read standard env vars from their own SDKs, and a small set of Weft CLI/server paths read explicit `WEFT_*` overrides listed below.
+Most configuration flows through typed option objects rather than environment variables. Some integrations ([OpenTelemetry](https://opentelemetry.io/), observability exporters) may read standard env vars from their own SDKs, and a small set of Weft CLI/server paths read explicit `WEFT_*` overrides listed below.
 
 ---
 

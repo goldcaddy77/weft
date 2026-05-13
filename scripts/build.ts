@@ -30,6 +30,11 @@ async function writeUnbundledRuntimeModules(): Promise<void> {
     if (
       sourcePath.endsWith('.test.ts') ||
       sourcePath.endsWith('.test-d.ts') ||
+      sourcePath.endsWith('.test-support.ts') ||
+      sourcePath.endsWith('.bench.ts') ||
+      sourcePath.endsWith('-fixture.ts') ||
+      sourcePath.startsWith('src/benchmarks/') ||
+      sourcePath.includes('/__tests__/') ||
       sourcePath.includes('/__fixtures__/')
     ) {
       continue;
@@ -76,6 +81,8 @@ await Bun.build({
   minify: true,
   external: ['lmdb', '@libsql/client', '@opentelemetry/api', 'bun:sqlite', 'better-sqlite3'],
 });
+
+await writeUnbundledRuntimeModules();
 
 // Keep the storage barrel as local binding re-exports. Bun 1.3.13 can
 // incorrectly strip imported bindings that are only used by a bundled barrel
@@ -156,8 +163,6 @@ await Bun.build({
   sourcemap: 'external',
   plugins: [sveltePlugin],
 });
-
-await writeUnbundledRuntimeModules();
 
 await $`bunx tsc --declaration --emitDeclarationOnly --project tsconfig.build.json`;
 

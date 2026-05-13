@@ -220,7 +220,7 @@ weft timeline <workflow-id> --diff 2 3 --database ./weft.db
 
 ### validate
 
-Validate a workflows module for correctness before deployment.
+Validate a workflow module for correctness before deployment.
 
 ```bash
 weft validate ./src/workflows.ts
