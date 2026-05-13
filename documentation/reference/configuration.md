@@ -76,7 +76,6 @@ interface ServeOptions {
   routingPolicy?: RoutingPolicy;
   schedulingPolicy?: SchedulingPolicy;
   prometheusExporter?: PrometheusExporter;
-  metricsCollector?: MetricsCollector;
 }
 ```
 
@@ -92,7 +91,6 @@ interface ServeOptions {
 | `routingPolicy`            | `RoutingPolicy`      | `'least-loaded'` | Worker routing policy                                      |
 | `schedulingPolicy`         | `SchedulingPolicy`   | `'priority'`     | Scheduling policy for task dispatch                        |
 | `prometheusExporter`       | `PrometheusExporter` | `undefined`      | Exporter that produces the response body for `/v1/metrics` |
-| `metricsCollector`         | `MetricsCollector`   | `undefined`      | Legacy metrics collector used when no exporter is supplied |
 
 The returned `WeftServer` exposes the resolved `port`, `hostname`, and `url`, along with a `stop()` method and `AsyncDisposable` support.
 

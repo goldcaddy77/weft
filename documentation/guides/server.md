@@ -30,7 +30,6 @@ interface ServeOptions {
   routingPolicy?: RoutingPolicy; // task dispatch policy for remote workers; default: 'least-loaded'
   schedulingPolicy?: SchedulingPolicy; // workflow scheduling policy
   prometheusExporter?: PrometheusExporter; // Prometheus metrics exporter
-  metricsCollector?: MetricsCollector; // @deprecated -- prefer prometheusExporter
 }
 ```
 

@@ -1,7 +1,6 @@
 import type { Engine } from '../../core/engine.ts';
 import {
   createMetricsCollectorExporter,
-  type MetricsCollector,
   type PrometheusExporter,
 } from '../../observability/metrics.ts';
 import { generateApiCatalog, originFromRequest, warnIfPublicOriginUnset } from '../api-catalog.ts';
@@ -66,21 +65,10 @@ export interface HandlerOptions {
   authContext?: AuthContext;
   /**
    * Optional {@link PrometheusExporter} used to produce the body of
-   * `/v1/metrics`. When set, it takes precedence over `metricsCollector` —
-   * this is the recommended plug point for projects that source metrics from
-   * the OpenTelemetry SDK (e.g. via `@opentelemetry/exporter-prometheus`).
+   * `/v1/metrics`. This is the plug point for projects that source metrics
+   * from the OpenTelemetry SDK (e.g. via `@opentelemetry/exporter-prometheus`).
    */
   prometheusExporter?: PrometheusExporter;
-  /**
-   * Optional metrics collector for the /v1/metrics endpoint. Used when no
-   * `prometheusExporter` is provided.
-   *
-   * @deprecated Prefer `prometheusExporter` — wrap your metrics source (OpenTelemetry
-   * or otherwise) in a {@link PrometheusExporter} and pass it there. This
-   * field remains for projects still using the legacy `MetricsCollector`
-   * path and has lower precedence if both are set.
-   */
-  metricsCollector?: MetricsCollector;
   /**
    * Operation registry for pipeline dispatch. Must be supplied together
    * with `restBindings` — a caller that overrides one but not the other
@@ -132,14 +120,14 @@ export interface HandlerOptions {
   pipelineTrace?: PipelineTrace;
 }
 
+const defaultPrometheusExporter = createMetricsCollectorExporter(undefined);
+
 async function handleGetMetrics(
-  prometheusExporter: PrometheusExporter | undefined,
-  metricsCollector: MetricsCollector | undefined,
+  prometheusExporter: PrometheusExporter = defaultPrometheusExporter,
 ): Promise<Response> {
-  const exporter = prometheusExporter ?? createMetricsCollectorExporter(metricsCollector);
   let body: string;
   try {
-    body = await exporter.serialize();
+    body = await prometheusExporter.serialize();
   } catch (error) {
     console.error('PrometheusExporter.serialize() threw', { error });
     return new Response(JSON.stringify({ error: 'metrics exporter failed' }), {
@@ -163,8 +151,7 @@ export type RouteExecutor = (context: RouteExecutionContext) => Promise<Response
 
 export const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   healthCheck: async ({ request }) => negotiatedResponse(request, { status: 'ok' }),
-  getMetrics: async ({ options }) =>
-    handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),
+  getMetrics: async ({ options }) => handleGetMetrics(options?.prometheusExporter),
   apiCatalog: async ({ request, options }) => {
     // Three-tier origin resolution:
     //   1. publicOrigin explicit → use verbatim (safe, operator-controlled).

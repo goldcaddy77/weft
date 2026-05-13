@@ -1,4 +1,3 @@
-/* oxlint-disable max-lines -- ID:server-index-serve-orchestration */
 /**
  * Bun.serve() wrapper with WebSocket support, dashboard UI, and clean shutdown.
  *
@@ -8,7 +7,11 @@
 import { decode } from '../core/codec.ts';
 import type { Engine } from '../core/engine.ts';
 import type { RetryPolicy } from '../core/types.ts';
-import type { MetricsCollector, PrometheusExporter } from '../observability/metrics.ts';
+import {
+  createMetricsCollectorExporter,
+  MetricsCollector,
+  type PrometheusExporter,
+} from '../observability/metrics.ts';
 import type { RoutingPolicy } from '../worker/registry.ts';
 import { WorkerRegistry } from '../worker/registry.ts';
 import type { AuthConfig } from './authentication.ts';
@@ -111,19 +114,8 @@ export interface ServeOptions {
    * Optional {@link PrometheusExporter} that produces the body of `/v1/metrics`.
    * Recommended for projects that source metrics from the OpenTelemetry SDK —
    * e.g. wrap `@opentelemetry/exporter-prometheus` to satisfy the interface.
-   * When set, it takes precedence over {@link ServeOptions.metricsCollector}.
    */
   prometheusExporter?: PrometheusExporter;
-  /**
-   * Optional {@link MetricsCollector} used as the default metrics source for
-   * `/v1/metrics` when no `prometheusExporter` is supplied.
-   *
-   * @deprecated Prefer `prometheusExporter` — wrap your metrics source (OpenTelemetry
-   * or otherwise) in a {@link PrometheusExporter} and pass it there. This
-   * field remains for projects still using the legacy `MetricsCollector`
-   * path and has lower precedence if both are set.
-   */
-  metricsCollector?: MetricsCollector;
   /**
    * Optional metadata applied uniformly to all three discovery documents
    * (`/openapi.json`, `/openrpc.json`, `/asyncapi.json`). When set, the
@@ -286,6 +278,10 @@ export function serve(options: ServeOptions): WeftServer {
   const port = options.port ?? 7233;
   const hostname = options.hostname ?? '0.0.0.0';
   const development = options.development ?? false;
+  const serverMetricsCollector = new MetricsCollector();
+  const defaultPrometheusExporter = createMetricsCollectorExporter(serverMetricsCollector);
+  const prometheusExporter = options.prometheusExporter ?? defaultPrometheusExporter;
+  const serverOptions = { ...options, prometheusExporter };
 
   // Validate auth config synchronously so misconfigurations fail fast.
   if (options.auth) {
@@ -319,12 +315,11 @@ export function serve(options: ServeOptions): WeftServer {
     liveOperationRegistry: createLiveOperationRegistry({
       workerRegistry,
       taskQueue,
-      ...(options.metricsCollector !== undefined
-        ? { metricsCollector: options.metricsCollector }
-        : {}),
+      metricsCollector: serverMetricsCollector,
     }),
     liveRestBindings: createLiveRestBindings(),
     supportedAuthenticationSchemes: deriveSupportedOpenApiSecuritySchemes(options.auth),
+    metricsCollector: serverMetricsCollector,
     eventFeedBackend,
     workflowEventFeed: createWorkflowEventFeed(eventFeedBackend),
     activeJsonRpcSessions: new Set(),
@@ -362,8 +357,8 @@ export function serve(options: ServeOptions): WeftServer {
     routes,
     ...(tlsOptions ? { tls: tlsOptions } : {}),
     fetch: (request): Promise<Response | undefined> =>
-      handleServerFetchRequest(server, context, options, request),
-    websocket: createServerWebSocketHandlers(context, options, cleanupWorkflowIndex),
+      handleServerFetchRequest(server, context, serverOptions, request),
+    websocket: createServerWebSocketHandlers(context, serverOptions, cleanupWorkflowIndex),
   });
 
   // AsyncDisposableStack manages all server resources and disposes them in

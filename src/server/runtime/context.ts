@@ -1,5 +1,6 @@
 import type { ServerWebSocket } from 'bun';
 
+import type { MetricsCollector } from '../../observability/metrics.ts';
 import type { WorkerRegistry } from '../../worker/registry.ts';
 import type { Authenticator } from '../authentication.ts';
 import type { DeadlineTracker } from '../deadline-tracker.ts';
@@ -35,6 +36,8 @@ export interface ServerContext {
   readonly liveOperationRegistry: ReturnType<typeof createLiveOperationRegistry>;
   readonly liveRestBindings: ReturnType<typeof createLiveRestBindings>;
   readonly supportedAuthenticationSchemes: ReadonlySet<OpenApiSecuritySchemeName>;
+  /** Server-owned process-local metrics collector used by runtime diagnostics. */
+  readonly metricsCollector: MetricsCollector;
   readonly eventFeedBackend: ReturnType<typeof createEngineEventFeedBackend>;
   readonly workflowEventFeed: WorkflowEventFeed;
   readonly activeJsonRpcSessions: Set<JsonRpcWebSocketSession>;

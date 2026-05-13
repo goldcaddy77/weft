@@ -41,9 +41,9 @@ export async function reassignOrExpireTask(
 
   const queuedRecord = createRequeuedRecord(record, nextAttempt, nextRetryCount, reason);
   await transitionInflightToQueued(options.engine.storage, operationId, queuedRecord);
-  recordTaskRetryMetric(options.metricsCollector);
-  recordTaskRequeueMetric(options.metricsCollector);
-  recordWorkerCapacitySaturationMetric(options.metricsCollector, context.registry);
+  recordTaskRetryMetric(context.metricsCollector);
+  recordTaskRequeueMetric(context.metricsCollector);
+  recordWorkerCapacitySaturationMetric(context.metricsCollector, context.registry);
 
   scheduleTaskRedispatch(context, options, createRequeuedTaskDispatch(record, nextAttempt), policy);
 }
@@ -66,7 +66,7 @@ async function expireTaskAfterMaxAttempts(
     record,
     resolutionReason: 'max-attempts-exceeded',
   });
-  recordWorkerCapacitySaturationMetric(options.metricsCollector, context.registry);
+  recordWorkerCapacitySaturationMetric(context.metricsCollector, context.registry);
   options.engine.dispatchEvent(
     new ActivityFailedEvent(
       record.operationId,
@@ -260,7 +260,7 @@ export async function reconcileOrphanedRecords(
         console.error('[weft] Failed to reconcile inflight record — skipping:', error);
       }
     }
-    recordTaskStaleHeartbeatMetric(options.metricsCollector, staleHeartbeatCount);
+    recordTaskStaleHeartbeatMetric(context.metricsCollector, staleHeartbeatCount);
   } catch (error) {
     console.error('[weft] Reconciliation scanner error:', error);
   } finally {
