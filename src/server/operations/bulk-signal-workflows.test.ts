@@ -196,6 +196,22 @@ describe('weft.workflows.bulk.signal', () => {
     expect(await response.json()).toEqual({
       error: 'Field "name" must be a non-empty string',
     });
+
+    response = await handleRequest(
+      request({
+        filter: { tags: ['selected'] },
+        name: 'continue',
+      }),
+      engine,
+      {
+        ...bulkAdminHandlerOptions(),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'Field "confirmationToken" is required after a dry run',
+    });
   });
 
   it('maps EngineFailure faults to the legacy 500 response body', async () => {
