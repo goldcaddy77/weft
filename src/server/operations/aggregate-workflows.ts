@@ -13,7 +13,8 @@ import {
   ListFilterValidationError,
   listFilterObjectSchema,
 } from '../../core/list-filter-validation.ts';
-import type { ListFilter } from '../../core/types.ts';
+import type { FailureCategory, ListFilter, TimeRange } from '../../core/types.ts';
+import { parseAttributeFilters } from '../attribute-filters.ts';
 import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
@@ -124,14 +125,42 @@ function extractAggregateWorkflowsInput(request: Request): AggregateWorkflowsInp
   if (type !== null) filter['type'] = type;
   const tags = url.searchParams.getAll('tag');
   if (tags.length > 0) filter['tags'] = tags;
+
+  const attributeFilters = parseAttributeFilters(url.searchParams);
+  if (attributeFilters.length > 0) {
+    filter['attributes'] = attributeFilters.map((attribute) => ({
+      key: attribute.key,
+      ...(attribute.value === undefined ? {} : { value: attribute.value }),
+      ...(attribute.gt === undefined ? {} : { gt: attribute.gt }),
+      ...(attribute.lt === undefined ? {} : { lt: attribute.lt }),
+      ...(attribute.gte === undefined ? {} : { gte: attribute.gte }),
+      ...(attribute.lte === undefined ? {} : { lte: attribute.lte }),
+    }));
+  }
+
   const idPrefix = url.searchParams.get('id_prefix');
   if (idPrefix !== null) filter['idPrefix'] = idPrefix;
+
   const tenantIds = url.searchParams.getAll('tenant_id');
   if (tenantIds.length === 1) {
     filter['tenantId'] = tenantIds[0];
   } else if (tenantIds.length > 1) {
     filter['tenantId'] = tenantIds;
   }
+
+  const failureCategories = url.searchParams.getAll('failure_category') as FailureCategory[];
+  if (failureCategories.length === 1) {
+    filter['failureCategory'] = failureCategories[0];
+  } else if (failureCategories.length > 1) {
+    filter['failureCategory'] = failureCategories;
+  }
+
+  const createdAt = extractTimeRange(url.searchParams, 'created_at');
+  if (createdAt !== undefined) filter['createdAt'] = createdAt;
+  const updatedAt = extractTimeRange(url.searchParams, 'updated_at');
+  if (updatedAt !== undefined) filter['updatedAt'] = updatedAt;
+  const executionDeadline = extractTimeRange(url.searchParams, 'execution_deadline');
+  if (executionDeadline !== undefined) filter['executionDeadline'] = executionDeadline;
 
   const limit = url.searchParams.get('limit');
   const limitValue = limit !== null ? Math.floor(Number(limit)) : undefined;
@@ -143,6 +172,22 @@ function extractAggregateWorkflowsInput(request: Request): AggregateWorkflowsInp
       ? { limit: limitValue }
       : {}),
   } as AggregateWorkflowsInput;
+}
+
+function extractTimeRange(
+  params: URLSearchParams,
+  prefix: 'created_at' | 'updated_at' | 'execution_deadline',
+): TimeRange | undefined {
+  const range: TimeRange = {};
+  const gte = params.get(`${prefix}_gte`);
+  if (gte !== null && Number.isFinite(Number(gte))) range.gte = Number(gte);
+  const gt = params.get(`${prefix}_gt`);
+  if (gt !== null && Number.isFinite(Number(gt))) range.gt = Number(gt);
+  const lte = params.get(`${prefix}_lte`);
+  if (lte !== null && Number.isFinite(Number(lte))) range.lte = Number(lte);
+  const lt = params.get(`${prefix}_lt`);
+  if (lt !== null && Number.isFinite(Number(lt))) range.lt = Number(lt);
+  return Object.keys(range).length > 0 ? range : undefined;
 }
 
 function shapeAggregateWorkflowsSuccess(result: AggregateWorkflowsOutput): Response {
