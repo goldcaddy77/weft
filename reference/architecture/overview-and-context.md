@@ -731,7 +731,7 @@ Hatchet positions as simpler Temporal with AI-first design. Native result stream
 | Context window management | DIY                | DIY                | DIY                | DIY               | Pluggable strategies     |
 | Multi-agent coordination  | DIY                | AgentKit           | DIY                | DIY               | Handoff/Debate/Supervise |
 | Model routing             | DIY                | DIY                | DIY                | DIY               | Fallback/Cost-tier/A-B   |
-| Serverless suspension     | No                 | Yes                | Yes                | No                | Inline only              |
+| Serverless suspension     | No                 | Yes                | Yes                | No                | Inline + worker parking  |
 | Self-hosted single binary | No                 | No                 | Yes                | No (Postgres)     | Yes (SQLite)             |
 | Browser runtime           | No                 | No                 | No                 | No                | Yes (Service Worker)     |
 
@@ -739,6 +739,6 @@ Hatchet positions as simpler Temporal with AI-first design. Native result stream
 
 ## Honest Gaps
 
-The largest AI-native gaps originally tracked here have narrowed substantially in [the roadmap](../architecture.md): inline agent turns can park on provider resume hints, the dashboard has a dedicated agent detail view, and tenant-aware agent customization is built in. The remaining caveat is worker-mode suspension still holding a worker slot while parked; otherwise the unchecked roadmap items are now operational performance-verification tasks rather than new AI primitives.
+The largest AI-native gaps originally tracked here have narrowed substantially in [the roadmap](../architecture.md): inline agent turns can park on provider resume hints, worker-mode signal suspension releases the active worker slot while the parked generator state remains in that worker process, the dashboard has a dedicated agent detail view, and tenant-aware agent customization is built in. The unchecked roadmap items are now operational performance-verification tasks rather than new AI primitives.
 
 ---

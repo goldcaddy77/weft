@@ -8,19 +8,6 @@ This file tracks remaining work only. Completed roadmap items belong in git hist
 
 These items are still present in `reference/architecture.md` and are not completed in the current implementation.
 
-- [ ] **Release workflow workers during agent LLM suspension.**
-
-  **Where:** `src/core/worker-execution-strategy.ts`, `src/workers/workflow-runner.ts`, `src/core/engine/operations-agent-suspension.ts`, and worker-execution tests.
-
-  Inline agent turns can already park on provider resume hints when `suspendOnLlmWait` is enabled. Worker-execution mode still falls back to in-memory waiting because `WorkerExecutionStrategy` keeps the per-workflow worker in `#workersByWorkflowId` until the workflow completes. Close that architecture caveat without adding a second suspension system: persist the same pending agent execution state, release the workflow worker while parked, and resume through the existing signal path.
-
-  **Acceptance criteria:**
-  - A worker-execution workflow that parks on an LLM resume hint releases its worker back to the pool before the provider resumes.
-  - With worker concurrency `1`, a second workflow can start and complete while the first workflow is parked on an LLM resume signal.
-  - Delivering the matching resume signal reacquires a worker, restores the pending agent loop state, and completes the original workflow exactly once.
-  - Cancellation and engine disposal clean up parked worker-mode agent state without leaking workers, signal waiters, or pending agent-execution keys.
-  - Verification passes with `bun run lint`, `bun run typecheck`, `bun test src/core/engine/operations-agent-suspension.test.ts src/core/worker-execution-strategy.test.ts`, and `bun run verify:documentation`.
-
 - [ ] **Close the activity-completion throughput gap to the architecture target.**
 
   **Where:** `src/benchmarks/activity-completions.test.ts`, `src/benchmarks/activity-completions-runner.ts`, terminal workflow cleanup in `src/core/engine/termination.ts`, and hot-path storage writes around activity completion.
