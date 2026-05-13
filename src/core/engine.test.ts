@@ -87,9 +87,42 @@ class AttributeReadCountingStorage extends MemoryStorage {
 
   override async get(key: string): Promise<Uint8Array | null> {
     if (key.startsWith('attr:')) {
-      this.attributeReadCount += 1;
+      this.recordAttributeRead();
     }
+    return this.getStoredValue(key);
+  }
+
+  protected recordAttributeRead(): void {
+    this.attributeReadCount += 1;
+  }
+
+  protected async getStoredValue(key: string): Promise<Uint8Array | null> {
     return super.get(key);
+  }
+}
+
+class ConcurrentAttributeReadCountingStorage extends AttributeReadCountingStorage {
+  activeAttributeReadCount = 0;
+  maxConcurrentAttributeReadCount = 0;
+
+  override async get(key: string): Promise<Uint8Array | null> {
+    if (!key.startsWith('attr:')) {
+      return this.getStoredValue(key);
+    }
+
+    this.recordAttributeRead();
+    this.activeAttributeReadCount += 1;
+    this.maxConcurrentAttributeReadCount = Math.max(
+      this.maxConcurrentAttributeReadCount,
+      this.activeAttributeReadCount,
+    );
+
+    try {
+      await sleepForTesting(1);
+      return await this.getStoredValue(key);
+    } finally {
+      this.activeAttributeReadCount -= 1;
+    }
   }
 }
 
@@ -1341,6 +1374,47 @@ describe('Engine', () => {
       }),
     );
     expect(storage.attributeReadCount).toBe(0);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('list() reads requested legacy failureCategory attributes concurrently within constrained chunks', async () => {
+    const storage = new ConcurrentAttributeReadCountingStorage();
+    const engine = new Engine({ storage });
+    engine.register('attribute-backed-category-concurrent', async function* () {
+      throw new Error('legacy failure');
+    });
+
+    const handles = await Promise.all(
+      [0, 1, 2].map((index) =>
+        engine.start('attribute-backed-category-concurrent', null, {
+          id: `wf-attribute-category-${index}`,
+        }),
+      ),
+    );
+
+    for (const handle of handles) {
+      await expect(handle.result()).rejects.toThrow('legacy failure');
+      const stateBytes = await storage.get(KEYS.workflow(handle.id));
+      expect(stateBytes).not.toBeNull();
+      const legacyState = decode(stateBytes!) as WorkflowState;
+      legacyState.failureCategory = null;
+      await storage.put(KEYS.workflow(handle.id), encode(legacyState));
+      await storage.put(KEYS.attribute(handle.id), encode({ failureCategory: 'planning' }));
+    }
+
+    storage.attributeReadCount = 0;
+    storage.maxConcurrentAttributeReadCount = 0;
+
+    const result = await engine.list(
+      { idPrefix: 'wf-attribute-category-' },
+      { includeFailureCategory: true },
+    );
+
+    expect(result.items).toHaveLength(3);
+    expect(result.items.every((item) => item.failureCategory === 'planning')).toBe(true);
+    expect(storage.attributeReadCount).toBe(3);
+    expect(storage.maxConcurrentAttributeReadCount).toBeGreaterThan(1);
 
     engine[Symbol.dispose]();
   });

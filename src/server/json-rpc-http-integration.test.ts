@@ -19,9 +19,12 @@ import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { serve, type WeftServer } from './index.ts';
 
+const createdEngines: Engine[] = [];
+
 function createHoldEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
+  createdEngines.push(engine);
   engine.register('hold', async function* (ctx: WorkflowContext, _input: unknown) {
     return yield* ctx.waitForSignal<string>('release');
   });
@@ -30,6 +33,7 @@ function createHoldEngine(): Engine {
 
 function createCrashEngine(storage = new MemoryStorage()): Engine {
   const engine = new Engine({ storage });
+  createdEngines.push(engine);
   engine.register('crash', async function* () {
     throw new Error('workflow failure');
   });
@@ -67,12 +71,25 @@ async function waitForStatus(
   throw new Error(`workflow ${workflowId} did not reach ${status} in time`);
 }
 
+function disposeCreatedEngines(): void {
+  let disposeError: unknown;
+  for (const engine of createdEngines.splice(0)) {
+    try {
+      engine[Symbol.dispose]();
+    } catch (error) {
+      disposeError ??= error;
+    }
+  }
+  if (disposeError !== undefined) throw disposeError;
+}
+
 describe('serve() — POST /jsonrpc', () => {
   let server: WeftServer | undefined;
 
   afterEach(async () => {
     await server?.stop();
     server = undefined;
+    disposeCreatedEngines();
   });
 
   it('dispatches weft.workflows.get against the live engine and sets Cache-Control: no-store', async () => {

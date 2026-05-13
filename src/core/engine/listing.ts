@@ -60,16 +60,15 @@ export async function list(
       const chunkBytes = await Promise.all(
         chunkIds.map((workflowId) => internals.storage.get(KEYS.workflow(workflowId))),
       );
+      const matchingStates: WorkflowState[] = [];
       for (const stateBytes of chunkBytes) {
         if (!stateBytes) continue;
         const state = decodeWorkflowState(stateBytes);
         if (!matchesListFilter(state, normalizedFilter, constrainedIds, normalizedTagFilters))
           continue;
-        const attributeBytes = shouldReadFailureCategoryAttribute(state, options)
-          ? await internals.storage.get(KEYS.attribute(state.id))
-          : null;
-        items.push(summaryFromState(state, failureCategoryFromAttributeBytes(attributeBytes)));
+        matchingStates.push(state);
       }
+      items.push(...(await summariesFromStates(internals, matchingStates, options)));
     }
     return paginateWorkflowSummaries(sortSummariesByCreatedAtDescending(items), normalizedFilter);
   }
@@ -93,6 +92,30 @@ export async function list(
   }
 
   return paginateWorkflowSummaries(sortSummariesByCreatedAtDescending(items), normalizedFilter);
+}
+
+async function summariesFromStates(
+  internals: EngineInternals,
+  states: readonly WorkflowState[],
+  options: ListOptions | undefined,
+): Promise<WorkflowSummary[]> {
+  const attributeBytesByWorkflowId = new Map<string, Uint8Array | null>();
+  await Promise.all(
+    states.map(async (state) => {
+      if (!shouldReadFailureCategoryAttribute(state, options)) return;
+      attributeBytesByWorkflowId.set(
+        state.id,
+        await internals.storage.get(KEYS.attribute(state.id)),
+      );
+    }),
+  );
+
+  return states.map((state) =>
+    summaryFromState(
+      state,
+      failureCategoryFromAttributeBytes(attributeBytesByWorkflowId.get(state.id) ?? null),
+    ),
+  );
 }
 
 function shouldReadFailureCategoryAttribute(
