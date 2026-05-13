@@ -5,7 +5,7 @@ import { emitBindings, generateOpenApiDocument } from './openapi.ts';
 import { createOperationRegistry } from './operation-catalog.ts';
 import { defineOperation } from './operation-registry.ts';
 import type { UnknownRestBinding } from './rest-bindings.ts';
-import { ROUTES, toOpenApiPath, toRegex } from './route-model.ts';
+import { DIRECT_HTTP_ROUTES, toOpenApiPath, toRegex } from './route-model.ts';
 
 describe('OpenAPI document generation', () => {
   const document = generateOpenApiDocument();
@@ -45,11 +45,13 @@ describe('OpenAPI document generation', () => {
     expect(servers[0]!.url).toBe('https://api.example.com');
   });
 
-  it('includes all non-meta routes as path items', () => {
+  it('includes all direct routes except the OpenAPI self-document as path items', () => {
     const paths = document['paths'] as Record<string, unknown>;
-    const domainRoutes = ROUTES.filter((r) => r.handler !== 'openApiDocument');
+    const documentedDirectRoutes = DIRECT_HTTP_ROUTES.filter(
+      (route) => route.handler !== 'openApiDocument',
+    );
 
-    for (const route of domainRoutes) {
+    for (const route of documentedDirectRoutes) {
       const openApiPath = toOpenApiPath(route.path);
       expect(paths[openApiPath]).toBeDefined();
 
@@ -130,6 +132,37 @@ describe('OpenAPI document generation', () => {
     expect(healthPath).toBeDefined();
     const operation = healthPath!['get']!;
     expect(operation).not.toHaveProperty('requestBody');
+  });
+
+  it('documents direct public meta routes with their response media types and public security', () => {
+    const paths = document['paths'] as Record<string, Record<string, Record<string, unknown>>>;
+
+    const metricsOperation = paths['/v1/metrics']!['get']!;
+    expect(metricsOperation['security']).toEqual([]);
+    const metricsResponses = metricsOperation['responses'] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const metricsContent = metricsResponses['200']!['content'] as Record<string, unknown>;
+    expect(metricsContent).toHaveProperty('text/plain');
+
+    const catalogOperation = paths['/.well-known/api-catalog']!['get']!;
+    expect(catalogOperation['security']).toEqual([]);
+    const catalogResponses = catalogOperation['responses'] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const catalogContent = catalogResponses['200']!['content'] as Record<string, unknown>;
+    expect(catalogContent).toHaveProperty('application/linkset+json');
+
+    const asyncApiOperation = paths['/asyncapi.json']!['get']!;
+    expect(asyncApiOperation['security']).toEqual([]);
+    const asyncApiResponses = asyncApiOperation['responses'] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const asyncApiContent = asyncApiResponses['200']!['content'] as Record<string, unknown>;
+    expect(asyncApiContent).toHaveProperty('application/json');
   });
 
   it('documents storage REST bindings with their non-JSON wire formats', () => {
@@ -260,7 +293,7 @@ describe('emitBindings — body-accepting methods', () => {
     expect(entry).not.toHaveProperty('requestBody');
   });
 
-  it('does not let non-discoverable bindings suppress matching legacy routes', () => {
+  it('does not document direct routes shadowed by non-discoverable bindings', () => {
     const operation = defineOperation({
       name: 'weft.test.hiddenhealth',
       mcpExposable: false,
@@ -287,11 +320,10 @@ describe('emitBindings — body-accepting methods', () => {
       restBindings: [binding],
     });
 
-    const legacyHealthRoute = (document['paths'] as Record<string, Record<string, unknown>>)[
+    const shadowedHealthRoute = (document['paths'] as Record<string, Record<string, unknown>>)[
       '/v1/health'
     ]?.['get'] as Record<string, unknown> | undefined;
-    expect(legacyHealthRoute).toBeDefined();
-    expect(legacyHealthRoute?.['operationId']).not.toBe('weft.test.hiddenhealth');
+    expect(shadowedHealthRoute).toBeUndefined();
   });
 
   it('treats output schemas with throwing safeParse implementations as non-nullable for octet-stream routes', () => {

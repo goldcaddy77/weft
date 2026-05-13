@@ -40,20 +40,18 @@ function apiKeyAuth() {
 }
 
 describe('handleRequest coverage regressions', () => {
-  it('prefers a more specific legacy route over a conflicting REST binding', async () => {
+  it('dispatches matching REST bindings before direct meta routes', async () => {
     const engine = createEngine();
     const bindingOperation = defineOperation({
       name: 'weft.test.routeshadow',
       mcpExposable: false,
       summary: 'shadow route',
       inputSchema: z.object({ resource: z.string() }),
-      outputSchema: z.object({ ok: z.literal(true) }),
+      outputSchema: z.object({ resource: z.string() }),
       access: { kind: 'public' },
       transports: { http: true, jsonRpcHttp: false, jsonRpcWebSocket: false, jsonRpcStdio: false },
       unknownKeyPolicy: { http: 'reject', jsonRpc: 'reject' },
-      invoke: async () => {
-        throw new Error('binding should not run');
-      },
+      invoke: async ({ input }) => input,
     });
     const binding: UnknownRestBinding = {
       method: 'GET',
@@ -71,7 +69,7 @@ describe('handleRequest coverage regressions', () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ status: 'ok' });
+    await expect(response.json()).resolves.toEqual({ resource: 'health' });
   });
 
   it('returns 400 when a conflicting REST binding path parameter cannot be decoded', async () => {

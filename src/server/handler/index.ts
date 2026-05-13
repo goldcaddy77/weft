@@ -2,43 +2,110 @@
  * Platform-agnostic HTTP request handler for the workflow REST API.
  * Maps Request to Response with no Bun-specific dependencies.
  *
- * Post-Track-8 dispatch model: incoming requests are resolved first against
- * the unified operation catalog via `RestBinding` entries (the
- * `dispatchViaExecuteOperation` pipeline). Only four REST-only meta routes
- * bypass that pipeline and are dispatched directly from the legacy `ROUTES`
- * table: `GET /v1/health`, `GET /v1/metrics`, `GET /openapi.json`, and
- * `GET /openrpc.json`. The `shouldPreferLegacyRoute` predicate enforces
- * the precedence rule when both a `RestBinding` and a legacy `ROUTES` entry
- * match the same path.
+ * Dispatch model: operation-backed REST routes are resolved through
+ * `RestBinding` entries and the `dispatchViaExecuteOperation` pipeline.
+ * Only REST-only meta and discovery endpoints bypass the operation catalog,
+ * using the direct-route table shared with the OpenAPI generator.
  *
  * @module server/handler
  */
 
 import type { Engine } from '../../core/engine.ts';
 import { MalformedRouteParameterError } from '../rest-binding.ts';
-import { matchRestBinding, shouldPreferLegacyRoute } from './binding-dispatch.ts';
+import { matchRestBinding } from './binding-dispatch.ts';
 import { errorResponse } from './response-helpers.ts';
 import {
-  ROUTE_EXECUTORS,
   authContextToPrincipal,
   defaultOperationRegistry,
   defaultRestBindings,
+  DIRECT_ROUTE_EXECUTORS,
   dispatchViaExecuteOperation,
   type HandlerOptions,
 } from './route-dispatch.ts';
-import { matchRoute } from './route-matching.ts';
+import { matchDirectRoute } from './route-matching.ts';
 
-export {
-  countLiteralSegments,
-  countPathParameters,
-  shouldPreferLegacyRoute,
-} from './binding-dispatch.ts';
 export {
   authContextToPrincipal,
   isOperationFaultLike,
   type HandlerOptions,
 } from './route-dispatch.ts';
 export { extractRouteParameters, getRequiredRouteParameter } from './route-matching.ts';
+
+type RouteLookup<T> = { kind: 'matched'; value: T } | { kind: 'malformed'; response: Response };
+
+function routeParameterErrorResponse(error: unknown): Response | null {
+  if (error instanceof MalformedRouteParameterError) return errorResponse(error.message, 400);
+  return null;
+}
+
+function matchRouteBoundary<T>(matcher: () => T): RouteLookup<T> {
+  try {
+    return { kind: 'matched', value: matcher() };
+  } catch (error) {
+    const response = routeParameterErrorResponse(error);
+    if (response !== null) return { kind: 'malformed', response };
+    throw error;
+  }
+}
+
+function validateHandlerOptions(options: HandlerOptions | undefined): Response | null {
+  if ((options?.restBindings === undefined) === (options?.operationRegistry === undefined)) {
+    return null;
+  }
+  return errorResponse(
+    '`restBindings` and `operationRegistry` must be supplied together (or both omitted).',
+    500,
+  );
+}
+
+async function dispatchRestBinding(
+  request: Request,
+  engine: Engine,
+  bindingMatch: NonNullable<ReturnType<typeof matchRestBinding>>,
+  operationRegistry: ReturnType<typeof defaultOperationRegistry>,
+  options: HandlerOptions | undefined,
+  url: URL,
+): Promise<Response> {
+  try {
+    const principal = authContextToPrincipal(options?.authContext);
+    return await dispatchViaExecuteOperation(
+      request,
+      engine,
+      bindingMatch.binding,
+      bindingMatch.pathParams,
+      operationRegistry,
+      principal,
+      options?.pipelineTrace,
+    );
+  } catch (error) {
+    console.error('Unhandled error in dispatchViaExecuteOperation', {
+      method: request.method,
+      path: url.pathname,
+      error,
+    });
+    return errorResponse('Internal server error', 500);
+  }
+}
+
+async function dispatchDirectRoute(
+  request: Request,
+  engine: Engine,
+  route: NonNullable<ReturnType<typeof matchDirectRoute>>,
+  options: HandlerOptions | undefined,
+  url: URL,
+): Promise<Response> {
+  try {
+    const executor = DIRECT_ROUTE_EXECUTORS[route.handler];
+    return await executor({ request, engine, options });
+  } catch (error) {
+    console.error('Unhandled error in handleRequest', {
+      method: request.method,
+      path: url.pathname,
+      error,
+    });
+    return errorResponse('Internal server error', 500);
+  }
+}
 
 /**
  * Pure HTTP request handler. Maps Request to Response.
@@ -55,7 +122,6 @@ export { extractRouteParameters, getRequiredRouteParameter } from './route-match
  * console.log(response.status); // 200
  * ```
  */
-// oxlint-disable-next-line eslint(complexity) -- ID:server-handler-route-binding-dispatch-complexity -- this request boundary intentionally owns binding-first dispatch, legacy fallback, and compatibility shims in one place.
 export async function handleRequest(
   request: Request,
   engine: Engine,
@@ -63,65 +129,35 @@ export async function handleRequest(
 ): Promise<Response> {
   const url = new URL(request.url);
 
-  if ((options?.restBindings === undefined) !== (options?.operationRegistry === undefined)) {
-    return errorResponse(
-      '`restBindings` and `operationRegistry` must be supplied together (or both omitted).',
-      500,
-    );
-  }
+  const optionError = validateHandlerOptions(options);
+  if (optionError !== null) return optionError;
+
   const restBindings = options?.restBindings ?? defaultRestBindings();
   const operationRegistry = options?.operationRegistry ?? defaultOperationRegistry();
-  let bindingMatch: ReturnType<typeof matchRestBinding>;
-  try {
-    bindingMatch = matchRestBinding(request.method, url.pathname, restBindings);
-  } catch (error) {
-    if (error instanceof MalformedRouteParameterError) return errorResponse(error.message, 400);
-    throw error;
+  const bindingLookup = matchRouteBoundary(() =>
+    matchRestBinding(request.method, url.pathname, restBindings),
+  );
+  if (bindingLookup.kind === 'malformed') return bindingLookup.response;
+
+  if (bindingLookup.value !== null) {
+    return dispatchRestBinding(
+      request,
+      engine,
+      bindingLookup.value,
+      operationRegistry,
+      options,
+      url,
+    );
   }
 
-  let route: ReturnType<typeof matchRoute>;
-  try {
-    route = matchRoute(request.method, url.pathname);
-  } catch (error) {
-    if (error instanceof MalformedRouteParameterError) return errorResponse(error.message, 400);
-    throw error;
-  }
+  const directRouteLookup = matchRouteBoundary(() =>
+    matchDirectRoute(request.method, url.pathname),
+  );
+  if (directRouteLookup.kind === 'malformed') return directRouteLookup.response;
 
-  if (bindingMatch !== null && !shouldPreferLegacyRoute(bindingMatch, route)) {
-    try {
-      const principal = authContextToPrincipal(options?.authContext);
-      return await dispatchViaExecuteOperation(
-        request,
-        engine,
-        bindingMatch.binding,
-        bindingMatch.pathParams,
-        operationRegistry,
-        principal,
-        options?.pipelineTrace,
-      );
-    } catch (error) {
-      console.error('Unhandled error in dispatchViaExecuteOperation', {
-        method: request.method,
-        path: url.pathname,
-        error,
-      });
-      return errorResponse('Internal server error', 500);
-    }
-  }
-
-  if (route === null) {
+  if (directRouteLookup.value === null) {
     return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);
   }
 
-  try {
-    const executor = ROUTE_EXECUTORS[route.handler];
-    return await executor({ request, engine, options });
-  } catch (error) {
-    console.error('Unhandled error in handleRequest', {
-      method: request.method,
-      path: url.pathname,
-      error,
-    });
-    return errorResponse('Internal server error', 500);
-  }
+  return dispatchDirectRoute(request, engine, directRouteLookup.value, options, url);
 }

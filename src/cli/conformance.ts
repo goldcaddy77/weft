@@ -235,7 +235,8 @@ async function runConformanceChecks(
     checks.push(createCheck('cancellation', true, 'cancelled task resolved as failed'));
 
     const reconnectOperationId = 'conformance-reconnect';
-    const reconnectDelayMs = Math.min(750, Math.max(250, Math.floor(timeoutMs / 4)));
+    // Keep the first worker busy while its replacement registers, but leave room for retry.
+    const reconnectDelayMs = Math.min(1_500, Math.max(250, Math.floor(timeoutMs * 0.75)));
     const reconnectDispatched = await server.dispatchTask({
       operationId: reconnectOperationId,
       activityName: 'weft.conformance.sleep',
@@ -265,6 +266,7 @@ async function runConformanceChecks(
     );
     await waitForResolvedStatus(storage, reconnectOperationId, 'completed', timeoutMs);
     checks.push(createCheck('reconnect', true, 'in-flight task completed after reconnect'));
+    await Bun.sleep(CONFORMANCE_HEARTBEAT_INTERVAL_MS * 2);
 
     const shutdownWorkerId = server.registry.getAll()[0]?.id;
     if (shutdownWorkerId === undefined) {

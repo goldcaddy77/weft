@@ -1,29 +1,29 @@
 import { MalformedRouteParameterError } from '../rest-binding.ts';
-import { ROUTES, toRegex } from '../route-model.ts';
+import { DIRECT_HTTP_ROUTES, toRegex } from '../route-model.ts';
 
-/** Union of all handler names derived from the shared route model. */
-export type HandlerName = (typeof ROUTES)[number]['handler'];
+/** Union of all handler names derived from the shared direct-route model. */
+export type DirectRouteHandlerName = (typeof DIRECT_HTTP_ROUTES)[number]['handler'];
 
 export type RouteMatch = {
-  handler: HandlerName;
+  handler: DirectRouteHandlerName;
   params: Record<string, string>;
   path: string;
 };
 
 /**
- * Route patterns derived from the shared route model. The regex is computed
- * once at module load time for the hot path.
+ * Direct-route patterns derived from the shared route model. The regex is
+ * computed once at module load time for the hot path.
  */
-const ROUTE_PATTERNS: Array<{
-  method: (typeof ROUTES)[number]['method'];
+const DIRECT_ROUTE_PATTERNS: Array<{
+  method: (typeof DIRECT_HTTP_ROUTES)[number]['method'];
   pattern: RegExp;
-  handler: HandlerName;
+  handler: DirectRouteHandlerName;
   path: string;
   paramNames: readonly string[];
 }> = [];
 
-for (const route of ROUTES) {
-  ROUTE_PATTERNS.push({
+for (const route of DIRECT_HTTP_ROUTES) {
+  DIRECT_ROUTE_PATTERNS.push({
     method: route.method,
     pattern: toRegex(route.path),
     handler: route.handler,
@@ -32,8 +32,8 @@ for (const route of ROUTES) {
   });
 }
 
-export function matchRoute(method: string, pathname: string): RouteMatch | null {
-  for (const route of ROUTE_PATTERNS) {
+export function matchDirectRoute(method: string, pathname: string): RouteMatch | null {
+  for (const route of DIRECT_ROUTE_PATTERNS) {
     if (route.method !== method) continue;
 
     const match = route.pattern.exec(pathname);
@@ -57,10 +57,8 @@ export function matchRoute(method: string, pathname: string): RouteMatch | null 
  * `decodeURIComponent`. Used by route dispatchers to turn a regex hit into a
  * `{ paramName: value }` map for the operation handler.
  *
- * Post-Track-8 note: the only active routes dispatched through this helper
- * are the four parameter-free meta routes (`/v1/health`, `/v1/metrics`,
- * `/openapi.json`, `/openrpc.json`). The function is kept public for
- * tests and any user-supplied route extensions.
+ * The in-tree direct routes are parameter-free meta endpoints. The function
+ * remains public for tests and user-supplied route extensions.
  *
  * @example Extract route params from a synthetic custom route
  * ```ts
@@ -97,10 +95,10 @@ export function extractRouteParameters(
  * Extracts a named parameter from a route parameter map, throwing a descriptive
  * `Error` if the parameter is absent.
  *
- * Used by the legacy ROUTE_EXECUTOR helpers in this file and any user-supplied
- * route handlers that extend the catalog. Post-Track-8 in-tree REST bindings
- * do not call this function — they receive a pre-populated `pathParams` map
- * from `bindingPathMatches` via `RestBinding.extractInput`.
+ * Used by direct-route helpers and any user-supplied route handlers that
+ * extend the catalog. In-tree `RestBinding` routes do not call this function;
+ * they receive a pre-populated `pathParams` map from `bindingPathMatches` via
+ * `RestBinding.extractInput`.
  *
  * @example
  * ```ts
