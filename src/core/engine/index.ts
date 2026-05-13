@@ -1319,8 +1319,6 @@ export class Engine<
     internals.nextRetentionSweepAt = null;
     internals.handleCache.clear();
     internals.resultResolvers.clear();
-    internals.signalWaiters.clear();
-    internals.signalWaitersByWorkflow.clear();
     internals.updateWaiters.clear();
     internals.updateWaitersByWorkflow.clear();
     internals.reviewWaiters.clear();

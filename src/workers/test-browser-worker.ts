@@ -110,7 +110,8 @@ function signalNameFromInput(input: unknown): string {
     return 'resume';
   }
 
-  const signalName = input.signalName;
+  const record = input as Record<string, unknown>;
+  const signalName = record['signalName'];
   return typeof signalName === 'string' && signalName.length > 0 ? signalName : 'resume';
 }
 
