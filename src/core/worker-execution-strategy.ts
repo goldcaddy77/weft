@@ -123,7 +123,11 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
       return;
     }
 
-    if (!this.#disposed && !this.#cancelledWorkflowIds.has(parameters.workflowId)) {
+    if (this.#cancelledWorkflowIds.delete(parameters.workflowId)) {
+      return;
+    }
+
+    if (!this.#disposed) {
       this.#emit({
         type: 'failed',
         workflowId: parameters.workflowId,
@@ -304,6 +308,7 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     try {
       // On terminal messages, release the worker back to the pool
       if (message.type === 'completed' || message.type === 'failed') {
+        this.#cancelledWorkflowIds.delete(message.workflowId);
         this.#parkedWorkersByWorkflowId.delete(message.workflowId);
         this.#releaseActiveWorker(message.workflowId);
         this.#detachWorkerListenersIfIdle(worker);
@@ -350,6 +355,7 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
 
       this.#workersByWorkflowId.delete(workflowId);
       this.#parkedWorkersByWorkflowId.delete(workflowId);
+      this.#cancelledWorkflowIds.delete(workflowId);
     }
 
     this.#activeWorkflowIdByWorker.delete(worker);

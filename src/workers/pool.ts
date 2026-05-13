@@ -179,7 +179,6 @@ export class WorkerPool implements Disposable, AsyncDisposable {
 
     // Return the worker to the available pool.
     this.#available.push(worker);
-    this.#drainGenericQueue();
 
     // If we're waiting for async dispose and all workers are now available,
     // resolve the dispose promise.
