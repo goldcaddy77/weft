@@ -52,7 +52,7 @@ describe('createLiveOperationRegistry', () => {
     for (const binding of REST_BINDINGS) {
       // Without this, a binding could be added to REST_BINDINGS but
       // omitted from the factory — every request to that route would
-      // silently fall through to legacy in production.
+      // fail with MethodNotFound in production.
       expect(registry.get(binding.operationName)).toBeDefined();
     }
   });

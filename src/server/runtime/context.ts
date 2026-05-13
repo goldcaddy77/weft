@@ -1,5 +1,6 @@
 import type { ServerWebSocket } from 'bun';
 
+import type { McpSessionManager } from '../../mcp/session.ts';
 import type { WorkerRegistry } from '../../worker/registry.ts';
 import type { Authenticator } from '../authentication.ts';
 import type { DeadlineTracker } from '../deadline-tracker.ts';
@@ -38,6 +39,7 @@ export interface ServerContext {
   readonly eventFeedBackend: ReturnType<typeof createEngineEventFeedBackend>;
   readonly workflowEventFeed: WorkflowEventFeed;
   readonly activeJsonRpcSessions: Set<JsonRpcWebSocketSession>;
+  readonly mcpSessionManager: McpSessionManager;
   readonly authenticatorPromise: Promise<Authenticator> | null;
   /** Visibility poll interval in milliseconds. */
   readonly visibilityPollMs: number;

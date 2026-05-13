@@ -1,12 +1,12 @@
 /**
  * Text-value compatibility wrapper.
  *
- * Adapts Weft's `Uint8Array`-keyed {@link Storage} to a string-valued
- * key/value interface with an array-returning prefix list. The shape
- * mirrors the `KeyValueStore` contract that Agent Bureau and similar
- * downstream consumers expect. The wrapper lives in Weft so that
- * adopting Weft storage does not require any runtime dependency on
- * those consumers.
+ * Adapts Weft's `Uint8Array`-keyed {@link Storage} to a generic
+ * string-valued key/value interface with an array-returning prefix
+ * list. The shape is what downstream consumers that expect a string
+ * `KeyValueStore` typically require. The wrapper lives in Weft so
+ * that adopting Weft storage does not require any runtime dependency
+ * on those consumers.
  *
  * Encoding is UTF-8 with fatal decoding: invalid byte sequences raise
  * `TypeError` rather than silently producing replacement characters,
@@ -20,8 +20,10 @@ import { storageDeletePrefix, storageHas, storageKeys, type Storage } from './in
 /**
  * String-valued key/value store layered on top of a Weft {@link Storage}.
  *
- * Matches the structural shape downstream consumers (notably Agent
- * Bureau) require from a key/value backend.
+ * Matches the structural shape downstream consumers commonly require
+ * from a string `KeyValueStore` backend: `get`/`set`/`delete` over
+ * UTF-8 text, a `list(prefix)` that materializes keys into an array,
+ * and optional `has`, `deletePrefix`, and `close` helpers.
  *
  * @example
  * ```ts

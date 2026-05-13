@@ -214,62 +214,66 @@ describe('BunSQLiteStorage benchmark', () => {
     storage[Symbol.dispose]();
   });
 
-  it('mixed batch operations (puts + deletes) maintain throughput', async () => {
-    const storage = createStorage();
-    const value = generateCheckpointValue();
+  it(
+    'mixed batch operations (puts + deletes) maintain throughput',
+    async () => {
+      const storage = createStorage();
+      const value = generateCheckpointValue();
 
-    // Seed data to delete
-    const seedOperations: BatchOperation[] = Array.from({ length: 10_000 }, (_, index) => ({
-      type: 'put' as const,
-      key: `seed:${String(index).padStart(10, '0')}`,
-      value,
-    }));
-    await storage.batch(seedOperations);
+      // Seed data to delete
+      const seedOperations: BatchOperation[] = Array.from({ length: 10_000 }, (_, index) => ({
+        type: 'put' as const,
+        key: `seed:${String(index).padStart(10, '0')}`,
+        value,
+      }));
+      await storage.batch(seedOperations);
 
-    const totalOperations = 50_000;
-    const batchSize = 1_000;
-    const batches = totalOperations / batchSize;
+      const totalOperations = 50_000;
+      const batchSize = 1_000;
+      const batches = totalOperations / batchSize;
 
-    // Pre-generate mixed operations: 80% puts, 20% deletes
-    const allBatches: BatchOperation[][] = Array.from({ length: batches }, (_b, batchIndex) =>
-      Array.from({ length: batchSize }, (_i, itemIndex) => {
-        const globalIndex = batchIndex * batchSize + itemIndex;
-        if (globalIndex % 5 === 0 && globalIndex / 5 < 10_000) {
+      // Pre-generate mixed operations: 80% puts, 20% deletes
+      const allBatches: BatchOperation[][] = Array.from({ length: batches }, (_b, batchIndex) =>
+        Array.from({ length: batchSize }, (_i, itemIndex) => {
+          const globalIndex = batchIndex * batchSize + itemIndex;
+          if (globalIndex % 5 === 0 && globalIndex / 5 < 10_000) {
+            return {
+              type: 'delete' as const,
+              key: `seed:${String(globalIndex / 5).padStart(10, '0')}`,
+            };
+          }
           return {
-            type: 'delete' as const,
-            key: `seed:${String(globalIndex / 5).padStart(10, '0')}`,
+            type: 'put' as const,
+            key: `mixed:${String(globalIndex).padStart(10, '0')}`,
+            value,
           };
-        }
-        return {
-          type: 'put' as const,
-          key: `mixed:${String(globalIndex).padStart(10, '0')}`,
-          value,
-        };
-      }),
-    );
+        }),
+      );
 
-    const start = performance.now();
+      const start = performance.now();
 
-    for (const batch of allBatches) {
-      await storage.batch(batch);
-    }
+      for (const batch of allBatches) {
+        await storage.batch(batch);
+      }
 
-    const elapsed = performance.now() - start;
-    const operationsPerSecond = Math.round((totalOperations / elapsed) * 1000);
+      const elapsed = performance.now() - start;
+      const operationsPerSecond = Math.round((totalOperations / elapsed) * 1000);
 
-    console.log(
-      [
-        `\n  SQLite mixed batch benchmark:`,
-        `    Total operations: ${totalOperations.toLocaleString()} (80% put, 20% delete)`,
-        `    Value size:       ${value.byteLength} bytes`,
-        `    Batch size:       ${batchSize.toLocaleString()}`,
-        `    Elapsed:          ${elapsed.toFixed(1)}ms`,
-        `    Operations/sec:   ${operationsPerSecond.toLocaleString()}\n`,
-      ].join('\n'),
-    );
+      console.log(
+        [
+          `\n  SQLite mixed batch benchmark:`,
+          `    Total operations: ${totalOperations.toLocaleString()} (80% put, 20% delete)`,
+          `    Value size:       ${value.byteLength} bytes`,
+          `    Batch size:       ${batchSize.toLocaleString()}`,
+          `    Elapsed:          ${elapsed.toFixed(1)}ms`,
+          `    Operations/sec:   ${operationsPerSecond.toLocaleString()}\n`,
+        ].join('\n'),
+      );
 
-    expect(operationsPerSecond).toBeGreaterThan(0);
+      expect(operationsPerSecond).toBeGreaterThan(0);
 
-    storage[Symbol.dispose]();
-  }, 15_000);
+      storage[Symbol.dispose]();
+    },
+    { timeout: 15_000 },
+  );
 });

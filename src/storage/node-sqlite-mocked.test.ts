@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
+import { storageCount, storageDeletePrefix, storageKeys } from './interface.ts';
+
 type FakeRow = { key: string; value: Uint8Array };
 
 function compareKeys(left: string, right: string): number {
@@ -140,6 +142,12 @@ describe('NodeSQLiteStorage with mocked better-sqlite3', () => {
 
     expect(await storage.get('a:2')).toEqual(new Uint8Array([2]));
 
+    const emptyPrefixResults: [string, Uint8Array][] = [];
+    for await (const entry of storage.scan('')) {
+      emptyPrefixResults.push(entry);
+    }
+    expect(emptyPrefixResults.map(([key]) => key)).toEqual(['a:1', 'a:2', 'a:3', 'b:1']);
+
     const forwardResults: [string, Uint8Array][] = [];
     for await (const entry of storage.scan('a:')) {
       forwardResults.push(entry);
@@ -176,6 +184,17 @@ describe('NodeSQLiteStorage with mocked better-sqlite3', () => {
     }
     expect(lteResults.map(([key]) => key)).toEqual(['a:1', 'a:2']);
     expect(storage.scanStatementCacheSize).toBeGreaterThanOrEqual(2);
+    expect(await Array.fromAsync(storageKeys(storage, 'a:', { reverse: true, limit: 2 }))).toEqual([
+      'a:3',
+      'a:2',
+    ]);
+    expect(await storageCount(storage, 'a:')).toBe(3);
+    expect(await storageDeletePrefix(storage, 'b:')).toBe(1);
+    expect(await Array.fromAsync(storage.scan(''))).toEqual([
+      ['a:1', new Uint8Array([1])],
+      ['a:2', new Uint8Array([2])],
+      ['a:3', new Uint8Array([3])],
+    ]);
 
     await storage.batch([
       { type: 'put', key: 'batch:new', value: new Uint8Array([9]) },

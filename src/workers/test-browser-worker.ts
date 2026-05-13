@@ -79,7 +79,41 @@ registrations.set('multi-step', async function* (_ctx, _input) {
   };
   return { step1, step2 };
 });
+
+registrations.set('wait-signal-then-complete', async function* (ctx, input) {
+  const signalName = signalNameFromInput(input);
+  const payload: unknown = yield {
+    id: `wait:${ctx.workflowId}:${signalName}`,
+    workflowId: ctx.workflowId,
+    kind: 'signal-wait',
+    queue: 'default',
+    attempt: 1,
+    retryPolicy: {
+      maxAttempts: 1,
+      initialBackoff: 0,
+      backoffMultiplier: 1,
+      maxBackoff: 0,
+    },
+    scheduledAt: Date.now(),
+    signalName,
+  };
+  return { input, payload, workflowId: ctx.workflowId };
+});
 /* eslint-enable require-yield */
+
+function signalNameFromInput(input: unknown): string {
+  if (typeof input !== 'object' || input === null) {
+    return 'resume';
+  }
+
+  if (!('signalName' in input)) {
+    return 'resume';
+  }
+
+  const record = input as Record<string, unknown>;
+  const signalName = record['signalName'];
+  return typeof signalName === 'string' && signalName.length > 0 ? signalName : 'resume';
+}
 
 // ---------------------------------------------------------------------------
 // Wire up the real worker message loop

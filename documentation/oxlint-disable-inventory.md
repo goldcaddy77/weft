@@ -675,13 +675,6 @@ naming the alternative that was rejected.
 - **Symbol**: `extractFaultDataPayload`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
-## `server-handler-route-binding-dispatch-complexity`
-
-- **File**: `src/server/handler/index.ts`
-- **Rule**: `complexity` (via `eslint(complexity)`)
-- **Symbol**: `(request handler)`
-- **Reason**: Pre-existing complexity violation; the request boundary owns binding-first dispatch, legacy fallback, and compatibility shims in one place.
-
 - **File**: `src/server/handler.ts`
 - **Rule**: `max-lines`
 - **Symbol**: `(whole file)`
@@ -858,13 +851,6 @@ naming the alternative that was rejected.
 - **File**: `src/storage/lmdb.ts`
 - **Rule**: `complexity`
 - **Symbol**: `deletePrefix`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `storage-node-sqlite-delete-complexity`
-
-- **File**: `src/storage/node-sqlite.ts`
-- **Rule**: `complexity`
-- **Symbol**: `delete`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
 ## `testing-test-engine-run-n-complexity`

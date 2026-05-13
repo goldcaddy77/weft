@@ -37,7 +37,7 @@ The constructor and individual `register*` methods remain available for tests, m
 
 Weft no longer ships an AI agent surface. Agent loops, declarations, coordination primitives, provider contracts, tool-call types, and agent events moved out of the core package. Weft now focuses on durable execution primitives: workflows, activities, checkpoints, signals, updates, shared state, and human review.
 
-If you previously used Weft's built-in agent loop or coordination helpers, move that orchestration to an external layer such as `agent-bureau`, or build it directly on top of `ctx.run()` and `ctx.review()`.
+If you previously used Weft's built-in agent loop or coordination helpers, move that orchestration to an external agent framework, or build it directly on top of `ctx.run()` and `ctx.review()`.
 
 ### Consumer Migration Checklist
 
