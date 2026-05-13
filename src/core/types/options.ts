@@ -229,6 +229,7 @@ export interface TimeRange {
  * ```ts
  * import { Engine, type ListFilter } from 'weft';
  *
+ * const engine = new Engine();
  * const filter: ListFilter = {
  *   status: ['running', 'failed'],
  *   tenantId: 'acme',

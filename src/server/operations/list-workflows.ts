@@ -13,14 +13,13 @@ import type {
   ListOptions,
   PaginatedResult,
   SearchAttributeValue,
-  TimeRange,
   WorkflowStatus,
   WorkflowSummary,
 } from '../../core/types.ts';
-import { parseAttributeFilters } from '../attribute-filters.ts';
 import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
+import { extractListFilterFromQuery } from './list-filter-query-extractor.ts';
 import { jsonErrorResponse, shapeRestFault } from './operation-helpers.ts';
 
 const workflowStatusSchema = z.custom<WorkflowStatus>((value) => typeof value === 'string');
@@ -130,32 +129,9 @@ function toUnprocessable(error: unknown): OperationFault {
   return { code: 'Unprocessable', message, data: { reason: message } };
 }
 
-// oxlint-disable-next-line complexity -- ID:server-operations-list-workflows-extract-list-workflows-input-complexity
 function extractListWorkflowsInput(request: Request): ListWorkflowsInput {
   const url = new URL(request.url);
-  const filter: ListWorkflowsInput = {};
-
-  const statuses = url.searchParams.getAll('status') as WorkflowStatus[];
-  if (statuses.length === 1) {
-    filter.status = statuses[0]!;
-  } else if (statuses.length > 1) {
-    filter.status = statuses;
-  }
-
-  const type = url.searchParams.get('type');
-  if (type !== null) {
-    filter.type = type;
-  }
-
-  // Pass raw tag values through; `invoke` runs `coerceStartWorkflowTags`
-  // so every transport (REST, JSON-RPC) hits the same validation rather
-  // than only REST. Empty / whitespace tags from the query string flow
-  // here untouched — the operation's `invoke` rejects them with an
-  // `Unprocessable` fault that `shapeFault` maps to 400.
-  const tags = url.searchParams.getAll('tag');
-  if (tags.length > 0) {
-    filter.tags = tags;
-  }
+  const filter = extractListFilterFromQuery(url) as ListWorkflowsInput;
 
   const limit = url.searchParams.get('limit');
   if (limit !== null) {
@@ -173,73 +149,12 @@ function extractListWorkflowsInput(request: Request): ListWorkflowsInput {
     }
   }
 
-  const attributeFilters = parseAttributeFilters(url.searchParams);
-  if (attributeFilters.length > 0) {
-    filter.attributes = attributeFilters.map((attribute) => ({
-      key: attribute.key,
-      ...(attribute.value === undefined ? {} : { value: attribute.value }),
-      ...(attribute.gt === undefined ? {} : { gt: attribute.gt }),
-      ...(attribute.lt === undefined ? {} : { lt: attribute.lt }),
-      ...(attribute.gte === undefined ? {} : { gte: attribute.gte }),
-      ...(attribute.lte === undefined ? {} : { lte: attribute.lte }),
-    }));
-  }
-
-  const idPrefix = url.searchParams.get('id_prefix');
-  if (idPrefix !== null) {
-    filter.idPrefix = idPrefix;
-  }
-
-  const tenantIds = url.searchParams.getAll('tenant_id');
-  if (tenantIds.length === 1) {
-    filter.tenantId = tenantIds[0]!;
-  } else if (tenantIds.length > 1) {
-    filter.tenantId = tenantIds;
-  }
-
-  const failureCategories = url.searchParams.getAll('failure_category') as FailureCategory[];
-  if (failureCategories.length === 1) {
-    filter.failureCategory = failureCategories[0]!;
-  } else if (failureCategories.length > 1) {
-    filter.failureCategory = failureCategories;
-  }
-
-  const createdAt = extractTimeRange(url.searchParams, 'created_at');
-  if (createdAt !== undefined) filter.createdAt = createdAt;
-  const updatedAt = extractTimeRange(url.searchParams, 'updated_at');
-  if (updatedAt !== undefined) filter.updatedAt = updatedAt;
-  const executionDeadline = extractTimeRange(url.searchParams, 'execution_deadline');
-  if (executionDeadline !== undefined) filter.executionDeadline = executionDeadline;
-
   const include = url.searchParams.getAll('include');
   if (include.includes('failureCategory')) {
     filter.include = ['failureCategory'];
   }
 
   return filter;
-}
-
-/**
- * Parse one of the three `*_at` time-range filters from the query
- * string. The four bounds map to `{prefix}_gte`, `{prefix}_gt`,
- * `{prefix}_lte`, `{prefix}_lt`. Returns `undefined` when none of the
- * bounds were specified so the omitted-vs-empty distinction is preserved
- * for the downstream `normalizeListFilter` validation.
- */
-function extractTimeRange(
-  params: URLSearchParams,
-  prefix: 'created_at' | 'updated_at' | 'execution_deadline',
-): TimeRange | undefined {
-  const range: TimeRange = {};
-  const gte = params.get(`${prefix}_gte`);
-  if (gte !== null && Number.isFinite(Number(gte))) range.gte = Number(gte);
-  const gt = params.get(`${prefix}_gt`);
-  if (gt !== null && Number.isFinite(Number(gt))) range.gt = Number(gt);
-  const lte = params.get(`${prefix}_lte`);
-  if (lte !== null && Number.isFinite(Number(lte))) range.lte = Number(lte);
-  const lt = params.get(`${prefix}_lt`);
-  if (lt !== null && Number.isFinite(Number(lt))) range.lt = Number(lt);
-  return Object.keys(range).length > 0 ? range : undefined;
 }
 
 function shapeListWorkflowsSuccess(result: ListWorkflowsOutput): Response {

@@ -24,7 +24,7 @@ import { resolveListCandidateIds } from './list-candidate-resolution.ts';
 import { intersectIdentifierSets, matchesListFilter } from './state-utilities.ts';
 import { decodeWorkflowState } from './validation.ts';
 import { MAX_LIST_SCAN_ROWS, WorkflowListScanCapExceededError } from './workflow-indexes.ts';
-import { resolveConstrainedIds } from './workflow-state-stream.ts';
+import { isTopLevelWorkflowStateKey, resolveConstrainedIds } from './workflow-state-stream.ts';
 
 /** One group in an {@link AggregateResult}. `key === null` collects workflows missing the dimension. */
 export type AggregateGroup = {
@@ -193,11 +193,6 @@ export async function aggregate(
   const truncated = sortedGroups.length > requestedLimit;
   const groups = truncated ? sortedGroups.slice(0, requestedLimit) : sortedGroups;
   return { total, groups, truncated };
-}
-
-function isTopLevelWorkflowStateKey(key: string): boolean {
-  const idPart = key.slice(3);
-  return !idPart.includes(':');
 }
 
 // Re-exports for callers that only need to discriminate result shape.

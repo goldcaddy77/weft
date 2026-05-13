@@ -846,20 +846,6 @@ naming the alternative that was rejected.
 - **Symbol**: `invoke`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
-## `server-operations-aggregate-workflows-extract-input`
-
-- **File**: `src/server/operations/aggregate-workflows.ts`
-- **Rule**: `complexity`
-- **Symbol**: `extractAggregateWorkflowsInput`
-- **Reason**: REST query-string-to-AggregateWorkflowsInput extractor must branch over every supported ListFilter dimension (status, type, tags, idPrefix, tenantId) plus the aggregate-specific group_by parsing and limit coercion. Each branch maps to one query parameter — the same shape as the existing `extractListWorkflowsInput` entry below.
-
-## `server-operations-list-workflows-extract-list-workflows-input-complexity`
-
-- **File**: `src/server/operations/list-workflows.ts`
-- **Rule**: `complexity`
-- **Symbol**: `extractListWorkflowsInput`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
 ## `server-operations-list-schedules-validation-complexity`
 
 - **File**: `src/server/operations/list-schedules.ts`
@@ -985,3 +971,10 @@ naming the alternative that was rejected.
 - **Rule**: `max-lines`
 - **Symbol**: entire module
 - **Reason**: Single typed fetch wrapper for the Weft REST API. The file is dominated by interface/type declarations describing the API surface; splitting them across multiple files would scatter the contract that dashboard call sites import from one place. Method bodies are short and the file is read top-to-bottom as a directory of REST routes.
+
+## `server-operations-extract-list-filter-from-query`
+
+- **File**: `src/server/operations/list-filter-query-extractor.ts`
+- **Rule**: `complexity`
+- **Symbol**: `extractListFilterFromQuery`
+- **Reason**: Single shared dispatcher that parses every supported `ListFilter` dimension from REST query parameters (status, type, tags, attributes, idPrefix, tenantId, failureCategory, createdAt, updatedAt, executionDeadline). Each branch is a one-liner mapping one filter field to one parser — splitting would scatter the per-dimension contract that both `list-workflows` and `aggregate-workflows` rely on.

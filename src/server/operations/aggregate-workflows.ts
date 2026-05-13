@@ -17,6 +17,7 @@ import type { ListFilter } from '../../core/types.ts';
 import { type OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
+import { extractListFilterFromQuery } from './list-filter-query-extractor.ts';
 import { shapeRestFault } from './operation-helpers.ts';
 
 const aggregateWorkflowsInput = listFilterObjectSchema
@@ -102,7 +103,6 @@ function parseGroupByQuery(raw: string | null): AggregateGroupBy | null {
   return null;
 }
 
-// oxlint-disable-next-line complexity -- ID:server-operations-aggregate-workflows-extract-input
 function extractAggregateWorkflowsInput(request: Request): AggregateWorkflowsInput {
   const url = new URL(request.url);
 
@@ -114,25 +114,7 @@ function extractAggregateWorkflowsInput(request: Request): AggregateWorkflowsInp
     );
   }
 
-  const filter: Record<string, unknown> = {};
-  const statuses = url.searchParams.getAll('status');
-  if (statuses.length === 1) {
-    filter['status'] = statuses[0];
-  } else if (statuses.length > 1) {
-    filter['status'] = statuses;
-  }
-  const type = url.searchParams.get('type');
-  if (type !== null) filter['type'] = type;
-  const tags = url.searchParams.getAll('tag');
-  if (tags.length > 0) filter['tags'] = tags;
-  const idPrefix = url.searchParams.get('id_prefix');
-  if (idPrefix !== null) filter['idPrefix'] = idPrefix;
-  const tenantIds = url.searchParams.getAll('tenant_id');
-  if (tenantIds.length === 1) {
-    filter['tenantId'] = tenantIds[0];
-  } else if (tenantIds.length > 1) {
-    filter['tenantId'] = tenantIds;
-  }
+  const filter = extractListFilterFromQuery(url);
 
   const limit = url.searchParams.get('limit');
   const limitValue = limit !== null ? Math.floor(Number(limit)) : undefined;

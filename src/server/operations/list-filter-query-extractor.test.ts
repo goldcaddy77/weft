@@ -1,0 +1,98 @@
+import { describe, expect, it } from 'bun:test';
+
+import {
+  extractListFilterFromQuery,
+  extractTimeRangeFromQuery,
+} from './list-filter-query-extractor.ts';
+
+function urlWith(params: Record<string, string | string[]>): URL {
+  const url = new URL('https://example.test/v1/workflows');
+  for (const [key, value] of Object.entries(params)) {
+    if (Array.isArray(value)) {
+      for (const entry of value) url.searchParams.append(key, entry);
+    } else {
+      url.searchParams.set(key, value);
+    }
+  }
+  return url;
+}
+
+describe('extractListFilterFromQuery', () => {
+  it('extracts every supported list filter dimension', () => {
+    const url = urlWith({
+      status: ['failed', 'timed-out'],
+      type: 'order',
+      tag: ['nightly', 'v2'],
+      id_prefix: 'order-',
+      tenant_id: ['acme', 'globex'],
+      failure_category: ['memory', 'planning'],
+      created_at_gte: '1000',
+      created_at_lt: '5000',
+      updated_at_gt: '2000',
+      execution_deadline_lte: '10000',
+    });
+
+    expect(extractListFilterFromQuery(url)).toEqual({
+      status: ['failed', 'timed-out'],
+      type: 'order',
+      tags: ['nightly', 'v2'],
+      idPrefix: 'order-',
+      tenantId: ['acme', 'globex'],
+      failureCategory: ['memory', 'planning'],
+      createdAt: { gte: 1000, lt: 5000 },
+      updatedAt: { gt: 2000 },
+      executionDeadline: { lte: 10000 },
+    });
+  });
+
+  it('collapses single-value status/tenant/failureCategory to a scalar', () => {
+    const url = urlWith({
+      status: 'failed',
+      tenant_id: 'acme',
+      failure_category: 'memory',
+    });
+    expect(extractListFilterFromQuery(url)).toEqual({
+      status: 'failed',
+      tenantId: 'acme',
+      failureCategory: 'memory',
+    });
+  });
+
+  it('returns an empty filter when no parameters are set', () => {
+    expect(extractListFilterFromQuery(urlWith({}))).toEqual({});
+  });
+
+  it('extracts attribute filters', () => {
+    const url = urlWith({
+      'attr.customerTier': 'gold',
+    });
+    const result = extractListFilterFromQuery(url);
+    expect(result.attributes).toEqual([{ key: 'customerTier', value: 'gold' }]);
+  });
+});
+
+describe('extractTimeRangeFromQuery', () => {
+  it('returns undefined when no bounds are set', () => {
+    expect(extractTimeRangeFromQuery(urlWith({}).searchParams, 'created_at')).toBeUndefined();
+  });
+
+  it('ignores non-finite numeric values', () => {
+    const params = urlWith({ created_at_gte: 'not-a-number', created_at_lt: '5000' }).searchParams;
+    expect(extractTimeRangeFromQuery(params, 'created_at')).toEqual({ lt: 5000 });
+  });
+
+  it('extracts all four bounds independently', () => {
+    const params = urlWith({
+      created_at_gte: '1',
+      created_at_gt: '2',
+      created_at_lte: '3',
+      created_at_lt: '4',
+    }).searchParams;
+    expect(extractTimeRangeFromQuery(params, 'created_at')).toEqual({
+      gte: 1,
+      gt: 2,
+      lte: 3,
+      lt: 4,
+    });
+  });
+});
