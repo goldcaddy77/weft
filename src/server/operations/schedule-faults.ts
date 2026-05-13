@@ -1,6 +1,7 @@
 import type { ScheduleAccessOptions } from '../../core/types.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import type { Principal } from '../principal.ts';
+import { shapeLegacyRestFaultWithRawEngineFailureMessage } from './operation-helpers.ts';
 
 export const MISSING_SCHEDULE_TENANT_CLAIM_MESSAGE =
   'JWT-authenticated schedule requests require a tenantId, tenant_id, or tenant claim';
@@ -80,8 +81,6 @@ export function mapScheduleErrorToFault(scheduleId: string, error: unknown): Ope
 }
 
 export function shapeScheduleFault(fault: OperationFault): Response {
-  return new Response(JSON.stringify({ error: fault.message }), {
-    status: fault.code === 'InvalidParams' ? 400 : FAULT_CODE_TO_HTTP_STATUS[fault.code],
-    headers: { 'Content-Type': 'application/json' },
-  });
+  // Schedule routes preserve legacy raw EngineFailure messages.
+  return shapeLegacyRestFaultWithRawEngineFailureMessage(fault);
 }

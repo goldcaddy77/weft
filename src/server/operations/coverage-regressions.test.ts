@@ -15,7 +15,7 @@ import {
   bulkDeleteWorkflowsOperation,
   bulkDeleteWorkflowsRestBinding,
 } from './bulk-delete-workflows.ts';
-import { invalidParamsFault, parseRequiredBulkListFilter } from './bulk-filter-helpers.ts';
+import { parseRequiredBulkListFilter } from './bulk-filter-helpers.ts';
 import {
   bulkMutateWorkflowTagsOperation,
   bulkMutateWorkflowTagsRestBinding,
@@ -31,6 +31,7 @@ import { getUpdateResultRestBinding } from './get-update-result.ts';
 import { listCheckpointsRestBinding } from './list-checkpoints.ts';
 import { listReviewsRestBinding } from './list-reviews.ts';
 import { listWorkflowsOperation, listWorkflowsRestBinding } from './list-workflows.ts';
+import { invalidParamsFault } from './operation-helpers.ts';
 import { purgeWorkflowsOperation } from './purge-workflows.ts';
 import { recoverAllRestBinding } from './recover-all.ts';
 import { resumeWorkflowRestBinding } from './resume-workflow.ts';
