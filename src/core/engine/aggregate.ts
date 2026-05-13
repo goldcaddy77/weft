@@ -21,10 +21,10 @@ import type { ListFilter, SearchAttributeValue, WorkflowState } from '../types.t
 import { normalizeWorkflowTags } from '../workflow-tags.ts';
 import type { EngineInternals } from './internals.ts';
 import { resolveListCandidateIds } from './list-candidate-resolution.ts';
-import { intersectIdentifierSets, matchesListFilter } from './state-utilities.ts';
+import { matchesListFilter } from './state-utilities.ts';
 import { decodeWorkflowState } from './validation.ts';
 import { MAX_LIST_SCAN_ROWS, WorkflowListScanCapExceededError } from './workflow-indexes.ts';
-import { isTopLevelWorkflowStateKey, resolveConstrainedIds } from './workflow-state-stream.ts';
+import { isTopLevelWorkflowStateKey } from './workflow-state-stream.ts';
 
 /** One group in an {@link AggregateResult}. `key === null` collects workflows missing the dimension. */
 export type AggregateGroup = {
@@ -197,6 +197,3 @@ export async function aggregate(
 
 // Re-exports for callers that only need to discriminate result shape.
 export type { AggregateGroupBy, AggregateOptions };
-// Re-export so callers can attach `intersectIdentifierSets` to the public
-// surface alongside the aggregate function if needed; harmless if unused.
-export { intersectIdentifierSets, resolveConstrainedIds };

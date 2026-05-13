@@ -38,17 +38,22 @@ export async function list(
     if (orderedIds.length > MAX_LIST_SCAN_ROWS) {
       throw new WorkflowListScanCapExceededError(MAX_LIST_SCAN_ROWS);
     }
-    const stateBytesList = await Promise.all(
-      orderedIds.map((workflowId) => internals.storage.get(KEYS.workflow(workflowId))),
-    );
-
-    for (const stateBytes of stateBytesList) {
-      if (!stateBytes) continue;
-
-      const state = decodeWorkflowState(stateBytes);
-      if (!matchesListFilter(state, filter, constrainedIds, normalizedTagFilters)) continue;
-
-      items.push(summaryFromState(state));
+    // Bounded concurrency so a large constrained set does not fan out
+    // millions of parallel `storage.get` calls or hold every state's bytes
+    // in memory at once. Stays within the existing scan cap; the chunk
+    // size matches `workflow-state-stream`'s attribute fan-out.
+    const chunkSize = 64;
+    for (let start = 0; start < orderedIds.length; start += chunkSize) {
+      const chunkIds = orderedIds.slice(start, start + chunkSize);
+      const chunkBytes = await Promise.all(
+        chunkIds.map((workflowId) => internals.storage.get(KEYS.workflow(workflowId))),
+      );
+      for (const stateBytes of chunkBytes) {
+        if (!stateBytes) continue;
+        const state = decodeWorkflowState(stateBytes);
+        if (!matchesListFilter(state, filter, constrainedIds, normalizedTagFilters)) continue;
+        items.push(summaryFromState(state));
+      }
     }
     return paginateWorkflowSummaries(sortSummariesByCreatedAtDescending(items), filter);
   }

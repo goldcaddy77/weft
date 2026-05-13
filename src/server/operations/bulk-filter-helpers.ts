@@ -4,8 +4,10 @@ import { assertScopedBulkWorkflowFilter } from '../../core/bulk-workflow-filter.
 import { coerceStartWorkflowTags } from '../../core/start-workflow-validation.ts';
 import type {
   AttributeFilter,
+  FailureCategory,
   ListFilter,
   SearchAttributeValue,
+  TimeRange,
   WorkflowStatus,
 } from '../../core/types.ts';
 import type { OperationFault } from '../operation-fault.ts';
@@ -27,6 +29,13 @@ const attributeFilterSchema = z.object({
   gte: searchAttributeValueSchema.optional(),
   lte: searchAttributeValueSchema.optional(),
 });
+const failureCategorySchema = z.custom<FailureCategory>((value) => typeof value === 'string');
+const timeRangeSchema = z.object({
+  gte: z.number().optional(),
+  gt: z.number().optional(),
+  lte: z.number().optional(),
+  lt: z.number().optional(),
+});
 
 export const bulkListFilterInputSchema = z.object({
   status: z.union([workflowStatusSchema, z.array(workflowStatusSchema)]).optional(),
@@ -35,6 +44,12 @@ export const bulkListFilterInputSchema = z.object({
   attributes: z.array(attributeFilterSchema).optional(),
   limit: z.number().int().min(0).optional(),
   offset: z.number().int().min(0).optional(),
+  idPrefix: z.string().optional(),
+  tenantId: z.union([z.string(), z.array(z.string())]).optional(),
+  failureCategory: z.union([failureCategorySchema, z.array(failureCategorySchema)]).optional(),
+  createdAt: timeRangeSchema.optional(),
+  updatedAt: timeRangeSchema.optional(),
+  executionDeadline: timeRangeSchema.optional(),
 });
 
 export type BulkListFilterInput = z.infer<typeof bulkListFilterInputSchema>;
@@ -218,7 +233,77 @@ export function parseBulkListFilterFromBody(body: unknown): ListFilter {
     filter.offset = offset;
   }
 
+  const idPrefix = filterRecord['idPrefix'];
+  if (typeof idPrefix === 'string') {
+    filter.idPrefix = idPrefix;
+  }
+
+  const tenantId = parseOptionalTenantId(filterRecord['tenantId']);
+  if (tenantId !== undefined) {
+    filter.tenantId = tenantId;
+  }
+
+  const failureCategory = parseOptionalFailureCategory(filterRecord['failureCategory']);
+  if (failureCategory !== undefined) {
+    filter.failureCategory = failureCategory;
+  }
+
+  const createdAt = parseOptionalTimeRange(filterRecord['createdAt']);
+  if (createdAt !== undefined) {
+    filter.createdAt = createdAt;
+  }
+
+  const updatedAt = parseOptionalTimeRange(filterRecord['updatedAt']);
+  if (updatedAt !== undefined) {
+    filter.updatedAt = updatedAt;
+  }
+
+  const executionDeadline = parseOptionalTimeRange(filterRecord['executionDeadline']);
+  if (executionDeadline !== undefined) {
+    filter.executionDeadline = executionDeadline;
+  }
+
   return filter;
+}
+
+function parseOptionalTenantId(value: unknown): string | string[] | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value) && value.every((entry) => typeof entry === 'string')) {
+    return value;
+  }
+  throw new Error('Field "filter.tenantId" must be a string or an array of strings');
+}
+
+function parseOptionalFailureCategory(
+  value: unknown,
+): FailureCategory | FailureCategory[] | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === 'string') return value as FailureCategory;
+  if (Array.isArray(value) && value.every((entry) => typeof entry === 'string')) {
+    return value as FailureCategory[];
+  }
+  throw new Error('Field "filter.failureCategory" must be a string or an array of strings');
+}
+
+const TIME_RANGE_BOUNDS = ['gte', 'gt', 'lte', 'lt'] as const;
+
+function parseOptionalTimeRange(value: unknown): TimeRange | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'object' || value === null) {
+    throw new Error('Time-range filter must be an object with gte/gt/lte/lt numeric bounds');
+  }
+  const record = value as Record<string, unknown>;
+  const range: TimeRange = {};
+  for (const bound of TIME_RANGE_BOUNDS) {
+    const entry = record[bound];
+    if (entry === undefined) continue;
+    if (typeof entry !== 'number' || !Number.isFinite(entry)) {
+      throw new Error(`Time-range bound "${bound}" must be a finite number`);
+    }
+    range[bound] = entry;
+  }
+  return Object.keys(range).length > 0 ? range : undefined;
 }
 
 export function parseRequiredBulkListFilter(body: unknown): ListFilter {
@@ -231,6 +316,13 @@ export function parseRequiredBulkListFilter(body: unknown): ListFilter {
 
 export function listFilterFromBulkInput(input: BulkListFilterInput): ListFilter {
   const filter: ListFilter = {};
+  applyBasicBulkFilterFields(filter, input);
+  applyExtendedBulkFilterFields(filter, input);
+  applyBulkTimeRangeFields(filter, input);
+  return filter;
+}
+
+function applyBasicBulkFilterFields(filter: ListFilter, input: BulkListFilterInput): void {
   if (input.status !== undefined) {
     filter.status = input.status;
   }
@@ -241,14 +333,7 @@ export function listFilterFromBulkInput(input: BulkListFilterInput): ListFilter 
     filter.tags = input.tags;
   }
   if (input.attributes !== undefined) {
-    filter.attributes = input.attributes.map((attribute) => ({
-      key: attribute.key,
-      ...(attribute.value === undefined ? {} : { value: attribute.value }),
-      ...(attribute.gt === undefined ? {} : { gt: attribute.gt }),
-      ...(attribute.lt === undefined ? {} : { lt: attribute.lt }),
-      ...(attribute.gte === undefined ? {} : { gte: attribute.gte }),
-      ...(attribute.lte === undefined ? {} : { lte: attribute.lte }),
-    }));
+    filter.attributes = input.attributes.map(copyAttributeFilter);
   }
   if (input.limit !== undefined) {
     filter.limit = input.limit;
@@ -256,5 +341,46 @@ export function listFilterFromBulkInput(input: BulkListFilterInput): ListFilter 
   if (input.offset !== undefined) {
     filter.offset = input.offset;
   }
-  return filter;
+}
+
+function copyAttributeFilter(
+  attribute: NonNullable<BulkListFilterInput['attributes']>[number],
+): AttributeFilter {
+  return {
+    key: attribute.key,
+    ...(attribute.value === undefined ? {} : { value: attribute.value }),
+    ...(attribute.gt === undefined ? {} : { gt: attribute.gt }),
+    ...(attribute.lt === undefined ? {} : { lt: attribute.lt }),
+    ...(attribute.gte === undefined ? {} : { gte: attribute.gte }),
+    ...(attribute.lte === undefined ? {} : { lte: attribute.lte }),
+  };
+}
+
+function applyExtendedBulkFilterFields(filter: ListFilter, input: BulkListFilterInput): void {
+  if (input.idPrefix !== undefined) {
+    filter.idPrefix = input.idPrefix;
+  }
+  if (input.tenantId !== undefined) {
+    filter.tenantId = input.tenantId;
+  }
+  if (input.failureCategory !== undefined) {
+    filter.failureCategory = input.failureCategory;
+  }
+}
+
+function applyBulkTimeRangeFields(filter: ListFilter, input: BulkListFilterInput): void {
+  const createdAt = parseOptionalTimeRange(input.createdAt);
+  if (createdAt !== undefined) {
+    filter.createdAt = createdAt;
+  }
+
+  const updatedAt = parseOptionalTimeRange(input.updatedAt);
+  if (updatedAt !== undefined) {
+    filter.updatedAt = updatedAt;
+  }
+
+  const executionDeadline = parseOptionalTimeRange(input.executionDeadline);
+  if (executionDeadline !== undefined) {
+    filter.executionDeadline = executionDeadline;
+  }
 }

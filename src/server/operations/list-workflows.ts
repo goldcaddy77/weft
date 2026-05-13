@@ -10,7 +10,6 @@ import { coerceStartWorkflowTags } from '../../core/start-workflow-validation.ts
 import type {
   FailureCategory,
   ListFilter,
-  ListOptions,
   PaginatedResult,
   SearchAttributeValue,
   WorkflowStatus,
@@ -59,7 +58,6 @@ const listWorkflowsInput = z.object({
   executionDeadline: timeRangeSchema.optional(),
   tenantId: z.union([z.string(), z.array(z.string())]).optional(),
   failureCategory: z.union([failureCategorySchema, z.array(failureCategorySchema)]).optional(),
-  include: z.array(z.literal('failureCategory')).optional(),
 });
 const listWorkflowsOutput = z.unknown();
 
@@ -94,26 +92,16 @@ export const listWorkflowsOperation = defineOperation<ListWorkflowsInput, ListWo
       }
     }
 
-    const { include, ...filterInput } = input;
-
     let filter: ListFilter;
     try {
       filter = normalizeListFilter({
-        ...filterInput,
+        ...input,
         ...(validatedTags !== undefined ? { tags: validatedTags } : {}),
       });
     } catch (error) {
       if (error instanceof ListFilterValidationError) throw toUnprocessable(error);
       throw error;
     }
-
-    // ListOptions opt-ins (currently only `includeFailureCategory`)
-    // ride alongside the filter. Default off to keep per-summary cost
-    // unchanged for callers that never ask.
-    const _options: ListOptions = {
-      ...(include?.includes('failureCategory') && { includeFailureCategory: true }),
-    };
-    void _options;
 
     try {
       return await e.list(filter);
@@ -147,11 +135,6 @@ function extractListWorkflowsInput(request: Request): ListWorkflowsInput {
     if (Number.isFinite(parsed) && parsed >= 0) {
       filter.offset = Math.floor(parsed);
     }
-  }
-
-  const include = url.searchParams.getAll('include');
-  if (include.includes('failureCategory')) {
-    filter.include = ['failureCategory'];
   }
 
   return filter;

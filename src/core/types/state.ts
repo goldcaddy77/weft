@@ -239,9 +239,7 @@ export interface WorkflowStateNamespace {
  * identity and lifecycle fields but not the full input, result, or checkpoint.
  * Use {@link Engine.get} to retrieve the complete {@link WorkflowState}. The
  * optional fields (`tenantId`, `executionDeadline`, `failureCategory`) are
- * populated only when the engine has a reason to surface them — see
- * {@link ListOptions.includeFailureCategory}; `tenantId` and
- * `executionDeadline` are populated unconditionally when present on state.
+ * populated whenever the underlying `WorkflowState` carries them.
  */
 export interface WorkflowSummary {
   id: WorkflowId;
@@ -255,11 +253,7 @@ export interface WorkflowSummary {
   tenantId?: string;
   /** Execution deadline (ms epoch) if set on the workflow. */
   executionDeadline?: number;
-  /**
-   * Failure category read from the `failureCategory` search attribute. Only
-   * populated when callers pass `{ includeFailureCategory: true }` to
-   * {@link Engine.list}.
-   */
+  /** Failure category if set on the workflow state. */
   failureCategory?: FailureCategory;
 }
 

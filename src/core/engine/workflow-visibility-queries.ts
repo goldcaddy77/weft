@@ -25,7 +25,7 @@ function isFinitePositive(value: number): boolean {
 }
 
 function sortableTimestamp(value: number): string {
-  return String(Math.trunc(value)).padStart(16, '0');
+  return String(value).padStart(16, '0');
 }
 
 async function collectWorkflowIdsFromIndex(
