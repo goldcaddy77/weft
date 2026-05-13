@@ -67,12 +67,16 @@ async function resolveDimensionKey(
   if (groupBy === 'status') return state.status;
   if (groupBy === 'type') return state.type;
   if (groupBy === 'tenant') return state.tenant?.id ?? null;
+  // Read `failureCategory` from the loaded state so the aggregate buckets
+  // every workflow under the same key the list-filter post-filter used.
+  // The search-attribute store may be stale or absent for engine-managed
+  // categories; `state.failureCategory` is the authoritative source.
+  if (groupBy === 'failureCategory') return state.failureCategory ?? null;
 
-  const attributeName = groupBy === 'failureCategory' ? 'failureCategory' : groupBy.attribute;
   const attributeBytes = await internals.storage.get(KEYS.attribute(state.id));
   if (!attributeBytes) return null;
   const attributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
-  return ATTRIBUTE_VALUE_TO_KEY(attributes[attributeName]);
+  return ATTRIBUTE_VALUE_TO_KEY(attributes[groupBy.attribute]);
 }
 
 /**

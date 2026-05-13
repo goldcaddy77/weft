@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
+import { KEYS } from '../../storage/interface.ts';
+import { MemoryStorage } from '../../storage/memory.ts';
 import { AggregateDistinctKeyCapExceededError } from '../aggregate-validation.ts';
 import { Engine } from '../engine.ts';
 import type { WorkflowContext } from '../types.ts';
@@ -99,6 +101,26 @@ describe('engine.aggregate', () => {
     const result = await engine.aggregate({ type: 'done' }, { groupBy: 'status' });
     expect(result.total).toBe(2);
     expect(result.groups).toEqual([{ key: 'completed', count: 2 }]);
+    engine[Symbol.dispose]();
+  });
+
+  it('groups failureCategory from workflow state, not stale search attributes', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    engine.register('fails', async function* () {
+      throw new Error('boom');
+    });
+
+    const handle = await engine.start('fails', null, { id: 'failed-1' });
+    await expect(handle.result()).rejects.toThrow('boom');
+    await storage.delete(KEYS.attribute('failed-1'));
+
+    const result = await engine.aggregate(
+      { status: 'failed', failureCategory: 'system' },
+      { groupBy: 'failureCategory' },
+    );
+    expect(result.total).toBe(1);
+    expect(result.groups).toEqual([{ key: 'system', count: 1 }]);
     engine[Symbol.dispose]();
   });
 
