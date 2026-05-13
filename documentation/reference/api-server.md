@@ -123,13 +123,14 @@ The handler exposes the following routes under the `/v1` prefix:
 
 ### Workflows
 
-| Method   | Path                       | Description                                                                   |
-| -------- | -------------------------- | ----------------------------------------------------------------------------- |
-| `POST`   | `/v1/workflows`            | Start a new workflow                                                          |
-| `GET`    | `/v1/workflows`            | List workflows (query params: `status`, `type`, `limit`, `offset`)            |
-| `GET`    | `/v1/workflows/:id`        | Get workflow state                                                            |
-| `DELETE` | `/v1/workflows/:id`        | Cancel a workflow                                                             |
-| `GET`    | `/v1/workflows/:id/result` | Await workflow result (30s default long-poll timeout, configurable up to 60s) |
+| Method   | Path                       | Description                                                                          |
+| -------- | -------------------------- | ------------------------------------------------------------------------------------ |
+| `POST`   | `/v1/workflows`            | Start a new workflow                                                                 |
+| `GET`    | `/v1/workflows`            | List workflows — see [Visibility filters](#list-workflows----query-parameters) below |
+| `GET`    | `/v1/workflows/aggregate`  | Group-by counts over the same filter shape                                           |
+| `GET`    | `/v1/workflows/:id`        | Get workflow state                                                                   |
+| `DELETE` | `/v1/workflows/:id`        | Cancel a workflow                                                                    |
+| `GET`    | `/v1/workflows/:id/result` | Await workflow result (30s default long-poll timeout, configurable up to 60s)        |
 
 #### Start Workflow -- Request Body
 
@@ -146,12 +147,49 @@ Returns `201` with `{ "id": "<workflow-id>" }`.
 
 #### List Workflows -- Query Parameters
 
-| Parameter | Type     | Description                                    |
-| --------- | -------- | ---------------------------------------------- |
-| `status`  | `string` | Filter by status (e.g. `running`, `completed`) |
-| `type`    | `string` | Filter by workflow type                        |
-| `limit`   | `number` | Page size                                      |
-| `offset`  | `number` | Page offset                                    |
+| Parameter                                              | Type     | Description                                                                          |
+| ------------------------------------------------------ | -------- | ------------------------------------------------------------------------------------ |
+| `status`                                               | `string` | Filter by status. Repeat for an OR filter (e.g. `?status=running&status=pending`).   |
+| `type`                                                 | `string` | Filter by workflow type.                                                             |
+| `tag`                                                  | `string` | Filter by tag. Repeat to AND multiple tags.                                          |
+| `id_prefix`                                            | `string` | Match workflow ids starting with this prefix. Restricted to `[A-Za-z0-9_-]+`.        |
+| `tenant_id`                                            | `string` | Filter by tenant id. Repeat for an OR filter across tenants.                         |
+| `failure_category`                                     | `string` | One of `memory`, `reflection`, `planning`, `action`, `system`. Repeats OR.           |
+| `created_at_{gte,gt,lte,lt}`                           | `number` | Filter by `createdAt` (ms epoch). At most one of `gte`/`gt` and one of `lte`/`lt`.   |
+| `updated_at_{gte,gt,lte,lt}`                           | `number` | Filter by `updatedAt` (ms epoch).                                                    |
+| `execution_deadline_{gte,gt,lte,lt}`                   | `number` | Filter by `executionDeadline` (ms epoch).                                            |
+| `attribute.<name>`, `attribute.<name>.{gte,gt,lte,lt}` | `string` | Filter by indexed search attribute (equality or range).                              |
+| `include`                                              | `string` | Set to `failureCategory` to populate `WorkflowSummary.failureCategory` on responses. |
+| `limit`                                                | `number` | Page size (max 1000).                                                                |
+| `offset`                                               | `number` | Page offset.                                                                         |
+
+Results are ordered by `createdAt` descending with `id` ascending as the tiebreaker. Invalid filter values surface as a `400` (`Unprocessable`) with a structured error before any storage scan begins.
+
+#### Aggregate Workflows -- Query Parameters
+
+`GET /v1/workflows/aggregate` accepts every list-workflow filter parameter (except `limit`/`offset`, which are interpreted differently) plus:
+
+| Parameter  | Type     | Description                                                                                    |
+| ---------- | -------- | ---------------------------------------------------------------------------------------------- |
+| `group_by` | `string` | Required. One of `status`, `type`, `tenant`, `failureCategory`, or `attribute:<name>`.         |
+| `limit`    | `number` | Cap on the number of returned groups (default 1000, max 10000). Excess groups set `truncated`. |
+
+Response shape:
+
+```json
+{
+  "total": 42,
+  "groups": [
+    { "key": "running", "count": 24 },
+    { "key": "completed", "count": 18 }
+  ],
+  "truncated": false
+}
+```
+
+Groups are sorted by `count` descending with `key` ascending as the tiebreaker. Workflows missing the dimension bucket under `key: null`.
+
+If an aggregate would materialize more than 100,000 distinct group keys the request fails with a `400` (`Unprocessable`) rather than silently truncating, since truncation would let scan-order bias which groups "win." Narrow the filter or choose a lower-cardinality `group_by`.
 
 ### Signals
 
