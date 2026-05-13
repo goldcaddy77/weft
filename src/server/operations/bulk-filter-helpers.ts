@@ -4,11 +4,20 @@ import { assertScopedBulkWorkflowFilter } from '../../core/bulk-workflow-filter.
 import { coerceStartWorkflowTags } from '../../core/start-workflow-validation.ts';
 import type {
   AttributeFilter,
+  BulkOperationCommitOptions,
+  BulkOperationDryRunOptions,
+  BulkOperationPrincipal,
   ListFilter,
   SearchAttributeValue,
   WorkflowStatus,
 } from '../../core/types.ts';
+import {
+  MAX_BULK_CONFIRMATION_TOKEN_LENGTH,
+  MAX_BULK_OPERATION_REQUEST_ID_LENGTH,
+} from '../../core/types/bulk.ts';
+import type { AccessPolicy } from '../authorization.ts';
 import type { OperationFault } from '../operation-fault.ts';
+import type { Principal } from '../principal.ts';
 import { invalidParamsFault } from './operation-helpers.ts';
 
 const workflowStatusSchema = z.custom<WorkflowStatus>((value) => typeof value === 'string');
@@ -38,6 +47,19 @@ export const bulkListFilterInputSchema = z.object({
 });
 
 export type BulkListFilterInput = z.infer<typeof bulkListFilterInputSchema>;
+
+export const bulkOperationControlInputSchema = z.object({
+  dryRun: z.boolean().optional(),
+  confirmationToken: z.string().min(1).max(MAX_BULK_CONFIRMATION_TOKEN_LENGTH).optional(),
+  requestId: z.string().min(1).max(MAX_BULK_OPERATION_REQUEST_ID_LENGTH).optional(),
+});
+
+export type BulkOperationControlInput = z.infer<typeof bulkOperationControlInputSchema>;
+
+export const bulkOperatorAccessPolicy = {
+  kind: 'scoped',
+  scopes: { kind: 'anyOf', scopes: ['workflows:admin'] },
+} satisfies AccessPolicy;
 
 export function faultMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -257,4 +279,95 @@ export function listFilterFromBulkInput(input: BulkListFilterInput): ListFilter 
     filter.offset = input.offset;
   }
   return filter;
+}
+
+export function parseBulkOperationControlFromBody(body: unknown): BulkOperationControlInput {
+  if (body === undefined) {
+    return {};
+  }
+
+  const record = parseJsonObjectBody(body);
+  const dryRun = parseOptionalBooleanControl(record, 'dryRun');
+  const confirmationToken = parseOptionalNonEmptyStringControl(record, 'confirmationToken');
+  const requestId = parseOptionalBulkRequestId(record);
+
+  return {
+    ...(dryRun === undefined ? {} : { dryRun }),
+    ...(confirmationToken === undefined ? {} : { confirmationToken }),
+    ...(requestId === undefined ? {} : { requestId }),
+  };
+}
+
+export function bulkOperationOptionsFromInput(
+  input: BulkOperationControlInput,
+  principal: Principal,
+): BulkOperationDryRunOptions | BulkOperationCommitOptions {
+  const auditPrincipal = principalToBulkOperationPrincipal(principal);
+  if (input.dryRun === true) {
+    return {
+      dryRun: true,
+      principal: auditPrincipal,
+      ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+    };
+  }
+
+  if (input.confirmationToken === undefined) {
+    throw invalidParamsFault('Field "confirmationToken" is required after a dry run');
+  }
+
+  return {
+    confirmationToken: input.confirmationToken,
+    principal: auditPrincipal,
+    ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+  };
+}
+
+function principalToBulkOperationPrincipal(principal: Principal): BulkOperationPrincipal {
+  if (principal.method === 'unauthenticated') {
+    return { method: 'unauthenticated' };
+  }
+
+  return {
+    method: principal.method,
+    ...(principal.subject === undefined ? {} : { subject: principal.subject }),
+    ...(principal.tenantId === undefined ? {} : { tenantId: principal.tenantId }),
+  };
+}
+
+function parseJsonObjectBody(body: unknown): Record<string, unknown> {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    throw new Error('Request body must be a JSON object');
+  }
+
+  return body as Record<string, unknown>;
+}
+
+function parseOptionalBooleanControl(
+  record: Record<string, unknown>,
+  fieldName: 'dryRun',
+): boolean | undefined {
+  const value = record[fieldName];
+  if (value === undefined) return undefined;
+  if (typeof value === 'boolean') return value;
+  throw new Error(`Field "${fieldName}" must be a boolean`);
+}
+
+function parseOptionalNonEmptyStringControl(
+  record: Record<string, unknown>,
+  fieldName: 'confirmationToken' | 'requestId',
+): string | undefined {
+  const value = record[fieldName];
+  if (value === undefined) return undefined;
+  if (typeof value === 'string' && value.length > 0) return value;
+  throw new Error(`Field "${fieldName}" must be a non-empty string`);
+}
+
+function parseOptionalBulkRequestId(record: Record<string, unknown>): string | undefined {
+  const requestId = parseOptionalNonEmptyStringControl(record, 'requestId');
+  if (requestId === undefined) return undefined;
+  if (requestId.length <= MAX_BULK_OPERATION_REQUEST_ID_LENGTH) return requestId;
+
+  throw new Error(
+    `Field "requestId" must be at most ${MAX_BULK_OPERATION_REQUEST_ID_LENGTH} characters`,
+  );
 }

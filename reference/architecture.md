@@ -5669,6 +5669,10 @@ Child workflows exist, but composing them into pipelines, fan-out/fan-in DAGs, o
 - [x] **`engine.tagAll(filter, tags)` and `engine.untagAll(filter, tags)` bulk-modify tags.** Returns `{ modified: number }`.
 - [x] **All bulk operations have HTTP equivalents.** `POST /v1/workflows/bulk/cancel`, `POST /v1/workflows/bulk/signal`, `DELETE /v1/workflows/bulk`, `PATCH /v1/workflows/bulk/tags`.
 - [x] **Bulk operations are batched internally.** Process in chunks of 1000 to avoid holding storage locks. Progress is observable via returned counts.
+- [x] **Bulk operations support dry-run previews.** Passing `{ dryRun: true }` returns matched counts, scope summaries, sampled workflow IDs, and a confirmation token without mutating workflow state.
+- [x] **Confirmed bulk operations reject stale scopes.** Committed cancel, signal, delete, and tag mutations validate the dry-run confirmation token against the current matched workflow set before mutating state.
+- [x] **Confirmed bulk operations persist audit records.** Audit events capture the credential-safe caller principal, action, request ID, filter summary, affected count, sampled IDs, and confirmation token.
+- [x] **Dashboard bulk actions require preview before commit.** Cancel, signal, delete, and tag mutations show the active scope and affected count before enabling confirmation.
 
 #### 7h. Workflow forking
 

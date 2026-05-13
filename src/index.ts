@@ -15,6 +15,8 @@
 export { VERSION } from './version.ts';
 // Core
 export {
+  BulkDeleteRequiresTerminalWorkflowsError,
+  BulkOperationConfirmationError,
   Engine,
   EngineCreateNameMismatchError,
   ScheduleHandle,
@@ -47,7 +49,19 @@ export type {
   AnyWorkflowDefinition,
   BulkCancelResult,
   BulkDeleteResult,
+  BulkOperationAction,
+  BulkOperationAuditEvent,
+  BulkOperationCommitOptions,
+  BulkOperationDryRunOptions,
+  BulkOperationDryRunResult,
   BulkOperationError,
+  BulkOperationFilterSummary,
+  BulkOperationOptions,
+  BulkOperationPrincipal,
+  BulkOperationScopeSummary,
+  BulkSignalAllCommitOptions,
+  BulkSignalAllDryRunOptions,
+  BulkSignalAllOptions,
   BulkSignalResult,
   BulkTagResult,
   Checkpoint,

@@ -227,6 +227,11 @@ async function waitForConditionWithRealTimers(
 
     const remainingMilliseconds = timeoutMs - (performance.now() - start);
     if (remainingMilliseconds <= 0) {
+      const finalResult = await checkWaitCondition(predicate);
+      if (finalResult.satisfied) {
+        return;
+      }
+      lastError = finalResult.error ?? lastError;
       break;
     }
 

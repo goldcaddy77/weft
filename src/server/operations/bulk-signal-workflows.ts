@@ -1,18 +1,22 @@
 import { z } from 'zod';
 
 import { assertScopedBulkWorkflowFilter } from '../../core/bulk-workflow-filter.ts';
-import type { Engine } from '../../core/engine.ts';
+import { BulkOperationConfirmationError, type Engine } from '../../core/engine.ts';
 import { coerceStartWorkflowTags } from '../../core/start-workflow-validation.ts';
-import type { BulkSignalResult, ListFilter } from '../../core/types.ts';
+import type { BulkOperationDryRunResult, BulkSignalResult, ListFilter } from '../../core/types.ts';
 import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 import {
   bulkListFilterInputSchema,
+  bulkOperationControlInputSchema,
+  bulkOperationOptionsFromInput,
+  bulkOperatorAccessPolicy,
   engineFailureFault,
   faultMessage,
   listFilterFromBulkInput,
   parseBulkListFilterFromBody,
+  parseBulkOperationControlFromBody,
   readOptionalJsonBody,
   type BulkListFilterInput,
 } from './bulk-filter-helpers.ts';
@@ -21,14 +25,16 @@ import {
   shapeLegacyRestFaultWithRawEngineFailureMessage,
 } from './operation-helpers.ts';
 
-const bulkSignalWorkflowsInput = bulkListFilterInputSchema.extend({
-  name: z.string().min(1),
-  payload: z.unknown().optional(),
-});
+const bulkSignalWorkflowsInput = bulkListFilterInputSchema
+  .extend({
+    name: z.string().min(1),
+    payload: z.unknown().optional(),
+  })
+  .merge(bulkOperationControlInputSchema);
 const bulkSignalWorkflowsOutput = z.unknown();
 
 export type BulkSignalWorkflowsInput = z.infer<typeof bulkSignalWorkflowsInput>;
-export type BulkSignalWorkflowsOutput = BulkSignalResult;
+export type BulkSignalWorkflowsOutput = BulkSignalResult | BulkOperationDryRunResult;
 
 export const bulkSignalWorkflowsOperation = defineOperation<
   BulkSignalWorkflowsInput,
@@ -40,10 +46,10 @@ export const bulkSignalWorkflowsOperation = defineOperation<
   tags: ['Workflows'],
   inputSchema: bulkSignalWorkflowsInput,
   outputSchema: bulkSignalWorkflowsOutput as z.ZodType<BulkSignalWorkflowsOutput>,
-  access: { kind: 'public' },
+  access: bulkOperatorAccessPolicy,
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
-  invoke: async ({ input, engine }): Promise<BulkSignalWorkflowsOutput> => {
+  invoke: async ({ input, engine, principal }): Promise<BulkSignalWorkflowsOutput> => {
     const e = engine as Engine;
 
     let validatedTags: string[] | undefined;
@@ -67,9 +73,17 @@ export const bulkSignalWorkflowsOperation = defineOperation<
       throw invalidParamsFault(faultMessage(error));
     }
 
+    const operationOptions = bulkOperationOptionsFromInput(input, principal);
+
     try {
-      return await e.signalAll(filter, input.name, input.payload);
+      if (operationOptions.dryRun === true) {
+        return await e.signalAll(filter, input.name, input.payload, operationOptions);
+      }
+      return await e.signalAll(filter, input.name, input.payload, operationOptions);
     } catch (error) {
+      if (error instanceof BulkOperationConfirmationError) {
+        throw invalidParamsFault(error.message);
+      }
       throw engineFailureFault(faultMessage(error));
     }
   },
@@ -121,6 +135,7 @@ export const bulkSignalWorkflowsRestBinding: UnknownRestBinding = {
       ...filter,
       name,
       ...(body['payload'] === undefined ? {} : { payload: body['payload'] }),
+      ...parseBulkOperationControlFromBody(body),
     };
   },
   success: { kind: 'json', status: 200 },
