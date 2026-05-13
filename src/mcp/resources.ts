@@ -172,6 +172,11 @@ function parseSearchResource(searchParams: URLSearchParams): ParsedResourceUri |
   return parsed.ok ? { kind: 'search', filter: parsed.filter } : null;
 }
 
+/** Return true when a URI identifies a valid workflow search resource. */
+export function isWorkflowSearchResourceUri(uri: string): boolean {
+  return parseWeftResourceUri(uri)?.kind === 'search';
+}
+
 function parseWorkflowResourcePath(pathname: string): ParsedResourceUri | null {
   const parts = pathname.split('/').filter(Boolean).map(decodePathSegment);
   if (parts.some((part) => part === null)) return null;
@@ -184,7 +189,8 @@ function parseWorkflowResourcePath(pathname: string): ParsedResourceUri | null {
   return null;
 }
 
-function workflowResourceUri(
+/** Build the canonical MCP URI for a workflow resource. */
+export function workflowResourceUri(
   workflowId: string,
   resourceKind: 'state' | 'events' | 'checkpoints',
 ): string {

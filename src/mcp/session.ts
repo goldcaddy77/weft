@@ -2,7 +2,9 @@ import type { Engine } from '../core/engine.ts';
 import type { WeftEventMap } from '../core/events.ts';
 import type { JsonRpcId } from '../server/json-rpc-protocol.ts';
 import type { Principal } from '../server/principal.ts';
+import { getVisibleWorkflowState } from './access.ts';
 import { requestIdKey, type McpResponse } from './protocol.ts';
+import { isWorkflowSearchResourceUri, workflowResourceUri } from './resources.ts';
 
 type NotificationTarget = (message: McpResponse | Record<string, unknown>) => void;
 
@@ -199,7 +201,9 @@ export class McpSessionManager implements AsyncDisposable {
     this.#listener = (event) => {
       const workflowId = (event as { workflowId?: unknown }).workflowId;
       if (typeof workflowId !== 'string') return;
-      this.#notifyWorkflowResourceUpdated(workflowId);
+      void this.#notifyWorkflowResourceUpdated(workflowId).catch(() => {
+        this.#deleteExpiredSessions();
+      });
     };
     for (const eventName of RESOURCE_EVENT_NAMES) {
       this.#engine.addEventListener(eventName, this.#listener);
@@ -252,19 +256,32 @@ export class McpSessionManager implements AsyncDisposable {
     this.#sessions.clear();
   }
 
-  #notifyWorkflowResourceUpdated(workflowId: string): void {
+  async #notifyWorkflowResourceUpdated(workflowId: string): Promise<void> {
     const candidateUris = [
-      `weft://workflows/${workflowId}/state`,
-      `weft://workflows/${workflowId}/events`,
-      `weft://workflows/${workflowId}/checkpoints`,
+      workflowResourceUri(workflowId, 'state'),
+      workflowResourceUri(workflowId, 'events'),
+      workflowResourceUri(workflowId, 'checkpoints'),
     ];
 
     const now = this.#currentTimeMilliseconds();
     for (const session of this.#sessions.values()) {
-      if (!candidateUris.some((uri) => session.subscriptions.has(uri))) continue;
-      session.touch(now);
+      const subscribedUris = new Set<string>();
       for (const uri of candidateUris) {
         if (!session.subscriptions.has(uri)) continue;
+        subscribedUris.add(uri);
+      }
+      const searchUris = [...session.subscriptions].filter(isWorkflowSearchResourceUri);
+      if (searchUris.length > 0) {
+        const state = await getVisibleWorkflowState(this.#engine, session.principal, workflowId);
+        if (state !== null) {
+          for (const uri of searchUris) {
+            subscribedUris.add(uri);
+          }
+        }
+      }
+      if (subscribedUris.size === 0) continue;
+      session.touch(now);
+      for (const uri of subscribedUris) {
         session.notify('notifications/resources/updated', { uri });
       }
     }

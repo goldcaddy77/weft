@@ -496,6 +496,45 @@ describe('MCP Streamable HTTP transport', () => {
     expect(notificationText).toContain(uri);
   });
 
+  it('notifies subscribed search resources when workflow visibility changes', async () => {
+    const engine = createEngine();
+    server = serve({ engine, port: 0 });
+    const sessionId = await initialize(server);
+    const handle = await engine.start(
+      'hold-for-cancel',
+      { label: 'search-subscription' },
+      { id: 'search-subscription-workflow' },
+    );
+    const searchUri = 'weft://workflows/search?status=running&type=hold-for-cancel';
+
+    const controller = new AbortController();
+    const streamResponse = await fetch(`${server.url}/mcp`, {
+      headers: {
+        accept: 'text/event-stream',
+        'Mcp-Session-Id': sessionId,
+        'Mcp-Protocol-Version': MCP_PROTOCOL_VERSION,
+      },
+      signal: controller.signal,
+    });
+    expect(streamResponse.status).toBe(200);
+
+    const subscribed = await mcpJson(server, sessionId, {
+      jsonrpc: '2.0',
+      id: 'subscribe-search',
+      method: 'resources/subscribe',
+      params: { uri: searchUri },
+    });
+    expect(subscribed.result).toEqual({});
+
+    await engine.signal(handle.id, 'release', 'done');
+    await waitForStatus(engine, handle.id, 'completed');
+
+    const notificationText = await readUntil(streamResponse, searchUri);
+    controller.abort();
+    expect(notificationText).toContain('notifications/resources/updated');
+    expect(notificationText).toContain(searchUri);
+  });
+
   it('maps MCP cancellation notifications to engine.cancel for an in-flight workflow tool call', async () => {
     const engine = createEngine();
     server = serve({ engine, port: 0 });
