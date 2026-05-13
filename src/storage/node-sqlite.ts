@@ -20,6 +20,13 @@ import type {
   Storage,
 } from './interface.ts';
 import { storageValuesEqual } from './interface.ts';
+import {
+  SQLITE_CREATE_KEY_VALUE_TABLE,
+  SQLITE_DELETE_VALUE_BY_KEY,
+  SQLITE_SELECT_VALUE_BY_KEY,
+  SQLITE_UPSERT_VALUE_BY_KEY,
+  buildSqliteKeyValueRangeSelect,
+} from './sqlite-key-value-queries.ts';
 
 /**
  * Minimal subset of the `better-sqlite3` API surface that this adapter uses.
@@ -137,18 +144,11 @@ export class NodeSQLiteStorage implements Storage {
     this.#database.pragma('temp_store = MEMORY');
     this.#database.pragma('wal_autocheckpoint = 10000');
 
-    this.#database.exec(`
-      CREATE TABLE IF NOT EXISTS kv (
-        key TEXT PRIMARY KEY,
-        value BLOB NOT NULL
-      ) WITHOUT ROWID
-    `);
+    this.#database.exec(SQLITE_CREATE_KEY_VALUE_TABLE);
 
-    this.#getStatement = this.#database.prepare('SELECT value FROM kv WHERE key = ?');
-    this.#putStatement = this.#database.prepare(
-      'INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-    );
-    this.#deleteStatement = this.#database.prepare('DELETE FROM kv WHERE key = ?');
+    this.#getStatement = this.#database.prepare(SQLITE_SELECT_VALUE_BY_KEY);
+    this.#putStatement = this.#database.prepare(SQLITE_UPSERT_VALUE_BY_KEY);
+    this.#deleteStatement = this.#database.prepare(SQLITE_DELETE_VALUE_BY_KEY);
     this.#batchTransaction = this.#database.transaction((entries: unknown) => {
       for (const entry of entries as BatchOperation[]) {
         if (entry.type === 'put') {
@@ -175,42 +175,8 @@ export class NodeSQLiteStorage implements Storage {
     this.#deleteStatement.run(key);
   }
 
-  // oxlint-disable-next-line complexity -- ID:storage-node-sqlite-delete-complexity
   async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
-    const { limit, reverse, gt, lt, gte, lte } = options;
-
-    const prefixEnd =
-      prefix.length > 0
-        ? prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
-        : '\xff';
-
-    const conditions: string[] = ['key >= ? AND key < ?'];
-    const parameters: unknown[] = [prefix, prefixEnd];
-
-    if (gt !== undefined) {
-      conditions.push('key > ?');
-      parameters.push(gt);
-    }
-    if (gte !== undefined) {
-      conditions.push('key >= ?');
-      parameters.push(gte);
-    }
-    if (lt !== undefined) {
-      conditions.push('key < ?');
-      parameters.push(lt);
-    }
-    if (lte !== undefined) {
-      conditions.push('key <= ?');
-      parameters.push(lte);
-    }
-
-    const direction = reverse ? 'DESC' : 'ASC';
-    const limitClause = limit !== undefined ? 'LIMIT ?' : '';
-    if (limit !== undefined) {
-      parameters.push(limit);
-    }
-
-    const sql = `SELECT key, value FROM kv WHERE ${conditions.join(' AND ')} ORDER BY key ${direction} ${limitClause}`;
+    const { parameters, sql } = buildSqliteKeyValueRangeSelect(prefix, options);
 
     let statement = this.#scanStatements.get(sql);
     if (!statement) {
