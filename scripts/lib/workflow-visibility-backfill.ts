@@ -179,8 +179,9 @@ export async function runWorkflowVisibilityDrop(
   let rowsDeleted = 0;
   for (const prefix of VISIBILITY_INDEX_PREFIXES) {
     if (storage.deletePrefix !== undefined) {
-      await storage.deletePrefix(prefix);
-      logger(`Dropped prefix ${prefix}`);
+      const removed = await storage.deletePrefix(prefix);
+      rowsDeleted += removed;
+      logger(`Dropped prefix ${prefix} (${removed} rows)`);
       continue;
     }
     const toDelete: BatchOperation[] = [];
