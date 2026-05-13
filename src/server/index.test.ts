@@ -9,7 +9,7 @@ import {
   WorkflowCompletedEvent,
 } from '../core/events.ts';
 import type { RetryPolicy, WorkflowContext } from '../core/types.ts';
-import { METRICS, MetricsCollector } from '../observability/metrics.ts';
+import { METRICS } from '../observability/metrics.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -902,8 +902,7 @@ describe('worker WebSocket protocol', () => {
 
   it('records task lifecycle metadata and low-cardinality metrics for WebSocket dispatches', async () => {
     engine = createEngine();
-    const metricsCollector = new MetricsCollector();
-    server = serve({ engine, port: 0, metricsCollector });
+    server = serve({ engine, port: 0 });
 
     const ws = await connectWorker(server);
     await registerWorker(ws, { workerId: 'w-diagnostics', activities: ['charge'], concurrency: 1 });
@@ -965,7 +964,74 @@ describe('worker WebSocket protocol', () => {
     expect(typeof resolved.queueLatencyMs).toBe('number');
     expect(typeof resolved.executionLatencyMs).toBe('number');
 
-    const snapshot = metricsCollector.snapshot();
+    const metricsResponse = await fetch(`${server.url}/v1/metrics`);
+    expect(metricsResponse.status).toBe(200);
+    const metricsText = await metricsResponse.text();
+    expect(metricsText).toContain('weft_task_queue_latency_count 1');
+    expect(metricsText).toContain('weft_task_execution_latency_count 1');
+    expect(metricsText).toContain('weft_worker_capacity_saturation 0');
+
+    ws.close();
+    await waitForRealTimersForTesting(50);
+  });
+
+  it('exposes WebSocket dispatch metrics through the server-owned system metrics endpoint', async () => {
+    engine = createEngine();
+    const apiKey = 'metrics-system-read-key';
+    server = serve({
+      engine,
+      port: 0,
+      auth: {
+        apiKeys: [apiKey],
+        defaultApiKeyScopes: ['system:read'],
+        publicPaths: [
+          '/v1/health',
+          '/v1/metrics',
+          '/.well-known/api-catalog',
+          '/openapi.json',
+          '/openrpc.json',
+          '/asyncapi.json',
+          '/v1/tasks/default/stream',
+        ],
+      },
+    });
+
+    const ws = await connectWorker(server);
+    await registerWorker(ws, { workerId: 'w-owned-metrics', activities: ['charge'] });
+
+    ws.addEventListener('message', (event) => {
+      const message = JSON.parse(String(event.data)) as { type: string; operationId?: string };
+      if (message.type === 'task') {
+        ws.send(
+          JSON.stringify({
+            type: 'taskResult',
+            operationId: message.operationId,
+            status: 'completed',
+            value: 42,
+          }),
+        );
+      }
+    });
+
+    await server.dispatchTask({
+      operationId: 'server-owned-metrics-op',
+      activityName: 'charge',
+      input: null,
+      workflowId: 'workflow-server-owned-metrics',
+    });
+
+    await waitFor(
+      async () =>
+        (await engine.storage.get(KEYS.operationResolved('server-owned-metrics-op'))) !== null,
+      { label: 'server-owned-metrics-op to resolve' },
+    );
+
+    const response = await fetch(`${server.url}/v1/metrics/json`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+
+    expect(response.status).toBe(200);
+    const snapshot = (await response.json()) as Record<string, { type?: string; value?: number }>;
     expect(snapshot[METRICS.taskQueueLatency.name]?.type).toBe('histogram');
     expect(snapshot[METRICS.taskExecutionLatency.name]?.type).toBe('histogram');
     expect(snapshot[METRICS.workerCapacitySaturation.name]).toEqual({ type: 'gauge', value: 0 });
@@ -976,7 +1042,6 @@ describe('worker WebSocket protocol', () => {
 
   it('refreshes stale heartbeat metrics from runtime reconciliation scans', async () => {
     engine = createEngine();
-    const metricsCollector = new MetricsCollector();
     const now = Date.now();
     const staleInflightRecord: InflightRecord = {
       operationId: 'stale-heartbeat-metric-op',
@@ -1003,14 +1068,14 @@ describe('worker WebSocket protocol', () => {
     server = serve({
       engine,
       port: 0,
-      metricsCollector,
       visibilityPollIntervalMs: 10,
     });
 
     await waitFor(
-      () => {
-        const metric = metricsCollector.snapshot()[METRICS.taskStaleHeartbeats.name];
-        return metric?.type === 'gauge' && metric.value === 1;
+      async () => {
+        const response = await fetch(`${server.url}/v1/metrics`);
+        const text = await response.text();
+        return text.includes('weft_task_stale_heartbeats 1');
       },
       { label: 'stale heartbeat metric to refresh', timeoutMs: 1000 },
     );
@@ -2727,8 +2792,7 @@ describe('long-poll endpoints (GET /v1/tasks/:queue, POST /v1/tasks/:queue/resul
 
   it('persists lifecycle metadata when a long-poll worker completes immediately after claim', async () => {
     engine = createEngine();
-    const metricsCollector = new MetricsCollector();
-    server = serve({ engine, port: 0, metricsCollector });
+    server = serve({ engine, port: 0 });
 
     await server.dispatchTask({
       operationId: 'long-poll-diagnostics-op',
@@ -2775,9 +2839,11 @@ describe('long-poll endpoints (GET /v1/tasks/:queue, POST /v1/tasks/:queue/resul
     expect(typeof resolved.queueLatencyMs).toBe('number');
     expect(typeof resolved.executionLatencyMs).toBe('number');
 
-    const snapshot = metricsCollector.snapshot();
-    expect(snapshot[METRICS.taskQueueLatency.name]?.type).toBe('histogram');
-    expect(snapshot[METRICS.taskExecutionLatency.name]?.type).toBe('histogram');
+    const metricsResponse = await fetch(`${server.url}/v1/metrics`);
+    expect(metricsResponse.status).toBe(200);
+    const metricsText = await metricsResponse.text();
+    expect(metricsText).toContain('weft_task_queue_latency_count 1');
+    expect(metricsText).toContain('weft_task_execution_latency_count 1');
   });
 
   it('refreshes lastQueuedAt when redispatching an existing queued record to long-poll', async () => {

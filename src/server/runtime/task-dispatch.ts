@@ -134,8 +134,8 @@ export async function dispatchTaskImpl(
           now,
         },
       );
-      recordTaskQueueLatencyMetric(options.metricsCollector, normalizedInflightRecord);
-      recordWorkerCapacitySaturationMetric(options.metricsCollector, context.registry);
+      recordTaskQueueLatencyMetric(context.metricsCollector, normalizedInflightRecord);
+      recordWorkerCapacitySaturationMetric(context.metricsCollector, context.registry);
 
       // Record affinity for future sticky routing (FIFO eviction when over limit).
       if (task.workflowId) {
@@ -207,7 +207,7 @@ export async function dispatchTaskImpl(
     ...(task.headers ? { headers: task.headers } : {}),
     ...(resolvedPriority !== undefined ? { priority: resolvedPriority } : {}),
   });
-  recordTaskBacklogMetric(options.metricsCollector, context.taskQueue);
+  recordTaskBacklogMetric(context.metricsCollector, context.taskQueue);
   return enqueued;
 }
 

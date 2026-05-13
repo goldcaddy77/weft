@@ -67,7 +67,6 @@ import {
 import {
   createGetSystemMetricsOperation,
   createGetSystemMetricsRestBinding,
-  getSystemMetricsOperation,
 } from './operations/get-system-metrics.ts';
 import {
   createGetTaskDiagnosticsOperation,
@@ -332,9 +331,7 @@ type LiveOperationRegistryOptions = {
 };
 
 function buildSystemMetricsOperation(options: LiveOperationRegistryOptions) {
-  return options.metricsCollector === undefined
-    ? getSystemMetricsOperation
-    : createGetSystemMetricsOperation({ metricsCollector: options.metricsCollector });
+  return createGetSystemMetricsOperation({ metricsCollector: options.metricsCollector });
 }
 
 function buildListWorkersOperationForRegistry(options: LiveOperationRegistryOptions) {

@@ -71,8 +71,8 @@ export async function markTaskClaimedByLongPollWorker(
     task.operationId,
     inflightRecord,
   );
-  recordTaskQueueLatencyMetric(options.metricsCollector, normalizedInflightRecord);
-  recordTaskBacklogMetric(options.metricsCollector, context.taskQueue);
+  recordTaskQueueLatencyMetric(context.metricsCollector, normalizedInflightRecord);
+  recordTaskBacklogMetric(context.metricsCollector, context.taskQueue);
 }
 
 export async function handleTaskPollRequest(
@@ -170,7 +170,7 @@ export async function handleTaskResultRequest(
       resolutionReason: resolvedStatus,
     });
     if (inflightRecord !== null) {
-      recordTaskExecutionLatencyMetric(options.metricsCollector, inflightRecord, resolvedAt);
+      recordTaskExecutionLatencyMetric(context.metricsCollector, inflightRecord, resolvedAt);
     }
   } catch (error) {
     console.error(
