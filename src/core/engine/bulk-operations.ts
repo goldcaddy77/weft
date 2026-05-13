@@ -101,17 +101,7 @@ export async function purge(
   );
 }
 
-export async function cancelAll(
-  internals: EngineInternals,
-  filter: ListFilter,
-  options: BulkOperationDryRunOptions,
-): Promise<BulkOperationDryRunResult>;
-export async function cancelAll(
-  internals: EngineInternals,
-  filter: ListFilter,
-  options?: BulkOperationCommitOptions,
-): Promise<BulkCancelResult>;
-export async function cancelAll(
+export async function runBulkCancellation(
   internals: EngineInternals,
   filter: ListFilter,
   options: BulkOperationOptions = {},
@@ -156,6 +146,29 @@ export async function cancelAll(
   const result: BulkCancelResult = { cancelled, failed: errors.length, errors };
   if (!shouldPersistBulkAudit(options)) return result;
   return withBulkAuditEvent(internals, preparation, options, result, cancelled);
+}
+
+export async function cancelAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  options: BulkOperationDryRunOptions,
+): Promise<BulkOperationDryRunResult>;
+export async function cancelAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  options?: BulkOperationCommitOptions,
+): Promise<BulkCancelResult>;
+export async function cancelAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
+): Promise<BulkCancelResult | BulkOperationDryRunResult>;
+export async function cancelAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  options: BulkOperationOptions = {},
+): Promise<BulkCancelResult | BulkOperationDryRunResult> {
+  return runBulkCancellation(internals, filter, options);
 }
 
 export async function signalAll(
@@ -230,19 +243,7 @@ export async function signalAll(
   return withBulkAuditEvent(internals, preparation, options, result, signalled);
 }
 
-export async function deleteAll(
-  internals: EngineInternals,
-  filter: ListFilter,
-  cleanupWaiters: CleanupWaiters,
-  options: BulkOperationDryRunOptions,
-): Promise<BulkOperationDryRunResult>;
-export async function deleteAll(
-  internals: EngineInternals,
-  filter: ListFilter,
-  cleanupWaiters: CleanupWaiters,
-  options?: BulkOperationCommitOptions,
-): Promise<BulkDeleteResult>;
-export async function deleteAll(
+export async function runBulkDeletion(
   internals: EngineInternals,
   filter: ListFilter,
   cleanupWaiters: CleanupWaiters,
@@ -287,6 +288,42 @@ export async function deleteAll(
   return withBulkAuditEvent(internals, preparation, options, result, deleted);
 }
 
+export async function deleteAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  cleanupWaiters: CleanupWaiters,
+  options: BulkOperationDryRunOptions,
+): Promise<BulkOperationDryRunResult>;
+export async function deleteAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  cleanupWaiters: CleanupWaiters,
+  options?: BulkOperationCommitOptions,
+): Promise<BulkDeleteResult>;
+export async function deleteAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  cleanupWaiters: CleanupWaiters,
+  options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
+): Promise<BulkDeleteResult | BulkOperationDryRunResult>;
+export async function deleteAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  cleanupWaiters: CleanupWaiters,
+  options: BulkOperationOptions = {},
+): Promise<BulkDeleteResult | BulkOperationDryRunResult> {
+  return runBulkDeletion(internals, filter, cleanupWaiters, options);
+}
+
+export async function runBulkTagAddition(
+  internals: EngineInternals,
+  filter: ListFilter,
+  tags: string[],
+  options: BulkOperationOptions = {},
+): Promise<BulkTagResult | BulkOperationDryRunResult> {
+  return mutateTagsWithBulkControls(internals, filter, tags, 'add', options);
+}
+
 export async function tagAll(
   internals: EngineInternals,
   filter: ListFilter,
@@ -303,9 +340,24 @@ export async function tagAll(
   internals: EngineInternals,
   filter: ListFilter,
   tags: string[],
+  options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
+): Promise<BulkTagResult | BulkOperationDryRunResult>;
+export async function tagAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  tags: string[],
   options: BulkOperationOptions = {},
 ): Promise<BulkTagResult | BulkOperationDryRunResult> {
-  return mutateTagsWithBulkControls(internals, filter, tags, 'add', options);
+  return runBulkTagAddition(internals, filter, tags, options);
+}
+
+export async function runBulkTagRemoval(
+  internals: EngineInternals,
+  filter: ListFilter,
+  tags: string[],
+  options: BulkOperationOptions = {},
+): Promise<BulkTagResult | BulkOperationDryRunResult> {
+  return mutateTagsWithBulkControls(internals, filter, tags, 'remove', options);
 }
 
 export async function untagAll(
@@ -324,9 +376,15 @@ export async function untagAll(
   internals: EngineInternals,
   filter: ListFilter,
   tags: string[],
+  options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
+): Promise<BulkTagResult | BulkOperationDryRunResult>;
+export async function untagAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  tags: string[],
   options: BulkOperationOptions = {},
 ): Promise<BulkTagResult | BulkOperationDryRunResult> {
-  return mutateTagsWithBulkControls(internals, filter, tags, 'remove', options);
+  return runBulkTagRemoval(internals, filter, tags, options);
 }
 
 async function mutateTagsWithBulkControls(
@@ -575,7 +633,6 @@ function deriveBulkConfirmationToken(
     workflows: snapshots.map((snapshot) => ({
       id: snapshot.id,
       status: snapshot.status,
-      updatedAt: snapshot.updatedAt,
     })),
   })}`;
 }

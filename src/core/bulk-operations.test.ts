@@ -1075,6 +1075,52 @@ describe('bulk workflow operations', () => {
     }
   });
 
+  it('accepts confirmation tokens after workflow progress keeps the same bulk scope', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    engine.register('wait-for-signal', waitForSignalWorkflow);
+
+    try {
+      const handle = await engine.start('wait-for-signal', 'first', {
+        id: 'bulk-stable-token-progress',
+        tags: ['stable-token'],
+      });
+      await waitForWorkflowStatus(engine, handle.id, 'running');
+
+      const preview = await engine.cancelAll({ tags: ['stable-token'] }, { dryRun: true });
+      const storedWorkflowBytes = await storage.get(KEYS.workflow(handle.id));
+      if (storedWorkflowBytes === null) {
+        throw new Error('Expected stored workflow state for stable bulk confirmation token test');
+      }
+      const storedWorkflowState = decode(storedWorkflowBytes) as WorkflowState;
+      await storage.put(
+        KEYS.workflow(handle.id),
+        encode({
+          ...storedWorkflowState,
+          updatedAt: storedWorkflowState.updatedAt + 1_000,
+        } satisfies WorkflowState),
+      );
+
+      await expect(
+        engine.cancelAll(
+          { tags: ['stable-token'] },
+          { confirmationToken: preview.confirmationToken },
+        ),
+      ).resolves.toEqual(
+        expect.objectContaining({
+          cancelled: 1,
+          failed: 0,
+          errors: [],
+        }),
+      );
+
+      const cancelledWorkflow = await engine.get(handle.id);
+      expect(cancelledWorkflow?.status).toBe('cancelled');
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
   it('rejects signal confirmation tokens when the action payload changes', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
     engine.register('wait-for-signal', waitForSignalWorkflow);

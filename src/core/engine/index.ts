@@ -87,12 +87,12 @@ import { UpdateCoordinator } from '../updates.ts';
 import { WorkerExecutionStrategy } from '../worker-execution-strategy.ts';
 import { broadcast as broadcastFromInternals, type BroadcastCallbacks } from './broadcast.ts';
 import {
-  cancelAll as cancelAllWorkflows,
-  deleteAll as deleteAllWorkflows,
+  runBulkCancellation as cancelAllWorkflows,
+  runBulkDeletion as deleteAllWorkflows,
   purge as purgeWorkflows,
   signalAll as signalAllWorkflows,
-  tagAll as tagAllWorkflows,
-  untagAll as untagAllWorkflows,
+  runBulkTagAddition as tagAllWorkflows,
+  runBulkTagRemoval as untagAllWorkflows,
 } from './bulk-operations.ts';
 import {
   createBroadcastCallbacks as createBroadcastCallbacksForEngine,
@@ -987,9 +987,6 @@ export class Engine<
     filter: ListFilter,
     options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
   ): Promise<BulkCancelResult | BulkOperationDryRunResult> {
-    if (options?.dryRun === true) {
-      return cancelAllWorkflows(getInternals(this), filter, options);
-    }
     return cancelAllWorkflows(getInternals(this), filter, options);
   }
   async signalAll(
@@ -1033,19 +1030,6 @@ export class Engine<
     filter: ListFilter,
     options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
   ): Promise<BulkDeleteResult | BulkOperationDryRunResult> {
-    if (options?.dryRun === true) {
-      return deleteAllWorkflows(
-        getInternals(this),
-        filter,
-        (workflowId) =>
-          cleanupWaitersFromTermination(
-            getInternals(this),
-            workflowId,
-            this.#createTerminationCallbacks(),
-          ),
-        options,
-      );
-    }
     return deleteAllWorkflows(
       getInternals(this),
       filter,
@@ -1073,9 +1057,6 @@ export class Engine<
     tags: string[],
     options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
   ): Promise<BulkTagResult | BulkOperationDryRunResult> {
-    if (options?.dryRun === true) {
-      return tagAllWorkflows(getInternals(this), filter, tags, options);
-    }
     return tagAllWorkflows(getInternals(this), filter, tags, options);
   }
   async untagAll(
@@ -1093,9 +1074,6 @@ export class Engine<
     tags: string[],
     options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
   ): Promise<BulkTagResult | BulkOperationDryRunResult> {
-    if (options?.dryRun === true) {
-      return untagAllWorkflows(getInternals(this), filter, tags, options);
-    }
     return untagAllWorkflows(getInternals(this), filter, tags, options);
   }
   async schedule<TInput>(

@@ -80,10 +80,6 @@ export type {
   WorkflowTypeRetentionPolicy,
 } from './api-client-types.ts';
 
-// ---------------------------------------------------------------------------
-// Error
-// ---------------------------------------------------------------------------
-
 export class ApiError extends Error {
   readonly status: number;
 
@@ -93,10 +89,6 @@ export class ApiError extends Error {
     this.status = status;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Client
-// ---------------------------------------------------------------------------
 
 const BASE_PATH = '/v1';
 
