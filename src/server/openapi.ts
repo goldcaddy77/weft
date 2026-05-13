@@ -1,9 +1,10 @@
 /**
- * OpenAPI 3.1 document generator driven from the shared route model.
+ * OpenAPI 3.1 document generator driven from the operation and direct-route
+ * models.
  *
- * Produces a JSON-serializable OpenAPI document that reflects the exact
- * routes registered in `route-model.ts`. Both `handleRequest()` and
- * `serve()` expose this at `GET /openapi.json`.
+ * Produces a JSON-serializable OpenAPI document for the REST-ish HTTP
+ * surface. Both `handleRequest()` and `serve()` expose this at
+ * `GET /openapi.json`.
  *
  * @module server/openapi
  */
@@ -19,7 +20,12 @@ import type { ErasedOperation, OperationRegistry } from './operation-catalog.ts'
 import type { ParamSource } from './rest-binding.ts';
 import type { UnknownRestBinding } from './rest-bindings.ts';
 import { createLiveOperationRegistry, createLiveRestBindings } from './rest-bindings.ts';
-import { ROUTES, toOpenApiPath } from './route-model.ts';
+import {
+  DIRECT_HTTP_ROUTES,
+  toOpenApiPath,
+  type DirectHttpRouteDefinition,
+  type DirectRouteResponseContent,
+} from './route-model.ts';
 
 export type OpenApiSecuritySchemeName = 'bearerAuth' | 'apiKeyAuth';
 
@@ -35,7 +41,7 @@ export type OpenApiOptions = {
   version?: string;
   /** Operator-supplied discovery metadata applied to the generated document. */
   discoveryInfo?: DiscoveryInfo;
-  /** Operation registry used to emit migrated REST bindings. */
+  /** Operation registry used to emit operation-backed REST bindings. */
   registry?: OperationRegistry;
   /**
    * REST bindings used to emit OpenAPI path items. Defaults to
@@ -68,12 +74,7 @@ const DEFAULT_SCHEMA_HELPER: OpenApiSchemaHelper = {
 const JSON_MEDIA_TYPE = 'application/json';
 const OCTET_STREAM_MEDIA_TYPE = 'application/octet-stream';
 
-/**
- * Generate an OpenAPI 3.1 JSON document from the shared route definitions.
- *
- * Each route in `ROUTES` becomes a path item with the appropriate HTTP
- * method, summary, tags, and path parameters.
- */
+/** Build path parameter metadata for an Express-style route pattern. */
 function buildPathParameters(paramNames: readonly string[]): Array<Record<string, unknown>> {
   return paramNames.map((name) => ({
     name,
@@ -111,6 +112,11 @@ function binaryBodySchema(): OpenApiSchema {
 function streamingResponseSchema(mediaType: string): OpenApiSchema {
   if (mediaType === OCTET_STREAM_MEDIA_TYPE) return binaryBodySchema();
   return { type: 'string' };
+}
+
+function directRouteContentSchema(content: DirectRouteResponseContent): OpenApiSchema {
+  if (content.schema === 'string') return { type: 'string' };
+  return { type: 'object' };
 }
 
 function outputCanBeNull(operation: ErasedOperation): boolean {
@@ -274,21 +280,12 @@ export function emitBindings(
   bindings: ReadonlyArray<UnknownRestBinding> = createLiveRestBindings(),
   registry: OperationRegistry = createLiveOperationRegistry(),
   schemaHelper: OpenApiSchemaHelper = DEFAULT_SCHEMA_HELPER,
-): Set<string> {
-  const boundMethodPaths = new Set<string>();
+): void {
   for (const binding of bindings) {
     const operation: ErasedOperation | undefined = registry.get(binding.operationName);
     if (operation === undefined) continue;
     const openApiPath = toOpenApiPath(binding.path);
-    // Order matters: skipping non-discoverable bindings BEFORE adding to
-    // `boundMethodPaths` is intentional. `boundMethodPaths` suppresses
-    // legacy `ROUTES` entries that share the same path; not adding here
-    // means a non-discoverable binding does NOT shadow its corresponding
-    // legacy route. If a future non-discoverable binding has no legacy
-    // fallback its path is intentionally absent from the doc — that is
-    // what `discoverable: false` means.
     if (!isDiscoverable(operation)) continue;
-    boundMethodPaths.add(`${binding.method} ${openApiPath}`);
     if (!paths[openApiPath]) paths[openApiPath] = {};
 
     const parameters = buildBindingParameters(binding, operation);
@@ -310,18 +307,39 @@ export function emitBindings(
     paths[openApiPath][binding.method.toLowerCase()] = entry;
     for (const tag of operation.tags) tagSet.add(tag);
   }
-  return boundMethodPaths;
 }
 
-function emitRoutes(
+function buildDirectRouteResponses(route: DirectHttpRouteDefinition): Record<string, unknown> {
+  const responses: Record<string, unknown> = {};
+  for (const routeResponse of route.responses) {
+    const response: Record<string, unknown> = {
+      description: routeResponse.description,
+    };
+    if (routeResponse.content !== undefined) {
+      const content: Record<string, { schema: OpenApiSchema }> = {};
+      for (const contentVariant of routeResponse.content) {
+        content[contentVariant.mediaType] = {
+          schema: directRouteContentSchema(contentVariant),
+        };
+      }
+      response['content'] = content;
+    }
+    responses[String(routeResponse.status)] = response;
+  }
+  return responses;
+}
+
+function buildDirectRouteSecurity(route: DirectHttpRouteDefinition): [] | undefined {
+  if (route.access === 'public') return [];
+  return undefined;
+}
+
+function emitDirectRoutes(
   paths: Record<string, Record<string, unknown>>,
   tagSet: Set<string>,
-  boundMethodPaths: Set<string>,
 ): void {
-  for (const route of ROUTES) {
-    if (route.handler === 'openApiDocument') continue;
+  for (const route of DIRECT_HTTP_ROUTES) {
     const openApiPath = toOpenApiPath(route.path);
-    if (boundMethodPaths.has(`${route.method} ${openApiPath}`)) continue;
     if (!paths[openApiPath]) paths[openApiPath] = {};
 
     const parameters = buildPathParameters(route.paramNames);
@@ -329,13 +347,11 @@ function emitRoutes(
       summary: route.summary,
       operationId: route.handler,
       tags: route.tags,
-      responses: { '200': { description: 'Successful response' } },
+      responses: buildDirectRouteResponses(route),
     };
+    const security = buildDirectRouteSecurity(route);
+    if (security !== undefined) entry['security'] = security;
     if (parameters.length > 0) entry['parameters'] = parameters;
-    // `ROUTES` only contains direct-handler legacy endpoints, and that
-    // table is intentionally GET-only. Any body-carrying route must be
-    // cataloged in REST_BINDINGS so the runtime API and OpenAPI contract
-    // stay aligned from one source of truth.
 
     paths[openApiPath][route.method.toLowerCase()] = entry;
     for (const tag of route.tags) tagSet.add(tag);
@@ -354,10 +370,10 @@ export function generateOpenApiDocument(options?: OpenApiOptions): Record<string
   const tagSet = new Set<string>();
   const schemaHelper = extractComponentsSchemas(registry);
 
-  // REST_BINDINGS win against any stale ROUTES entry covering the same
-  // (method, path) — a migrated operation owns its OpenAPI description.
-  const boundMethodPaths = emitBindings(paths, tagSet, restBindings, registry, schemaHelper);
-  emitRoutes(paths, tagSet, boundMethodPaths);
+  emitBindings(paths, tagSet, restBindings, registry, schemaHelper);
+  // Direct routes are reserved infrastructure endpoints, so they are emitted
+  // after bindings and overwrite any conflicting user binding documentation.
+  emitDirectRoutes(paths, tagSet);
 
   const tags = [...tagSet].toSorted().map((name) => ({ name }));
   const supportedSchemes =

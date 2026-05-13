@@ -143,8 +143,8 @@ describe('handler pipeline — restBindings / operationRegistry pairing guard', 
   });
 });
 
-describe('handler pipeline — route precedence and legacy-route failures', () => {
-  it('returns 500 when a legacy route executor throws unexpectedly', async () => {
+describe('handler pipeline — direct-route failures', () => {
+  it('returns 500 when a direct route executor throws unexpectedly', async () => {
     const engine = createEngine();
     const explodingRegistry = {
       get() {
@@ -473,7 +473,7 @@ describe('handler pipeline — authContextToPrincipal branches', () => {
     expect(captured.principal?.method).toBe('unauthenticated');
   });
 
-  it('returns 400 when legacy route matching sees malformed percent encoding', async () => {
+  it('returns 400 when route matching sees malformed percent encoding', async () => {
     const engine = createEngine();
 
     const response = await handleRequest(

@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed (breaking)
+
+The `weft/server/handler` subpath no longer exports the internal legacy route
+precedence helpers `countLiteralSegments`, `countPathParameters`, or
+`shouldPreferLegacyRoute`. Direct meta and discovery endpoints are now modeled
+as reserved direct HTTP routes instead of legacy fallbacks.
+
 ## [0.1.0] - 2026-05-11
 
 ### Removed (breaking)

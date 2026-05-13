@@ -1,10 +1,10 @@
 /**
- * Live registry of `RestBinding` instances for migrated REST operations.
+ * Live registry of `RestBinding` instances for operation-backed REST routes.
  *
  * Each entry is a REST route whose dispatch flows through the shared
- * `executeOperation` pipeline. The router (handleRequest) matches
- * against `REST_BINDINGS` first; a miss falls through to the legacy
- * `ROUTES`/`ROUTE_EXECUTORS` table for operations not yet migrated.
+ * `executeOperation` pipeline. The router (handleRequest) checks reserved
+ * direct meta and discovery routes first; remaining requests then match
+ * these operation-backed bindings.
  *
  * @module server/rest-bindings
  */
@@ -263,7 +263,7 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
   getStreamChunksRestBinding,
   streamWorkflowSseRestBinding,
   getTaskDiagnosticsRestBinding,
-  // Wave 1 — previously legacy direct handlers
+  // Track 8 operation-backed routes
   listSchedulesRestBinding,
   getScheduleRestBinding,
   getTenantQuotaRestBinding,
@@ -433,7 +433,7 @@ export function createLiveOperationRegistry(
     streamWorkflowSseOperation,
     workflowEventsSubscriptionOperation,
     buildTaskDiagnosticsOperationForRegistry(resolved),
-    // Wave 1 — previously legacy direct handlers
+    // Track 8 operation-backed routes
     listSchedulesOperation,
     getScheduleOperation,
     getTenantQuotaOperation,

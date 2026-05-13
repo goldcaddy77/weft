@@ -1,0 +1,65 @@
+#!/usr/bin/env bun
+
+export type ConformanceRegisterExitWorkerFixture = 'register-exit';
+
+const serverUrl = Bun.env['WEFT_WORKER_URL'];
+const queue = Bun.env['WEFT_WORKER_QUEUE'] ?? 'conformance';
+const protocolVersion = Number(Bun.env['WEFT_WORKER_PROTOCOL_VERSION'] ?? '1');
+const activities = (Bun.env['WEFT_WORKER_ACTIVITIES'] ?? '')
+  .split(',')
+  .map((activity) => activity.trim())
+  .filter((activity) => activity.length > 0);
+const workerId = `register-exit-worker-${crypto.randomUUID()}`;
+
+if (serverUrl === undefined) {
+  console.error('WEFT_WORKER_URL is required');
+  process.exit(2);
+}
+
+const socket = new WebSocket(serverUrl);
+
+function send(message: Record<string, unknown>): void {
+  if (socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify(message));
+  }
+}
+
+socket.addEventListener('open', () => {
+  send({
+    type: 'register',
+    protocolVersion,
+    workerId,
+    activities,
+    concurrency: 1,
+    queue,
+  });
+});
+
+socket.addEventListener('message', (event) => {
+  const parsed = JSON.parse(String(event.data)) as Record<string, unknown>;
+  if (parsed['type'] === 'registerAck') {
+    return;
+  }
+  if (parsed['type'] !== 'task') {
+    return;
+  }
+
+  const operationId = parsed['operationId'];
+  const activityName = parsed['activityName'];
+  if (typeof operationId !== 'string' || activityName !== 'weft.conformance.echo') {
+    return;
+  }
+
+  send({ type: 'taskResult', operationId, status: 'completed', value: parsed['input'] ?? null });
+  setTimeout(() => {
+    socket.close();
+  }, 10);
+});
+
+socket.addEventListener('close', () => {
+  process.exit(0);
+});
+
+socket.addEventListener('error', () => {
+  process.exit(1);
+});
