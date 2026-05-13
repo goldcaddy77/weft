@@ -1,3 +1,5 @@
+/* oxlint-disable max-lines -- ID:core-engine-bulk-operations-file-length */
+
 import type { BatchOperation, Storage as WeftStorage } from '../../storage/interface.ts';
 import {
   KEYS,
@@ -6,12 +8,24 @@ import {
   tryDecodeStorageKeyComponent,
 } from '../../storage/interface.ts';
 import { assertScopedBulkWorkflowFilter } from '../bulk-workflow-filter.ts';
-import { decode } from '../codec.ts';
-import { buildIndexOperations } from '../search-attributes.ts';
+import { decode, encode } from '../codec.ts';
+import { computeSemanticHash } from '../effect-log/index.ts';
+import { buildIndexOperations, searchAttributeName } from '../search-attributes.ts';
 import type {
   BulkCancelResult,
   BulkDeleteResult,
+  BulkOperationAction,
+  BulkOperationAuditEvent,
+  BulkOperationCommitOptions,
+  BulkOperationDryRunOptions,
+  BulkOperationDryRunResult,
   BulkOperationError,
+  BulkOperationFilterSummary,
+  BulkOperationOptions,
+  BulkOperationPrincipal,
+  BulkOperationScopeSummary,
+  BulkSignalAllCommitOptions,
+  BulkSignalAllDryRunOptions,
   BulkSignalResult,
   BulkTagResult,
   ListFilter,
@@ -21,9 +35,16 @@ import type {
   WorkflowState,
   WorkflowStatus,
 } from '../types.ts';
+import {
+  MAX_BULK_CONFIRMATION_TOKEN_LENGTH,
+  MAX_BULK_OPERATION_REQUEST_ID_LENGTH,
+} from '../types/bulk.ts';
 import { buildWorkflowTagIndexOperations, normalizeWorkflowTags } from '../workflow-tags.ts';
 import { bulkMutateWorkflowTags } from './attributes-tags.ts';
-import { BulkDeleteRequiresTerminalWorkflowsError } from './errors.ts';
+import {
+  BulkDeleteRequiresTerminalWorkflowsError,
+  BulkOperationConfirmationError,
+} from './errors.ts';
 import type { EngineInternals } from './internals.ts';
 import {
   BULK_OPERATION_BATCH_SIZE,
@@ -50,6 +71,23 @@ type PurgeParameters = {
 type CleanupWaiters = (workflowId: string) => void;
 
 const ACTIVE_WORKFLOW_STATUSES: WorkflowStatus[] = ['pending', 'running'];
+const BULK_OPERATION_SAMPLE_LIMIT = 20;
+const DEFAULT_BULK_OPERATION_PRINCIPAL: BulkOperationPrincipal = { method: 'in-process' };
+
+type BulkWorkflowSnapshot = {
+  id: string;
+  type: string;
+  status: WorkflowStatus;
+  updatedAt: number;
+  tenantId?: string;
+};
+
+type BulkOperationPreparation = {
+  workflowIds: string[];
+  confirmationToken: string;
+  preview: BulkOperationDryRunResult;
+  scope: BulkOperationScopeSummary;
+};
 
 export async function purge(
   internals: EngineInternals,
@@ -64,17 +102,30 @@ export async function purge(
   );
 }
 
-export async function cancelAll(
+async function runBulkCancellation(
   internals: EngineInternals,
   filter: ListFilter,
-): Promise<BulkCancelResult> {
+  options: BulkOperationOptions = {},
+): Promise<BulkCancelResult | BulkOperationDryRunResult> {
+  options = normalizeBulkOperationOptions(options);
   assertScopedBulkWorkflowFilter(filter);
   const actionableFilter = buildActionableBulkWorkflowFilter(
     internals,
     filter,
     ACTIVE_WORKFLOW_STATUSES,
   );
-  const workflowIdsToCancel = await snapshotMatchingWorkflowIds(internals, actionableFilter);
+  const preparation = await prepareBulkOperation(
+    internals,
+    'cancel',
+    actionableFilter,
+    filter,
+    {},
+    options,
+  );
+  if (options.dryRun === true) return preparation.preview;
+
+  validateBulkConfirmation(options, preparation);
+  const workflowIdsToCancel = preparation.workflowIds;
   let cancelled = 0;
   const errors: BulkOperationError[] = [];
 
@@ -93,15 +144,70 @@ export async function cancelAll(
     }
   }
 
-  return { cancelled, failed: errors.length, errors };
+  const result: BulkCancelResult = { cancelled, failed: errors.length, errors };
+  if (!shouldPersistBulkAudit(options)) return result;
+  return withBulkAuditEvent(internals, preparation, options, result, cancelled);
+}
+
+export async function cancelAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  options: BulkOperationDryRunOptions,
+): Promise<BulkOperationDryRunResult>;
+export async function cancelAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  options?: BulkOperationCommitOptions,
+): Promise<BulkCancelResult>;
+export async function cancelAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
+): Promise<BulkCancelResult | BulkOperationDryRunResult>;
+export async function cancelAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  options: BulkOperationOptions = {},
+): Promise<BulkCancelResult | BulkOperationDryRunResult> {
+  return runBulkCancellation(internals, filter, options);
 }
 
 export async function signalAll(
   internals: EngineInternals,
   filter: ListFilter,
   name: string,
+  payload: unknown,
+  options: BulkSignalAllDryRunOptions,
+): Promise<BulkOperationDryRunResult>;
+export async function signalAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  name: string,
+  payload: unknown,
+  options: BulkSignalAllCommitOptions,
+): Promise<BulkSignalResult>;
+export async function signalAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  name: string,
   payload?: unknown,
-): Promise<BulkSignalResult> {
+  options?: BulkOperationCommitOptions,
+): Promise<BulkSignalResult>;
+export async function signalAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  name: string,
+  payload: unknown,
+  options: BulkOperationOptions,
+): Promise<BulkSignalResult | BulkOperationDryRunResult>;
+export async function signalAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  name: string,
+  payload?: unknown,
+  maybeOptions?: BulkOperationOptions,
+): Promise<BulkSignalResult | BulkOperationDryRunResult> {
+  const options = normalizeBulkOperationOptions(maybeOptions ?? {});
   assertScopedBulkWorkflowFilter(filter);
   if (name.length === 0) throw new Error('Field "name" must be a non-empty string');
   const actionableFilter = buildActionableBulkWorkflowFilter(
@@ -109,7 +215,18 @@ export async function signalAll(
     filter,
     ACTIVE_WORKFLOW_STATUSES,
   );
-  const workflowIdsToSignal = await snapshotMatchingWorkflowIds(internals, actionableFilter);
+  const preparation = await prepareBulkOperation(
+    internals,
+    'signal',
+    actionableFilter,
+    filter,
+    { name, payload },
+    options,
+  );
+  if (options.dryRun === true) return preparation.preview;
+
+  validateBulkConfirmation(options, preparation);
+  const workflowIdsToSignal = preparation.workflowIds;
   let signalled = 0;
   let failed = 0;
 
@@ -122,46 +239,44 @@ export async function signalAll(
     }
   }
 
-  return { signalled, failed };
+  const result: BulkSignalResult = { signalled, failed };
+  if (!shouldPersistBulkAudit(options)) return result;
+  return withBulkAuditEvent(internals, preparation, options, result, signalled);
 }
 
-export async function deleteAll(
+async function runBulkDeletion(
   internals: EngineInternals,
   filter: ListFilter,
   cleanupWaiters: CleanupWaiters,
-): Promise<BulkDeleteResult> {
+  options: BulkOperationOptions = {},
+): Promise<BulkDeleteResult | BulkOperationDryRunResult> {
+  options = normalizeBulkOperationOptions(options);
   assertScopedBulkWorkflowFilter(filter);
-  const candidateWorkflowIds: string[] = [];
+  const candidateWorkflowSnapshots = await collectTerminalWorkflowSnapshots(internals, filter);
+  const preparation = buildBulkOperationPreparation(
+    'delete',
+    filter,
+    {},
+    candidateWorkflowSnapshots,
+    options,
+  );
+  if (options.dryRun === true) return preparation.preview;
 
-  for await (const batch of streamWorkflowStateBatches(internals, filter)) {
-    for (const state of batch) {
-      if (!isTerminalWorkflowStatus(state.status))
-        throw new BulkDeleteRequiresTerminalWorkflowsError();
-
-      candidateWorkflowIds.push(state.id);
-    }
-  }
-
+  validateBulkConfirmation(options, preparation);
   let deleted = 0;
   for (
     let batchStart = 0;
-    batchStart < candidateWorkflowIds.length;
+    batchStart < preparation.workflowIds.length;
     batchStart += BULK_OPERATION_BATCH_SIZE
   ) {
-    const batchWorkflowIds = candidateWorkflowIds.slice(
+    const batchWorkflowIds = preparation.workflowIds.slice(
       batchStart,
       batchStart + BULK_OPERATION_BATCH_SIZE,
     );
-    const workflowStatesToDelete: WorkflowState[] = [];
-
-    for (const workflowId of batchWorkflowIds) {
-      const refreshedState = await loadWorkflowState(internals, workflowId);
-      if (refreshedState === null) continue;
-      if (!isTerminalWorkflowStatus(refreshedState.status))
-        throw new BulkDeleteRequiresTerminalWorkflowsError();
-
-      workflowStatesToDelete.push(refreshedState);
-    }
+    const workflowStatesToDelete = await loadTerminalWorkflowStatesForBatch(
+      internals,
+      batchWorkflowIds,
+    );
 
     for (const workflowState of workflowStatesToDelete) {
       await purgeWorkflow(internals, workflowState, cleanupWaiters);
@@ -169,23 +284,140 @@ export async function deleteAll(
     }
   }
 
-  return { deleted };
+  const result: BulkDeleteResult = { deleted };
+  if (!shouldPersistBulkAudit(options)) return result;
+  return withBulkAuditEvent(internals, preparation, options, result, deleted);
+}
+
+export async function deleteAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  cleanupWaiters: CleanupWaiters,
+  options: BulkOperationDryRunOptions,
+): Promise<BulkOperationDryRunResult>;
+export async function deleteAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  cleanupWaiters: CleanupWaiters,
+  options?: BulkOperationCommitOptions,
+): Promise<BulkDeleteResult>;
+export async function deleteAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  cleanupWaiters: CleanupWaiters,
+  options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
+): Promise<BulkDeleteResult | BulkOperationDryRunResult>;
+export async function deleteAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  cleanupWaiters: CleanupWaiters,
+  options: BulkOperationOptions = {},
+): Promise<BulkDeleteResult | BulkOperationDryRunResult> {
+  return runBulkDeletion(internals, filter, cleanupWaiters, options);
+}
+
+async function runBulkTagAddition(
+  internals: EngineInternals,
+  filter: ListFilter,
+  tags: string[],
+  options: BulkOperationOptions = {},
+): Promise<BulkTagResult | BulkOperationDryRunResult> {
+  return mutateTagsWithBulkControls(internals, filter, tags, 'add', options);
 }
 
 export async function tagAll(
   internals: EngineInternals,
   filter: ListFilter,
   tags: string[],
-): Promise<BulkTagResult> {
-  return bulkMutateWorkflowTags(internals, filter, tags, 'add');
+  options: BulkOperationDryRunOptions,
+): Promise<BulkOperationDryRunResult>;
+export async function tagAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  tags: string[],
+  options?: BulkOperationCommitOptions,
+): Promise<BulkTagResult>;
+export async function tagAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  tags: string[],
+  options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
+): Promise<BulkTagResult | BulkOperationDryRunResult>;
+export async function tagAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  tags: string[],
+  options: BulkOperationOptions = {},
+): Promise<BulkTagResult | BulkOperationDryRunResult> {
+  return runBulkTagAddition(internals, filter, tags, options);
+}
+
+async function runBulkTagRemoval(
+  internals: EngineInternals,
+  filter: ListFilter,
+  tags: string[],
+  options: BulkOperationOptions = {},
+): Promise<BulkTagResult | BulkOperationDryRunResult> {
+  return mutateTagsWithBulkControls(internals, filter, tags, 'remove', options);
 }
 
 export async function untagAll(
   internals: EngineInternals,
   filter: ListFilter,
   tags: string[],
-): Promise<BulkTagResult> {
-  return bulkMutateWorkflowTags(internals, filter, tags, 'remove');
+  options: BulkOperationDryRunOptions,
+): Promise<BulkOperationDryRunResult>;
+export async function untagAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  tags: string[],
+  options?: BulkOperationCommitOptions,
+): Promise<BulkTagResult>;
+export async function untagAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  tags: string[],
+  options?: BulkOperationDryRunOptions | BulkOperationCommitOptions,
+): Promise<BulkTagResult | BulkOperationDryRunResult>;
+export async function untagAll(
+  internals: EngineInternals,
+  filter: ListFilter,
+  tags: string[],
+  options: BulkOperationOptions = {},
+): Promise<BulkTagResult | BulkOperationDryRunResult> {
+  return runBulkTagRemoval(internals, filter, tags, options);
+}
+
+async function mutateTagsWithBulkControls(
+  internals: EngineInternals,
+  filter: ListFilter,
+  tags: string[],
+  mode: 'add' | 'remove',
+  options: BulkOperationOptions,
+): Promise<BulkTagResult | BulkOperationDryRunResult> {
+  options = normalizeBulkOperationOptions(options);
+  assertScopedBulkWorkflowFilter(filter);
+  const action: BulkOperationAction = mode === 'add' ? 'tag:add' : 'tag:remove';
+  const preparation = await prepareBulkOperation(
+    internals,
+    action,
+    filter,
+    filter,
+    { tags },
+    options,
+  );
+  if (options.dryRun === true) return preparation.preview;
+
+  validateBulkConfirmation(options, preparation);
+  const result = await bulkMutateWorkflowTags(
+    internals,
+    filter,
+    tags,
+    mode,
+    preparation.workflowIds,
+  );
+  if (!shouldPersistBulkAudit(options)) return result;
+  return withBulkAuditEvent(internals, preparation, options, result, result.modified);
 }
 
 export async function purgeInternal(
@@ -252,6 +484,249 @@ function buildActionableBulkWorkflowFilter(
 
   const [effectiveStatus] = effectiveStatuses;
   return { ...filter, status: effectiveStatus ?? [] };
+}
+
+async function prepareBulkOperation(
+  internals: EngineInternals,
+  action: BulkOperationAction,
+  scanFilter: ListFilter,
+  tokenFilter: ListFilter,
+  actionParameters: Record<string, unknown>,
+  options: BulkOperationOptions,
+): Promise<BulkOperationPreparation> {
+  const snapshots = await snapshotMatchingWorkflowSnapshots(internals, scanFilter);
+  return buildBulkOperationPreparation(action, tokenFilter, actionParameters, snapshots, options);
+}
+
+function buildBulkOperationPreparation(
+  action: BulkOperationAction,
+  filter: ListFilter,
+  actionParameters: Record<string, unknown>,
+  snapshots: readonly BulkWorkflowSnapshot[],
+  options: BulkOperationOptions,
+): BulkOperationPreparation {
+  const filterSummary = summarizeBulkFilter(filter);
+  const scope = summarizeBulkOperationScope(filterSummary, snapshots);
+  const requestId = resolveBulkOperationRequestId(
+    action,
+    filterSummary,
+    actionParameters,
+    scope,
+    options,
+  );
+  const confirmationToken = deriveBulkConfirmationToken(
+    action,
+    filterSummary,
+    actionParameters,
+    snapshots,
+  );
+  const sampleWorkflowIds = scope.sampleWorkflowIds;
+
+  return {
+    workflowIds: snapshots.map((snapshot) => snapshot.id),
+    confirmationToken,
+    scope,
+    preview: {
+      dryRun: true,
+      action,
+      matched: snapshots.length,
+      requestId,
+      scope,
+      sampleWorkflowIds,
+      confirmationToken,
+      confirmationTokenVersion: 1,
+    },
+  };
+}
+
+function summarizeBulkOperationScope(
+  filter: BulkOperationFilterSummary,
+  snapshots: readonly BulkWorkflowSnapshot[],
+): BulkOperationScopeSummary {
+  const sampleWorkflowIds = snapshots
+    .slice(0, BULK_OPERATION_SAMPLE_LIMIT)
+    .map((snapshot) => snapshot.id);
+
+  return {
+    matched: snapshots.length,
+    filter,
+    statuses: uniqueSorted(snapshots.map((snapshot) => snapshot.status)),
+    workflowTypes: uniqueSorted(snapshots.map((snapshot) => snapshot.type)),
+    tenantIds: uniqueSorted(
+      snapshots
+        .map((snapshot) => snapshot.tenantId)
+        .filter((tenantId): tenantId is string => tenantId !== undefined),
+    ),
+    sampleWorkflowIds,
+    sampleLimit: BULK_OPERATION_SAMPLE_LIMIT,
+  };
+}
+
+function summarizeBulkFilter(filter: ListFilter): BulkOperationFilterSummary {
+  const summary: BulkOperationFilterSummary = {};
+
+  if (filter.status !== undefined) {
+    summary.status = Array.isArray(filter.status) ? uniqueSorted(filter.status) : filter.status;
+  }
+  if (filter.type !== undefined) {
+    summary.type = filter.type;
+  }
+  const normalizedTags = normalizeWorkflowTags(filter.tags);
+  if (normalizedTags !== undefined) {
+    summary.tags = normalizedTags;
+  }
+  if (filter.attributes !== undefined) {
+    summary.attributes = filter.attributes
+      .map((attribute) => ({
+        key: searchAttributeName(attribute.key),
+        ...(attribute.value === undefined ? {} : { value: attribute.value }),
+        ...(attribute.gt === undefined ? {} : { gt: attribute.gt }),
+        ...(attribute.lt === undefined ? {} : { lt: attribute.lt }),
+        ...(attribute.gte === undefined ? {} : { gte: attribute.gte }),
+        ...(attribute.lte === undefined ? {} : { lte: attribute.lte }),
+      }))
+      .toSorted((left, right) =>
+        computeSemanticHash(left).localeCompare(computeSemanticHash(right)),
+      );
+  }
+  if (filter.limit !== undefined) {
+    summary.limit = filter.limit;
+  }
+  if (filter.offset !== undefined) {
+    summary.offset = filter.offset;
+  }
+
+  return summary;
+}
+
+function resolveBulkOperationRequestId(
+  action: BulkOperationAction,
+  filterSummary: BulkOperationFilterSummary,
+  actionParameters: Record<string, unknown>,
+  scope: BulkOperationScopeSummary,
+  options: BulkOperationOptions,
+): string {
+  const explicitRequestId = options.requestId?.trim();
+  if (explicitRequestId !== undefined && explicitRequestId.length > 0) {
+    return explicitRequestId;
+  }
+
+  return `bulk:${computeSemanticHash({
+    action,
+    actionParameters: sanitizeBulkTokenValue(actionParameters),
+    filterSummary,
+    matched: scope.matched,
+    sampleWorkflowIds: scope.sampleWorkflowIds,
+  })}`;
+}
+
+function deriveBulkConfirmationToken(
+  action: BulkOperationAction,
+  filterSummary: BulkOperationFilterSummary,
+  actionParameters: Record<string, unknown>,
+  snapshots: readonly BulkWorkflowSnapshot[],
+): string {
+  return `bulk:${computeSemanticHash({
+    version: 1,
+    action,
+    actionParameters: sanitizeBulkTokenValue(actionParameters),
+    filterSummary,
+    workflows: snapshots.map((snapshot) => ({
+      id: snapshot.id,
+      status: snapshot.status,
+    })),
+  })}`;
+}
+
+function validateBulkConfirmation(
+  options: BulkOperationCommitOptions,
+  preparation: BulkOperationPreparation,
+): void {
+  if (options.confirmationToken === undefined) return;
+  if (options.confirmationToken === preparation.confirmationToken) return;
+
+  throw new BulkOperationConfirmationError();
+}
+
+function shouldPersistBulkAudit(options: BulkOperationCommitOptions): boolean {
+  return (
+    options.confirmationToken !== undefined ||
+    options.requestId !== undefined ||
+    options.principal !== undefined
+  );
+}
+
+async function withBulkAuditEvent<TResult extends object>(
+  internals: EngineInternals,
+  preparation: BulkOperationPreparation,
+  options: BulkOperationCommitOptions,
+  result: TResult,
+  affectedCount: number,
+): Promise<TResult & { auditEvent: BulkOperationAuditEvent }> {
+  const auditEvent = await persistBulkOperationAuditEvent(
+    internals,
+    preparation,
+    options,
+    affectedCount,
+  );
+  return { ...result, auditEvent };
+}
+
+async function persistBulkOperationAuditEvent(
+  internals: EngineInternals,
+  preparation: BulkOperationPreparation,
+  options: BulkOperationCommitOptions,
+  affectedCount: number,
+): Promise<BulkOperationAuditEvent> {
+  const timestamp = internals.options.getNow();
+  const explicitRequestId = options.requestId?.trim();
+  const requestId =
+    explicitRequestId !== undefined && explicitRequestId.length > 0
+      ? explicitRequestId
+      : preparation.preview.requestId;
+  const auditEvent: BulkOperationAuditEvent = {
+    type: 'bulk-operation:audit',
+    action: preparation.preview.action,
+    requestId,
+    timestamp,
+    principal: options.principal ?? DEFAULT_BULK_OPERATION_PRINCIPAL,
+    filterSummary: preparation.scope.filter,
+    scope: preparation.scope,
+    affectedCount,
+    sampleWorkflowIds: preparation.scope.sampleWorkflowIds,
+    confirmationToken: preparation.confirmationToken,
+  };
+
+  await internals.storage.put(
+    KEYS.bulkOperationAudit(timestamp, requestId, preparation.confirmationToken),
+    encode(auditEvent),
+  );
+  return auditEvent;
+}
+
+function normalizeBulkOperationOptions<TOptions extends BulkOperationOptions>(
+  options: TOptions,
+): TOptions {
+  const confirmationToken = 'confirmationToken' in options ? options.confirmationToken : undefined;
+  if (
+    confirmationToken !== undefined &&
+    confirmationToken.length > MAX_BULK_CONFIRMATION_TOKEN_LENGTH
+  ) {
+    throw new Error(
+      `Field "confirmationToken" must be at most ${String(MAX_BULK_CONFIRMATION_TOKEN_LENGTH)} characters`,
+    );
+  }
+
+  if (
+    options.requestId !== undefined &&
+    options.requestId.length > MAX_BULK_OPERATION_REQUEST_ID_LENGTH
+  ) {
+    throw new Error(
+      `Field "requestId" must be at most ${String(MAX_BULK_OPERATION_REQUEST_ID_LENGTH)} characters`,
+    );
+  }
+
+  return options;
 }
 
 function toBulkOperationError(
@@ -321,18 +796,91 @@ async function* streamExpiredRetentionWorkflowStates(
   }
 }
 
-async function snapshotMatchingWorkflowIds(
+async function snapshotMatchingWorkflowSnapshots(
   internals: EngineInternals,
   filter?: ListFilter,
-): Promise<string[]> {
-  const workflowIds: string[] = [];
+): Promise<BulkWorkflowSnapshot[]> {
+  const snapshots: BulkWorkflowSnapshot[] = [];
 
   // Snapshot ids before mutating workflow state entries so storage scans
   // cannot skip or re-visit workflows when backends reorder after writes.
   for await (const batch of streamWorkflowStateBatches(internals, filter))
-    for (const state of batch) workflowIds.push(state.id);
+    for (const state of batch) snapshots.push(workflowStateToBulkSnapshot(state));
 
-  return workflowIds;
+  return snapshots;
+}
+
+function workflowStateToBulkSnapshot(state: WorkflowState): BulkWorkflowSnapshot {
+  return {
+    id: state.id,
+    type: state.type,
+    status: state.status,
+    updatedAt: state.updatedAt,
+    ...(state.tenant?.id === undefined ? {} : { tenantId: state.tenant.id }),
+  };
+}
+
+function uniqueSorted<const T extends string>(values: readonly T[]): T[] {
+  return [...new Set(values)].toSorted((left, right) => left.localeCompare(right));
+}
+
+function sanitizeBulkTokenValue(value: unknown): unknown {
+  if (isBulkTokenPrimitive(value)) {
+    return value;
+  }
+  if (typeof value === 'bigint') return value.toString();
+  if (typeof value === 'symbol') return String(value);
+  if (typeof value === 'function') return '[function]';
+  if (Array.isArray(value)) return value.map(sanitizeBulkTokenValue);
+
+  const record = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const key of Object.keys(record).toSorted()) {
+    result[key] = sanitizeBulkTokenValue(record[key]);
+  }
+  return result;
+}
+
+function isBulkTokenPrimitive(value: unknown): boolean {
+  return (
+    value === null ||
+    value === undefined ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  );
+}
+
+async function collectTerminalWorkflowSnapshots(
+  internals: EngineInternals,
+  filter: ListFilter,
+): Promise<BulkWorkflowSnapshot[]> {
+  const snapshots: BulkWorkflowSnapshot[] = [];
+  for await (const batch of streamWorkflowStateBatches(internals, filter)) {
+    for (const state of batch) {
+      if (!isTerminalWorkflowStatus(state.status)) {
+        throw new BulkDeleteRequiresTerminalWorkflowsError();
+      }
+      snapshots.push(workflowStateToBulkSnapshot(state));
+    }
+  }
+  return snapshots;
+}
+
+async function loadTerminalWorkflowStatesForBatch(
+  internals: EngineInternals,
+  workflowIds: readonly string[],
+): Promise<WorkflowState[]> {
+  const workflowStates: WorkflowState[] = [];
+  for (const workflowId of workflowIds) {
+    const refreshedState = await loadWorkflowState(internals, workflowId);
+    if (refreshedState === null) continue;
+    if (!isTerminalWorkflowStatus(refreshedState.status)) {
+      throw new BulkDeleteRequiresTerminalWorkflowsError();
+    }
+    workflowStates.push(refreshedState);
+  }
+  return workflowStates;
 }
 
 // oxlint-disable-next-line complexity -- ID:core-engine-resolve-purge-window-complexity

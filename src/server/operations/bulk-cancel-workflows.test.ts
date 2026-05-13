@@ -11,6 +11,7 @@ import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
 import type { OperationFault } from '../operation-fault.ts';
+import { principalFromApiKey } from '../principal.ts';
 import {
   bulkCancelWorkflowsOperation,
   bulkCancelWorkflowsRestBinding,
@@ -57,6 +58,20 @@ function request(path: string, body?: unknown): Request {
 const registry = createOperationRegistry([bulkCancelWorkflowsOperation]);
 const bindings = [bulkCancelWorkflowsRestBinding];
 
+function bulkAdminHandlerOptions(customRegistry = registry) {
+  return {
+    operationRegistry: customRegistry,
+    restBindings: bindings,
+    authContext: {
+      method: 'api-key' as const,
+      principal: principalFromApiKey({
+        subject: 'bulk-admin-operator',
+        scopes: ['workflows:admin'],
+      }),
+    },
+  };
+}
+
 describe('weft.workflows.bulk.cancel', () => {
   it('returns cancellation counts and cancels matching workflows', async () => {
     const engine = createEngine();
@@ -80,18 +95,65 @@ describe('weft.workflows.bulk.cancel', () => {
       waitForStatus(engine, 'bulk-cancel-other', 'running'),
     ]);
 
+    const previewResponse = await handleRequest(
+      request('/v1/workflows/bulk/cancel', {
+        filter: { tags: ['selected'] },
+        dryRun: true,
+        requestId: 'bulk-cancel-request',
+      }),
+      engine,
+      bulkAdminHandlerOptions(),
+    );
+
+    expect(previewResponse.status).toBe(200);
+    const preview = await previewResponse.json();
+    expect(preview).toEqual(
+      expect.objectContaining({
+        dryRun: true,
+        action: 'cancel',
+        matched: 2,
+        requestId: 'bulk-cancel-request',
+        confirmationToken: expect.stringMatching(/^bulk:/),
+      }),
+    );
+    const firstPreviewedWorkflow = await engine.get('bulk-cancel-selected-a');
+    const secondPreviewedWorkflow = await engine.get('bulk-cancel-selected-b');
+    expect(firstPreviewedWorkflow?.status).toBe('running');
+    expect(secondPreviewedWorkflow?.status).toBe('running');
+
     const response = await handleRequest(
       request('/v1/workflows/bulk/cancel', { filter: { tags: ['selected'] } }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      bulkAdminHandlerOptions(),
     );
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get('content-type')).toBe('application/json');
+    expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
+      error: 'Field "confirmationToken" is required after a dry run',
+    });
+
+    const confirmedResponse = await handleRequest(
+      request('/v1/workflows/bulk/cancel', {
+        filter: { tags: ['selected'] },
+        confirmationToken: preview.confirmationToken,
+        requestId: 'bulk-cancel-request',
+      }),
+      engine,
+      bulkAdminHandlerOptions(),
+    );
+
+    expect(confirmedResponse.status).toBe(200);
+    expect(confirmedResponse.headers.get('content-type')).toBe('application/json');
+    expect(await confirmedResponse.json()).toEqual({
       cancelled: 2,
       failed: 0,
       errors: [],
+      auditEvent: expect.objectContaining({
+        type: 'bulk-operation:audit',
+        action: 'cancel',
+        affectedCount: 2,
+        requestId: 'bulk-cancel-request',
+      }),
     });
     const firstCancelledState = await engine.get('bulk-cancel-selected-a');
     const secondCancelledState = await engine.get('bulk-cancel-selected-b');
@@ -107,8 +169,7 @@ describe('weft.workflows.bulk.cancel', () => {
     const engine = createEngine();
 
     const response = await handleRequest(request('/v1/workflows/bulk/cancel', {}), engine, {
-      operationRegistry: registry,
-      restBindings: bindings,
+      ...bulkAdminHandlerOptions(),
     });
 
     expect(response.status).toBe(400);
@@ -129,7 +190,7 @@ describe('weft.workflows.bulk.cancel', () => {
         },
       }),
       engine,
-      { operationRegistry: registry, restBindings: bindings },
+      bulkAdminHandlerOptions(),
     );
 
     expect(response.status).toBe(400);
@@ -137,6 +198,51 @@ describe('weft.workflows.bulk.cancel', () => {
     expect(await response.json()).toEqual({
       error: 'Field "filter.attributes[0].key" must be a non-empty string',
     });
+  });
+
+  it('caps request ids before they can become audit storage keys', async () => {
+    const engine = createEngine();
+
+    const response = await handleRequest(
+      request('/v1/workflows/bulk/cancel', {
+        filter: { tags: ['selected'] },
+        dryRun: true,
+        requestId: 'x'.repeat(201),
+      }),
+      engine,
+      bulkAdminHandlerOptions(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'Field "requestId" must be at most 200 characters',
+    });
+  });
+
+  it('requires workflows:admin for authenticated bulk operators', async () => {
+    const engine = createEngine();
+
+    const response = await handleRequest(
+      request('/v1/workflows/bulk/cancel', {
+        filter: { tags: ['selected'] },
+        dryRun: true,
+      }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: bindings,
+        authContext: {
+          method: 'api-key',
+          principal: principalFromApiKey({
+            subject: 'read-only-operator',
+            scopes: ['workflows:read'],
+          }),
+        },
+      },
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'requires any of: workflows:admin' });
   });
 
   it('maps EngineFailure faults to the legacy 500 response body', async () => {
@@ -158,8 +264,7 @@ describe('weft.workflows.bulk.cancel', () => {
       request('/v1/workflows/bulk/cancel', { filter: { tags: ['selected'] } }),
       engine,
       {
-        operationRegistry: failingRegistry,
-        restBindings: bindings,
+        ...bulkAdminHandlerOptions(failingRegistry),
       },
     );
 

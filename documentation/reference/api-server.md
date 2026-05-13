@@ -236,10 +236,67 @@ PATCH body: `{ "attributes": { "key": "value" } }`.
 
 ### Bulk Operations
 
-| Method | Path                        | Description               |
-| ------ | --------------------------- | ------------------------- |
-| `POST` | `/v1/workflows/bulk/cancel` | Cancel multiple workflows |
-| `POST` | `/v1/workflows/bulk/signal` | Signal multiple workflows |
+Bulk operations are filter-driven and require a scoped `filter` object. A
+filter can include `status`, `type`, `tags`, `attributes`, `limit`, and
+`offset`, matching the `engine.list()` filter shape used by the in-process
+API. On authenticated servers, callers must have the `workflows:admin` scope.
+
+| Method   | Path                        | Description                              |
+| -------- | --------------------------- | ---------------------------------------- |
+| `POST`   | `/v1/workflows/bulk/cancel` | Cancel multiple workflows                |
+| `POST`   | `/v1/workflows/bulk/signal` | Signal multiple workflows                |
+| `DELETE` | `/v1/workflows/bulk`        | Delete multiple terminal workflows       |
+| `PATCH`  | `/v1/workflows/bulk/tags`   | Add or remove tags on multiple workflows |
+
+Run a preview first by sending `dryRun: true` and an optional `requestId`:
+
+```json
+{
+  "filter": {
+    "status": "running",
+    "type": "checkout",
+    "tags": ["nightly"]
+  },
+  "dryRun": true,
+  "requestId": "ops-2026-05-12"
+}
+```
+
+The preview returns a stable confirmation token plus the matched count, scope
+summary, tenant IDs, and sampled workflow IDs:
+
+```json
+{
+  "dryRun": true,
+  "action": "cancel",
+  "matched": 2,
+  "requestId": "ops-2026-05-12",
+  "confirmationToken": "bulk:...",
+  "confirmationTokenVersion": 1,
+  "sampleWorkflowIds": ["wf-1", "wf-2"],
+  "scope": {
+    "matched": 2,
+    "filter": { "status": "running", "type": "checkout", "tags": ["nightly"] },
+    "statuses": ["running"],
+    "workflowTypes": ["checkout"],
+    "tenantIds": ["acme"],
+    "sampleWorkflowIds": ["wf-1", "wf-2"],
+    "sampleLimit": 20
+  }
+}
+```
+
+Commit the operation by resending the same scoped filter with the
+`confirmationToken` returned by the preview. If the current matched workflow
+scope has changed, the commit fails and the caller must preview again.
+Committed operations persist a durable audit event with the credential-safe
+caller principal, action, request ID, filter summary, affected count, sampled
+workflow IDs, and confirmation token.
+
+Signal requests also include `name` and an optional `payload` field. Tag
+requests include `operation: "add" | "remove"` and a `tags` array. Bulk delete
+only applies to terminal workflows and returns `422` if the filter would match
+pending or running workflows.
 
 ### Checkpoints & Replay
 

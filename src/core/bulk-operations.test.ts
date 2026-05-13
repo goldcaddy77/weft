@@ -10,7 +10,7 @@ import {
 } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { BULK_WORKFLOW_FILTER_ERROR_MESSAGE } from './bulk-workflow-filter.ts';
-import { encode } from './codec.ts';
+import { decode, encode } from './codec.ts';
 import { BulkDeleteRequiresTerminalWorkflowsError, Engine } from './engine.ts';
 import { cancelAll } from './engine/bulk-operations.ts';
 import type { SearchAttributeValue, WorkflowContext, WorkflowState } from './types.ts';
@@ -22,6 +22,10 @@ async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
 async function* waitForSignalWorkflow(ctx: WorkflowContext, input: unknown) {
   const signal = yield* ctx.waitForSignal<string>('continue');
   return `${String(input)}:${signal}`;
+}
+
+async function* waitForUnknownSignalWorkflow(ctx: WorkflowContext) {
+  return yield* ctx.waitForSignal('continue');
 }
 
 async function* failingWorkflow(_ctx: WorkflowContext, _input: unknown) {
@@ -76,6 +80,10 @@ async function createCompletedWorkflow(
   await handle.result();
 }
 
+function isTopLevelWorkflowStateKey(key: string): boolean {
+  return key.startsWith('wf:') && !key.slice('wf:'.length).includes(':');
+}
+
 class BulkCancelFailureStorage extends MemoryStorage {
   shouldFail = false;
   workflowIdToFail: string | null = null;
@@ -107,7 +115,7 @@ class BulkBatchTrackingStorage extends MemoryStorage {
   ): AsyncIterable<[string, Uint8Array]> {
     for await (const entry of super.scan(prefix, options)) {
       const [key] = entry;
-      if (prefix === 'wf:' && key.startsWith('wf:') && !key.slice('wf:'.length).includes(':')) {
+      if (prefix === 'wf:' && isTopLevelWorkflowStateKey(key)) {
         this.scannedTopLevelWorkflowStateEntries += 1;
       }
       yield entry;
@@ -117,16 +125,29 @@ class BulkBatchTrackingStorage extends MemoryStorage {
   override async batch(operations: BatchOperation[]): Promise<void> {
     const mutatesTopLevelWorkflowState =
       this.shouldTrackBulkMutations &&
-      operations.some(
-        (operation) =>
-          operation.key.startsWith('wf:') && !operation.key.slice('wf:'.length).includes(':'),
-      );
+      operations.some((operation) => isTopLevelWorkflowStateKey(operation.key));
 
     if (mutatesTopLevelWorkflowState && this.firstMutationSeenAfterScanningCount === null) {
       this.firstMutationSeenAfterScanningCount = this.scannedTopLevelWorkflowStateEntries;
     }
 
     await super.batch(operations);
+  }
+}
+
+class WorkflowStateGetFailureStorage extends MemoryStorage {
+  shouldFailWorkflowStateGet = false;
+  workflowStateGetCount = 0;
+
+  override async get(key: string): Promise<Uint8Array | null> {
+    if (isTopLevelWorkflowStateKey(key)) {
+      this.workflowStateGetCount += 1;
+      if (this.shouldFailWorkflowStateGet) {
+        throw new Error(`unexpected workflow state get for ${key}`);
+      }
+    }
+
+    return super.get(key);
   }
 }
 
@@ -445,6 +466,35 @@ describe('bulk workflow operations', () => {
     }
   });
 
+  it('keeps three-argument signalAll object payloads as payloads even when they contain control-shaped keys', async () => {
+    const engine = new Engine({ storage: new MemoryStorage() });
+    engine.register('wait-for-unknown-signal', waitForUnknownSignalWorkflow);
+
+    try {
+      const payload = {
+        dryRun: true,
+        requestId: 'payload-request-id',
+        confirmationToken: 'payload-confirmation-token',
+      };
+      const handle = await engine.start('wait-for-unknown-signal', undefined, {
+        id: 'bulk-signal-control-shaped-payload',
+        tags: ['bulk-signal-control-shaped-payload'],
+      });
+      await waitForWorkflowStatus(engine, handle.id, 'running');
+
+      const result = await engine.signalAll(
+        { tags: ['bulk-signal-control-shaped-payload'] },
+        'continue',
+        payload,
+      );
+
+      expect(result).toEqual({ signalled: 1, failed: 0 });
+      await expect(handle.result()).resolves.toEqual(payload);
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
   it('tracks failed signals when one matching workflow cannot be signalled', async () => {
     const storage = new BulkSignalFailureStorage();
     const engine = new Engine({ storage });
@@ -597,6 +647,31 @@ describe('bulk workflow operations', () => {
       expect(await engine.get('bulk-delete-failed')).toBeNull();
       expect(await engine.get('bulk-delete-running')).toBeNull();
     } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('prepares bulk delete dry runs from the terminal scan without reloading workflow states', async () => {
+    const storage = new WorkflowStateGetFailureStorage();
+    const engine = new Engine({ storage });
+    engine.register('echo', echoWorkflow);
+
+    try {
+      await createCompletedWorkflow(engine, 'bulk-delete-single-scan');
+
+      storage.workflowStateGetCount = 0;
+      storage.shouldFailWorkflowStateGet = true;
+
+      await expect(engine.deleteAll({ status: 'completed' }, { dryRun: true })).resolves.toEqual(
+        expect.objectContaining({
+          action: 'delete',
+          dryRun: true,
+          matched: 1,
+        }),
+      );
+      expect(storage.workflowStateGetCount).toBe(0);
+    } finally {
+      storage.shouldFailWorkflowStateGet = false;
       await engine[Symbol.asyncDispose]();
     }
   });
@@ -917,4 +992,271 @@ describe('bulk workflow operations', () => {
     },
     { timeout: 15_000 },
   );
+
+  it('previews bulk cancellation without mutating matching workflows', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    engine.register('wait-for-signal', waitForSignalWorkflow);
+
+    try {
+      await engine.start('wait-for-signal', 'first', {
+        id: 'bulk-preview-selected-a',
+        tags: ['preview'],
+      });
+      await engine.start('wait-for-signal', 'second', {
+        id: 'bulk-preview-selected-b',
+        tags: ['preview'],
+      });
+      await waitForWorkflowStatusCount(engine, 'running', 2, 10_000);
+
+      const preview = await engine.cancelAll(
+        { tags: ['preview'] },
+        { dryRun: true, requestId: 'bulk-preview-request' },
+      );
+
+      expect(preview).toEqual(
+        expect.objectContaining({
+          dryRun: true,
+          action: 'cancel',
+          matched: 2,
+          requestId: 'bulk-preview-request',
+          sampleWorkflowIds: ['bulk-preview-selected-a', 'bulk-preview-selected-b'],
+          confirmationToken: expect.stringMatching(/^bulk:/),
+        }),
+      );
+      expect(preview.scope).toEqual(
+        expect.objectContaining({
+          matched: 2,
+          statuses: ['running'],
+          workflowTypes: ['wait-for-signal'],
+          tenantIds: [],
+        }),
+      );
+      const firstPreviewedWorkflow = await engine.get('bulk-preview-selected-a');
+      const secondPreviewedWorkflow = await engine.get('bulk-preview-selected-b');
+      const firstPreviewedWorkflowStatus = firstPreviewedWorkflow?.status;
+      const secondPreviewedWorkflowStatus = secondPreviewedWorkflow?.status;
+      if (firstPreviewedWorkflowStatus === undefined) {
+        throw new Error('Expected first previewed workflow to remain in storage');
+      }
+      if (secondPreviewedWorkflowStatus === undefined) {
+        throw new Error('Expected second previewed workflow to remain in storage');
+      }
+      expect(['pending', 'running']).toContain(firstPreviewedWorkflowStatus);
+      expect(['pending', 'running']).toContain(secondPreviewedWorkflowStatus);
+
+      await engine.cancel('bulk-preview-selected-a');
+      await engine.cancel('bulk-preview-selected-b');
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('rejects stale bulk confirmation tokens when the matched workflow set changes', async () => {
+    const now = 1_000;
+    const engine = new Engine({ getNow: () => now });
+    engine.register('echo', echoWorkflow);
+
+    try {
+      await engine.start('echo', 'first', {
+        id: 'bulk-stale-selected-a',
+        tags: ['stale-token'],
+        startAt: now + 60_000,
+      });
+
+      const preview = await engine.cancelAll({ tags: ['stale-token'] }, { dryRun: true });
+
+      await engine.start('echo', 'second', {
+        id: 'bulk-stale-selected-b',
+        tags: ['stale-token'],
+        startAt: now + 60_000,
+      });
+
+      await expect(
+        engine.cancelAll(
+          { tags: ['stale-token'] },
+          { confirmationToken: preview.confirmationToken },
+        ),
+      ).rejects.toThrow('Bulk confirmation token does not match the current dry-run scope');
+      const firstStaleWorkflow = await engine.get('bulk-stale-selected-a');
+      const secondStaleWorkflow = await engine.get('bulk-stale-selected-b');
+      expect(firstStaleWorkflow?.status).toBe('pending');
+      expect(secondStaleWorkflow?.status).toBe('pending');
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('accepts confirmation tokens after workflow progress keeps the same bulk scope', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    engine.register('wait-for-signal', waitForSignalWorkflow);
+
+    try {
+      const handle = await engine.start('wait-for-signal', 'first', {
+        id: 'bulk-stable-token-progress',
+        tags: ['stable-token'],
+      });
+      await waitForWorkflowStatus(engine, handle.id, 'running');
+
+      const preview = await engine.cancelAll({ tags: ['stable-token'] }, { dryRun: true });
+      const storedWorkflowBytes = await storage.get(KEYS.workflow(handle.id));
+      if (storedWorkflowBytes === null) {
+        throw new Error('Expected stored workflow state for stable bulk confirmation token test');
+      }
+      const storedWorkflowState = decode(storedWorkflowBytes) as WorkflowState;
+      await storage.put(
+        KEYS.workflow(handle.id),
+        encode({
+          ...storedWorkflowState,
+          updatedAt: storedWorkflowState.updatedAt + 1_000,
+        } satisfies WorkflowState),
+      );
+
+      await expect(
+        engine.cancelAll(
+          { tags: ['stable-token'] },
+          { confirmationToken: preview.confirmationToken },
+        ),
+      ).resolves.toEqual(
+        expect.objectContaining({
+          cancelled: 1,
+          failed: 0,
+          errors: [],
+        }),
+      );
+
+      const cancelledWorkflow = await engine.get(handle.id);
+      expect(cancelledWorkflow?.status).toBe('cancelled');
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('rejects signal confirmation tokens when the action payload changes', async () => {
+    const engine = new Engine({ storage: new MemoryStorage() });
+    engine.register('wait-for-signal', waitForSignalWorkflow);
+
+    try {
+      const handle = await engine.start('wait-for-signal', 'first', {
+        id: 'bulk-stale-signal-payload',
+        tags: ['stale-signal-token'],
+      });
+      await waitForWorkflowStatus(engine, handle.id, 'running');
+
+      const preview = await engine.signalAll(
+        { tags: ['stale-signal-token'] },
+        'continue',
+        'approved',
+        { dryRun: true },
+      );
+
+      await expect(
+        engine.signalAll({ tags: ['stale-signal-token'] }, 'continue', 'changed', {
+          confirmationToken: preview.confirmationToken,
+        }),
+      ).rejects.toThrow('Bulk confirmation token does not match the current dry-run scope');
+      const workflowState = await engine.get(handle.id);
+      expect(workflowState?.status).toBe('running');
+
+      await engine.signal(handle.id, 'continue', 'cleanup');
+      await expect(handle.result()).resolves.toBe('first:cleanup');
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('rejects tag confirmation tokens when the action tags or operation change', async () => {
+    const engine = new Engine({ storage: new MemoryStorage() });
+    engine.register('echo', echoWorkflow);
+
+    try {
+      await createCompletedWorkflow(engine, 'bulk-stale-tag-action', ['selected']);
+
+      const preview = await engine.tagAll({ tags: ['selected'] }, ['archived'], { dryRun: true });
+
+      await expect(
+        engine.tagAll({ tags: ['selected'] }, ['different'], {
+          confirmationToken: preview.confirmationToken,
+        }),
+      ).rejects.toThrow('Bulk confirmation token does not match the current dry-run scope');
+      await expect(
+        engine.untagAll({ tags: ['selected'] }, ['archived'], {
+          confirmationToken: preview.confirmationToken,
+        }),
+      ).rejects.toThrow('Bulk confirmation token does not match the current dry-run scope');
+
+      const workflowState = await engine.get('bulk-stale-tag-action');
+      expect(workflowState?.tags).toEqual(['selected']);
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('persists durable audit records for committed bulk actions', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage, getNow: () => 42_000 });
+    engine.register('wait-for-signal', waitForSignalWorkflow);
+
+    try {
+      await engine.start('wait-for-signal', 'first', {
+        id: 'bulk-audit-selected-a',
+        tags: ['audit'],
+      });
+      await engine.start('wait-for-signal', 'second', {
+        id: 'bulk-audit-selected-b',
+        tags: ['audit'],
+      });
+      await waitForWorkflowStatusCount(engine, 'running', 2, 10_000);
+
+      const preview = await engine.cancelAll(
+        { tags: ['audit'] },
+        { dryRun: true, requestId: 'bulk-audit-request' },
+      );
+      const result = await engine.cancelAll(
+        { tags: ['audit'] },
+        {
+          confirmationToken: preview.confirmationToken,
+          principal: {
+            method: 'api-key',
+            subject: 'operator-1',
+            tenantId: 'tenant-1',
+          },
+          requestId: 'bulk-audit-request',
+        },
+      );
+
+      expect(result.cancelled).toBe(2);
+      expect(result.auditEvent).toEqual(
+        expect.objectContaining({
+          type: 'bulk-operation:audit',
+          action: 'cancel',
+          affectedCount: 2,
+          requestId: 'bulk-audit-request',
+          principal: {
+            method: 'api-key',
+            subject: 'operator-1',
+            tenantId: 'tenant-1',
+          },
+          sampleWorkflowIds: ['bulk-audit-selected-a', 'bulk-audit-selected-b'],
+        }),
+      );
+
+      const storedAuditRecords = [];
+      for await (const [, value] of storage.scan(KEYS.bulkOperationAuditPrefix())) {
+        storedAuditRecords.push(decode(value));
+      }
+
+      expect(storedAuditRecords).toEqual([
+        expect.objectContaining({
+          type: 'bulk-operation:audit',
+          action: 'cancel',
+          affectedCount: 2,
+          requestId: 'bulk-audit-request',
+        }),
+      ]);
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
 });
