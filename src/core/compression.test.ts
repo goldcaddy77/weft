@@ -215,43 +215,34 @@ describe('compression fallbacks', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Legacy data (no header)
+// Malformed data (no canonical header)
 // ---------------------------------------------------------------------------
 
-describe('legacy data without header', () => {
-  it('passes through raw msgpack data starting with 0x80+', async () => {
-    // msgpack fixmap starts at 0x80 — not the magic byte
-    const legacy = new Uint8Array([0x80, 0xa1, 0x61, 0x01]);
-    const result = await decompressPayload(legacy);
-    expect(result).toEqual(legacy);
+describe('malformed payloads without a canonical header', () => {
+  it('rejects raw msgpack data starting with 0x80+', async () => {
+    const headerless = new Uint8Array([0x80, 0xa1, 0x61, 0x01]);
+    await expect(decompressPayload(headerless)).rejects.toThrow(
+      'Compression payload missing magic byte 0xC1.',
+    );
   });
 
-  it('passes through data with arbitrary unrecognized first byte', async () => {
-    const legacy = new Uint8Array([0xff, 0xab, 0xcd]);
-    const result = await decompressPayload(legacy);
-    expect(result).toEqual(legacy);
+  it('rejects data with an arbitrary unrecognized first byte', async () => {
+    const headerless = new Uint8Array([0xff, 0xab, 0xcd]);
+    await expect(decompressPayload(headerless)).rejects.toThrow(
+      'Compression payload missing magic byte 0xC1.',
+    );
   });
 
-  it('passes through msgpack-encoded bare integer 0 (0x00) without corruption', async () => {
-    // msgpack encodes integer 0 as a single byte 0x00.
-    // With the old 1-byte header scheme, this would collide with the
-    // "uncompressed" header and strip the data byte. The 0xC1 magic
-    // byte prefix eliminates this collision.
-    const legacyZero = new Uint8Array([0x00]);
-    const result = await decompressPayload(legacyZero);
-    expect(result).toEqual(legacyZero);
+  it('rejects single-byte payloads because they cannot contain the full header', async () => {
+    await expect(decompressPayload(new Uint8Array([0x00]))).rejects.toThrow(
+      'Compression payload missing 2-byte header.',
+    );
   });
 
-  it('passes through msgpack-encoded bare integer 1 (0x01) without corruption', async () => {
-    const legacyOne = new Uint8Array([0x01]);
-    const result = await decompressPayload(legacyOne);
-    expect(result).toEqual(legacyOne);
-  });
-
-  it('passes through msgpack-encoded bare integer 2 (0x02) without corruption', async () => {
-    const legacyTwo = new Uint8Array([0x02]);
-    const result = await decompressPayload(legacyTwo);
-    expect(result).toEqual(legacyTwo);
+  it('rejects an unknown algorithm byte after the magic byte', async () => {
+    await expect(decompressPayload(new Uint8Array([0xc1, 0x7f, 0x01]))).rejects.toThrow(
+      'Compression payload uses unsupported algorithm byte 0x7f.',
+    );
   });
 });
 
@@ -273,14 +264,16 @@ describe('empty data', () => {
     expect(decompressed).toEqual(original);
   });
 
-  it('returns empty data as-is when decompressing', async () => {
-    const result = await decompressPayload(new Uint8Array(0));
-    expect(result.length).toBe(0);
+  it('rejects empty unframed data when decompressing', async () => {
+    await expect(decompressPayload(new Uint8Array(0))).rejects.toThrow(
+      'Compression payload missing 2-byte header.',
+    );
   });
 
-  it('returns single-byte data as-is when decompressing (too short for header)', async () => {
-    const result = await decompressPayload(new Uint8Array([0x42]));
-    expect(result).toEqual(new Uint8Array([0x42]));
+  it('rejects single-byte unframed data when decompressing', async () => {
+    await expect(decompressPayload(new Uint8Array([0x42]))).rejects.toThrow(
+      'Compression payload missing 2-byte header.',
+    );
   });
 });
 

@@ -135,20 +135,19 @@ describe('batch', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Backward compatibility
+// Malformed inner payloads
 // ---------------------------------------------------------------------------
 
-describe('backward compatibility', () => {
-  it('reads raw data (no header) from inner storage', async () => {
+describe('malformed inner payloads', () => {
+  it('rejects raw inner storage data without a compression header', async () => {
     const { storage, inner } = createStorage();
 
-    // Simulate legacy data: raw bytes without a compression header.
-    // 0x80 is msgpack fixmap — not a recognized compression header.
-    const legacy = new Uint8Array([0x80, 0xa1, 0x61, 0x01]);
-    await inner.put('legacy-key', legacy);
+    const headerless = new Uint8Array([0x80, 0xa1, 0x61, 0x01]);
+    await inner.put('malformed-key', headerless);
 
-    const result = await storage.get('legacy-key');
-    expect(result).toEqual(legacy);
+    await expect(storage.get('malformed-key')).rejects.toThrow(
+      'Compression payload missing magic byte 0xC1.',
+    );
   });
 });
 
