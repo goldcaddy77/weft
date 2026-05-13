@@ -215,19 +215,6 @@ function buildWorkflowVisibilityIndexOperationsInternal(
 const EMPTY_INDEX_VALUE = new Uint8Array(0);
 
 /**
- * Read the per-workflow visibility manifest from storage. Returns `null`
- * when the workflow has no manifest yet (first write) or when the stored
- * payload is malformed.
- */
-export async function loadWorkflowVisibilityManifest(
-  storage: Storage,
-  workflowId: string,
-): Promise<WorkflowVisibilityManifest | null> {
-  const bytes = await storage.get(KEYS.workflowVisibilityManifest(workflowId));
-  return decodeWorkflowVisibilityManifest(bytes);
-}
-
-/**
  * Watermark recorded by the backfill once every workflow has a manifest at
  * the current schema version. `engine.list()` and `engine.aggregate()` only
  * consult the new `wf-idx-*` rows when the watermark is `current`.

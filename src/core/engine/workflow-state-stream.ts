@@ -46,43 +46,6 @@ export async function* streamMatchingWorkflowStates(
   }
 }
 
-/** Collect decoded workflow states that match a list filter. */
-export async function collectMatchingWorkflowStates(
-  internals: EngineInternals,
-  filter?: ListFilter,
-): Promise<WorkflowState[]> {
-  const normalizedTagFilters = normalizeWorkflowTags(filter?.tags);
-  const constrainedIds = await resolveConstrainedIds(internals, filter, normalizedTagFilters);
-
-  if (constrainedIds !== null) {
-    const orderedIds = [...constrainedIds];
-    const states = await Promise.all(
-      orderedIds.map((workflowId) =>
-        loadMatchingWorkflowState(
-          internals,
-          workflowId,
-          filter,
-          constrainedIds,
-          normalizedTagFilters,
-        ),
-      ),
-    );
-
-    return states.filter((state): state is WorkflowState => state !== null);
-  }
-
-  const states: WorkflowState[] = [];
-  for await (const [key, value] of internals.storage.scan('wf:')) {
-    if (!isTopLevelWorkflowStateKey(key)) continue;
-
-    const state = decodeWorkflowState(value);
-    if (!matchesListFilter(state, filter, constrainedIds, normalizedTagFilters)) continue;
-    states.push(state);
-  }
-
-  return states;
-}
-
 async function loadMatchingWorkflowState(
   internals: EngineInternals,
   workflowId: string,
