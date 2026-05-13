@@ -8,6 +8,7 @@ import { generateAsyncApiDocument } from '../asyncapi.ts';
 import type { AuthContext } from '../authentication.ts';
 import type { DiscoveryInfo } from '../discovery-info.ts';
 import { faultToHttpResponse } from '../fault-to-http.ts';
+import { generateMcpDiscovery } from '../mcp-discovery.ts';
 import { generateOpenApiDocument, type OpenApiSecuritySchemeName } from '../openapi.ts';
 import { generateOpenRpcDocument } from '../openrpc.ts';
 import {
@@ -213,6 +214,28 @@ export const DIRECT_ROUTE_EXECUTORS: Record<DirectRouteHandlerName, RouteExecuto
       status: 200,
       headers: { 'Content-Type': 'application/linkset+json' },
     });
+  },
+  mcpDiscovery: async ({ request, options }) => {
+    if (options?.publicOrigin !== undefined) {
+      return jsonResponse(generateMcpDiscovery({ origin: options.publicOrigin }));
+    }
+    const requestOrigin = originFromRequest(request);
+    if (options?.trustedHosts !== undefined) {
+      const requestHost = new URL(requestOrigin).host;
+      if (!options.trustedHosts.includes(requestHost)) {
+        return errorResponse('request Host is not in the configured trustedHosts allowlist', 421);
+      }
+      return jsonResponse(generateMcpDiscovery({ origin: requestOrigin }));
+    }
+    const isDevelopment = Bun.env['NODE_ENV'] === 'development';
+    const operatorOverride = Bun.env['WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN'] === '1';
+    if (!isDevelopment && !operatorOverride) {
+      return errorResponse(
+        "/.well-known/mcp.json refuses to emit absolute MCP endpoint URLs without one of `publicOrigin` or `trustedHosts` configured. Set `serve({ publicOrigin: 'https://api.example.com' })` or `serve({ trustedHosts: ['api.example.com'] })`. For local development, set NODE_ENV=development; for CI/test overrides set WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN=1.",
+        503,
+      );
+    }
+    return jsonResponse(generateMcpDiscovery({ origin: requestOrigin }));
   },
   openApiDocument: async ({ options }) =>
     jsonResponse(

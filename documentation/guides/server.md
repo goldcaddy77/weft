@@ -77,6 +77,9 @@ GET /v1/health
 ```
 GET /openrpc.json
 → OpenRPC 1.3.2 document listing all JSON-RPC methods
+
+GET /.well-known/mcp.json
+→ MCP discovery document pointing clients at /mcp
 ```
 
 The `rpc.discover` JSON-RPC method returns the same document over the JSON-RPC transport. These discovery endpoints were introduced in the Track 8 operation catalogue consolidation.

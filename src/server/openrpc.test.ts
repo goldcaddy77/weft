@@ -419,6 +419,118 @@ describe('generateOpenRpcDocument — info and servers', () => {
   });
 });
 
+describe('generateOpenRpcDocument — MCP metadata', () => {
+  it('emits x-weft-mcp metadata for MCP-exposable operations and the live MCP discovery surface', () => {
+    const registry = createOperationRegistry([
+      makeOp({
+        name: 'weft.workflows.checkout.start',
+        mcpExposable: true,
+        inputSchema: z.object({ orderId: z.string() }),
+        outputSchema: z.object({ workflowId: z.string(), status: z.string() }),
+        discoverable: true,
+      }),
+      makeOp({
+        name: 'weft.workflows.internal.start',
+        mcpExposable: false,
+        inputSchema: z.object({ id: z.string() }),
+        outputSchema: z.object({ workflowId: z.string(), status: z.string() }),
+      }),
+    ]);
+
+    const document = generateOpenRpcDocument({
+      registry,
+      transports: ['http', 'websocket'],
+    });
+    const metadata = document['x-weft-mcp'] as Record<string, unknown>;
+
+    expect(metadata).toMatchObject({
+      protocol: 'model-context-protocol',
+      protocolVersion: '2025-11-25',
+      discoveryPath: '/.well-known/mcp.json',
+      transports: {
+        streamableHttp: {
+          path: '/mcp',
+          methods: ['POST', 'GET', 'DELETE'],
+        },
+        stdio: {
+          command: 'weft-mcp',
+        },
+      },
+      liveDiscovery: {
+        tools: {
+          method: 'tools/list',
+          canonical: true,
+        },
+        resources: {
+          listMethod: 'resources/list',
+          templatesMethod: 'resources/templates/list',
+        },
+      },
+    });
+    expect(metadata['operations']).toEqual([
+      {
+        operationName: 'weft.workflows.checkout.start',
+      },
+    ]);
+
+    const methods = document['methods'] as Array<Record<string, unknown>>;
+    const checkout = methods.find(
+      (candidate) => candidate['name'] === 'weft.workflows.checkout.start',
+    );
+    const internal = methods.find(
+      (candidate) => candidate['name'] === 'weft.workflows.internal.start',
+    );
+    expect(checkout?.['x-weft-mcp']).toEqual({
+      operationName: 'weft.workflows.checkout.start',
+      toolDiscovery: {
+        method: 'tools/list',
+        source: 'live',
+      },
+    });
+    expect(internal?.['x-weft-mcp']).toBeUndefined();
+  });
+
+  it('keeps the root MCP operation list in parity with method-level MCP metadata', () => {
+    const registry = createOperationRegistry([
+      makeOp({
+        name: 'weft.workflows.checkout.start',
+        mcpExposable: true,
+        inputSchema: z.object({ orderId: z.string() }),
+        outputSchema: z.object({ workflowId: z.string(), status: z.string() }),
+        discoverable: true,
+      }),
+      makeOp({
+        name: 'weft.workflows.refund.start',
+        mcpExposable: true,
+        inputSchema: z.object({ refundId: z.string() }),
+        outputSchema: z.object({ workflowId: z.string(), status: z.string() }),
+        discoverable: true,
+      }),
+    ]);
+
+    const document = generateOpenRpcDocument({ registry, transports: ['http'] });
+    const metadata = document['x-weft-mcp'] as { operations?: Array<{ operationName?: string }> };
+    const metadataOperationNames = (metadata.operations ?? []).flatMap((operation) =>
+      operation.operationName === undefined ? [] : [operation.operationName],
+    );
+    const methods = document['methods'] as Array<Record<string, unknown>>;
+    const methodOperationNames = methods
+      .flatMap((method) => {
+        const extension = method['x-weft-mcp'];
+        if (extension === undefined) return [];
+        const operationName = (extension as { operationName?: unknown }).operationName;
+        return typeof operationName === 'string' ? [operationName] : [];
+      })
+      .toSorted(byString);
+
+    expect(metadataOperationNames.toSorted(byString)).toEqual([
+      'weft.workflows.checkout.start',
+      'weft.workflows.refund.start',
+    ]);
+    expect(metadataOperationNames.toSorted(byString)).toEqual(methodOperationNames);
+  });
+});
+
 describe('generateOpenRpcDocument — result, tags, nested shapes', () => {
   it('emits a result ContentDescriptor with name, required, and schema', () => {
     const registry = createOperationRegistry([

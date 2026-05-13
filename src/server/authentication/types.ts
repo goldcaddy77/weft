@@ -108,8 +108,8 @@ export type MTLSConfig = {
  *
  * At least one of `apiKeys`, `resolveApiKeyPrincipal`, `jwt`, or `mtls` must be
  * present — the server rejects the config at startup otherwise.  Paths listed in
- * `publicPaths` bypass all authentication (default: health, metrics, and OpenAPI
- * document endpoints).
+ * `publicPaths` bypass all authentication (default: health, metrics, and
+ * discovery document endpoints).
  *
  * @example
  * ```ts
@@ -135,7 +135,7 @@ export type AuthConfig = {
   mtls?: MTLSConfig;
   /**
    * Paths that bypass authentication. Defaults to
-   * `['/v1/health', '/v1/metrics', '/.well-known/api-catalog', '/openapi.json', '/openrpc.json', '/asyncapi.json']`.
+   * `['/v1/health', '/v1/metrics', '/.well-known/api-catalog', '/.well-known/mcp.json', '/openapi.json', '/openrpc.json', '/asyncapi.json']`.
    */
   publicPaths?: string[];
   /**
@@ -297,6 +297,7 @@ export const DEFAULT_PUBLIC_PATHS = [
   '/v1/health',
   '/v1/metrics',
   '/.well-known/api-catalog',
+  '/.well-known/mcp.json',
   '/openapi.json',
   '/openrpc.json',
   '/asyncapi.json',

@@ -33,6 +33,7 @@ export function generateApiCatalog(options: ApiCatalogOptions): LinksetDocument 
   const { origin } = options;
 
   const links: LinksetLink[] = [
+    { href: `${origin}/.well-known/mcp.json`, type: 'application/json' },
     { href: `${origin}/asyncapi.json`, type: 'application/asyncapi+json' },
     { href: `${origin}/openapi.json`, type: 'application/openapi+json' },
     { href: `${origin}/openrpc.json`, type: 'application/json' },

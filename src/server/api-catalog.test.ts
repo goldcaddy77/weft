@@ -9,6 +9,7 @@ import {
   resetPublicOriginWarningForTesting,
 } from './api-catalog.ts';
 import { handleRequest } from './handler.ts';
+import { generateMcpDiscovery } from './mcp-discovery.ts';
 
 function createEngine(): Engine {
   return new Engine({ storage: new MemoryStorage() });
@@ -31,6 +32,10 @@ describe('API catalog linkset', () => {
           anchor: 'https://api.example.com',
           'service-desc': [
             {
+              href: 'https://api.example.com/.well-known/mcp.json',
+              type: 'application/json',
+            },
+            {
               href: 'https://api.example.com/asyncapi.json',
               type: 'application/asyncapi+json',
             },
@@ -45,6 +50,42 @@ describe('API catalog linkset', () => {
           ],
         },
       ],
+    });
+  });
+
+  it('generates an MCP discovery document with the live Streamable HTTP endpoint', () => {
+    const document = generateMcpDiscovery({ origin: 'https://api.example.com' });
+
+    expect(document).toEqual({
+      schemaVersion: 1,
+      protocol: 'model-context-protocol',
+      protocolVersion: '2025-11-25',
+      serverInfo: {
+        name: 'weft',
+        version: '0.1.0',
+      },
+      transports: {
+        streamableHttp: {
+          url: 'https://api.example.com/mcp',
+          methods: ['POST', 'GET', 'DELETE'],
+          sessionHeader: 'Mcp-Session-Id',
+          protocolVersionHeader: 'Mcp-Protocol-Version',
+        },
+        stdio: {
+          command: 'weft-mcp',
+        },
+      },
+      discovery: {
+        openRpc: 'https://api.example.com/openrpc.json',
+        tools: {
+          method: 'tools/list',
+          canonical: true,
+        },
+        resources: {
+          listMethod: 'resources/list',
+          templatesMethod: 'resources/templates/list',
+        },
+      },
     });
   });
 
@@ -105,6 +146,25 @@ describe('API catalog linkset', () => {
     expect(response.headers.get('Content-Type')).toBe('application/linkset+json');
     const body = (await response.json()) as Record<string, unknown>;
     expect(body['linkset']).toBeDefined();
+  });
+
+  it('serves /.well-known/mcp.json as application/json when configured with publicOrigin', async () => {
+    engine = createEngine();
+    const response = await handleRequest(
+      new Request('https://attacker.example/.well-known/mcp.json'),
+      engine,
+      { publicOrigin: 'https://api.example.com' },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toBe('application/json');
+    const body = (await response.json()) as {
+      transports?: { streamableHttp?: { url?: string; methods?: string[] } };
+      discovery?: { tools?: { method?: string; canonical?: boolean } };
+    };
+    expect(body.transports?.streamableHttp?.url).toBe('https://api.example.com/mcp');
+    expect(body.transports?.streamableHttp?.methods).toEqual(['POST', 'GET', 'DELETE']);
+    expect(body.discovery?.tools).toEqual({ method: 'tools/list', canonical: true });
   });
 
   it('uses an explicit publicOrigin from handler options instead of request-derived origin', async () => {

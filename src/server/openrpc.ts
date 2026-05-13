@@ -29,6 +29,16 @@ import { VERSION } from '../version.ts';
 import { isDiscoverable } from './discovery-filter.ts';
 import { applyDiscoveryInfo, type DiscoveryInfo } from './discovery-info.ts';
 import { asPlainObject, compareStrings } from './json-schema-utilities.ts';
+import {
+  MCP_DISCOVERY_PATH,
+  MCP_PROTOCOL_VERSION,
+  MCP_RESOURCE_TEMPLATES_LIST_METHOD,
+  MCP_RESOURCES_LIST_METHOD,
+  MCP_STDIO_COMMAND,
+  MCP_STREAMABLE_HTTP_METHODS,
+  MCP_STREAMABLE_HTTP_PATH,
+  MCP_TOOLS_LIST_METHOD,
+} from './mcp-discovery.ts';
 import { OpenRpcDocumentSchema } from './openrpc-document-schema.ts';
 import { buildOpenRpcComponentsErrors } from './openrpc-errors.ts';
 import {
@@ -71,6 +81,19 @@ type OpenRpcMethod = {
   result: ContentDescriptor;
   errors?: Array<{ $ref: string }>;
   'x-weft-paramsSchema': Record<string, unknown>;
+  'x-weft-mcp'?: OpenRpcMcpMethodMetadata;
+};
+
+type OpenRpcMcpMethodMetadata = {
+  operationName: string;
+  toolDiscovery: {
+    method: typeof MCP_TOOLS_LIST_METHOD;
+    source: 'live';
+  };
+};
+
+type OpenRpcMcpOperationReference = {
+  operationName: string;
 };
 
 /**
@@ -79,6 +102,7 @@ type OpenRpcMethod = {
  */
 export function generateOpenRpcDocument(options: OpenRpcOptions): Record<string, unknown> {
   const methods: OpenRpcMethod[] = [];
+  const mcpOperations: OpenRpcMcpOperationReference[] = [];
   let registryProvidesDiscover = false;
 
   for (const operation of options.registry.list()) {
@@ -90,7 +114,12 @@ export function generateOpenRpcDocument(options: OpenRpcOptions): Record<string,
       // emit duplicate method names.
       registryProvidesDiscover = true;
     }
-    methods.push(buildMethod(operation));
+    const method = buildMethod(operation);
+    if (operation.mcpExposable) {
+      method['x-weft-mcp'] = buildMethodMcpMetadata(operation);
+      mcpOperations.push({ operationName: operation.name });
+    }
+    methods.push(method);
   }
   if (!registryProvidesDiscover && options.transports.length > 0) {
     methods.push(buildDiscoverMethod());
@@ -103,6 +132,7 @@ export function generateOpenRpcDocument(options: OpenRpcOptions): Record<string,
     components: {
       errors: buildOpenRpcComponentsErrors(),
     },
+    'x-weft-mcp': buildDocumentMcpMetadata(mcpOperations),
   };
   applyOpenRpcServer(document, options.serverUrl);
   return document;
@@ -127,6 +157,48 @@ function applyOpenRpcServer(
   if (serverUrl) {
     document['servers'] = [{ url: serverUrl }];
   }
+}
+
+function buildDocumentMcpMetadata(
+  operations: ReadonlyArray<OpenRpcMcpOperationReference>,
+): Record<string, unknown> {
+  return {
+    protocol: 'model-context-protocol',
+    protocolVersion: MCP_PROTOCOL_VERSION,
+    discoveryPath: MCP_DISCOVERY_PATH,
+    transports: {
+      streamableHttp: {
+        path: MCP_STREAMABLE_HTTP_PATH,
+        methods: MCP_STREAMABLE_HTTP_METHODS,
+      },
+      stdio: {
+        command: MCP_STDIO_COMMAND,
+      },
+    },
+    liveDiscovery: {
+      tools: {
+        method: MCP_TOOLS_LIST_METHOD,
+        canonical: true,
+      },
+      resources: {
+        listMethod: MCP_RESOURCES_LIST_METHOD,
+        templatesMethod: MCP_RESOURCE_TEMPLATES_LIST_METHOD,
+      },
+    },
+    operations: [...operations].toSorted((left, right) =>
+      compareStrings(left.operationName, right.operationName),
+    ),
+  };
+}
+
+function buildMethodMcpMetadata(operation: ErasedOperation): OpenRpcMcpMethodMetadata {
+  return {
+    operationName: operation.name,
+    toolDiscovery: {
+      method: MCP_TOOLS_LIST_METHOD,
+      source: 'live',
+    },
+  };
 }
 
 function isOperationLiveOnJsonRpc(
