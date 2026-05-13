@@ -1,10 +1,12 @@
 import { z } from 'zod';
 
-import type { Engine } from '../../core/engine.ts';
 import type { OperationFault } from '../operation-fault.ts';
-import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 import { shapeLegacyRestFaultWithRawEngineFailureMessage } from './operation-helpers.ts';
+import {
+  createSingleWorkflowControlOperation,
+  extractWorkflowIdFromPath,
+} from './single-workflow-control-operation.ts';
 
 const signalWorkflowInput = z.object({
   workflowId: z.string().min(1),
@@ -18,41 +20,19 @@ const signalWorkflowOutput = z.object({
 export type SignalWorkflowInput = z.infer<typeof signalWorkflowInput>;
 export type SignalWorkflowOutput = z.infer<typeof signalWorkflowOutput>;
 
-export const signalWorkflowOperation = defineOperation<SignalWorkflowInput, SignalWorkflowOutput>({
+export const signalWorkflowOperation = createSingleWorkflowControlOperation<
+  SignalWorkflowInput,
+  SignalWorkflowOutput
+>({
   name: 'weft.workflows.signal',
-  mcpExposable: false,
   summary: 'Send a signal to a workflow',
   tags: ['Signals'],
   inputSchema: signalWorkflowInput,
   outputSchema: signalWorkflowOutput as z.ZodType<SignalWorkflowOutput>,
-  access: { kind: 'public' },
   producibleFaults: ['NotFound'],
-  transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
-  unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<SignalWorkflowOutput> => {
-    const e = engine as Engine;
-
-    try {
-      await e.signal(input.workflowId, input.signalName, input.payload);
-      return { ok: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes('not found')) {
-        const fault: OperationFault = {
-          code: 'NotFound',
-          message,
-          data: { resource: 'workflow', identifier: input.workflowId },
-        };
-        throw fault;
-      }
-
-      const fault: OperationFault = {
-        code: 'EngineFailure',
-        message,
-        data: {},
-      };
-      throw fault;
-    }
+    await engine.signal(input.workflowId, input.signalName, input.payload);
+    return { ok: true };
   },
 });
 
@@ -86,7 +66,7 @@ export const signalWorkflowRestBinding: UnknownRestBinding = {
         : undefined;
 
     return {
-      workflowId: pathParams['id'] ?? '',
+      ...extractWorkflowIdFromPath(pathParams),
       signalName: pathParams['name'] ?? '',
       payload,
     };
