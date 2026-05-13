@@ -4,7 +4,7 @@ const repositoryRoot = new URL('../', import.meta.url).pathname;
 
 // Disallowed terms are written as fragment arrays joined at runtime so this
 // file does not trip its own check. A future maintainer adding a new term
-// should follow the same pattern — writing the term as a single literal
+// should follow the same pattern; writing the term as a single literal
 // string here would make the test fail on itself the next time it runs.
 const disallowedTerms = [
   ['agent', ' bureau'],
