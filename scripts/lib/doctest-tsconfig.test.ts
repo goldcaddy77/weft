@@ -15,6 +15,8 @@ describe('doctest tsconfig generation', () => {
     weft: 'src/index.ts',
     'weft/storage/memory': 'src/storage/memory.ts',
   };
+  const repositoryRoot = '/workspace/weft';
+  const doctestsDirectory = '/workspace/weft/tmp/doctests';
 
   const expectedTsconfig = {
     extends: '../../tsconfig.json',
@@ -33,11 +35,41 @@ describe('doctest tsconfig generation', () => {
   };
 
   it('creates the shared doctest tsconfig shape', () => {
-    expect(createDoctestTsconfig(publicEntryPoints)).toEqual(expectedTsconfig);
+    expect(
+      createDoctestTsconfig({
+        repositoryRoot,
+        doctestsDirectory,
+        publicEntryPoints,
+      }),
+    ).toEqual(expectedTsconfig);
+  });
+
+  it('creates paths relative to the doctest directory', () => {
+    expect(
+      createDoctestTsconfig({
+        repositoryRoot,
+        doctestsDirectory: '/workspace/weft/generated/nested/doctests',
+        publicEntryPoints,
+      }),
+    ).toEqual({
+      ...expectedTsconfig,
+      extends: '../../../tsconfig.json',
+      compilerOptions: {
+        ...expectedTsconfig.compilerOptions,
+        paths: {
+          weft: ['../../../src/index'],
+          'weft/storage/memory': ['../../../src/storage/memory'],
+        },
+      },
+    });
   });
 
   it('formats the tsconfig with one trailing newline', () => {
-    const formatted = formatDoctestTsconfig(publicEntryPoints);
+    const formatted = formatDoctestTsconfig({
+      repositoryRoot,
+      doctestsDirectory,
+      publicEntryPoints,
+    });
 
     expect(formatted).toBe(`${JSON.stringify(expectedTsconfig, null, 2)}\n`);
     expect(formatted.endsWith('\n')).toBe(true);
@@ -47,12 +79,38 @@ describe('doctest tsconfig generation', () => {
   it('rejects doctest source paths outside the repository', () => {
     expect(() =>
       createDoctestTsconfig({
-        weft: '../outside.ts',
+        repositoryRoot,
+        doctestsDirectory,
+        publicEntryPoints: {
+          weft: '../outside.ts',
+        },
       }),
     ).toThrow('Invalid doctest source path for weft');
     expect(() =>
       createDoctestTsconfig({
-        weft: '/tmp/outside.ts',
+        repositoryRoot,
+        doctestsDirectory,
+        publicEntryPoints: {
+          weft: '/tmp/outside.ts',
+        },
+      }),
+    ).toThrow('Invalid doctest source path for weft');
+    expect(() =>
+      createDoctestTsconfig({
+        repositoryRoot,
+        doctestsDirectory,
+        publicEntryPoints: {
+          weft: 'src/../index.ts',
+        },
+      }),
+    ).toThrow('Invalid doctest source path for weft');
+    expect(() =>
+      createDoctestTsconfig({
+        repositoryRoot,
+        doctestsDirectory,
+        publicEntryPoints: {
+          weft: 'src\\index.ts',
+        },
       }),
     ).toThrow('Invalid doctest source path for weft');
   });
@@ -60,19 +118,43 @@ describe('doctest tsconfig generation', () => {
   it('rejects doctest source paths that are not TypeScript source files', () => {
     expect(() =>
       createDoctestTsconfig({
-        weft: 'src/index.js',
+        repositoryRoot,
+        doctestsDirectory,
+        publicEntryPoints: {
+          weft: 'src/index.js',
+        },
       }),
     ).toThrow('Invalid doctest source path for weft');
   });
 
   it('writes tsconfig.json into the provided doctest directory', () => {
     const directory = mkdtempSync(join(tmpdir(), 'weft-doctest-tsconfig-'));
+    const testRepositoryRoot = join(directory, 'repository');
+    const testDoctestsDirectory = join(testRepositoryRoot, 'tmp', 'nested', 'doctests');
 
     try {
-      writeDoctestTsconfig(directory, publicEntryPoints);
+      writeDoctestTsconfig({
+        repositoryRoot: testRepositoryRoot,
+        doctestsDirectory: testDoctestsDirectory,
+        publicEntryPoints,
+      });
 
-      expect(readFileSync(join(directory, 'tsconfig.json'), 'utf8')).toBe(
-        `${JSON.stringify(expectedTsconfig, null, 2)}\n`,
+      expect(readFileSync(join(testDoctestsDirectory, 'tsconfig.json'), 'utf8')).toBe(
+        `${JSON.stringify(
+          {
+            ...expectedTsconfig,
+            extends: '../../../tsconfig.json',
+            compilerOptions: {
+              ...expectedTsconfig.compilerOptions,
+              paths: {
+                weft: ['../../../src/index'],
+                'weft/storage/memory': ['../../../src/storage/memory'],
+              },
+            },
+          },
+          null,
+          2,
+        )}\n`,
       );
     } finally {
       rmSync(directory, { recursive: true, force: true });

@@ -1,10 +1,16 @@
-import { writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { relative, resolve } from 'node:path';
 
 export type DoctestPublicEntryPoints = Record<string, string>;
 
+export type DoctestTsconfigOptions = {
+  repositoryRoot: string;
+  doctestsDirectory: string;
+  publicEntryPoints: DoctestPublicEntryPoints;
+};
+
 export type DoctestTsconfig = {
-  extends: '../../tsconfig.json';
+  extends: string;
   compilerOptions: {
     noEmit: true;
     noUnusedLocals: false;
@@ -16,17 +22,16 @@ export type DoctestTsconfig = {
   exclude: [];
 };
 
-export function createDoctestTsconfig(
-  publicEntryPoints: DoctestPublicEntryPoints,
-): DoctestTsconfig {
+export function createDoctestTsconfig(options: DoctestTsconfigOptions): DoctestTsconfig {
+  const repositoryRoot = resolve(options.repositoryRoot);
+  const doctestsDirectory = resolve(options.doctestsDirectory);
   const paths: Record<string, string[]> = {};
-  for (const [importPath, sourceRel] of Object.entries(publicEntryPoints)) {
-    paths[importPath] = [
-      `../../${validateDoctestSourcePath(importPath, sourceRel).replace(/\.ts$/, '')}`,
-    ];
+  for (const [importPath, sourceRel] of Object.entries(options.publicEntryPoints)) {
+    const sourcePath = resolve(repositoryRoot, validateDoctestSourcePath(importPath, sourceRel));
+    paths[importPath] = [withoutTypeScriptExtension(toTsconfigPath(doctestsDirectory, sourcePath))];
   }
   return {
-    extends: '../../tsconfig.json',
+    extends: toTsconfigPath(doctestsDirectory, resolve(repositoryRoot, 'tsconfig.json')),
     compilerOptions: {
       noEmit: true,
       noUnusedLocals: false,
@@ -54,17 +59,24 @@ function validateDoctestSourcePath(importPath: string, sourceRel: string): strin
   return sourceRel;
 }
 
-export function formatDoctestTsconfig(publicEntryPoints: DoctestPublicEntryPoints): string {
-  return `${JSON.stringify(createDoctestTsconfig(publicEntryPoints), null, 2)}\n`;
+function toTsconfigPath(fromDirectory: string, toPath: string): string {
+  return relative(fromDirectory, toPath).replaceAll('\\', '/');
 }
 
-export function writeDoctestTsconfig(
-  doctestsDirectory: string,
-  publicEntryPoints: DoctestPublicEntryPoints,
-): void {
+function withoutTypeScriptExtension(filePath: string): string {
+  return filePath.replace(/\.ts$/, '');
+}
+
+export function formatDoctestTsconfig(options: DoctestTsconfigOptions): string {
+  return `${JSON.stringify(createDoctestTsconfig(options), null, 2)}\n`;
+}
+
+export function writeDoctestTsconfig(options: DoctestTsconfigOptions): void {
+  const doctestsDirectory = resolve(options.doctestsDirectory);
+  mkdirSync(doctestsDirectory, { recursive: true });
   writeFileSync(
     resolve(doctestsDirectory, 'tsconfig.json'),
-    formatDoctestTsconfig(publicEntryPoints),
+    formatDoctestTsconfig(options),
     'utf8',
   );
 }

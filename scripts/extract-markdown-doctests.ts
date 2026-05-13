@@ -52,6 +52,7 @@ import ts from 'typescript';
 
 import { writeDoctestTsconfig } from './lib/doctest-tsconfig.ts';
 import { buildManifest } from './lib/jsdoc-manifest.ts';
+import { parseMarkdownDoctestSkipCounts } from './lib/markdown-doctest-skip-counts.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
 const DOCUMENTATION_DIR = resolve(REPO_ROOT, 'documentation');
@@ -137,22 +138,13 @@ function loadSkipReasons(): Set<string> {
 
 function loadSkipCounts(): Record<string, number> {
   if (!existsSync(SKIP_COUNTS_PATH)) return {};
-  const parsed: unknown = JSON.parse(readFileSync(SKIP_COUNTS_PATH, 'utf8'));
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    console.error(`extract-markdown-doctests: ${SKIP_COUNTS_PATH} must contain a JSON object`);
+  try {
+    return parseMarkdownDoctestSkipCounts(readFileSync(SKIP_COUNTS_PATH, 'utf8'), SKIP_COUNTS_PATH);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`extract-markdown-doctests: ${message}`);
     process.exit(1);
   }
-  const counts: Record<string, number> = {};
-  for (const [reason, count] of Object.entries(parsed)) {
-    if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) {
-      console.error(
-        `extract-markdown-doctests: ${SKIP_COUNTS_PATH} value for "${reason}" must be a non-negative integer`,
-      );
-      process.exit(1);
-    }
-    counts[reason] = count;
-  }
-  return counts;
 }
 
 function classifyFence(
@@ -459,7 +451,11 @@ function main(): void {
 
   const runnableBlocks = blocks.filter((b) => b.classification.kind === 'runnable');
   for (const block of runnableBlocks) writeRunnableBlock(block);
-  writeDoctestTsconfig(DOCTESTS_DIR, manifest.publicEntryPoints);
+  writeDoctestTsconfig({
+    repositoryRoot: REPO_ROOT,
+    doctestsDirectory: DOCTESTS_DIR,
+    publicEntryPoints: manifest.publicEntryPoints,
+  });
 
   let typecheckOk = true;
   let perFileFailures = new Map<string, string[]>();

@@ -269,7 +269,11 @@ function main(): void {
     });
   }
 
-  writeDoctestTsconfig(DOCTESTS_DIR, manifest.publicEntryPoints);
+  writeDoctestTsconfig({
+    repositoryRoot: REPO_ROOT,
+    doctestsDirectory: DOCTESTS_DIR,
+    publicEntryPoints: manifest.publicEntryPoints,
+  });
 
   if (malformedFences.length > 0) {
     console.error('extract-doctests: malformed @example fences (must be ```ts):');
