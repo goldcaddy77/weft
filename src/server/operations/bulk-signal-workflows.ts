@@ -4,19 +4,22 @@ import { assertScopedBulkWorkflowFilter } from '../../core/bulk-workflow-filter.
 import type { Engine } from '../../core/engine.ts';
 import { coerceStartWorkflowTags } from '../../core/start-workflow-validation.ts';
 import type { BulkSignalResult, ListFilter } from '../../core/types.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 import {
   bulkListFilterInputSchema,
   engineFailureFault,
   faultMessage,
-  invalidParamsFault,
   listFilterFromBulkInput,
   parseBulkListFilterFromBody,
   readOptionalJsonBody,
   type BulkListFilterInput,
 } from './bulk-filter-helpers.ts';
+import {
+  invalidParamsFault,
+  shapeLegacyRestFaultWithRawEngineFailureMessage,
+} from './operation-helpers.ts';
 
 const bulkSignalWorkflowsInput = bulkListFilterInputSchema.extend({
   name: z.string().min(1),
@@ -83,10 +86,7 @@ function shapeBulkSignalWorkflowsFault(fault: OperationFault): Response {
   // `InvalidParams` (caller mistakes — bad body, scope assertion,
   // tag validation) maps canonically to 400. `EngineFailure` echoes
   // raw engine message at 500 (legacy parity).
-  return new Response(JSON.stringify({ error: fault.message }), {
-    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return shapeLegacyRestFaultWithRawEngineFailureMessage(fault);
 }
 
 export const bulkSignalWorkflowsRestBinding: UnknownRestBinding = {

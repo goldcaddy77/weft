@@ -1,10 +1,13 @@
 import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
-import { invalidParamsFault } from './operation-helpers.ts';
+import {
+  invalidParamsFault,
+  shapeLegacyRestFaultWithRawEngineFailureMessage,
+} from './operation-helpers.ts';
 
 const queryWorkflowInput = z.object({
   workflowId: z.string().min(1),
@@ -68,20 +71,11 @@ function shapeQueryWorkflowSuccess(result: QueryWorkflowOutput): Response {
 }
 
 function shapeQueryWorkflowFault(fault: OperationFault): Response {
-  if (fault.code === 'NotImplemented') {
-    return new Response(JSON.stringify({ error: fault.message }), {
-      status: 501,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
   // Preserve the legacy 500 body verbatim (raw engine error
   // message). Sanitizing internal errors is a deliberate behavior
   // shift that lands in a follow-up PR, not piecemeal as part of
   // operation migration.
-  return new Response(JSON.stringify({ error: fault.message }), {
-    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return shapeLegacyRestFaultWithRawEngineFailureMessage(fault);
 }
 
 export const queryWorkflowRestBinding: UnknownRestBinding = {

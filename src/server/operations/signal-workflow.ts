@@ -1,9 +1,10 @@
 import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
+import { shapeLegacyRestFaultWithRawEngineFailureMessage } from './operation-helpers.ts';
 
 const signalWorkflowInput = z.object({
   workflowId: z.string().min(1),
@@ -63,10 +64,8 @@ function shapeSignalWorkflowSuccess(output: SignalWorkflowOutput): Response {
 }
 
 function shapeSignalWorkflowFault(fault: OperationFault): Response {
-  return new Response(JSON.stringify({ error: fault.message }), {
-    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
-    headers: { 'Content-Type': 'application/json' },
-  });
+  // Legacy signal responses expose raw engine failure messages.
+  return shapeLegacyRestFaultWithRawEngineFailureMessage(fault);
 }
 
 export const signalWorkflowRestBinding: UnknownRestBinding = {

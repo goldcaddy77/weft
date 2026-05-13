@@ -10,9 +10,10 @@ import type {
   WorkflowSummary,
 } from '../../core/types.ts';
 import { parseAttributeFilters } from '../attribute-filters.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
+import { jsonErrorResponse, shapeRestFault } from './operation-helpers.ts';
 
 const workflowStatusSchema = z.custom<WorkflowStatus>((value) => typeof value === 'string');
 const searchAttributeValueSchema = z.custom<SearchAttributeValue>((value) => {
@@ -161,22 +162,12 @@ function shapeListWorkflowsSuccess(result: ListWorkflowsOutput): Response {
 }
 
 function shapeListWorkflowsFault(fault: OperationFault): Response {
+  // Legacy workflow listing reports invalid filter values as 400 even when
+  // the transport-neutral fault is `Unprocessable`.
   if (fault.code === 'Unprocessable') {
-    return new Response(JSON.stringify({ error: fault.message }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return jsonErrorResponse(fault.message, 400);
   }
-  if (fault.code === 'EngineFailure') {
-    return new Response(JSON.stringify({ error: 'Internal server error' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  return new Response(JSON.stringify({ error: fault.message }), {
-    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return shapeRestFault(fault);
 }
 
 export const listWorkflowsRestBinding: UnknownRestBinding = {

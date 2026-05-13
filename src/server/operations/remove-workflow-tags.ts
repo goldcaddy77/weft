@@ -5,9 +5,13 @@ import {
   coerceStartWorkflowTags,
   StartWorkflowValidationError,
 } from '../../core/start-workflow-validation.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
+import {
+  jsonErrorResponse,
+  shapeLegacyRestFaultWithRawEngineFailureMessage,
+} from './operation-helpers.ts';
 
 const removeWorkflowTagsInput = z.object({
   workflowId: z.string().min(1),
@@ -90,17 +94,14 @@ function shapeRemoveWorkflowTagsSuccess(output: RemoveWorkflowTagsOutput): Respo
 }
 
 function shapeRemoveWorkflowTagsFault(fault: OperationFault): Response {
+  // Legacy tag routes report validation failures as 400 instead of the
+  // transport-neutral Unprocessable status, and they expose raw engine
+  // failure messages. Keep those REST-only differences explicit.
   if (fault.code === 'Unprocessable') {
-    return new Response(JSON.stringify({ error: fault.message }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return jsonErrorResponse(fault.message, 400);
   }
 
-  return new Response(JSON.stringify({ error: fault.message }), {
-    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return shapeLegacyRestFaultWithRawEngineFailureMessage(fault);
 }
 
 export const removeWorkflowTagsRestBinding: UnknownRestBinding = {
