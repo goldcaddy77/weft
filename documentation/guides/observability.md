@@ -111,9 +111,19 @@ import { METRICS } from 'weft';
 //   name: 'weft.workflow.completed', type: 'counter', unit: 'workflows'
 // METRICS.workflowFailed
 //   name: 'weft.workflow.failed', type: 'counter', unit: 'workflows'
+// METRICS.taskBacklog
+//   name: 'weft.task.backlog', type: 'gauge', unit: 'tasks'
+// METRICS.taskQueueLatency
+//   name: 'weft.task.queue_latency', type: 'histogram', unit: 'ms'
+// METRICS.taskExecutionLatency
+//   name: 'weft.task.execution_latency', type: 'histogram', unit: 'ms'
+// METRICS.workerCapacitySaturation
+//   name: 'weft.worker.capacity_saturation', type: 'gauge', unit: 'ratio'
 ```
 
 Each metric has a `name`, `description`, `unit`, and `type` (counter, gauge, or histogram). The [server](./server.md) exposes these at `GET /v1/metrics` in Prometheus-compatible text format.
+
+Task and worker metrics are intentionally low-cardinality. They tell you that backlog, queue latency, execution latency, retries, stale heartbeats, or capacity saturation exist. When you need the concrete evidence behind those aggregates, use `GET /v1/tasks/diagnostics` to retrieve bounded diagnostic items for stuck queued tasks, stale in-flight tasks, retry storms, and all-workers-at-capacity conditions.
 
 ## Composing with other interceptors
 
