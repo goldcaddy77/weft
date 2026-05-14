@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
-import { encode } from '../../core/codec.ts';
 import type { Engine } from '../../core/engine.ts';
 import type { WorkflowTimelineEntry } from '../../core/types.ts';
+import { negotiatedResponse } from '../handler/response-helpers.ts';
 import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
@@ -53,21 +53,7 @@ function shapeGetWorkflowTimelineSuccess(
   result: GetWorkflowTimelineOutput,
   request: Request,
 ): Response {
-  // Match legacy `negotiatedResponse` behavior verbatim: substring
-  // match on `Accept`, no q-value parsing. RFC-7231 negotiation is
-  // a deliberate behavior change for a follow-up PR.
-  const accept = request.headers.get('Accept') ?? '';
-  if (accept.includes('application/msgpack')) {
-    return new Response(encode(result), {
-      status: 200,
-      headers: { 'Content-Type': 'application/msgpack' },
-    });
-  }
-
-  return new Response(JSON.stringify(result), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return negotiatedResponse(request, result, 200);
 }
 
 function shapeGetWorkflowTimelineFault(fault: OperationFault): Response {
