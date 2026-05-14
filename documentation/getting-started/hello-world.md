@@ -85,7 +85,7 @@ Run it:
 bun run index.ts
 ```
 
-That's a durable workflow with persistent storage and an explicit recovery path. Let's break down what just happened.
+That's a durable workflow with persistent storage and an explicit recovery path. A **workflow** is the durable process the engine drives to completion. An **activity** is a named side-effecting unit of work, such as formatting a message, calling an API, or writing to another system. Let's break down what just happened.
 
 ### Step-based alternative
 
@@ -129,6 +129,9 @@ The workflow is a **generator function**---notice the `function*` and the `yield
 There's no replay happening here. Weft doesn't re-execute your workflow from the beginning and try to match up results. It literally picks up where it left off. That's why you don't need to worry about determinism---your workflow code can use `Date.now()`, `Math.random()`, or anything else. The only rule is that side effects go inside activities (the functions you pass to `ctx.run()`).
 
 `ctx.run(activity, input)` is how you run an **activity** through its durable dispatch boundary. You can pass either the activity definition (as the example does) or the activity's name string. Either way, remote workers receive an activity name plus serialized input — not your in-process closure — which is why activities have to be registered with the engine before a workflow can dispatch to them.
+
+> [!NOTE]
+> **Checkpoint:** a serialized snapshot of the workflow's current position and local variables. Each durable operation creates a checkpoint boundary, so recovery resumes from the latest saved boundary instead of starting over.
 
 `Engine.create()` does the registration and recovery dance for you in one call: construct the engine, register every activity in the `activities` map, register every workflow in the `workflows` map, then call `engine.recoverAll()` so any workflows still running from a previous process pick up where they left off. The map keys (`helloWorldFormatGreeting`, `helloWorldWelcome`) become the inferred type-system names — Weft validates at runtime that each key matches its definition's `name` field, so you can't accidentally register `farewell` under the key `welcome`.
 
@@ -174,6 +177,8 @@ console.log(result);
 ```
 
 `yield* ctx.waitForSignal('approval')` pauses the workflow until someone sends a signal with that name. The workflow can wait for hours, days, or weeks---the checkpoint is in storage, costing nothing while it waits. When the signal arrives, the engine loads the checkpoint and resumes.
+
+A **signal** is fire-and-forget from the sender's perspective. If the caller needs a synchronous answer back from the workflow, use an update instead; if the caller only needs to inspect state, use a query.
 
 ## Running Activities in Parallel
 
@@ -236,4 +241,4 @@ await using engine = await Engine.create({ storage });
 
 ## Next Steps
 
-You've got the fundamentals: activities, sleeps, signals, parallel execution, and persistent storage. Before diving deeper, take a look at the [Key Concepts](key-concepts.md) page to build a vocabulary for the rest of the documentation.
+You've got the fundamentals: workflows, activities, checkpoints, sleeps, signals, parallel execution, and persistent storage. From here, the [Workflows guide](../guides/workflows.md) goes deeper on generator behavior, and the [Activities guide](../guides/activities.md) covers side effects and retries.
