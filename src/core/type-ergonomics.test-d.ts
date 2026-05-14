@@ -236,6 +236,11 @@ async function verifyEngineCreateInference(): Promise<void> {
   // does not narrow.
   const neither = await Engine.create({ recover: false });
   void neither.start('localGreet', 'Steve');
+  await Engine.create({ recover: true, acknowledgeUnknownWorkflowTypes: true });
+  // @ts-expect-error unknown workflow acknowledgement only applies when recovery runs.
+  await Engine.create({ acknowledgeUnknownWorkflowTypes: true });
+  // @ts-expect-error unknown workflow acknowledgement only applies when recovery runs.
+  await Engine.create({ recover: false, acknowledgeUnknownWorkflowTypes: true });
 
   // workflows-only narrows TWorkflows to the inferred map keys; activities
   // fall back to the module-augmented registry.

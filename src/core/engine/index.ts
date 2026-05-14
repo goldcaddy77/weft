@@ -299,14 +299,23 @@ export type EngineCreateOptions<
   workflows?: TWorkflowDefinitions;
   /** Activity definitions to register before workflows. */
   activities?: TActivityDefinitions;
-  /** Whether to recover stored running workflows after registration. Defaults to `false`. */
-  recover?: boolean;
-  /**
-   * Forwarded to {@link Engine.recoverAll}. Only use this during rolling
-   * deploys, explicit storage migrations, or intentional tenant partitioning.
-   */
-  acknowledgeUnknownWorkflowTypes?: boolean;
-};
+} & (
+    | {
+        /** Recover stored running workflows after registration. */
+        recover: true;
+        /**
+         * Forwarded to {@link Engine.recoverAll}. Only use this during rolling
+         * deploys, explicit storage migrations, or intentional tenant partitioning.
+         */
+        acknowledgeUnknownWorkflowTypes?: boolean;
+      }
+    | {
+        /** Whether to recover stored running workflows after registration. Defaults to `false`. */
+        recover?: false | undefined;
+        /** Only valid when `recover: true` is also set. */
+        acknowledgeUnknownWorkflowTypes?: never;
+      }
+  );
 
 type KnownWorkflowNames<TWorkflows extends object> = Extract<keyof TWorkflows, string>;
 declare const emptyWorkflowDefinitions: unique symbol;
@@ -318,10 +327,10 @@ type EmptyActivityDefinitions = Record<string, never> & {
   readonly [emptyActivityDefinitions]: true;
 };
 type EngineCreateRuntimeOptions = EngineConstructorOptions & {
-  activities?: Record<string, AnyActivityDefinition>;
-  workflows?: Record<string, AnyWorkflowDefinition>;
-  recover?: boolean;
-  acknowledgeUnknownWorkflowTypes?: boolean;
+  activities?: Record<string, AnyActivityDefinition> | undefined;
+  workflows?: Record<string, AnyWorkflowDefinition> | undefined;
+  recover?: boolean | undefined;
+  acknowledgeUnknownWorkflowTypes?: boolean | undefined;
 };
 
 type DynamicWorkflowName<TWorkflows extends object, TName extends string> =
@@ -345,18 +354,28 @@ type RegisteredActivityDefinitionExecute<
 type EngineCleanupIntervalDisposalTracker = {
   disposed: boolean;
   cleanupInterval: ReturnType<typeof setInterval> | null;
+  testToken: symbol | undefined;
 };
 
 let engineLeakWarningOverrideForTesting: boolean | undefined;
+let engineLeakCollectionCountForTesting = 0;
+let nextEngineLeakWarningTokenForTesting: symbol | undefined;
+const engineLeakWarningTokensForTesting = new Set<symbol>();
 
 const engineCleanupIntervalFinalizer =
   new FinalizationRegistry<EngineCleanupIntervalDisposalTracker>((tracker) => {
+    engineLeakCollectionCountForTesting++;
+
     if (tracker.cleanupInterval !== null) {
       clearInterval(tracker.cleanupInterval);
       tracker.cleanupInterval = null;
     }
 
     if (!tracker.disposed && shouldEmitEngineLeakWarning()) {
+      if (tracker.testToken !== undefined) {
+        engineLeakWarningTokensForTesting.add(tracker.testToken);
+      }
+
       process.emitWarning(
         'WeftEngineLeakWarning: A Weft Engine was garbage-collected without calling [Symbol.dispose](). Use `using`, `await using`, or call engine[Symbol.dispose]() to clear background timers and release runtime resources.',
       );
@@ -374,6 +393,26 @@ function shouldEmitEngineLeakWarning(): boolean {
 /** Test-only override for the engine leak-warning environment gate. */
 export function setEngineLeakWarningOverrideForTesting(value: boolean | undefined): void {
   engineLeakWarningOverrideForTesting = value;
+}
+
+/** Test-only marker applied to the next constructed engine leak tracker. */
+export function setNextEngineLeakWarningTokenForTesting(value: symbol | undefined): void {
+  nextEngineLeakWarningTokenForTesting = value;
+}
+
+/** Test-only count of engine cleanup finalizer observations. */
+export function getEngineLeakCollectionCountForTesting(): number {
+  return engineLeakCollectionCountForTesting;
+}
+
+/** Test-only visibility into whether a tagged engine leak emitted a warning. */
+export function hasEngineLeakWarningTokenForTesting(token: symbol): boolean {
+  return engineLeakWarningTokensForTesting.has(token);
+}
+
+/** Test-only cleanup for tagged leak warning observations. */
+export function clearEngineLeakWarningTokenForTesting(token: symbol): void {
+  engineLeakWarningTokensForTesting.delete(token);
 }
 
 /** Test-only visibility into the engine leak-warning environment gate. */
@@ -832,7 +871,9 @@ export class Engine<
     const cleanupIntervalDisposalTracker: EngineCleanupIntervalDisposalTracker = {
       disposed: false,
       cleanupInterval: null,
+      testToken: nextEngineLeakWarningTokenForTesting,
     };
+    nextEngineLeakWarningTokenForTesting = undefined;
     const cleanupInterval = setInterval(
       createCleanupIntervalTick(weakEngine, cleanupIntervalDisposalTracker),
       60_000,

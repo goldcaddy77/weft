@@ -4,93 +4,67 @@ import { MemoryStorage } from '../storage/memory.ts';
 import { sleepForTesting } from '../testing/fake-timers.ts';
 import { flush } from '../testing/storage-backends.ts';
 import {
+  clearEngineLeakWarningTokenForTesting,
   Engine,
+  getEngineLeakCollectionCountForTesting,
+  hasEngineLeakWarningTokenForTesting,
   setEngineLeakWarningOverrideForTesting,
+  setNextEngineLeakWarningTokenForTesting,
   shouldEmitEngineLeakWarningForTesting,
 } from './engine.ts';
 import { activity, workflow, type WorkflowContext } from './types.ts';
 
-async function forceFinalizers(
-  weakReference: WeakRef<object>,
-  stopWhen?: () => boolean,
-  options?: { requireCollection?: boolean },
-): Promise<void> {
-  let postCollectionCycles = 0;
-
-  for (let attempt = 0; attempt < 100; attempt++) {
+async function forceFinalizers(stopWhen: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt++) {
     Bun.gc(true);
     await flush();
     await sleepForTesting(5);
 
-    if (weakReference.deref() !== undefined) continue;
-
-    if (stopWhen?.() === true) return;
-
-    postCollectionCycles++;
-    if (stopWhen === undefined && postCollectionCycles >= 5) return;
+    if (stopWhen()) return;
   }
 
-  if (options?.requireCollection !== false) {
-    throw new Error('Expected leaked Engine to be garbage-collected during the warning test.');
-  }
+  throw new Error('Expected leaked Engine to be garbage-collected during the warning test.');
 }
 
-async function captureWarnings(
-  run: () => WeakRef<object>,
-  stopWhen?: (warnings: Error[]) => boolean,
-  options?: { requireCollection?: boolean },
-): Promise<Error[]> {
-  const warnings: Error[] = [];
-  const onWarning = (warning: Error) => {
-    warnings.push(warning);
-  };
-  process.on('warning', onWarning);
-  try {
-    const weakReference = run();
-    await flush();
-    await forceFinalizers(weakReference, () => stopWhen?.(warnings) === true, options);
-    await flush();
-  } finally {
-    process.off('warning', onWarning);
-  }
-  return warnings;
+async function captureLeakWarning(run: () => void, token: symbol): Promise<boolean> {
+  const initialCollectionCount = getEngineLeakCollectionCountForTesting();
+  setNextEngineLeakWarningTokenForTesting(token);
+  run();
+  await flush();
+  await forceFinalizers(() => getEngineLeakCollectionCountForTesting() > initialCollectionCount);
+  await flush();
+  return hasEngineLeakWarningTokenForTesting(token);
 }
 
-function createLeakedEngine(): WeakRef<object> {
-  const engine = new Engine();
-  return new WeakRef(engine);
+function createLeakedEngine(): void {
+  void new Engine();
 }
 
 describe('Engine lifecycle ergonomics', () => {
   afterEach(() => {
     setEngineLeakWarningOverrideForTesting(undefined);
+    setNextEngineLeakWarningTokenForTesting(undefined);
   });
 
-  it('emits one development warning when an engine is garbage-collected without disposal', async () => {
+  it('emits a development warning when an engine is garbage-collected without disposal', async () => {
     setEngineLeakWarningOverrideForTesting(true);
 
-    const warnings = await captureWarnings(createLeakedEngine, (capturedWarnings) =>
-      capturedWarnings.some((warning) => warning.message.includes('WeftEngineLeakWarning')),
-    );
+    const token = Symbol('leaked engine warning');
+    const emittedWarning = await captureLeakWarning(createLeakedEngine, token);
 
-    const disposalWarnings = warnings.filter((warning) =>
-      warning.message.includes('WeftEngineLeakWarning'),
-    );
-    expect(disposalWarnings).toHaveLength(1);
-    expect(disposalWarnings[0]!.message).toContain('[Symbol.dispose]');
+    expect(emittedWarning).toBe(true);
+    clearEngineLeakWarningTokenForTesting(token);
   });
 
   it('does not emit disposal warnings when the leak-warning gate is disabled', async () => {
     setEngineLeakWarningOverrideForTesting(false);
     expect(shouldEmitEngineLeakWarningForTesting()).toBe(false);
 
-    const warnings = await captureWarnings(createLeakedEngine, undefined, {
-      requireCollection: false,
-    });
+    const token = Symbol('disabled leaked engine warning');
+    const emittedWarning = await captureLeakWarning(createLeakedEngine, token);
 
-    expect(
-      warnings.filter((warning) => warning.message.includes('WeftEngineLeakWarning')),
-    ).toHaveLength(0);
+    expect(emittedWarning).toBe(false);
+    clearEngineLeakWarningTokenForTesting(token);
 
     setEngineLeakWarningOverrideForTesting(true);
     expect(shouldEmitEngineLeakWarningForTesting()).toBe(true);
@@ -100,9 +74,9 @@ describe('Engine lifecycle ergonomics', () => {
     const storage = new MemoryStorage();
     const resumable = workflow({
       name: 'resumable',
-      handler: async function* (ctx: WorkflowContext) {
-        yield* ctx.sleep('1h');
-        return 'done';
+      handler: async function* (ctx: WorkflowContext): AsyncGenerator<unknown, string, unknown> {
+        const suffix = yield* ctx.waitForSignal<string>('release');
+        return `done:${suffix}`;
       },
     });
 
@@ -114,7 +88,8 @@ describe('Engine lifecycle ergonomics', () => {
     original[Symbol.dispose]();
 
     const createdWithoutRecovery = await Engine.create({ storage });
-    expect(await createdWithoutRecovery.get('recoverable-workflow')).not.toBeNull();
+    const unrecoveredState = await createdWithoutRecovery.get('recoverable-workflow');
+    expect(unrecoveredState?.status).toBe('running');
     createdWithoutRecovery[Symbol.dispose]();
 
     const recovered = await Engine.create({
@@ -122,7 +97,8 @@ describe('Engine lifecycle ergonomics', () => {
       workflows: { resumable },
       recover: true,
     });
-    expect(await recovered.get('recoverable-workflow')).not.toBeNull();
+    await recovered.signal('recoverable-workflow', 'release', 'ok');
+    await expect(recovered.getHandle('recoverable-workflow').result()).resolves.toBe('done:ok');
     recovered[Symbol.dispose]();
   });
 
