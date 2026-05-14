@@ -5,11 +5,7 @@ import { KEYS, type Storage as WeftStorage } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { ActivityWorkerDispatcher } from '../../workers/activity-worker-dispatcher.ts';
 import { WorkerPool } from '../../workers/pool.ts';
-import {
-  ActivityRegistry,
-  type ActivityMetadata,
-  type ActivityRegistrationOptions,
-} from '../activity-registry.ts';
+import { ActivityRegistry, type ActivityMetadata } from '../activity-registry.ts';
 import { AtomicState, type AtomicStateOptions } from '../atomic-state.ts';
 import type { StoredStreamChunk } from '../context.ts';
 import { createExpiredResponseCleanupTick, createHandleCacheFinalizer } from '../engine-helpers.ts';
@@ -22,7 +18,6 @@ import {
   DEFAULT_RETENTION_SWEEP_BATCH_SIZE,
   DEFAULT_RETENTION_SWEEP_INTERVAL_MS,
   messageName,
-  type ActivityContext,
   type ActivityTypes,
   type AllowsDynamicWorkflowNames,
   type AnyActivityDefinition,
@@ -53,7 +48,6 @@ import {
   type PaginatedResult,
   type PurgeResult,
   type QueryDefinition,
-  type RegisteredActivityFunction,
   type RegisteredWorkflowDefinition,
   type RetentionOverview,
   type ReviewListEntry,
@@ -138,7 +132,7 @@ import {
   resumeParkedInlineWorkflow as resumeParkedInlineWorkflowFromInternals,
   type InlineParkingCallbacks,
 } from './inline-parking.ts';
-import { getInternals, initializeInternals } from './internals.ts';
+import { getInternals, initializeInternals, type EngineInternals } from './internals.ts';
 import {
   fork as forkFromLifecycle,
   recoverAll as recoverAllFromLifecycle,
@@ -305,7 +299,7 @@ export type EngineCreateOptions<
   workflows?: TWorkflowDefinitions;
   /** Activity definitions to register before workflows. */
   activities?: TActivityDefinitions;
-  /** Whether to recover stored running workflows after registration. Defaults to `true`. */
+  /** Whether to recover stored running workflows after registration. Defaults to `false`. */
   recover?: boolean;
   /**
    * Forwarded to {@link Engine.recoverAll}. Only use this during rolling
@@ -335,6 +329,126 @@ type DynamicWorkflowName<TWorkflows extends object, TName extends string> =
     ? UnregisteredName<TName, KnownWorkflowNames<TWorkflows>>
     : never;
 
+type ActivityDefinitionName<TDefinition extends AnyActivityDefinition> = TDefinition extends {
+  readonly name: infer TName extends string;
+}
+  ? TName
+  : string;
+
+type RegisteredActivityDefinitionExecute<
+  TActivities extends object,
+  TName extends Extract<keyof TActivities, string>,
+> = TActivities[TName] extends (...arguments_: infer TArguments) => infer TResult
+  ? (...arguments_: TArguments) => Awaited<TResult> | Promise<Awaited<TResult>>
+  : never;
+
+type EngineCleanupIntervalDisposalTracker = {
+  disposed: boolean;
+  cleanupInterval: ReturnType<typeof setInterval> | null;
+};
+
+let engineLeakWarningOverrideForTesting: boolean | undefined;
+
+const engineCleanupIntervalFinalizer =
+  new FinalizationRegistry<EngineCleanupIntervalDisposalTracker>((tracker) => {
+    if (tracker.cleanupInterval !== null) {
+      clearInterval(tracker.cleanupInterval);
+      tracker.cleanupInterval = null;
+    }
+
+    if (!tracker.disposed && shouldEmitEngineLeakWarning()) {
+      process.emitWarning(
+        'WeftEngineLeakWarning: A Weft Engine was garbage-collected without calling [Symbol.dispose](). Use `using`, `await using`, or call engine[Symbol.dispose]() to clear background timers and release runtime resources.',
+      );
+    }
+  });
+
+function shouldEmitEngineLeakWarning(): boolean {
+  if (engineLeakWarningOverrideForTesting !== undefined) {
+    return engineLeakWarningOverrideForTesting;
+  }
+
+  return Bun.env['WEFT_DEV_WARNINGS'] === '1' || Bun.env['NODE_ENV'] === 'development';
+}
+
+/** Test-only override for the engine leak-warning environment gate. */
+export function setEngineLeakWarningOverrideForTesting(value: boolean | undefined): void {
+  engineLeakWarningOverrideForTesting = value;
+}
+
+/** Test-only visibility into the engine leak-warning environment gate. */
+export function shouldEmitEngineLeakWarningForTesting(): boolean {
+  return shouldEmitEngineLeakWarning();
+}
+
+function isActivityDefinition(value: unknown): value is AnyActivityDefinition {
+  return (
+    typeof value === 'function' &&
+    typeof value.name === 'string' &&
+    'execute' in value &&
+    typeof (value as { execute?: unknown }).execute === 'function'
+  );
+}
+
+function createQueuedInlineWorkflowStartHandler<
+  TWorkflows extends object,
+  TActivities extends object,
+>(weakEngine: WeakRef<Engine<TWorkflows, TActivities>>, channel: MessageChannel): () => void {
+  return function handleQueuedInlineWorkflowStart() {
+    const engine = weakEngine.deref();
+    if (engine === undefined) {
+      channel.port1.close();
+      channel.port2.close();
+      return;
+    }
+
+    getInternals(engine).queuedInlineWorkflowStartFlushScheduled = false;
+    void swallowPromiseRejection(
+      flushQueuedInlineWorkflowStarts(getInternals(engine), {
+        processPendingUpdatesAfterInlineAdvance: (workflowId) =>
+          createLifecycleCallbacksForEngine(engine).processPendingUpdatesAfterInlineAdvance(
+            workflowId,
+          ),
+        swallowPromiseRejection: (promise) => swallowPromiseRejection(promise),
+      }),
+    );
+  };
+}
+
+function createCleanupIntervalTick<TWorkflows extends object, TActivities extends object>(
+  weakEngine: WeakRef<Engine<TWorkflows, TActivities>>,
+  tracker: EngineCleanupIntervalDisposalTracker,
+): () => void {
+  return function cleanupExpiredResponsesForLiveEngine() {
+    const engine = weakEngine.deref();
+    if (engine === undefined) {
+      if (tracker.cleanupInterval !== null) {
+        clearInterval(tracker.cleanupInterval);
+        tracker.cleanupInterval = null;
+      }
+      return;
+    }
+
+    const internals = getInternals(engine);
+    createExpiredResponseCleanupTick(internals.updateCoordinator, (source, error) =>
+      createTerminationCallbacksForEngine(engine).handleCleanupError(source, error),
+    )();
+  };
+}
+
+function disposeEngineCleanupInterval(internals: EngineInternals): void {
+  if (internals.cleanupInterval !== null) {
+    clearInterval(internals.cleanupInterval ?? undefined);
+    internals.cleanupInterval = null;
+  }
+  if (internals.cleanupIntervalDisposalTracker !== null) {
+    internals.cleanupIntervalDisposalTracker.disposed = true;
+    internals.cleanupIntervalDisposalTracker.cleanupInterval = null;
+    engineCleanupIntervalFinalizer.unregister(internals.cleanupIntervalDisposalTracker);
+    internals.cleanupIntervalDisposalTracker = null;
+  }
+}
+
 function definitionEntries<TDefinition extends object>(
   definitions: Record<string, TDefinition> | undefined,
 ): Array<[string, TDefinition]> {
@@ -345,7 +459,7 @@ function typedEngineView<TViewWorkflows extends object, TViewActivities extends 
   engine: object,
 ): Engine<TViewWorkflows, TViewActivities> {
   // The runtime instance is the same Engine; this re-narrows the phantom type
-  // parameters after `register` / `registerActivity` has mutated the
+  // parameters after `register` has mutated the
   // underlying registries. There is no sound type-system bridge: `Engine` is
   // invariant in both type parameters because the `register` method makes them
   // contravariant, so any cast that preserves the structural relationship
@@ -490,8 +604,8 @@ export const ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING = Symbol('engineSignalWaiter
 /**
  * Durable execution engine.
  *
- * Register workflow functions with {@link Engine.register} or the typed
- * {@link Engine.withWorkflow} builder, start them with {@link Engine.start},
+ * Register workflow and activity definitions with {@link Engine.register},
+ * start workflows with {@link Engine.start},
  * and observe or cancel them via the returned {@link WorkflowHandle}. Each
  * workflow is a generator that yields to a {@link Context}; the engine
  * persists a checkpoint at every yield so the workflow survives crashes,
@@ -499,8 +613,7 @@ export const ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING = Symbol('engineSignalWaiter
  *
  * The default type parameters preserve the module-augmentation registry
  * model. Use `new Engine<{}, {}>()` when you want an engine-local registry
- * that only accepts definitions added through `withWorkflow` and
- * `withActivity`.
+ * that only accepts definitions added through `register`.
  *
  * @example Run a workflow with an activity
  * ```ts
@@ -524,6 +637,7 @@ export const ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING = Symbol('engineSignalWaiter
  * import { BunSQLiteStorage } from 'weft/storage/sqlite/bun';
  * await using storage = new BunSQLiteStorage('./weft.db');
  * await using engine = new Engine({ storage });
+ * await engine.recoverAll();
  * void engine;
  * ```
  */
@@ -535,8 +649,8 @@ export class Engine<
   implements Disposable, AsyncDisposable
 {
   /**
-   * Construct, register, and recover an engine in one step. Activities are
-   * registered before workflows, and recovery runs by default after all
+   * Construct and register an engine in one step. Activities are registered
+   * before workflows. Pass `recover: true` to run recovery after all
    * definitions are installed.
    *
    * @example
@@ -605,7 +719,7 @@ export class Engine<
         engine.register(definition);
       }
 
-      if (options.recover !== false) {
+      if (options.recover === true) {
         const recoverOptions =
           options.acknowledgeUnknownWorkflowTypes === undefined
             ? undefined
@@ -685,20 +799,15 @@ export class Engine<
     getInternals(this).queuedInlineWorkflowStartIds = new Set();
     getInternals(this).queuedOrLaunchingInlineWorkflowStartIds = new Set();
     getInternals(this).queuedInlineWorkflowStartFlushScheduled = false;
+    const weakEngine = new WeakRef(this);
     const queuedInlineWorkflowStartChannel =
       strategyBundle.inlineStrategy !== null ? new MessageChannel() : null;
     getInternals(this).queuedInlineWorkflowStartChannel = queuedInlineWorkflowStartChannel;
     if (queuedInlineWorkflowStartChannel !== null) {
-      queuedInlineWorkflowStartChannel.port1.onmessage = () => {
-        getInternals(this).queuedInlineWorkflowStartFlushScheduled = false;
-        void swallowPromiseRejection(
-          flushQueuedInlineWorkflowStarts(getInternals(this), {
-            processPendingUpdatesAfterInlineAdvance: (workflowId) =>
-              this.#createLifecycleCallbacks().processPendingUpdatesAfterInlineAdvance(workflowId),
-            swallowPromiseRejection: (promise) => swallowPromiseRejection(promise),
-          }),
-        );
-      };
+      queuedInlineWorkflowStartChannel.port1.onmessage = createQueuedInlineWorkflowStartHandler(
+        weakEngine,
+        queuedInlineWorkflowStartChannel,
+      );
     }
     getInternals(this).tenantQuotaManager = new TenantQuotaManager(
       storage,
@@ -719,11 +828,22 @@ export class Engine<
     getInternals(this).reviewTimerIds = new Map();
     getInternals(this).pendingWebhooks = new Set();
     getInternals(this).pendingTimelineEntries = new Map();
-    getInternals(this).cleanupInterval = setInterval(
-      createExpiredResponseCleanupTick(getInternals(this).updateCoordinator, (source, error) =>
-        this.#createTerminationCallbacks().handleCleanupError(source, error),
-      ),
+    getInternals(this).cleanupIntervalDisposalTracker = null;
+    const cleanupIntervalDisposalTracker: EngineCleanupIntervalDisposalTracker = {
+      disposed: false,
+      cleanupInterval: null,
+    };
+    const cleanupInterval = setInterval(
+      createCleanupIntervalTick(weakEngine, cleanupIntervalDisposalTracker),
       60_000,
+    );
+    cleanupIntervalDisposalTracker.cleanupInterval = cleanupInterval;
+    getInternals(this).cleanupInterval = cleanupInterval;
+    getInternals(this).cleanupIntervalDisposalTracker = cleanupIntervalDisposalTracker;
+    engineCleanupIntervalFinalizer.register(
+      this,
+      cleanupIntervalDisposalTracker,
+      cleanupIntervalDisposalTracker,
     );
     getInternals(this).retentionSweepInterval = null;
     getInternals(this).retentionSweepInFlight = null;
@@ -824,33 +944,11 @@ export class Engine<
   }
 
   /**
-   * Register a workflow definition and return this same engine with the
+   * Register a workflow by name or definition, or register an activity
+   * definition. Definition overloads return this same engine with the
    * definition added to its phantom type registry. This is additive over the
    * module-augmented default registry; construct `new Engine<{}, {}>()` for a
    * strict local registry.
-   */
-  withWorkflow<TDefinition extends AnyWorkflowDefinition>(
-    definition: TDefinition,
-  ): Engine<TWorkflows & InferWorkflowEntry<TDefinition>, TActivities> {
-    this.register(definition);
-    return typedEngineView<TWorkflows & InferWorkflowEntry<TDefinition>, TActivities>(this);
-  }
-
-  /**
-   * Register an activity definition and return this same engine with the
-   * definition added to its phantom type registry. The callable definition is
-   * registered directly so retry, timeout, schema, verification, and
-   * compensation metadata stays attached to the function object.
-   */
-  withActivity<TDefinition extends AnyActivityDefinition>(
-    definition: TDefinition,
-  ): Engine<TWorkflows, TActivities & InferActivityEntry<TDefinition>> {
-    this.#registerActivityDefinition(definition);
-    return typedEngineView<TWorkflows, TActivities & InferActivityEntry<TDefinition>>(this);
-  }
-
-  /**
-   * Register a workflow by name, registration object, or workflow definition.
    *
    * @example
    * ```ts
@@ -862,35 +960,57 @@ export class Engine<
    * });
    * ```
    */
+  register<TDefinition extends AnyWorkflowDefinition>(
+    definition: TDefinition,
+  ): Engine<TWorkflows & InferWorkflowEntry<TDefinition>, TActivities>;
+  register<
+    TDefinition extends AnyActivityDefinition,
+    TName extends Extract<keyof TActivities, string> & ActivityDefinitionName<TDefinition>,
+  >(
+    definition: TDefinition & {
+      readonly name: TName;
+      readonly execute: RegisteredActivityDefinitionExecute<TActivities, TName>;
+    },
+  ): Engine<TWorkflows, TActivities & InferActivityEntry<TDefinition>>;
+  register<TDefinition extends AnyActivityDefinition>(
+    definition: ActivityDefinitionName<TDefinition> extends Extract<keyof TActivities, string>
+      ? never
+      : TDefinition,
+  ): Engine<TWorkflows, TActivities & InferActivityEntry<TDefinition>>;
   register<TName extends KnownWorkflowNames<TWorkflows>>(
     name: TName,
     handler:
       | WorkflowFunction<WorkflowInput<TWorkflows, TName>, WorkflowOutput<TWorkflows, TName>>
       | StepWorkflowFunction<WorkflowInput<TWorkflows, TName>, WorkflowOutput<TWorkflows, TName>>,
-  ): void;
+  ): this;
   register<TName extends KnownWorkflowNames<TWorkflows>>(
     name: TName,
     registration: WorkflowRegistration<
       WorkflowInput<TWorkflows, TName>,
       WorkflowOutput<TWorkflows, TName>
     >,
-  ): void;
+  ): this;
   register<TName extends string, TInput = unknown, TOutput = unknown>(
     name: UnregisteredName<TName, KnownWorkflowNames<TWorkflows>>,
     handler: WorkflowFunction<TInput, TOutput> | StepWorkflowFunction<TInput, TOutput>,
-  ): void;
+  ): this;
   register<TName extends string, TInput = unknown, TOutput = unknown>(
     name: UnregisteredName<TName, KnownWorkflowNames<TWorkflows>>,
     registration: WorkflowRegistration<TInput, TOutput>,
-  ): void;
-  register<TDefinition extends AnyWorkflowDefinition>(definition: TDefinition): void;
-  register(nameOrDefinition: unknown, handlerOrRegistrationOrOptions?: unknown): void {
-    return registerWorkflow(
+  ): this;
+  register(nameOrDefinition: unknown, handlerOrRegistrationOrOptions?: unknown): unknown {
+    if (isActivityDefinition(nameOrDefinition) && handlerOrRegistrationOrOptions === undefined) {
+      this.#registerActivityDefinition(nameOrDefinition);
+      return typedEngineView<TWorkflows, TActivities>(this);
+    }
+
+    registerWorkflow(
       getInternals(this),
       nameOrDefinition,
       handlerOrRegistrationOrOptions,
       this.#createRegistrationCallbacks(),
     );
+    return typedEngineView<TWorkflows, TActivities>(this);
   }
   addInterceptor(interceptor: Interceptor): void {
     getInternals(this).interceptors.push(interceptor);
@@ -907,24 +1027,6 @@ export class Engine<
     getInternals(this).activityRegistry.register(definition.name, definition);
   }
 
-  registerActivity<TName extends Extract<keyof TActivities, string>>(
-    name: TName,
-    fn: RegisteredActivityFunction<TActivities, TName>,
-    options?: ActivityRegistrationOptions,
-  ): void;
-  registerActivity<TName extends string, TResult>(
-    name: UnregisteredName<TName, Extract<keyof TActivities, string>>,
-    fn: () => TResult | Promise<TResult>,
-    options?: ActivityRegistrationOptions,
-  ): void;
-  registerActivity<TName extends string, TInput, TResult>(
-    name: UnregisteredName<TName, Extract<keyof TActivities, string>>,
-    fn: (input: TInput, context?: ActivityContext) => TResult | Promise<TResult>,
-    options?: ActivityRegistrationOptions,
-  ): void;
-  registerActivity(name: string, fn: Function, options?: ActivityRegistrationOptions): void {
-    getInternals(this).activityRegistry.register(name, fn, options);
-  }
   getWorkflowDefinition(type: string): RegisteredWorkflowDefinition | undefined {
     const registration = getInternals(this).registrations.get(type);
     return registration === undefined ? undefined : copyWorkflowDefinition(type, registration);
@@ -1416,10 +1518,7 @@ export class Engine<
     internals.activityWorkerDispatcher?.[Symbol.dispose]();
     internals.activityWorkerDispatcher = null;
     internals.inlineStrategy = null;
-    if (internals.cleanupInterval !== null) {
-      clearInterval(internals.cleanupInterval ?? undefined);
-      internals.cleanupInterval = null;
-    }
+    disposeEngineCleanupInterval(internals);
     if (internals.retentionSweepInterval !== null) {
       clearInterval(internals.retentionSweepInterval ?? undefined);
       internals.retentionSweepInterval = null;

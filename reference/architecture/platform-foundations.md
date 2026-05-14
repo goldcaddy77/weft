@@ -1231,14 +1231,14 @@ class CheckpointCache {
 
 #### Activity Registry
 
-Activities are registered by string name and looked up at dispatch time. The registry is a simple `Map<string, Function>` — straightforward and predictable:
+Activities are registered by definition name and looked up at dispatch time. The registry is a simple map from name to callable definition — straightforward and predictable:
 
 ```typescript
 // Actual implementation in engine.ts
-#activityRegistrations: Map<string, (...arguments_: unknown[]) => unknown>;
+#activityRegistrations: Map<string, ActivityDefinition>;
 
-registerActivity(name: string, fn: (...arguments_: unknown[]) => unknown): void {
-  this.#activityRegistrations.set(name, fn);
+register(activity: ActivityDefinition): void {
+  this.#activityRegistrations.set(activity.name, activity);
 }
 ```
 
