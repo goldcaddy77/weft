@@ -113,7 +113,11 @@ class SubprocessServerHandleImpl implements SubprocessServerHandle {
   ) {
     this.#process = process;
     this.url = url;
-    this.port = new URL(url).port === '' ? 80 : Number(new URL(url).port);
+    const parsedUrl = new URL(url);
+    if (parsedUrl.port === '') {
+      throw new Error(`Subprocess readiness URL must include an explicit port: ${url}`);
+    }
+    this.port = Number(parsedUrl.port);
     this.databasePath = options.databasePath;
     this.command = command;
     this.#options = { ...options, port: this.port };
@@ -139,23 +143,18 @@ class SubprocessServerHandleImpl implements SubprocessServerHandle {
   get stdout(): string {
     return this.#output.stdout;
   }
-
   get stderr(): string {
     return this.#output.stderr;
   }
-
   async stop(signal: SubprocessSignal = 'SIGTERM'): Promise<void> {
     await stopProcess(this.#process, signal, this.#options.exitTimeoutMs);
   }
-
   async [Symbol.asyncDispose](): Promise<void> {
     await this.stop();
   }
-
   get internalProcess(): RunningSubprocess {
     return this.#process;
   }
-
   get internalRestartOptions(): NormalizedSubprocessServerOptions {
     return this.#options;
   }
@@ -298,6 +297,8 @@ function createReadyWatcher(
 
     void drainStream(process.stderr, (chunk) => {
       output.stderr = appendCapturedOutput(output.stderr, chunk);
+    }).catch((error: unknown) => {
+      fail(error instanceof Error ? error : new Error(String(error)));
     });
   });
 }
@@ -395,8 +396,7 @@ function isExpectedSignalExit(
 ): boolean {
   const signalCode = normalizeSignalCode(process.signalCode);
   if (signalCode !== null) return signalCode === signal;
-  if (exitCode === expectedExitCodeForSignal(signal)) return true;
-  return signal !== 'SIGKILL' && exitCode === 0;
+  return exitCode === expectedExitCodeForSignal(signal);
 }
 
 /**
@@ -474,7 +474,7 @@ export async function killAndReboot(
     );
   }
 
-  return spawnServerSubprocess(restartOptions);
+  return spawnServerSubprocess({ ...restartOptions, port: 0 });
 }
 
 /** Runs a callback with a server subprocess and tears it down afterward.

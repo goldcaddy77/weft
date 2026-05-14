@@ -239,6 +239,23 @@ process.exit(0);
     ).rejects.toThrow(/after readiness/);
   });
 
+  it('rejects readiness URLs without explicit ports', async () => {
+    const entrypoint = await writeEntrypoint(
+      'ready-without-port',
+      `
+console.log('WEFT_SUBPROCESS_READY http://127.0.0.1');
+setInterval(() => {}, 1000);
+`,
+    );
+
+    await expect(
+      spawnServerSubprocess({
+        entrypoint,
+        databasePath: join(createFixturePath('ready-without-port-db'), 'weft.db'),
+      }),
+    ).rejects.toThrow(/explicit port/);
+  });
+
   it('surfaces bind failures on a reused port', async () => {
     const entrypoint = await writeEntrypoint('bind-failure', durableEntrypointSource());
     const databasePath = join(createFixturePath('bind-failure-db'), 'weft.db');
@@ -291,7 +308,7 @@ setInterval(() => {}, 1000);
     }
   });
 
-  it('reboots after a subprocess handles SIGTERM and exits cleanly', async () => {
+  it('rejects clean exits that do not report signal termination', async () => {
     const entrypoint = await writeEntrypoint(
       'sigterm-clean-exit',
       `
@@ -307,10 +324,7 @@ setInterval(() => {}, 1000);
     });
     handles.push(handle);
 
-    handle = await killAndReboot(handle, 'SIGTERM');
-    handles.push(handle);
-
-    expect(handle.process.exitCode).toBeNull();
+    await expect(killAndReboot(handle, 'SIGTERM')).rejects.toThrow(/Expected subprocess/);
   });
 
   it('recovers a parked workflow after SIGKILL without re-running a completed activity', async () => {
@@ -332,9 +346,14 @@ setInterval(() => {}, 1000);
     handle = await killAndReboot(handle);
     handles.push(handle);
     const rebootedClient = new HttpClient({ baseUrl: handle.url });
+    expect(handle.command).toContain('--port');
+    expect(handle.command).toContain('0');
     await rebootedClient.signal(workflow.id, 'finish', 'done');
 
-    await expect(workflow.result()).resolves.toEqual({ activityCount: 1, signalPayload: 'done' });
+    await expect(readWorkflowResult(handle.url, workflow.id)).resolves.toEqual({
+      activityCount: 1,
+      signalPayload: 'done',
+    });
     expect(await Bun.file(join(directory, 'activity-count.txt')).text()).toBe('1');
   });
 
