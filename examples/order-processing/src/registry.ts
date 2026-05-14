@@ -26,17 +26,3 @@ export function createOrderProcessingEngine<TEngine extends Engine>(engine: TEng
   engine.register(sweepStaleOrdersWorkflow);
   return engine;
 }
-
-export const orderProcessingActivities = {
-  orderProcessingChargePayment: chargePayment,
-  orderProcessingRefundPayment: refundPayment,
-  orderProcessingReleaseInventory: releaseInventory,
-  orderProcessingReserveInventory: reserveInventory,
-  orderProcessingShipOrder: shipOrder,
-};
-
-export const orderProcessingWorkflows = {
-  orderProcessingOrder: orderWorkflow,
-  orderProcessingShipment: shipmentWorkflow,
-  orderProcessingSweepStaleOrders: sweepStaleOrdersWorkflow,
-};

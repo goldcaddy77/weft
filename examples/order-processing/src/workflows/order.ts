@@ -65,6 +65,7 @@ export const orderWorkflow = workflow({
     });
     context.onQuery(orderStatusQuery, currentStatus);
 
+    context.setAttribute(customerIdAttribute, input.customerId);
     setStatus('reserving');
     const reservations = yield* context.all(
       groupItemsByWarehouse(items).map(([warehouseId, warehouseItems]) =>
