@@ -22,10 +22,10 @@ import { TestEngine } from '../test-engine.ts';
 // ---------------------------------------------------------------------------
 
 const ALL_FAILURE_CATEGORIES: FailureCategory[] = [
-  'memory',
-  'reflection',
-  'planning',
-  'action',
+  'application',
+  'timeout',
+  'cancellation',
+  'resource',
   'system',
 ];
 
@@ -296,6 +296,28 @@ describe('TestEngine.runN', () => {
 
     expect(hasCorrectCategoriesShape(result.categories)).toBe(true);
     expect(ALL_FAILURE_CATEGORIES.every((c) => result.categories[c] >= 0)).toBe(true);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('counts stored application failures in RunNResult.categories', async () => {
+    class ToolSchemaValidationError extends Error {
+      constructor() {
+        super('invalid planned operation');
+        this.name = 'ToolSchemaValidationError';
+      }
+    }
+
+    const engine = new TestEngine();
+    engine.register('planning-failure', async function* () {
+      throw new ToolSchemaValidationError();
+    });
+
+    const result = await engine.runN('planning-failure', undefined, { runs: 1 });
+
+    expect(result.passRate).toBe(0);
+    expect(result.categories.application).toBe(1);
+    expect(result.categories.system).toBe(0);
 
     engine[Symbol.dispose]();
   });

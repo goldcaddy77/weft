@@ -267,10 +267,10 @@ export class TestEngine extends Engine {
     let passes = 0;
     const successOutputs: unknown[] = [];
     const categories: Record<FailureCategory, number> = {
-      memory: 0,
-      reflection: 0,
-      planning: 0,
-      action: 0,
+      application: 0,
+      timeout: 0,
+      cancellation: 0,
+      resource: 0,
       system: 0,
     };
 
@@ -300,17 +300,18 @@ export class TestEngine extends Engine {
         }
       }
 
+      // Use a unique ID per run to keep workflow state isolated.
+      const runId = `runN-${type}-${i}-${Date.now()}`;
+
       try {
-        // Use a unique ID per run to keep workflow state isolated.
-        const runId = `runN-${type}-${i}-${Date.now()}`;
         const handle = await runtimeWorkflowEngine(this).start(type, input, { id: runId });
         const output = await handle.result();
         passes++;
         successOutputs.push(output);
       } catch {
-        // Stub: all failures categorized as 'system' until failureCategory
-        // population is implemented (architecture item 5788).
-        categories.system++;
+        const state = await this.get(runId);
+        const category = state?.failureCategory ?? 'system';
+        categories[category]++;
       } finally {
         // Restore original mock base implementations.
         if (chaos) {

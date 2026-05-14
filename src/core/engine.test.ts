@@ -87,9 +87,42 @@ class AttributeReadCountingStorage extends MemoryStorage {
 
   override async get(key: string): Promise<Uint8Array | null> {
     if (key.startsWith('attr:')) {
-      this.attributeReadCount += 1;
+      this.recordAttributeRead();
     }
+    return this.getStoredValue(key);
+  }
+
+  protected recordAttributeRead(): void {
+    this.attributeReadCount += 1;
+  }
+
+  protected async getStoredValue(key: string): Promise<Uint8Array | null> {
     return super.get(key);
+  }
+}
+
+class ConcurrentAttributeReadCountingStorage extends AttributeReadCountingStorage {
+  activeAttributeReadCount = 0;
+  maxConcurrentAttributeReadCount = 0;
+
+  override async get(key: string): Promise<Uint8Array | null> {
+    if (!key.startsWith('attr:')) {
+      return this.getStoredValue(key);
+    }
+
+    this.recordAttributeRead();
+    this.activeAttributeReadCount += 1;
+    this.maxConcurrentAttributeReadCount = Math.max(
+      this.maxConcurrentAttributeReadCount,
+      this.activeAttributeReadCount,
+    );
+
+    try {
+      await sleepForTesting(1);
+      return await this.getStoredValue(key);
+    } finally {
+      this.activeAttributeReadCount -= 1;
+    }
   }
 }
 
@@ -104,6 +137,12 @@ describe('Engine', () => {
     expect(engine.storage.constructor.name).toBe('CompressedStorage');
 
     engine[Symbol.dispose]();
+  });
+
+  it('rejects suspendOnLlmWait until the option has a runtime implementation', () => {
+    expect(() => new Engine({ suspendOnLlmWait: true })).toThrow(
+      'suspendOnLlmWait is not yet implemented',
+    );
   });
 
   it('creates engine with no args and defaults to MemoryStorage', () => {
@@ -136,7 +175,7 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
-  it('Engine.create registers activities before workflows and recovers stored running workflows', async () => {
+  it('Engine.create registers activities before workflows and recovers when requested', async () => {
     const storage = new MemoryStorage();
     const firstEngine = new Engine({ storage });
     const formatFactoryGreeting = activity({
@@ -152,7 +191,7 @@ describe('Engine', () => {
       },
     });
 
-    firstEngine.registerActivity(formatFactoryGreeting.name, formatFactoryGreeting);
+    firstEngine.register(formatFactoryGreeting);
     firstEngine.register(factoryWelcome);
     await firstEngine.start('factoryWelcome', { name: 'Ada' }, { id: 'factory-recover-id' });
     await flush();
@@ -162,6 +201,7 @@ describe('Engine', () => {
       storage,
       activities: { formatFactoryGreeting },
       workflows: { factoryWelcome },
+      recover: true,
     });
 
     expect(recoveredEngine.getActivityDefinition('formatFactoryGreeting')).toMatchObject({
@@ -254,7 +294,7 @@ describe('Engine', () => {
     }
   });
 
-  it('withWorkflow and withActivity return a typed view of the same runtime engine', async () => {
+  it('register() returns a typed view of the same runtime engine', async () => {
     const formatBuilderGreeting = activity({
       name: 'formatBuilderGreeting',
       execute: async (input: { name: string }) => `Hello, ${input.name}`,
@@ -266,15 +306,13 @@ describe('Engine', () => {
       },
     });
 
-    const engine = new Engine<{}, {}>()
-      .withActivity(formatBuilderGreeting)
-      .withWorkflow(builderWelcome);
+    const engine = new Engine<{}, {}>().register(formatBuilderGreeting).register(builderWelcome);
     const handle = await engine.start('builderWelcome', { name: 'Grace' });
     await expect(handle.result()).resolves.toBe('Hello, Grace');
     engine[Symbol.dispose]();
   });
 
-  it('activity definition metadata is preserved through Engine.create and withActivity', async () => {
+  it('activity definition metadata is preserved through Engine.create and register()', async () => {
     const inputSchema = makeDefinitionSchema<{ name: string }>();
     const outputSchema = makeDefinitionSchema<string>();
     const retry = {
@@ -301,7 +339,7 @@ describe('Engine', () => {
       activities: { metadataActivity: definition },
       recover: false,
     });
-    const builderEngine = new Engine<{}, {}>().withActivity(definition);
+    const builderEngine = new Engine<{}, {}>().register(definition);
 
     expect(createdEngine.getActivityDefinition('metadataActivity')).toEqual(
       builderEngine.getActivityDefinition('metadataActivity'),
@@ -346,7 +384,7 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
-  it('registerActivity(name, fn) registers a named activity for workflow execution', async () => {
+  it('register(activityDefinition) registers a named activity for workflow execution', async () => {
     const engine = new Engine();
 
     async function double(value: unknown) {
@@ -361,7 +399,7 @@ describe('Engine', () => {
       { value: 'double' },
     );
 
-    engine.registerActivity('double', double);
+    engine.register(activity({ name: 'double', execute: double }));
     engine.register('double-via-registered-activity', async function* (ctx: WorkflowContext) {
       return yield* ctx.run(dispatchedDouble, 21);
     });
@@ -376,9 +414,12 @@ describe('Engine', () => {
   it('ctx.run(name, input) dispatches through the registered activity table', async () => {
     const engine = new Engine();
 
-    engine.registerActivity('formatGreeting', async (input: { name: string }) => {
-      return `Hello, ${input.name}`;
-    });
+    engine.register(
+      activity({
+        name: 'formatGreeting',
+        execute: async (input: { name: string }) => `Hello, ${input.name}`,
+      }),
+    );
     engine.register('welcome', async function* (ctx: WorkflowContext, input: { name: string }) {
       return yield* ctx.run('formatGreeting', input);
     });
@@ -1308,7 +1349,7 @@ describe('Engine', () => {
       { status: 'failed' },
       { includeFailureCategory: true },
     );
-    expect(includedResult.items[0]?.failureCategory).toBe('planning');
+    expect(includedResult.items[0]?.failureCategory).toBe('application');
     expect(storage.attributeReadCount).toBe(1);
 
     engine[Symbol.dispose]();
@@ -1337,10 +1378,51 @@ describe('Engine', () => {
     expect(includedResult.items).toContainEqual(
       expect.objectContaining({
         id: 'wf-state-category',
-        failureCategory: 'system',
+        failureCategory: 'application',
       }),
     );
     expect(storage.attributeReadCount).toBe(0);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('list() reads requested legacy failureCategory attributes concurrently within constrained chunks', async () => {
+    const storage = new ConcurrentAttributeReadCountingStorage();
+    const engine = new Engine({ storage });
+    engine.register('attribute-backed-category-concurrent', async function* () {
+      throw new Error('legacy failure');
+    });
+
+    const handles = await Promise.all(
+      [0, 1, 2].map((index) =>
+        engine.start('attribute-backed-category-concurrent', null, {
+          id: `wf-attribute-category-${index}`,
+        }),
+      ),
+    );
+
+    for (const handle of handles) {
+      await expect(handle.result()).rejects.toThrow('legacy failure');
+      const stateBytes = await storage.get(KEYS.workflow(handle.id));
+      expect(stateBytes).not.toBeNull();
+      const legacyState = decode(stateBytes!) as WorkflowState;
+      legacyState.failureCategory = null;
+      await storage.put(KEYS.workflow(handle.id), encode(legacyState));
+      await storage.put(KEYS.attribute(handle.id), encode({ failureCategory: 'planning' }));
+    }
+
+    storage.attributeReadCount = 0;
+    storage.maxConcurrentAttributeReadCount = 0;
+
+    const result = await engine.list(
+      { idPrefix: 'wf-attribute-category-' },
+      { includeFailureCategory: true },
+    );
+
+    expect(result.items).toHaveLength(3);
+    expect(result.items.every((item) => item.failureCategory === 'application')).toBe(true);
+    expect(storage.attributeReadCount).toBe(3);
+    expect(storage.maxConcurrentAttributeReadCount).toBeGreaterThan(1);
 
     engine[Symbol.dispose]();
   });
@@ -3069,20 +3151,25 @@ describe('Engine', () => {
     expect(typeof sendEmail).toBe('function');
   });
 
-  it('registerActivity() accepts a named activity registration', () => {
+  it('register() accepts a named activity registration', () => {
     const engine = new Engine();
 
     expect(() =>
-      engine.registerActivity('sendEmail', async (input: unknown) => {
-        const message = input as { to: string; body: string };
-        return `sent to ${message.to}: ${message.body}`;
-      }),
+      engine.register(
+        activity({
+          name: 'sendEmail',
+          execute: async (input: unknown) => {
+            const message = input as { to: string; body: string };
+            return `sent to ${message.to}: ${message.body}`;
+          },
+        }),
+      ),
     ).not.toThrow();
 
     engine[Symbol.dispose]();
   });
 
-  it('registerActivity() and ctx.run() accept typed activity definitions', async () => {
+  it('register() and ctx.run() accept typed activity definitions', async () => {
     const engine = new Engine();
     const sendEmail = activity({
       name: 'sendEmail',
@@ -3091,7 +3178,7 @@ describe('Engine', () => {
       },
     });
 
-    expect(() => engine.registerActivity(sendEmail.name, sendEmail)).not.toThrow();
+    expect(() => engine.register(sendEmail)).not.toThrow();
     engine.register('send-email', async function* (ctx: WorkflowContext) {
       return yield* ctx.run(sendEmail, {
         to: 'hello@example.com',
@@ -3115,7 +3202,7 @@ describe('Engine', () => {
       execute: async (input: { to: string }) => `sent to ${input.to}`,
     });
 
-    engine.registerActivity(sendEmail.name, sendEmail);
+    engine.register(sendEmail);
 
     const definition = engine.getActivityDefinition('sendEmail');
     expect(definition).toMatchObject({
@@ -5633,9 +5720,9 @@ describe('Engine speculative execution', () => {
 
     engine.register('speculate-parallel-success', async function* (ctx: WorkflowContext) {
       const context = ctx;
-      const result = (yield* context.speculate(async function* (branch) {
+      const result = yield* context.speculate(async function* (branch) {
         return yield* branch.all([branch.run(double, 5), branch.run(increment, 5)]);
-      })) as [number, number];
+      });
 
       return result;
     });
@@ -5782,7 +5869,7 @@ describe('Engine tenant-isolation guards', () => {
       },
       workerExecution: {
         workerUrl: new URL('https://example.invalid/worker.js'),
-        concurrency: 1,
+        poolSize: 1,
       },
     });
     expect(engine).toBeInstanceOf(Engine);
@@ -5793,7 +5880,7 @@ describe('Engine tenant-isolation guards', () => {
     const engine = new Engine({
       workerExecution: {
         workerUrl: new URL('https://example.invalid/worker.js'),
-        concurrency: 1,
+        poolSize: 1,
       },
     });
     expect(engine).toBeInstanceOf(Engine);

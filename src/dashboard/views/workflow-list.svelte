@@ -3,8 +3,10 @@
 
   import type {
     ApiClient,
+    AggregateResult,
     BulkOperationDryRunResult,
     BulkTagMutationOperation,
+    FailureCategory,
     ListFilter,
     RetentionOverview,
     ScheduleSummary,
@@ -15,6 +17,7 @@
   } from '../api-client.ts';
   import { activity, ban, check, refreshCw, search } from '../icons.ts';
   import Alert from '../components/alert.svelte';
+  import DateRangePicker from '../components/date-range-picker.svelte';
   import Input from '../components/input.svelte';
   import Page from '../components/page.svelte';
   import Button from '../components/button.svelte';
@@ -30,7 +33,11 @@
     formatTenantQuotaBytes,
     formatTenantQuotaWindow,
   } from '../utilities/tenant-quota.ts';
-  import { loadWorkflowListData } from '../utilities/workflow-list-data.ts';
+  import {
+    buildWorkflowListFilter,
+    loadWorkflowAggregate,
+    loadWorkflowListData,
+  } from '../utilities/workflow-list-data.ts';
   import { buildWorkflowRetentionRows } from '../utilities/workflow-retention.ts';
   import { collectWorkflowTags, toggleWorkflowTagSelection } from '../utilities/workflow-tags.ts';
 
@@ -43,8 +50,18 @@
   let statusFilter: WorkflowStatus | 'all' = $state('all');
   let typeFilter = $state('');
   let selectedTags = $state<string[]>([]);
+  let idPrefixFilter = $state('');
+  let tenantIdFilter = $state('');
+  let failureCategoryFilters = $state<FailureCategory[]>([]);
+  let createdAtGte: number | undefined = $state();
+  let createdAtLte: number | undefined = $state();
+  let updatedAtGte: number | undefined = $state();
+  let updatedAtLte: number | undefined = $state();
+  let executionDeadlineGte: number | undefined = $state();
+  let executionDeadlineLte: number | undefined = $state();
   let currentOffset = $state(0);
   const pageSize = 20;
+  const ID_PREFIX_PATTERN = /^[A-Za-z0-9_-]+$/;
 
   // ---------------------------------------------------------------------------
   // Data state
@@ -53,6 +70,12 @@
   let workflows: WorkflowSummary[] = $state([]);
   let schedules: ScheduleSummary[] = $state([]);
   let retentionOverview: RetentionOverview | null = $state(null);
+  let statusAggregate: AggregateResult | null = $state.raw(null);
+  let statusAggregateLoading = $state(false);
+  let statusAggregateError: string | null = $state(null);
+  let statusAggregateGeneration = 0;
+  let tenantSuggestions: string[] = $state([]);
+  let tenantSuggestionsGeneration = 0;
   let total = $state(0);
   let loading = $state(true);
   let error: string | null = $state(null);
@@ -104,6 +127,12 @@
     type: string;
     tags: string[];
     offset: number;
+    idPrefix?: string;
+    createdAt?: { gte?: number; lte?: number };
+    updatedAt?: { gte?: number; lte?: number };
+    executionDeadline?: { gte?: number; lte?: number };
+    tenantId?: string[];
+    failureCategory?: FailureCategory[];
   }
 
   type WorkflowFetchSource = 'foreground' | 'poll';
@@ -151,10 +180,33 @@
 
   function currentFetchFilters(): FetchFilters {
     return {
-      status: statusFilter,
-      type: typeFilter,
-      tags: selectedTags,
+      ...visibilityFilters({ includeTenantId: true }),
       offset: currentOffset,
+    };
+  }
+
+  function visibilityFilters(options: { includeTenantId: boolean }): Omit<FetchFilters, 'offset'> {
+    const normalizedType = typeFilter.trim();
+    const normalizedIdPrefix = idPrefixFilter.trim();
+    const normalizedTenantId = options.includeTenantId ? tenantIdFilter.trim() : '';
+    return {
+      status: statusFilter,
+      type: normalizedType,
+      tags: selectedTags,
+      ...(normalizedIdPrefix.length > 0 ? { idPrefix: normalizedIdPrefix } : {}),
+      ...(createdAtGte !== undefined || createdAtLte !== undefined
+        ? { createdAt: { gte: createdAtGte, lte: createdAtLte } }
+        : {}),
+      ...(updatedAtGte !== undefined || updatedAtLte !== undefined
+        ? { updatedAt: { gte: updatedAtGte, lte: updatedAtLte } }
+        : {}),
+      ...(executionDeadlineGte !== undefined || executionDeadlineLte !== undefined
+        ? { executionDeadline: { gte: executionDeadlineGte, lte: executionDeadlineLte } }
+        : {}),
+      ...(options.includeTenantId && normalizedTenantId.length > 0
+        ? { tenantId: [normalizedTenantId] }
+        : {}),
+      ...(failureCategoryFilters.length > 0 ? { failureCategory: failureCategoryFilters } : {}),
     };
   }
 
@@ -172,6 +224,98 @@
     const generation = fetchGeneration;
     const startedDuringForegroundFetch = activeForegroundFetchGeneration !== null;
     void fetchWorkflows(generation, filters, source, startedDuringForegroundFetch);
+  }
+
+  const idPrefixError = $derived.by(() => {
+    const normalizedIdPrefix = idPrefixFilter.trim();
+    if (normalizedIdPrefix.length === 0 || ID_PREFIX_PATTERN.test(normalizedIdPrefix)) {
+      return null;
+    }
+    return 'Use letters, numbers, underscores, or hyphens.';
+  });
+
+  const WORKFLOW_STATUS_OPTIONS: Array<{ value: WorkflowStatus; label: string }> = [
+    { value: 'pending', label: 'Pending' },
+    { value: 'running', label: 'Running' },
+    { value: 'completed', label: 'Completed' },
+    { value: 'failed', label: 'Failed' },
+    { value: 'cancelled', label: 'Cancelled' },
+    { value: 'timed-out', label: 'Timed Out' },
+  ];
+
+  const STATUS_OPTIONS: Array<{ value: WorkflowStatus | 'all'; label: string }> = [
+    { value: 'all', label: 'All Statuses' },
+    ...WORKFLOW_STATUS_OPTIONS,
+  ];
+
+  const failureCategoryLabels = {
+    application: 'Application',
+    timeout: 'Timeout',
+    cancellation: 'Cancellation',
+    resource: 'Resource',
+    system: 'System',
+  } satisfies Record<FailureCategory, string>;
+
+  const FAILURE_CATEGORY_OPTIONS: FailureCategory[] = [
+    'application',
+    'timeout',
+    'cancellation',
+    'resource',
+    'system',
+  ];
+
+  function formatFailureCategoryFilter(
+    category: FailureCategory | FailureCategory[] | undefined,
+  ): string {
+    if (category === undefined) return 'Any';
+    const categories = Array.isArray(category) ? category : [category];
+    return categories.map((entry) => failureCategoryLabels[entry]).join(', ');
+  }
+
+  const statusCountRows = $derived.by(() => {
+    const counts = new Map<WorkflowStatus, number>();
+    for (const group of statusAggregate?.groups ?? []) {
+      if (isWorkflowStatus(group.key)) {
+        counts.set(group.key, group.count);
+      }
+    }
+    return WORKFLOW_STATUS_OPTIONS.map((option) => ({
+      status: option.value,
+      label: option.label,
+      count: counts.get(option.value) ?? 0,
+    }));
+  });
+
+  function isWorkflowStatus(value: string | null): value is WorkflowStatus {
+    return (
+      value === 'pending' ||
+      value === 'running' ||
+      value === 'completed' ||
+      value === 'failed' ||
+      value === 'cancelled' ||
+      value === 'timed-out'
+    );
+  }
+
+  function toggleFailureCategoryFilter(category: FailureCategory): void {
+    failureCategoryFilters = failureCategoryFilters.includes(category)
+      ? failureCategoryFilters.filter((candidate) => candidate !== category)
+      : [...failureCategoryFilters, category];
+    resetFiltersAndBulkPreview();
+  }
+
+  function aggregateFilters(): FetchFilters {
+    return {
+      ...visibilityFilters({ includeTenantId: true }),
+      offset: 0,
+    };
+  }
+
+  function tenantSuggestionFilters(): FetchFilters {
+    return {
+      ...visibilityFilters({ includeTenantId: false }),
+      offset: 0,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -212,6 +356,56 @@
       document.removeEventListener('visibilitychange', handleVisibility);
     };
   });
+
+  $effect(() => {
+    const filters = aggregateFilters();
+    const generation = ++statusAggregateGeneration;
+    statusAggregateLoading = true;
+
+    void loadStatusAggregate(filters, generation);
+  });
+
+  async function loadStatusAggregate(filters: FetchFilters, generation: number): Promise<void> {
+    try {
+      const aggregate = await loadWorkflowAggregate(apiClient, filters, 'status');
+      if (generation === statusAggregateGeneration) {
+        statusAggregate = aggregate;
+        statusAggregateError = null;
+      }
+    } catch (aggregateError) {
+      if (generation === statusAggregateGeneration) {
+        statusAggregate = null;
+        statusAggregateError =
+          aggregateError instanceof Error ? aggregateError.message : String(aggregateError);
+      }
+    } finally {
+      if (generation === statusAggregateGeneration) {
+        statusAggregateLoading = false;
+      }
+    }
+  }
+
+  $effect(() => {
+    const filters = tenantSuggestionFilters();
+    const generation = ++tenantSuggestionsGeneration;
+
+    void loadTenantSuggestions(filters, generation);
+  });
+
+  async function loadTenantSuggestions(filters: FetchFilters, generation: number): Promise<void> {
+    try {
+      const aggregate = await loadWorkflowAggregate(apiClient, filters, 'tenant', 100);
+      if (generation === tenantSuggestionsGeneration) {
+        tenantSuggestions = aggregate.groups
+          .map((group) => group.key)
+          .filter((key): key is string => key !== null && key.length > 0);
+      }
+    } catch {
+      if (generation === tenantSuggestionsGeneration) {
+        tenantSuggestions = [];
+      }
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Pagination
@@ -279,18 +473,25 @@
   }
 
   const bulkFilter = $derived.by((): ListFilter => {
-    const filter: ListFilter = {};
-    if (statusFilter !== 'all') filter.status = statusFilter;
-    const normalizedType = typeFilter.trim();
-    if (normalizedType.length > 0) filter.type = normalizedType;
-    if (selectedTags.length > 0) filter.tags = [...selectedTags];
+    const { limit: _dropLimit, offset: _dropOffset, ...filter } = buildWorkflowListFilter(
+      { ...visibilityFilters({ includeTenantId: true }), offset: 0 },
+      0,
+    );
+    void _dropLimit;
+    void _dropOffset;
     return filter;
   });
 
   const bulkFilterIsScoped = $derived(
     bulkFilter.status !== undefined ||
       bulkFilter.type !== undefined ||
-      (bulkFilter.tags?.length ?? 0) > 0,
+      (bulkFilter.tags?.length ?? 0) > 0 ||
+      bulkFilter.idPrefix !== undefined ||
+      bulkFilter.tenantId !== undefined ||
+      bulkFilter.failureCategory !== undefined ||
+      bulkFilter.createdAt !== undefined ||
+      bulkFilter.updatedAt !== undefined ||
+      bulkFilter.executionDeadline !== undefined,
   );
   const bulkTags = $derived.by(() =>
     bulkTagInput
@@ -366,6 +567,20 @@
     });
     details.push({ label: 'Type filter', value: filter.type ?? 'Any' });
     details.push({ label: 'Tag filter', value: filter.tags?.join(', ') ?? 'Any' });
+    details.push({ label: 'ID prefix', value: filter.idPrefix ?? 'Any' });
+    details.push({
+      label: 'Tenant filter',
+      value:
+        filter.tenantId === undefined
+          ? 'Any'
+          : Array.isArray(filter.tenantId)
+            ? filter.tenantId.join(', ')
+            : filter.tenantId,
+    });
+    details.push({
+      label: 'Failure category',
+      value: formatFailureCategoryFilter(filter.failureCategory),
+    });
     if (filter.attributes !== undefined && filter.attributes.length > 0) {
       details.push({
         label: 'Attribute filters',
@@ -423,6 +638,22 @@
       ...(filter.status === undefined ? {} : { status: filter.status }),
       ...(filter.type === undefined ? {} : { type: filter.type }),
       ...(filter.tags === undefined ? {} : { tags: [...filter.tags] }),
+      ...(filter.idPrefix === undefined ? {} : { idPrefix: filter.idPrefix }),
+      ...(filter.tenantId === undefined
+        ? {}
+        : { tenantId: Array.isArray(filter.tenantId) ? [...filter.tenantId] : filter.tenantId }),
+      ...(filter.failureCategory === undefined
+        ? {}
+        : {
+            failureCategory: Array.isArray(filter.failureCategory)
+              ? [...filter.failureCategory]
+              : filter.failureCategory,
+          }),
+      ...(filter.createdAt === undefined ? {} : { createdAt: { ...filter.createdAt } }),
+      ...(filter.updatedAt === undefined ? {} : { updatedAt: { ...filter.updatedAt } }),
+      ...(filter.executionDeadline === undefined
+        ? {}
+        : { executionDeadline: { ...filter.executionDeadline } }),
       ...(filter.limit === undefined ? {} : { limit: filter.limit }),
       ...(filter.offset === undefined ? {} : { offset: filter.offset }),
     };
@@ -629,16 +860,6 @@
     }
   }
 
-  const STATUS_OPTIONS: Array<{ value: WorkflowStatus | 'all'; label: string }> = [
-    { value: 'all', label: 'All Statuses' },
-    { value: 'pending', label: 'Pending' },
-    { value: 'running', label: 'Running' },
-    { value: 'completed', label: 'Completed' },
-    { value: 'failed', label: 'Failed' },
-    { value: 'cancelled', label: 'Cancelled' },
-    { value: 'timed-out', label: 'Timed Out' },
-  ];
-
 </script>
 
 <Page title="Workflows">
@@ -698,14 +919,80 @@
         oninput={resetFiltersAndBulkPreview}
       />
     </div>
+    <div class="workflow-list-filter-group">
+      <Input
+        id="workflow-id-prefix-filter"
+        label="ID Prefix"
+        hideLabel
+        placeholder="Filter by ID prefix..."
+        bind:value={idPrefixFilter}
+        error={idPrefixError ?? undefined}
+        oninput={resetFiltersAndBulkPreview}
+      />
+    </div>
+    <div class="workflow-list-filter-group">
+      <Input
+        id="workflow-tenant-filter"
+        label="Tenant ID"
+        hideLabel
+        placeholder="Tenant ID"
+        bind:value={tenantIdFilter}
+        list="workflow-tenant-suggestions"
+        oninput={resetFiltersAndBulkPreview}
+      />
+      <datalist id="workflow-tenant-suggestions">
+        {#each tenantSuggestions as tenantSuggestion (tenantSuggestion)}
+          <option value={tenantSuggestion}></option>
+        {/each}
+      </datalist>
+    </div>
   </div>
+
+  <div class="workflow-date-filters">
+    <DateRangePicker
+      id="created-at"
+      label="Created"
+      bind:gte={createdAtGte}
+      bind:lte={createdAtLte}
+      oninput={resetFiltersAndBulkPreview}
+    />
+    <DateRangePicker
+      id="updated-at"
+      label="Updated"
+      bind:gte={updatedAtGte}
+      bind:lte={updatedAtLte}
+      oninput={resetFiltersAndBulkPreview}
+    />
+    <DateRangePicker
+      id="execution-deadline"
+      label="Execution Deadline"
+      bind:gte={executionDeadlineGte}
+      bind:lte={executionDeadlineLte}
+      oninput={resetFiltersAndBulkPreview}
+    />
+  </div>
+
+  <fieldset class="workflow-failure-category-filters">
+    <legend>Failure category</legend>
+    {#each FAILURE_CATEGORY_OPTIONS as category (category)}
+      <button
+        type="button"
+        class="workflow-filter-chip"
+        data-selected={failureCategoryFilters.includes(category)}
+        aria-pressed={failureCategoryFilters.includes(category)}
+        onclick={() => toggleFailureCategoryFilter(category)}
+      >
+        {failureCategoryLabels[category]}
+      </button>
+    {/each}
+  </fieldset>
 
   {#if availableTagFilters.length > 0}
     <div class="workflow-tag-filters" aria-label="Workflow tag filters">
       {#each availableTagFilters as tag (tag)}
         <button
           type="button"
-          class="workflow-tag-chip"
+          class="workflow-filter-chip"
           data-selected={selectedTags.includes(tag)}
           aria-pressed={selectedTags.includes(tag)}
           onclick={() => toggleTagFilter(tag)}
@@ -715,6 +1002,35 @@
       {/each}
     </div>
   {/if}
+
+  <Card
+    title="Status counts"
+    description={statusAggregateLoading ? 'Refreshing counts for the current filters.' : undefined}
+    icon={activity(14)}
+  >
+    {#if statusAggregateError}
+      <Alert
+        variant="warning"
+        title="Status counts unavailable"
+        description={statusAggregateError}
+      />
+    {:else}
+      <div class="sr-only" aria-live="polite" aria-atomic="true">
+        Status counts:
+        {#each statusCountRows as row, index (row.status)}
+          {row.label} {row.count}{index < statusCountRows.length - 1 ? ',' : '.'}
+        {/each}
+      </div>
+      <div class="workflow-status-counts">
+        {#each statusCountRows as row (row.status)}
+          <div class="workflow-status-count">
+            <span class="workflow-status-count-label">{row.label}</span>
+            <strong>{row.count}</strong>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </Card>
 
   <Card
     title="Tenant quota inspector"
@@ -1098,6 +1414,31 @@
     gap: var(--space-2, 0.5rem);
   }
 
+  .workflow-failure-category-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2, 0.5rem);
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .workflow-failure-category-filters legend {
+    width: 100%;
+    margin-bottom: var(--space-1-5, 0.375rem);
+    padding: 0;
+    font-size: var(--text-xs, 0.75rem);
+    font-weight: var(--font-medium, 500);
+    line-height: 1;
+    color: var(--text, #111827);
+  }
+
+  .workflow-date-filters {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: var(--space-3, 0.75rem);
+  }
+
   .workflow-list-filter-group {
     display: flex;
     align-items: center;
@@ -1117,13 +1458,14 @@
     flex: 1;
   }
 
-  .workflow-tag-chip {
+  .workflow-filter-chip {
     appearance: none;
     border: 1px solid var(--border-muted, #d1d5db);
     background: var(--surface, #ffffff);
     color: var(--text, #111827);
     border-radius: 999px;
-    padding: 0.35rem 0.7rem;
+    min-height: 2.75rem;
+    padding: 0.6rem 0.9rem;
     font-size: var(--text-xs, 0.75rem);
     font-weight: 600;
     cursor: pointer;
@@ -1133,10 +1475,47 @@
       color var(--duration-fast, 150ms) var(--ease-standard, ease);
   }
 
-  .workflow-tag-chip[data-selected='true'] {
+  .workflow-filter-chip:focus-visible {
+    outline: 2px solid transparent;
+    box-shadow:
+      0 0 0 var(--ring-offset, 2px) var(--ring-offset-color, var(--surface, #fff)),
+      0 0 0 calc(var(--ring-offset, 2px) + var(--ring-width, 2px))
+        var(--control-ring-color, #6366f1);
+  }
+
+  .workflow-filter-chip[data-selected='true'] {
     background: color-mix(in oklch, var(--secondary, #2563eb), transparent 84%);
     border-color: color-mix(in oklch, var(--secondary, #2563eb), transparent 52%);
     color: var(--secondary, #2563eb);
+  }
+
+  .workflow-status-counts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+    gap: var(--space-3, 0.75rem);
+  }
+
+  .workflow-status-count {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-2, 0.5rem);
+    padding: var(--space-3, 0.75rem);
+    border: 1px solid var(--border-muted, #e5e7eb);
+    border-radius: var(--radius-md, 0.375rem);
+    background: var(--surface, #fff);
+  }
+
+  .workflow-status-count-label {
+    font-size: var(--text-xs, 0.75rem);
+    font-weight: var(--font-medium, 500);
+    color: var(--text-muted, #6b7280);
+  }
+
+  .workflow-status-count strong {
+    font-size: var(--text-lg, 1.125rem);
+    font-weight: var(--font-semibold, 600);
+    color: var(--text, #111827);
   }
 
   .workflow-list-skeleton {

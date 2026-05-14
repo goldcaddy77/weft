@@ -2,7 +2,7 @@
  * `weft.workflows.list` operation + REST binding — behavior tests.
  */
 
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 
 import { decode, encode } from '../../core/codec.ts';
 import { Engine } from '../../core/engine.ts';
@@ -19,8 +19,11 @@ import {
 } from './list-workflows.ts';
 import { waitForWorkflowStatus } from './operation-test-helpers.test-support.ts';
 
+const createdEngines: Engine[] = [];
+
 function createEngine(storage = new MemoryStorage()): Engine {
   const engine = new Engine({ storage });
+  createdEngines.push(engine);
   engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
     return input;
   });
@@ -52,7 +55,23 @@ async function startLegacyFailedWorkflow(
 const registry = createOperationRegistry([listWorkflowsOperation]);
 const bindings = [listWorkflowsRestBinding];
 
+function disposeCreatedEngines(): void {
+  let disposeError: unknown;
+  for (const engine of createdEngines.splice(0)) {
+    try {
+      engine[Symbol.dispose]();
+    } catch (error) {
+      disposeError ??= error;
+    }
+  }
+  if (disposeError !== undefined) throw disposeError;
+}
+
 describe('weft.workflows.list', () => {
+  afterEach(() => {
+    disposeCreatedEngines();
+  });
+
   it('returns the paginated workflow list on the happy path', async () => {
     const engine = createEngine();
 
@@ -141,7 +160,7 @@ describe('weft.workflows.list', () => {
     expect(includedResponse.status).toBe(200);
     const includedBody = (await includedResponse.json()) as ListWorkflowsOutput;
     expect(includedBody.items).toHaveLength(1);
-    expect(includedBody.items[0]?.failureCategory).toBe('planning');
+    expect(includedBody.items[0]?.failureCategory).toBe('application');
 
     const repeatedIncludedResponse = await handleRequest(
       new Request(
@@ -158,7 +177,7 @@ describe('weft.workflows.list', () => {
     expect(repeatedIncludedResponse.status).toBe(200);
     const repeatedIncludedBody = (await repeatedIncludedResponse.json()) as ListWorkflowsOutput;
     expect(repeatedIncludedBody.items).toHaveLength(1);
-    expect(repeatedIncludedBody.items[0]?.failureCategory).toBe('planning');
+    expect(repeatedIncludedBody.items[0]?.failureCategory).toBe('application');
   });
 
   it('returns 400 when include contains an unsupported field', async () => {

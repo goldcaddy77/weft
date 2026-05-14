@@ -22,9 +22,10 @@ import type { TenantQuotaOptions } from './tenants.ts';
  * execution; `tags` and `searchAttributes` make the workflow discoverable
  * via filters.
  *
- * `HttpClient.start` does not yet forward `idempotencyKey` or
- * `searchAttributes` to the server (silent drop) — pass `LocalClient` for
- * full StartOptions support, or add the fields after start via `setAttributes`.
+ * `HttpClient.start` forwards `searchAttributes` to the server. It rejects
+ * `idempotencyKey` until the HTTP start protocol exposes matching
+ * single-execution semantics, so callers do not accidentally rely on a
+ * silently dropped option.
  *
  * @example Start a delayed workflow with tags and search attributes
  * ```ts
@@ -128,7 +129,7 @@ export interface EngineOptions {
     /** URL of the worker script (created via `createWorkerEntryUrl`). */
     workerUrl: string | URL;
     /** Maximum number of concurrent workers. Default: 4. */
-    concurrency?: number;
+    poolSize?: number;
     /** Use Bun's `smol` worker option for smaller memory footprint. */
     smol?: boolean;
   };

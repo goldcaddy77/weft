@@ -95,8 +95,15 @@ engine.register('welcome', async function* (ctx: WorkflowContext, input: Welcome
   const customer = ctx.getAttribute<string>('customer');
   const attributes = ctx.getAttributes();
   const child = yield* ctx.startChild<WelcomeOutput>('registered', input);
+  // @ts-expect-error child workflow options are closed to fields the engine reads.
+  yield* ctx.startChild<WelcomeOutput>('registered', input, { unknownOption: true });
   const parallel = yield* ctx.all([ctx.run('formatGreeting', input), ctx.sleep(1)]);
+  const typedParallel: [string, void] = parallel;
   const raced = yield* ctx.race([ctx.run('formatGreeting', input)]);
+  const typedRace: string | number = yield* ctx.race([
+    ctx.run('formatGreeting', input),
+    ctx.run(async () => 42),
+  ]);
   const offloadReference = yield* ctx.offload('welcome-output', async () => child);
   const loaded = yield* ctx.load<WelcomeOutput>(offloadReference);
   yield* ctx.archive('welcome-output', loaded);
@@ -107,7 +114,9 @@ engine.register('welcome', async function* (ctx: WorkflowContext, input: Welcome
   const memoized = yield* ctx.memo('memo-key', () => input.name);
   const runAllResult = yield* ctx.runAll({
     formatGreeting: [async (value: WelcomeInput) => value.name, input],
+    count: [async () => 42],
   });
+  const typedRunAllResult: { formatGreeting: string; count: number } = runAllResult;
   const sagaResult = yield* ctx.saga<WelcomeOutput>([]);
   const session = ctx.state.session('name', { initial: input.name });
 
@@ -116,13 +125,14 @@ engine.register('welcome', async function* (ctx: WorkflowContext, input: Welcome
   void updatePayload;
   void customer;
   void attributes;
-  void parallel;
+  void typedParallel;
   void raced;
+  void typedRace;
   void streamUrl;
   void mapped;
   void reduced;
   void memoized;
-  void runAllResult;
+  void typedRunAllResult;
   void sagaResult;
   void session;
 
@@ -136,12 +146,19 @@ const registration: WorkflowRegistration<WelcomeInput, WelcomeOutput> = {
 };
 engine.register('registered', registration);
 
-engine.registerActivity('formatGreeting', async (input: FormatGreetingInput) => {
-  return `Hello, ${input.name}`;
-});
+engine.register(
+  activity({
+    name: 'formatGreeting',
+    execute: async (input: FormatGreetingInput) => {
+      return `Hello, ${input.name}`;
+    },
+  }),
+);
 
-// @ts-expect-error registered activities must match their augmented input type.
-engine.registerActivity('formatGreeting', async (input: { id: string }) => input.id);
+engine.register(
+  // @ts-expect-error registered activities must match their augmented input type.
+  activity({ name: 'formatGreeting', execute: async (input: { id: string }) => input.id }),
+);
 
 // @ts-expect-error registered activity names must be present in the augmented registry.
 engine.registerActivity('runtimeFormatGreeting', async (input: FormatGreetingInput) => {
@@ -220,16 +237,16 @@ explicitEmptyEngine.register('notRegistered', async function* () {
 explicitEmptyEngine.registerActivity('notRegisteredActivity', async () => 'not registered');
 
 const strictLocalEngine = new Engine<{}, {}>()
-  .withWorkflow(localGreet)
-  .withWorkflow(concreteWorkflow)
-  .withWorkflow(schemaDefinedWorkflow)
-  .withActivity(sendEmail)
-  .withActivity(zeroInputActivity);
+  .register(localGreet)
+  .register(concreteWorkflow)
+  .register(schemaDefinedWorkflow)
+  .register(sendEmail)
+  .register(zeroInputActivity);
 
 void strictLocalEngine.start('localGreet', 'Steve');
 void strictLocalEngine.start('concreteWorkflow', 'Steve');
 void strictLocalEngine.start('schemaDefinedWorkflow', { id: 'wf-1' });
-// @ts-expect-error strict local engines reject workflow names not added by withWorkflow.
+// @ts-expect-error strict local engines reject workflow names not added by register().
 void strictLocalEngine.start('unknownLocalWorkflow', 'Steve');
 // @ts-expect-error localGreet input is inferred from the workflow definition.
 void strictLocalEngine.start('localGreet', { id: 'wrong' });
@@ -247,6 +264,11 @@ async function verifyEngineCreateInference(): Promise<void> {
   void neither.start('welcome', { name: 'Steve' });
   // @ts-expect-error no definition maps means only module-augmented workflows are available.
   void neither.start('localGreet', 'Steve');
+  await Engine.create({ recover: true, acknowledgeUnknownWorkflowTypes: true });
+  // @ts-expect-error unknown workflow acknowledgement only applies when recovery runs.
+  await Engine.create({ acknowledgeUnknownWorkflowTypes: true });
+  // @ts-expect-error unknown workflow acknowledgement only applies when recovery runs.
+  await Engine.create({ recover: false, acknowledgeUnknownWorkflowTypes: true });
 
   // workflows-only narrows TWorkflows to the inferred map keys; activities
   // fall back to the module-augmented registry.
@@ -282,13 +304,24 @@ async function verifyEngineCreateInference(): Promise<void> {
 
   // Regression guard for the recover-then-register pattern that
   // `Engine.create({ storage, recover: false })` is documented to support:
-  // deferred names must flow through the explicit builder API so the typed
+  // deferred names must flow through the explicit registration API so the typed
   // view records the additional workflow before it is started.
   const deferredRegistration = await Engine.create({ recover: false });
-  const deferredRegistrationWithWorkflow = deferredRegistration.withWorkflow(localGreet);
+  const deferredRegistrationWithWorkflow = deferredRegistration.register(localGreet);
   void deferredRegistrationWithWorkflow.start('localGreet', 'Steve');
 }
 void verifyEngineCreateInference;
+
+// @ts-expect-error registerActivity has been collapsed into register().
+engine.registerActivity('formatGreeting', async (input: FormatGreetingInput) => {
+  return `Hello, ${input.name}`;
+});
+
+// @ts-expect-error withWorkflow has been collapsed into register().
+engine.withWorkflow(localGreet);
+
+// @ts-expect-error withActivity has been collapsed into register().
+engine.withActivity(sendEmail);
 
 // Variance regression detector — reverting `AnyWorkflowDefinition` /
 // `AnyActivityDefinition` to `WorkflowDefinition<unknown, unknown>` /

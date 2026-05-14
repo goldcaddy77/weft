@@ -116,7 +116,7 @@ export type AnyWorkflowDefinition = {
 
 /**
  * Broad activity-definition constraint used by {@link Engine.create} and
- * `Engine.withActivity`. It models the callable values returned by
+ * `Engine.register`. It models the callable values returned by
  * {@link activity} so registration keeps colocated retry, timeout, schema,
  * and middleware metadata attached to the function object.
  *
@@ -202,7 +202,7 @@ type MergeDefinitionEntries<TUnion> = [TUnion] extends [never]
 
 /**
  * Infer a workflow registry entry from one concrete workflow definition. This
- * is used by `Engine.withWorkflow`, where the definition's literal `name`
+ * is used by `Engine.register`, where the definition's literal `name`
  * carries the registry key.
  *
  * @example

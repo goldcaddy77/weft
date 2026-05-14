@@ -13,6 +13,10 @@
 import type { ContextOperationRequest, ContextOptions } from './context.ts';
 import { Context } from './context.ts';
 import type { ExecutionStrategy } from './execution-strategy.ts';
+import {
+  classifyErrorAsFailureCategory,
+  errorFromFailedOperationOutcome,
+} from './failure-categories.ts';
 import type { TenantContext } from './tenant.ts';
 import type {
   FailureCategory,
@@ -84,38 +88,6 @@ function createInlineContextOptions(
     ...(parameters.deadline !== undefined && { deadline: parameters.deadline }),
     ...(parameters.tenant !== undefined && { tenant: parameters.tenant }),
   };
-}
-
-// ---------------------------------------------------------------------------
-// Error classification
-// ---------------------------------------------------------------------------
-
-/**
- * Classify an error into a {@link FailureCategory} without importing the
- * concrete error classes (avoids cross-module circular imports). Uses `.name`
- * for class-based discrimination and falls back to `'system'`.
- *
- * Error names that map to specific categories:
- * - `'ToolSchemaValidationError'` → `'planning'` (invalid effect input)
- * - `'EffectReplayConflictError'` → `'action'` (effect replay conflict)
- * - `'MCPServerUnavailableError'`, `'MCPToolTimeoutError'` → `'action'` (external effect execution)
- * - everything else → `'system'`
- */
-function classifyErrorAsFailureCategory(error: unknown): FailureCategory {
-  if (!(error instanceof Error)) {
-    return 'system';
-  }
-
-  switch (error.name) {
-    case 'ToolSchemaValidationError':
-      return 'planning';
-    case 'EffectReplayConflictError':
-    case 'MCPServerUnavailableError':
-    case 'MCPToolTimeoutError':
-      return 'action';
-    default:
-      return 'system';
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -198,13 +170,22 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
       parameters.operationResult.status === 'completed'
         ? parameters.operationResult.value
         : undefined;
+    const operationFailureCategory =
+      parameters.operationResult.status === 'failed'
+        ? parameters.operationResult.failureCategory
+        : undefined;
     const error =
       parameters.operationResult.status === 'failed'
-        ? new Error(parameters.operationResult.error)
+        ? errorFromFailedOperationOutcome(parameters.operationResult)
         : undefined;
 
     if (error) {
-      void this.#throwIntoGenerator(parameters.workflowId, generator, error);
+      void this.#throwIntoGenerator(
+        parameters.workflowId,
+        generator,
+        error,
+        operationFailureCategory,
+      );
     } else {
       void this.#driveGenerator(parameters.workflowId, generator, result);
     }
@@ -260,10 +241,14 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
    * Throw an error into the generator (used by the engine for propagating
    * activity failures, etc.).
    */
-  throwIntoWorkflow(workflowId: string, error: unknown): void {
+  throwIntoWorkflow(
+    workflowId: string,
+    error: unknown,
+    operationFailureCategory?: FailureCategory,
+  ): void {
     const generator = this.#generators.get(workflowId);
     if (!generator) return;
-    void this.#throwIntoGenerator(workflowId, generator, error);
+    void this.#throwIntoGenerator(workflowId, generator, error, operationFailureCategory);
   }
 
   /**
@@ -347,7 +332,9 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
             type: 'failed',
             workflowId,
             error: error instanceof Error ? error.message : String(error),
-            failureCategory: classifyErrorAsFailureCategory(error),
+            failureCategory: classifyErrorAsFailureCategory(error, {
+              defaultErrorCategory: 'application',
+            }),
           };
           if (error instanceof Error && error.stack !== undefined) {
             failedMessage.errorStack = error.stack;
@@ -362,6 +349,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
     workflowId: string,
     generator: AsyncGenerator,
     error: unknown,
+    operationFailureCategory?: FailureCategory,
   ): Promise<void> {
     return this.#trackWorkflowAdvance(
       workflowId,
@@ -401,7 +389,11 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
             type: 'failed',
             workflowId,
             error: innerError instanceof Error ? innerError.message : String(innerError),
-            failureCategory: classifyErrorAsFailureCategory(innerError),
+            failureCategory:
+              operationFailureCategory ??
+              classifyErrorAsFailureCategory(innerError, {
+                defaultErrorCategory: 'application',
+              }),
           };
           if (innerError instanceof Error && innerError.stack !== undefined) {
             failedMessage.errorStack = innerError.stack;

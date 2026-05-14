@@ -117,10 +117,14 @@ describe('CLI argument parsing', () => {
       expect(result.help).toBe(true);
     });
 
-    it('allows positional arguments without error', () => {
-      const result = parseCliArguments(['positional-arg', '--port', '5000']) as ServeCommand;
+    it('parses explicit serve subcommand arguments', () => {
+      const result = parseCliArguments(['serve', '--port', '5000']) as ServeCommand;
       expect(result.command).toBe('serve');
       expect(result.port).toBe('5000');
+    });
+
+    it('rejects positional arguments for serve mode instead of silently ignoring them', () => {
+      expect(() => parseCliArguments(['./workflows.ts', '--port', '5000'])).toThrow();
     });
 
     it('parses --storage flag with sqlite', () => {
@@ -192,10 +196,16 @@ describe('CLI argument parsing', () => {
       expect(() => parseCliArguments(['--unknown-flag'])).toThrow();
     });
 
-    it('treats an unknown subcommand as a positional for serve', () => {
-      const result = parseCliArguments(['something-else', '--port', '4444']) as ServeCommand;
-      expect(result.command).toBe('serve');
-      expect(result.port).toBe('4444');
+    it('throws on an unknown subcommand with a suggestion when close enough', () => {
+      expect(() => parseCliArguments(['timelin'])).toThrow(
+        "Unknown command 'timelin'. Did you mean 'timeline'?",
+      );
+    });
+
+    it('throws on an unknown subcommand without a weak suggestion', () => {
+      expect(() => parseCliArguments(['something-else', '--port', '4444'])).toThrow(
+        "Unknown command 'something-else'",
+      );
     });
   });
 
@@ -993,6 +1003,48 @@ describe('CLI direct execution', () => {
     expect(stdout).toContain('timeline');
     expect(stdout).toContain('--step');
     expect(stdout).toContain('--diff');
+  });
+
+  it('runs serve --help and exits 0', async () => {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', 'serve', '--help'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const exitCode = await process.exited;
+    const stdout = await new Response(process.stdout).text();
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('weft');
+    expect(stdout).toContain('--port');
+    expect(stdout).toContain('--database');
+  });
+
+  it('rejects ignored serve positionals before starting the server', async () => {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', './workflows.ts'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const exitCode = await process.exited;
+    const stderr = await new Response(process.stderr).text();
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("Unknown command './workflows.ts'");
+  });
+
+  it('rejects a misspelled subcommand before starting the server', async () => {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', 'timelin'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const exitCode = await process.exited;
+    const stderr = await new Response(process.stderr).text();
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("Unknown command 'timelin'");
+    expect(stderr).toContain("Did you mean 'timeline'?");
   });
 
   it('runs schedule --help and exits 0', async () => {
