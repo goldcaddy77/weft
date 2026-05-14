@@ -11,11 +11,11 @@
  * @module core/engine/list-candidate-resolution
  */
 
-import type { ListFilter } from '../types.ts';
+import type { FailureCategory, ListFilter } from '../types.ts';
 import type { EngineInternals } from './internals.ts';
 import { intersectIdentifierSets } from './state-utilities.ts';
 import { getWorkflowVisibilityWatermark } from './workflow-indexes.ts';
-import { resolveConstrainedIds } from './workflow-state-stream.ts';
+import { queryAttributeIndex, resolveConstrainedIds } from './workflow-state-stream.ts';
 import {
   queryWorkflowIdPrefixCandidates,
   queryWorkflowStatusIndex,
@@ -30,18 +30,19 @@ export async function resolveListCandidateIds(
   filter: ListFilter | undefined,
   normalizedTagFilters: readonly string[] | undefined,
 ): Promise<Set<string> | null> {
-  const baseConstrainedIds = await resolveConstrainedIds(internals, filter, normalizedTagFilters);
+  const [baseConstrainedIds, failureCategoryCandidateIds] = await Promise.all([
+    resolveConstrainedIds(internals, filter, normalizedTagFilters),
+    resolveFailureCategoryCandidateIds(internals, filter?.failureCategory),
+  ]);
 
   const watermark = await getWorkflowVisibilityWatermark(internals.storage);
   if (watermark === 'stale') {
     // idPrefix is independent of the watermark — primary-key scan is always available.
     if (filter?.idPrefix !== undefined) {
       const candidates = await queryWorkflowIdPrefixCandidates(internals.storage, filter.idPrefix);
-      return baseConstrainedIds === null
-        ? candidates
-        : intersectIdentifierSets([baseConstrainedIds, candidates]);
+      return combineCandidateSets([baseConstrainedIds, failureCategoryCandidateIds, candidates]);
     }
-    return baseConstrainedIds;
+    return combineCandidateSets([baseConstrainedIds, failureCategoryCandidateIds]);
   }
 
   const visibilityQueries: Array<Promise<Set<string>>> = [];
@@ -75,10 +76,38 @@ export async function resolveListCandidateIds(
     visibilityQueries.push(queryWorkflowIdPrefixCandidates(internals.storage, filter.idPrefix));
   }
 
-  if (visibilityQueries.length === 0) return baseConstrainedIds;
+  if (visibilityQueries.length === 0) {
+    return combineCandidateSets([baseConstrainedIds, failureCategoryCandidateIds]);
+  }
 
   const visibilitySets = await Promise.all(visibilityQueries);
-  const allSets =
-    baseConstrainedIds === null ? visibilitySets : [baseConstrainedIds, ...visibilitySets];
-  return intersectIdentifierSets(allSets);
+  return combineCandidateSets([baseConstrainedIds, failureCategoryCandidateIds, ...visibilitySets]);
+}
+
+async function resolveFailureCategoryCandidateIds(
+  internals: EngineInternals,
+  failureCategory: FailureCategory | readonly FailureCategory[] | undefined,
+): Promise<Set<string> | null> {
+  if (failureCategory === undefined) return null;
+
+  const categories = Array.isArray(failureCategory) ? failureCategory : [failureCategory];
+  const categorySets = await Promise.all(
+    categories.map((category) =>
+      queryAttributeIndex(internals, { key: 'failureCategory', value: category }),
+    ),
+  );
+
+  const ids = new Set<string>();
+  for (const categorySet of categorySets) {
+    for (const workflowId of categorySet) {
+      ids.add(workflowId);
+    }
+  }
+  return ids;
+}
+
+function combineCandidateSets(candidateSets: readonly (Set<string> | null)[]): Set<string> | null {
+  const presentSets = candidateSets.filter((set): set is Set<string> => set !== null);
+  if (presentSets.length === 0) return null;
+  return intersectIdentifierSets(presentSets);
 }
