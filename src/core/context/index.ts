@@ -15,6 +15,7 @@ import type {
   SearchAttributeHandle,
   SearchAttributeValue,
   SignalDefinition,
+  UnknownActivityNameWhenRegistryIsEmpty,
   UpdateDefinition,
   WorkflowContext,
   WorkflowMapOptions,
@@ -25,7 +26,6 @@ import type {
   WorkflowStateNamespace,
 } from '../types.ts';
 import { messageName, searchAttributeName } from '../types.ts';
-import type { UnknownNameWhenRegistryHasNoKnownNames } from '../types/registry-type-helpers.ts';
 import * as contextAttributes from './attributes.ts';
 import * as childWorkflowPipe from './child-workflow-pipe.ts';
 import * as durableOperations from './durable-operations.ts';
@@ -54,9 +54,6 @@ export type {
   StreamReference,
   StreamSink,
 } from './types.ts';
-
-type UnknownActivityNameWhenRegistryIsEmpty<TName extends string> =
-  UnknownNameWhenRegistryHasNoKnownNames<TName, Extract<keyof ActivityTypes, string>>;
 
 function acceptsNoActivityInput(fn: unknown): boolean {
   if (typeof fn !== 'function') return false;

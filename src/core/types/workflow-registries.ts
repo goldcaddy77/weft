@@ -1,4 +1,5 @@
 import type { ActivityContext, ActivityDefinition, ActivityFunction } from './activity.ts';
+import type { UnknownNameWhenRegistryHasNoKnownNames } from './registry-type-helpers.ts';
 import type {
   StepWorkflowFunction,
   WorkflowDefinition,
@@ -170,6 +171,9 @@ export type ActivityResult<
     ? Awaited<TResult>
     : unknown
   : unknown;
+
+export type UnknownActivityNameWhenRegistryIsEmpty<TName extends string> =
+  UnknownNameWhenRegistryHasNoKnownNames<TName, Extract<keyof ActivityTypes, string>>;
 
 export type RegisteredActivityFunction<
   TActivities extends object,
