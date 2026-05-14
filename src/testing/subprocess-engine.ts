@@ -6,20 +6,23 @@ const MAX_CAPTURED_OUTPUT_LENGTH = 32_768;
 type RunningSubprocess = Bun.Subprocess<'ignore', 'pipe', 'pipe'>;
 
 /**
- * Configuration for starting a Weft server in a child Bun process.
+ * Signals supported by the subprocess durability harness.
  *
- * Use this for process-level durability tests that need a real server, a real
- * wire protocol, and an on-disk storage path that survives process death.
+ * @example
+ * ```ts
+ * import type { SubprocessSignal } from 'weft/testing';
+ * const signal: SubprocessSignal = 'SIGKILL';
+ * ```
+ */
+export type SubprocessSignal = 'SIGINT' | 'SIGKILL' | 'SIGTERM';
+
+/**
+ * Configuration for starting a Weft server in a child Bun process.
  *
  * @example
  * ```ts
  * import type { SubprocessServerOptions } from 'weft/testing';
- *
- * const options: SubprocessServerOptions = {
- *   entrypoint: './tmp/durability-entrypoint.ts',
- *   databasePath: './tmp/weft-durability.db',
- * };
- * void options;
+ * const options: SubprocessServerOptions = { entrypoint: './tmp/entrypoint.ts', databasePath: './tmp/weft.db' };
  * ```
  */
 export interface SubprocessServerOptions {
@@ -48,37 +51,52 @@ interface NormalizedSubprocessServerOptions {
   exitTimeoutMs: number;
 }
 
+const subprocessServerHandleBrand: unique symbol = Symbol('SubprocessServerHandle');
+
+/**
+ * Minimal public view of the child process managed by a
+ * {@link SubprocessServerHandle}.
+ *
+ * @example
+ * ```ts
+ * import { spawnServerSubprocess, type SubprocessServerProcess } from 'weft/testing';
+ * const server = await spawnServerSubprocess({ entrypoint: './tmp/entrypoint.ts', databasePath: './tmp/weft.db' });
+ * const process: SubprocessServerProcess = server.process;
+ * ```
+ */
+export interface SubprocessServerProcess {
+  readonly exited: Promise<number>;
+  readonly exitCode: number | null;
+  readonly signalCode: SubprocessSignal | null;
+  kill(signal?: SubprocessSignal): void;
+}
+
 /**
  * Handle for a running Weft server subprocess started by
  * {@link spawnServerSubprocess}.
  *
- * The handle exposes the discovered server URL, the concrete command, bounded
- * stdout and stderr capture, and a stop helper for cleanup in test teardown.
- *
  * @example
  * ```ts
  * import { spawnServerSubprocess, type SubprocessServerHandle } from 'weft/testing';
- *
- * const server: SubprocessServerHandle = await spawnServerSubprocess({
- *   entrypoint: './tmp/durability-entrypoint.ts',
- *   databasePath: './tmp/weft-durability.db',
- * });
+ * const server: SubprocessServerHandle = await spawnServerSubprocess({ entrypoint: './tmp/entrypoint.ts', databasePath: './tmp/weft.db' });
  * await server.stop();
  * ```
  */
 export interface SubprocessServerHandle extends AsyncDisposable {
-  readonly process: RunningSubprocess;
+  readonly [subprocessServerHandleBrand]: true;
+  readonly process: SubprocessServerProcess;
   readonly url: string;
   readonly port: number;
   readonly databasePath: string;
   readonly command: readonly string[];
   readonly stdout: string;
   readonly stderr: string;
-  stop(signal?: NodeJS.Signals): Promise<void>;
+  stop(signal?: SubprocessSignal): Promise<void>;
 }
 
 class SubprocessServerHandleImpl implements SubprocessServerHandle {
-  readonly process: RunningSubprocess;
+  readonly [subprocessServerHandleBrand] = true as const;
+  readonly #process: RunningSubprocess;
   readonly url: string;
   readonly port: number;
   readonly databasePath: string;
@@ -93,13 +111,29 @@ class SubprocessServerHandleImpl implements SubprocessServerHandle {
     options: NormalizedSubprocessServerOptions,
     output: CapturedOutput,
   ) {
-    this.process = process;
+    this.#process = process;
     this.url = url;
     this.port = new URL(url).port === '' ? 80 : Number(new URL(url).port);
     this.databasePath = options.databasePath;
     this.command = command;
     this.#options = { ...options, port: this.port };
     this.#output = output;
+  }
+
+  get process(): SubprocessServerProcess {
+    const process = this.#process;
+    return {
+      exited: process.exited,
+      get exitCode() {
+        return process.exitCode;
+      },
+      get signalCode() {
+        return normalizeSignalCode(process.signalCode);
+      },
+      kill: (signal?: SubprocessSignal) => {
+        process.kill(signal);
+      },
+    };
   }
 
   get stdout(): string {
@@ -110,17 +144,26 @@ class SubprocessServerHandleImpl implements SubprocessServerHandle {
     return this.#output.stderr;
   }
 
-  get restartOptions(): NormalizedSubprocessServerOptions {
-    return this.#options;
-  }
-
-  async stop(signal: NodeJS.Signals = 'SIGTERM'): Promise<void> {
-    await stopProcess(this.process, signal, this.#options.exitTimeoutMs);
+  async stop(signal: SubprocessSignal = 'SIGTERM'): Promise<void> {
+    await stopProcess(this.#process, signal, this.#options.exitTimeoutMs);
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
     await this.stop();
   }
+
+  get internalProcess(): RunningSubprocess {
+    return this.#process;
+  }
+
+  get internalRestartOptions(): NormalizedSubprocessServerOptions {
+    return this.#options;
+  }
+}
+
+function normalizeSignalCode(value: string | null): SubprocessSignal | null {
+  if (value === 'SIGINT' || value === 'SIGKILL' || value === 'SIGTERM') return value;
+  return null;
 }
 
 type CapturedOutput = {
@@ -192,12 +235,24 @@ function createSubprocessEnvironment(
   return environment;
 }
 
+function normalizeReadyPattern(pattern: RegExp): RegExp {
+  const flags = pattern.flags.replaceAll('g', '').replaceAll('y', '');
+  return new RegExp(pattern.source, flags);
+}
+
+function findReadyUrl(output: string, pattern: RegExp): string | undefined {
+  pattern.lastIndex = 0;
+  const match = pattern.exec(output);
+  return match?.[1];
+}
+
 function createReadyWatcher(
   process: RunningSubprocess,
   output: CapturedOutput,
   readyPattern: RegExp,
   timeoutMs: number,
 ): Promise<string> {
+  const normalizedReadyPattern = normalizeReadyPattern(readyPattern);
   return new Promise<string>((resolve, reject) => {
     let settled = false;
     const timeout = setTimeout(() => {
@@ -235,8 +290,7 @@ function createReadyWatcher(
 
     void drainStream(process.stdout, (chunk) => {
       output.stdout = appendCapturedOutput(output.stdout, chunk);
-      const match = output.stdout.match(readyPattern);
-      const url = match?.[1];
+      const url = findReadyUrl(output.stdout, normalizedReadyPattern);
       if (url !== undefined) settleWithUrl(url);
     }).catch((error: unknown) => {
       fail(error instanceof Error ? error : new Error(String(error)));
@@ -246,6 +300,23 @@ function createReadyWatcher(
       output.stderr = appendCapturedOutput(output.stderr, chunk);
     });
   });
+}
+
+async function verifyProcessSurvivedReadiness(
+  process: RunningSubprocess,
+  output: CapturedOutput,
+  timeoutMs: number,
+): Promise<void> {
+  const stabilizationMs = Math.min(50, Math.max(1, timeoutMs));
+  const exitCode = await Promise.race([
+    process.exited,
+    Bun.sleep(stabilizationMs).then(() => undefined),
+  ]);
+  if (exitCode !== undefined) {
+    throw new Error(
+      `Subprocess exited with code ${exitCode} after readiness.\n${formatOutput(output)}`,
+    );
+  }
 }
 
 async function drainStream(
@@ -290,46 +361,52 @@ async function waitForExit(
   }
 }
 
+function hasProcessTerminated(process: RunningSubprocess): boolean {
+  return process.exitCode !== null || process.signalCode !== null;
+}
+
 async function stopProcess(
   process: RunningSubprocess,
-  signal: NodeJS.Signals,
+  signal: SubprocessSignal,
   timeoutMs: number,
 ): Promise<void> {
-  if (process.exitCode !== null) return;
+  if (hasProcessTerminated(process)) return;
   process.kill(signal);
   try {
     await waitForExit(process, timeoutMs, 'subprocess exit');
   } catch {
-    if (process.exitCode === null) {
+    if (!hasProcessTerminated(process)) {
       process.kill('SIGKILL');
       await process.exited.catch(() => undefined);
     }
   }
 }
 
-function expectedExitCodeForSignal(signal: NodeJS.Signals): number | undefined {
+function expectedExitCodeForSignal(signal: SubprocessSignal): number {
   if (signal === 'SIGKILL') return 137;
   if (signal === 'SIGTERM') return 143;
-  if (signal === 'SIGINT') return 130;
-  return undefined;
+  return 130;
+}
+
+function isExpectedSignalExit(
+  process: RunningSubprocess,
+  signal: SubprocessSignal,
+  exitCode: number,
+): boolean {
+  const signalCode = normalizeSignalCode(process.signalCode);
+  if (signalCode !== null) return signalCode === signal;
+  if (exitCode === expectedExitCodeForSignal(signal)) return true;
+  return signal !== 'SIGKILL' && exitCode === 0;
 }
 
 /**
  * Starts a Weft server entrypoint in a real Bun subprocess and waits for the
  * server to print a readiness URL.
  *
- * The child process receives only a small runtime environment by default plus
- * any explicit `env` values. Failures include the captured child stdout and
- * stderr so startup crashes do not become hung tests.
- *
  * @example
  * ```ts
  * import { spawnServerSubprocess } from 'weft/testing';
- *
- * const server = await spawnServerSubprocess({
- *   entrypoint: './tmp/durability-entrypoint.ts',
- *   databasePath: './tmp/weft-durability.db',
- * });
+ * const server = await spawnServerSubprocess({ entrypoint: './tmp/entrypoint.ts', databasePath: './tmp/weft.db' });
  * await server.stop();
  * ```
  */
@@ -359,6 +436,7 @@ export async function spawnServerSubprocess(
       normalizedOptions.readyPattern,
       normalizedOptions.startupTimeoutMs,
     );
+    await verifyProcessSurvivedReadiness(process, output, normalizedOptions.startupTimeoutMs);
     return new SubprocessServerHandleImpl(process, url, command, normalizedOptions, output);
   } catch (error) {
     await stopProcess(process, 'SIGKILL', normalizedOptions.exitTimeoutMs);
@@ -366,70 +444,46 @@ export async function spawnServerSubprocess(
   }
 }
 
-/**
- * Kills a running server subprocess and starts a replacement against the same
- * database path, port, entrypoint, and environment.
- *
- * The default signal is `SIGKILL` so tests exercise ungraceful process death.
- * If the original process exits for the wrong reason, the helper rejects with
- * captured stdout and stderr instead of silently rebooting.
- *
+/** Kills a running server subprocess and starts a replacement.
  * @example
  * ```ts
  * import { killAndReboot, spawnServerSubprocess } from 'weft/testing';
- *
- * const server = await spawnServerSubprocess({
- *   entrypoint: './tmp/durability-entrypoint.ts',
- *   databasePath: './tmp/weft-durability.db',
- * });
+ * const server = await spawnServerSubprocess({ entrypoint: './tmp/entrypoint.ts', databasePath: './tmp/weft.db' });
  * const rebooted = await killAndReboot(server);
  * await rebooted.stop();
  * ```
  */
 export async function killAndReboot(
   handle: SubprocessServerHandle,
-  signal: NodeJS.Signals = 'SIGKILL',
+  signal: SubprocessSignal = 'SIGKILL',
 ): Promise<SubprocessServerHandle> {
   if (!(handle instanceof SubprocessServerHandleImpl)) {
     throw new Error('killAndReboot requires a handle returned by spawnServerSubprocess');
   }
-  if (handle.process.exitCode !== null) {
+  const process = handle.internalProcess;
+  const restartOptions = handle.internalRestartOptions;
+  if (hasProcessTerminated(process)) {
     throw new Error(`Cannot reboot: subprocess already exited.\n${formatOutput(handle)}`);
   }
 
-  handle.process.kill(signal);
-  const exitCode = await waitForExit(handle.process, handle.restartOptions.exitTimeoutMs, 'kill');
-  const expectedExitCode = expectedExitCodeForSignal(signal);
-  if (expectedExitCode !== undefined && exitCode !== expectedExitCode) {
+  process.kill(signal);
+  const exitCode = await waitForExit(process, restartOptions.exitTimeoutMs, 'kill');
+  if (!isExpectedSignalExit(process, signal, exitCode)) {
     throw new Error(
-      `Expected subprocess to exit from ${signal} with code ${expectedExitCode}, got ${exitCode}.\n${formatOutput(handle)}`,
+      `Expected subprocess to exit from ${signal}, got code ${exitCode} and signal ${process.signalCode ?? '<none>'}.\n${formatOutput(handle)}`,
     );
   }
 
-  return spawnServerSubprocess(handle.restartOptions);
+  return spawnServerSubprocess(restartOptions);
 }
 
-/**
- * Runs a callback with a server subprocess and tears it down after the callback
- * settles.
- *
- * Use this helper for tests that only need one process lifetime. Tests that
- * intentionally kill and reboot should manage the returned handle explicitly
- * with {@link spawnServerSubprocess} and {@link killAndReboot}.
- *
+/** Runs a callback with a server subprocess and tears it down afterward.
  * @example
  * ```ts
  * import { withSubprocessServer } from 'weft/testing';
- *
  * await withSubprocessServer(
- *   {
- *     entrypoint: './tmp/durability-entrypoint.ts',
- *     databasePath: './tmp/weft-durability.db',
- *   },
- *   async (server) => {
- *     const response = await fetch(`${server.url}/v1/health`);
- *     await response.text();
- *   },
+ *   { entrypoint: './tmp/entrypoint.ts', databasePath: './tmp/weft.db' },
+ *   async (server) => fetch(`${server.url}/v1/health`),
  * );
  * ```
  */

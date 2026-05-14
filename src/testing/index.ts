@@ -142,7 +142,12 @@ const exportedWithSubprocessServer = withSubprocessServer;
 
 export type { ChaosScenario, FaultClass } from './chaos';
 export type { MockCall, MockedActivity, MockHandle } from './mocks';
-export type { SubprocessServerHandle, SubprocessServerOptions } from './subprocess-engine';
+export type {
+  SubprocessServerHandle,
+  SubprocessServerOptions,
+  SubprocessServerProcess,
+  SubprocessSignal,
+} from './subprocess-engine';
 export type { RunNOptions, RunNResult } from './test-engine';
 export {
   exportedActivityMockRegistry as ActivityMockRegistry,

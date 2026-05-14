@@ -164,12 +164,18 @@ async function readWorkflowResult(baseUrl: string, workflowId: string): Promise<
   return body.result;
 }
 
-async function startDurableServer(entrypoint: string, databasePath: string, port = 0) {
+async function startDurableServer(
+  entrypoint: string,
+  databasePath: string,
+  port = 0,
+  options: { startupTimeoutMs?: number } = {},
+) {
   const directory = dirname(databasePath);
   const handle = await spawnServerSubprocess({
     entrypoint,
     databasePath,
     port,
+    ...options,
     env: {
       WEFT_ACTIVITY_COUNT_PATH: join(directory, 'activity-count.txt'),
       WEFT_ACTIVITY_STARTED_PATH: join(directory, 'activity-started.txt'),
@@ -202,7 +208,7 @@ describe('subprocess server harness', () => {
       `
 ${parseArgumentsSource()}
 console.log('WEFT_SUBPROCESS_READY http://127.0.0.1:' + port);
-setTimeout(() => process.exit(17), 25);
+setTimeout(() => process.exit(17), 100);
 `,
     );
     const handle = await spawnServerSubprocess({
@@ -213,6 +219,24 @@ setTimeout(() => process.exit(17), 25);
 
     await handle.process.exited;
     await expect(killAndReboot(handle)).rejects.toThrow(/already exited/);
+  });
+
+  it('rejects a subprocess that exits immediately after printing readiness', async () => {
+    const entrypoint = await writeEntrypoint(
+      'ready-then-exit',
+      `
+${parseArgumentsSource()}
+console.log('WEFT_SUBPROCESS_READY http://127.0.0.1:' + port);
+process.exit(0);
+`,
+    );
+
+    await expect(
+      spawnServerSubprocess({
+        entrypoint,
+        databasePath: join(createFixturePath('ready-then-exit-db'), 'weft.db'),
+      }),
+    ).rejects.toThrow(/after readiness/);
   });
 
   it('surfaces bind failures on a reused port', async () => {
@@ -228,9 +252,9 @@ setTimeout(() => process.exit(17), 25);
     });
 
     try {
-      await expect(startDurableServer(entrypoint, databasePath, handle.port)).rejects.toThrow(
-        /before readiness|Timed out/,
-      );
+      await expect(
+        startDurableServer(entrypoint, databasePath, handle.port, { startupTimeoutMs: 500 }),
+      ).rejects.toThrow(/before readiness|EADDRINUSE/);
     } finally {
       portBlocker.stop(true);
     }
@@ -265,6 +289,28 @@ setInterval(() => {}, 1000);
     } finally {
       delete Bun.env['WEFT_PARENT_SECRET'];
     }
+  });
+
+  it('reboots after a subprocess handles SIGTERM and exits cleanly', async () => {
+    const entrypoint = await writeEntrypoint(
+      'sigterm-clean-exit',
+      `
+${parseArgumentsSource()}
+console.log('WEFT_SUBPROCESS_READY http://127.0.0.1:' + port);
+process.on('SIGTERM', () => process.exit(0));
+setInterval(() => {}, 1000);
+`,
+    );
+    let handle = await spawnServerSubprocess({
+      entrypoint,
+      databasePath: join(createFixturePath('sigterm-clean-exit-db'), 'weft.db'),
+    });
+    handles.push(handle);
+
+    handle = await killAndReboot(handle, 'SIGTERM');
+    handles.push(handle);
+
+    expect(handle.process.exitCode).toBeNull();
   });
 
   it('recovers a parked workflow after SIGKILL without re-running a completed activity', async () => {
