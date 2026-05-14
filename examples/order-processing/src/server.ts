@@ -8,13 +8,24 @@ const port = Number(Bun.env['PORT'] ?? 7321);
 const hostname = Bun.env['HOST'] ?? '127.0.0.1';
 const databasePath = Bun.env['WEFT_DATABASE_PATH'] ?? './order-processing.sqlite';
 
+async function loadDashboard(): Promise<unknown> {
+  try {
+    const dashboardModule = await import('../../../src/dashboard/index.html' as string);
+    return dashboardModule.default;
+  } catch {
+    return null;
+  }
+}
+
 if (import.meta.main) {
   using storage = new SQLiteStorage(databasePath);
   await using engine = createOrderProcessingEngine(new Engine({ storage }));
   await engine.recoverAll({ acknowledgeUnknownWorkflowTypes: true });
   await engine.schedule(orderProcessingSchedule);
+  const dashboard = await loadDashboard();
 
   await using server = serve({
+    dashboard,
     engine,
     hostname,
     port,
@@ -22,7 +33,9 @@ if (import.meta.main) {
   });
 
   console.log(`Order processing example listening at ${server.url}`);
-  console.log(`Dashboard: ${server.url}ui`);
+  if (dashboard !== null) {
+    console.log(`Dashboard: ${new URL('/ui', server.url).toString()}`);
+  }
 
   await new Promise(() => {});
 }

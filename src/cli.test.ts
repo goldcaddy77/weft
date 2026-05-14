@@ -1555,6 +1555,68 @@ describe('executeValidate', () => {
     }
   });
 
+  it('includes test files when validation globs explicitly target tests', async () => {
+    const workspacePath = join(tmpdir(), `weft-validate-explicit-test-glob-${crypto.randomUUID()}`);
+    const examplePath = join(workspacePath, 'examples', 'order-processing');
+
+    try {
+      mkdirSync(examplePath, { recursive: true });
+      await Bun.write(join(examplePath, 'src.ts'), 'export const workflow = "clean";');
+      await Bun.write(join(examplePath, 'src.test.ts'), 'export const testWorkflow = "clean";');
+
+      await expect(
+        expandGlobEntryPaths([join(workspacePath, 'examples/**/*.test.ts')]),
+      ).resolves.toEqual([join(workspacePath, 'examples/order-processing/src.test.ts')]);
+    } finally {
+      rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it('includes test files when validation globs explicitly target a tests directory', async () => {
+    const workspacePath = join(tmpdir(), `weft-validate-tests-directory-${crypto.randomUUID()}`);
+    const testsPath = join(workspacePath, 'examples', 'order-processing', 'tests');
+
+    try {
+      mkdirSync(testsPath, { recursive: true });
+      await Bun.write(
+        join(testsPath, 'order-processing.test.ts'),
+        'export const workflow = "test";',
+      );
+
+      await expect(
+        expandGlobEntryPaths([join(workspacePath, 'examples/**/tests/**/*.ts')]),
+      ).resolves.toEqual([
+        join(workspacePath, 'examples/order-processing/tests/order-processing.test.ts'),
+      ]);
+    } finally {
+      rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a validation load error instead of throwing when a glob root is missing', async () => {
+    const missingGlobPath = join(
+      tmpdir(),
+      `weft-validate-missing-glob-${crypto.randomUUID()}`,
+      'examples/**/*.ts',
+    );
+
+    const result = await executeValidate({
+      entryPaths: [missingGlobPath],
+      json: true,
+    });
+
+    expect(result.exitCode).toBe(2);
+    const parsed = JSON.parse(result.stdout) as {
+      entries: Array<{ entryPath: string; loadError?: string }>;
+      hasLoadErrors: boolean;
+    };
+    expect(parsed.hasLoadErrors).toBe(true);
+    expect(parsed.entries[0]).toMatchObject({
+      entryPath: missingGlobPath,
+    });
+    expect(parsed.entries[0]?.loadError).toContain('Cannot find module');
+  });
+
   it('returns exitCode 2 when a clean entry and a missing entry are validated together', async () => {
     const cleanEntryPath = join(tmpdir(), `weft-validate-mixed-clean-${crypto.randomUUID()}.ts`);
 

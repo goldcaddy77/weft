@@ -94,13 +94,20 @@ export interface ShipmentResult {
   trackingNumber: string;
 }
 
-export interface OrderCompletion {
-  chargeId?: string;
+export type OrderCompletion = CancelledOrderCompletion | ShippedOrderCompletion;
+
+export interface CancelledOrderCompletion {
   orderId: string;
-  refundId?: string;
-  releasedReservationIds?: string[];
-  status: 'cancelled' | 'shipped';
-  trackingNumber?: string;
+  refundId: string;
+  releasedReservationIds: string[];
+  status: 'cancelled';
+}
+
+export interface ShippedOrderCompletion {
+  chargeId: string;
+  orderId: string;
+  status: 'shipped';
+  trackingNumber: string;
 }
 
 export interface SweepStaleOrdersInput {

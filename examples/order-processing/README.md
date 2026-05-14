@@ -19,7 +19,12 @@ bun run server
 
 The dashboard is available at `http://localhost:7321/ui`.
 
-Run the small client in another terminal:
+The server stores state in `./order-processing.sqlite` by default. Set `WEFT_DATABASE_PATH` when
+you want both terminals to use a different SQLite file.
+
+Run the small client in another terminal. The client is intentionally local: it creates its own
+`Engine` instance against the same SQLite file instead of calling the server over HTTP, so the
+example stays focused on workflow APIs before introducing a network client.
 
 ```bash
 bun run client place

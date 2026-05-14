@@ -55,3 +55,5 @@ jobs:
         working-directory: examples/order-processing
       - run: bun run verify
         working-directory: examples/order-processing
+      - run: bun run smoke:server
+        working-directory: examples/order-processing

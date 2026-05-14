@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { TestEngine } from 'weft/testing';
 
-import { createOrderProcessingEngine } from '../src/registry';
+import { createOrderProcessingEngine, orderProcessingSchedule } from '../src/registry';
 import {
   addItemUpdate,
   cancelOrderSignal,
@@ -72,6 +72,12 @@ describe('order-processing reference example', () => {
 
     const allWorkflows = await engine.list();
     expect(allWorkflows.items.map((workflow) => workflow.id)).toContain(highValueOrderInput.orderId);
+    expect(allWorkflows.items).toContainEqual(
+      expect.objectContaining({
+        status: 'completed',
+        type: 'orderProcessingShipment',
+      }),
+    );
   });
 
   it('compensates inventory and payment when cancellation arrives before shipment', async () => {
@@ -98,8 +104,31 @@ describe('order-processing reference example', () => {
       ...standardOrderInput,
       orderId: 'order_stale',
     });
-    const sweepHandle = await engine.start('orderProcessingSweepStaleOrders', staleOrderSweepInput);
-    const sweepResult = await sweepHandle.result();
+
+    const scheduleHandle = await engine.schedule(orderProcessingSchedule);
+    await expect(engine.getSchedule(scheduleHandle.id)).resolves.toMatchObject({
+      id: scheduleHandle.id,
+      status: 'active',
+      workflowType: 'orderProcessingSweepStaleOrders',
+    });
+    await expect(engine.listSchedules({ workflowType: 'orderProcessingSweepStaleOrders' })).resolves
+      .toMatchObject({
+        items: [expect.objectContaining({ id: scheduleHandle.id })],
+      });
+
+    const scheduleDescription = await scheduleHandle.describe();
+    expect(scheduleDescription.nextFireAt).toBeNumber();
+    await engine.advanceTime(scheduleDescription.nextFireAt! - engine.now);
+    const workflows = await engine.list();
+    const sweepWorkflow = workflows.items.find(
+      (workflow) => workflow.type === 'orderProcessingSweepStaleOrders',
+    );
+    expect(sweepWorkflow).toMatchObject({
+      status: 'completed',
+      type: 'orderProcessingSweepStaleOrders',
+    });
+
+    const sweepResult = await engine.getHandle(sweepWorkflow!.id).result();
     expect(sweepResult).toEqual({
       cancelledOrderIds: ['order_stale'],
       scannedOrderCount: 1,
