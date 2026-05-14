@@ -21,28 +21,6 @@ naming the alternative that was rejected.
 - **Symbol**: `measureMemoryPerWorkflow`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
-- **File**: `src/client/index.ts`
-- **Rule**: `max-lines`
-- **Symbol**: `(whole file)`
-- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
-
-- **File**: `src/client/index.ts`
-- **Rule**: `complexity`
-- **Symbol**: `request`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-- **File**: `src/client/index.ts`
-- **Rule**: `complexity`
-- **Symbol**: `start`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `client-http-client-public-surface`
-
-- **File**: `src/client/http-client.ts`
-- **Rule**: `max-lines`
-- **Symbol**: `(whole file)`
-- **Reason**: HTTP client owns the public remote workflow surface. The definition-vocabulary cleanup adds typed signal, update, query, and schedule overloads alongside the existing string-based dynamic methods; splitting those method shims would make the public client contract harder to audit.
-
 ## `core-activity-registry-constructor-complexity`
 
 - **File**: `src/core/activity-registry.ts`

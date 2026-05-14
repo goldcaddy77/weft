@@ -1300,7 +1300,9 @@ describe('executeConformance', () => {
       checks: Array<{ name: string; ok: boolean; message: string }>;
     };
     expect(report.ok).toBe(false);
-    expect(report.checks[0]?.message).toContain('disconnected before heartbeat readiness check');
+    expect(report.checks[0]?.message).toMatch(
+      /^Worker register-exit-worker-[0-9a-f-]+ disconnected before heartbeat was observed$/,
+    );
   });
 
   it('surfaces a replacement worker that disconnects before graceful shutdown', async () => {
