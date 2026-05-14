@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
-import { encode } from '../../core/codec.ts';
 import type { Engine } from '../../core/engine.ts';
 import type { CheckpointState } from '../../core/types.ts';
+import { negotiatedResponse } from '../handler/response-helpers.ts';
 import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
@@ -52,21 +52,7 @@ export const getCheckpointAtOperation = defineOperation<
 });
 
 function shapeGetCheckpointAtSuccess(result: GetCheckpointAtOutput, request: Request): Response {
-  // Match legacy `negotiatedResponse` behavior verbatim: a substring
-  // match on `Accept`, no q-value parsing. Real RFC-7231 negotiation
-  // is a deliberate behavior change for a follow-up PR.
-  const accept = request.headers.get('Accept') ?? '';
-  if (accept.includes('application/msgpack')) {
-    return new Response(encode(result), {
-      status: 200,
-      headers: { 'Content-Type': 'application/msgpack' },
-    });
-  }
-
-  return new Response(JSON.stringify(result), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return negotiatedResponse(request, result, 200);
 }
 
 function shapeGetCheckpointAtFault(fault: OperationFault): Response {

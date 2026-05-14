@@ -14,9 +14,9 @@
 
 import { z } from 'zod';
 
-import { encode } from '../../core/codec.ts';
 import type { Engine } from '../../core/engine.ts';
 import type { WorkflowReplay } from '../../core/types.ts';
+import { negotiatedResponse } from '../handler/response-helpers.ts';
 import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
@@ -90,17 +90,7 @@ function shapeReplayWorkflowFault(fault: OperationFault): Response {
  * `negotiatedResponse` behavior from `handleReplayWorkflowToStep`.
  */
 function shapeReplayWorkflowSuccess(output: ReplayWorkflowOutput, request: Request): Response {
-  const accept = request.headers.get('Accept') ?? '';
-  if (accept.includes('application/msgpack')) {
-    return new Response(encode(output), {
-      status: 200,
-      headers: { 'Content-Type': 'application/msgpack' },
-    });
-  }
-  return new Response(JSON.stringify(output), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return negotiatedResponse(request, output, 200);
 }
 
 export const replayWorkflowRestBinding: UnknownRestBinding = {
