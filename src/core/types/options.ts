@@ -276,11 +276,10 @@ export interface ListFilter {
   /** Match workflows by `state.tenant?.id`. */
   tenantId?: string | string[];
   /**
-   * Match by the workflow's `failureCategory`. Applied as a post-filter
-   * against `WorkflowState.failureCategory` rather than via an index, so
-   * pair this with another scoped dimension (e.g. `status`) on large
-   * workflow populations for acceptable performance. A follow-up will
-   * lower this into the attributes index path.
+   * Match by the workflow's `failureCategory`. The engine uses the
+   * `failureCategory` search-attribute index to narrow candidate workflow IDs,
+   * then still verifies the loaded `WorkflowState.failureCategory` so state
+   * remains authoritative when index entries are stale.
    */
   failureCategory?: FailureCategory | FailureCategory[];
 }
