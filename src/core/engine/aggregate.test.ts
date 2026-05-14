@@ -2,13 +2,12 @@ import { describe, expect, it } from 'bun:test';
 
 import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
-import {
-  AggregateDistinctKeyCapExceededError,
-  MAX_AGGREGATE_DISTINCT_KEYS,
-} from '../aggregate-validation.ts';
+import { AggregateDistinctKeyCapExceededError } from '../aggregate-validation.ts';
 import { encode } from '../codec.ts';
 import { Engine } from '../engine.ts';
 import type { WorkflowContext, WorkflowState } from '../types.ts';
+import { aggregate as aggregateWorkflows } from './aggregate.ts';
+import { getInternals } from './internals.ts';
 
 async function startAndComplete(
   engine: Engine,
@@ -194,19 +193,46 @@ describe('engine.aggregate', () => {
   it('throws when an aggregate would materialize too many distinct group keys', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
-    await writeDistinctTypeWorkflows(storage, MAX_AGGREGATE_DISTINCT_KEYS + 1);
+    await writeDistinctTypeWorkflows(storage, 4);
 
     try {
-      await engine.aggregate(undefined, { groupBy: 'type' });
+      await aggregateWorkflows(
+        getInternals(engine),
+        undefined,
+        { groupBy: 'type' },
+        {
+          distinctKeyCap: 3,
+        },
+      );
       throw new Error('Expected aggregate to reject after exceeding the distinct-key cap');
     } catch (error) {
       expect(error).toBeInstanceOf(AggregateDistinctKeyCapExceededError);
       if (error instanceof AggregateDistinctKeyCapExceededError) {
-        expect(error.cap).toBe(MAX_AGGREGATE_DISTINCT_KEYS);
+        expect(error.cap).toBe(3);
       }
     } finally {
       engine[Symbol.dispose]();
     }
+  });
+
+  it('allows aggregates exactly at the distinct-key cap', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    await writeDistinctTypeWorkflows(storage, 3);
+
+    const result = await aggregateWorkflows(
+      getInternals(engine),
+      undefined,
+      { groupBy: 'type' },
+      {
+        distinctKeyCap: 3,
+      },
+    );
+
+    expect(result.total).toBe(3);
+    expect(result.groups).toHaveLength(3);
+    expect(result.truncated).toBe(false);
+    engine[Symbol.dispose]();
   });
 
   it('AggregateDistinctKeyCapExceededError carries the cap', () => {

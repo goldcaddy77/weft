@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
-import { MAX_AGGREGATE_DISTINCT_KEYS } from '../../core/aggregate-validation.ts';
-import { encode } from '../../core/codec.ts';
+import { AggregateDistinctKeyCapExceededError } from '../../core/aggregate-validation.ts';
 import { Engine } from '../../core/engine.ts';
-import type { WorkflowState } from '../../core/types.ts';
-import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
@@ -15,25 +12,6 @@ import {
 
 const registry = createOperationRegistry([aggregateWorkflowsOperation]);
 const bindings = [aggregateWorkflowsRestBinding];
-
-async function writeDistinctTypeWorkflows(storage: MemoryStorage, count: number): Promise<void> {
-  const now = Date.now();
-  await storage.batch(
-    Array.from({ length: count }, (_, index) => {
-      const workflowId = `rest-distinct-type-${index}`;
-      const state: WorkflowState = {
-        id: workflowId,
-        type: `rest-distinct-type-${index}`,
-        status: 'completed',
-        input: null,
-        version: 'test',
-        createdAt: now + index,
-        updatedAt: now + index,
-      };
-      return { type: 'put', key: KEYS.workflow(workflowId), value: encode(state) };
-    }),
-  );
-}
 
 describe('weft.workflows.aggregate', () => {
   it('maps unknown aggregate attributes to Unprocessable instead of EngineFailure', async () => {
@@ -64,9 +42,10 @@ describe('weft.workflows.aggregate', () => {
   });
 
   it('maps aggregate distinct-key cap errors to Unprocessable REST responses', async () => {
-    const storage = new MemoryStorage();
-    const engine = new Engine({ storage });
-    await writeDistinctTypeWorkflows(storage, MAX_AGGREGATE_DISTINCT_KEYS + 1);
+    const engine = new Engine({ storage: new MemoryStorage() });
+    engine.aggregate = async () => {
+      throw new AggregateDistinctKeyCapExceededError(3);
+    };
 
     const response = await handleRequest(
       new Request('http://localhost/v1/workflows/aggregate?group_by=type', {
@@ -79,7 +58,8 @@ describe('weft.workflows.aggregate', () => {
     expect(response.status).toBe(400);
     expect(response.headers.get('content-type')).toBe('application/json');
     expect(await response.json()).toEqual({
-      error: `Aggregate query would exceed the distinct-key cap of ${MAX_AGGREGATE_DISTINCT_KEYS}. Narrow the filter or choose a lower-cardinality groupBy.`,
+      error:
+        'Aggregate query would exceed the distinct-key cap of 3. Narrow the filter or choose a lower-cardinality groupBy.',
     });
 
     engine[Symbol.dispose]();

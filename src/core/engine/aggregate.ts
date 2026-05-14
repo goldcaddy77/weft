@@ -44,6 +44,10 @@ export type AggregateResult = {
   truncated: boolean;
 };
 
+type AggregateExecutionOptions = {
+  distinctKeyCap?: number;
+};
+
 const ATTRIBUTE_VALUE_TO_KEY = (value: SearchAttributeValue | undefined): string | null => {
   if (value === undefined || value === null) return null;
   if (typeof value === 'string') return value;
@@ -132,6 +136,7 @@ export async function aggregate(
   internals: EngineInternals,
   filter: ListFilter | undefined,
   options: AggregateOptions,
+  executionOptions: AggregateExecutionOptions = {},
 ): Promise<AggregateResult> {
   // Re-validate so in-process callers receive the same diagnostics as the
   // server operation, even when they construct the input by hand.
@@ -139,6 +144,7 @@ export async function aggregate(
   const normalizedOptions = normalizeAggregateOptions(options);
   const { groupBy } = normalizedOptions;
   const requestedLimit = normalizedOptions.limit ?? AGGREGATE_DEFAULT_LIMIT;
+  const distinctKeyCap = executionOptions.distinctKeyCap ?? MAX_AGGREGATE_DISTINCT_KEYS;
 
   if (typeof groupBy === 'object') {
     validateAttributeDimension(internals, groupBy.attribute);
@@ -161,8 +167,8 @@ export async function aggregate(
     const key = await resolveDimensionKey(internals, state, groupBy);
     const current = counts.get(key);
     if (current === undefined) {
-      if (counts.size >= MAX_AGGREGATE_DISTINCT_KEYS) {
-        throw new AggregateDistinctKeyCapExceededError(MAX_AGGREGATE_DISTINCT_KEYS);
+      if (counts.size >= distinctKeyCap) {
+        throw new AggregateDistinctKeyCapExceededError(distinctKeyCap);
       }
       counts.set(key, 1);
     } else {
