@@ -38,17 +38,21 @@ export function validateCloneable(value: unknown, path = ''): CloneValidationRes
  * Check whether an object is a class instance with methods on its prototype
  * (beyond what plain Object provides).
  */
-// oxlint-disable-next-line complexity -- ID:core-codec-is-class-instance-with-methods-complexity
 function isClassInstanceWithMethods(value: object): boolean {
   const prototype: unknown = Object.getPrototypeOf(value);
+  return (
+    hasCustomPrototype(prototype) &&
+    !isSupportedStructuredCloneType(value) &&
+    hasPrototypeMethods(prototype)
+  );
+}
 
-  // Plain objects have Object.prototype (or null) as their prototype
-  if (prototype === Object.prototype || prototype === null) {
-    return false;
-  }
+function hasCustomPrototype(prototype: unknown): boolean {
+  return prototype !== Object.prototype && prototype !== null;
+}
 
-  // Skip known supported types and arrays
-  if (
+function isSupportedStructuredCloneType(value: object): boolean {
+  return (
     Array.isArray(value) ||
     value instanceof Date ||
     value instanceof RegExp ||
@@ -57,12 +61,12 @@ function isClassInstanceWithMethods(value: object): boolean {
     value instanceof Error ||
     value instanceof Uint8Array ||
     value instanceof ArrayBuffer
-  ) {
-    return false;
-  }
+  );
+}
 
-  // Check if the prototype has any methods (own properties that are functions)
+function hasPrototypeMethods(prototype: unknown): boolean {
   if (typeof prototype !== 'object' || prototype === null) return false;
+
   const propertyNames = Object.getOwnPropertyNames(prototype);
   return propertyNames.some((name) => {
     if (name === 'constructor') return false;
