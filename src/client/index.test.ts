@@ -534,6 +534,24 @@ describe('HttpClient', () => {
       const state = await client.get('http-client-tags');
       expect(state?.tags).toEqual(['nightly', 'v2']);
     });
+
+    it('forwards StartOptions.searchAttributes through the HTTP client', async () => {
+      const handle = await client.start('client-contract-waiting', 'searchable', {
+        id: 'http-client-search-attributes',
+        searchAttributes: { customerId: 'acme', attempt: 2 },
+      });
+
+      const attributes = await client.getAttributes('http-client-search-attributes');
+      expect(attributes).toEqual({ customerId: 'acme', attempt: 2 });
+
+      await handle.cancel();
+    });
+
+    it('rejects StartOptions.idempotencyKey instead of silently dropping it', async () => {
+      await expect(
+        client.start('echo', 'dedupe', { idempotencyKey: 'dedupe-key' }),
+      ).rejects.toThrow('idempotencyKey is not supported over HttpClient');
+    });
   });
 
   describe('get', () => {

@@ -2,6 +2,7 @@ import { parseArgs } from 'node:util';
 
 import type { ScheduleOverlapPolicy } from '../core/types.ts';
 import { parseCodegenArguments } from './codegen-arguments.ts';
+import { formatUnknownCommandError } from './command-suggestions.ts';
 import type {
   CliCommand,
   PersistentStorageBackend,
@@ -51,6 +52,8 @@ const SUBCOMMAND_PARSERS: Record<string, (args: string[]) => CliCommand> = {
   codegen: parseCodegenArguments,
 };
 
+const KNOWN_SUBCOMMAND_LIST = [...KNOWN_SUBCOMMANDS];
+
 type ParsedSubcommand = {
   subcommand?: string;
   subcommandIndex: number;
@@ -70,10 +73,24 @@ function findSubcommand(args: string[]): ParsedSubcommand {
       return { subcommand: arg, subcommandIndex: index };
     }
 
+    if (!looksLikeFilePath(arg)) {
+      throw new Error(formatUnknownCommandError(arg, KNOWN_SUBCOMMAND_LIST));
+    }
+
     break;
   }
 
   return { subcommandIndex: -1 };
+}
+
+function looksLikeFilePath(value: string): boolean {
+  return (
+    value.startsWith('.') ||
+    value.startsWith('/') ||
+    value.startsWith('~') ||
+    value.includes('/') ||
+    /\.[cm]?tsx?$/.test(value)
+  );
 }
 
 function removeSubcommand(args: string[], subcommandIndex: number): string[] {

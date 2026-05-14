@@ -14,7 +14,7 @@ import {
   StartWorkflowValidationError,
 } from '../../core/start-workflow-validation.ts';
 import { QuotaExceededError } from '../../core/tenant-quotas.ts';
-import type { StartOptions } from '../../core/types.ts';
+import type { SearchAttributeValue, StartOptions } from '../../core/types.ts';
 import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
@@ -32,6 +32,7 @@ const startWorkflowInput = z.object({
   startAt: z.unknown().optional(),
   startAfter: z.unknown().optional(),
   tags: z.unknown().optional(),
+  searchAttributes: z.unknown().optional(),
 });
 
 const startWorkflowOutput = z.object({
@@ -134,10 +135,48 @@ function buildStartWorkflowOptions(input: StartWorkflowInput): StartOptions {
   if (input.tags !== undefined) {
     options.tags = coerceStartWorkflowTags(input.tags, 'Field "tags"');
   }
+  if (input.searchAttributes !== undefined) {
+    options.searchAttributes = coerceStartWorkflowSearchAttributes(
+      input.searchAttributes,
+      'Field "searchAttributes"',
+    );
+  }
 
   assertExclusiveStartWorkflowOptions(options.startAt, options.startAfter);
 
   return options;
+}
+
+function coerceStartWorkflowSearchAttributes(
+  value: unknown,
+  fieldName: string,
+): Record<string, SearchAttributeValue> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new StartWorkflowValidationError(`${fieldName} must be an object`);
+  }
+
+  // Null-prototype record keeps untrusted attribute keys from touching Object.prototype setters.
+  const attributes = Object.create(null) as Record<string, SearchAttributeValue>;
+  for (const [key, attributeValue] of Object.entries(value)) {
+    if (!isSearchAttributeValue(attributeValue)) {
+      throw new StartWorkflowValidationError(
+        `${fieldName}.${key} must be a string, number, boolean, Date, or string array`,
+      );
+    }
+    attributes[key] = attributeValue;
+  }
+
+  return attributes;
+}
+
+function isSearchAttributeValue(value: unknown): value is SearchAttributeValue {
+  return (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    value instanceof Date ||
+    (Array.isArray(value) && value.every((item) => typeof item === 'string'))
+  );
 }
 
 export const startWorkflowRestBinding: UnknownRestBinding = {
@@ -153,6 +192,7 @@ export const startWorkflowRestBinding: UnknownRestBinding = {
     startAt: { kind: 'body-field', bodyField: 'startAt' },
     startAfter: { kind: 'body-field', bodyField: 'startAfter' },
     tags: { kind: 'body-field', bodyField: 'tags' },
+    searchAttributes: { kind: 'body-field', bodyField: 'searchAttributes' },
   },
   extractInput: async (request) => {
     let body: unknown;
@@ -178,6 +218,7 @@ export const startWorkflowRestBinding: UnknownRestBinding = {
       startAt: record['startAt'],
       startAfter: record['startAfter'],
       tags: record['tags'],
+      searchAttributes: record['searchAttributes'],
     };
   },
   success: { kind: 'json', status: 201 },

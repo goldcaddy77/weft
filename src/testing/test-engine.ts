@@ -299,17 +299,18 @@ export class TestEngine extends Engine {
         }
       }
 
+      // Use a unique ID per run to keep workflow state isolated.
+      const runId = `runN-${type}-${i}-${Date.now()}`;
+
       try {
-        // Use a unique ID per run to keep workflow state isolated.
-        const runId = `runN-${type}-${i}-${Date.now()}`;
         const handle = await this.start(type, input, { id: runId });
         const output = await handle.result();
         passes++;
         successOutputs.push(output);
       } catch {
-        // Stub: all failures categorized as 'system' until failureCategory
-        // population is implemented (architecture item 5788).
-        categories.system++;
+        const state = await this.get(runId);
+        const category = state?.failureCategory ?? 'system';
+        categories[category]++;
       } finally {
         // Restore original mock base implementations.
         if (chaos) {

@@ -389,6 +389,10 @@ function resolveEngineOptions(
   options: EngineConstructorOptions | undefined,
   getNow: () => number,
 ): ResolvedOptions {
+  if (options?.suspendOnLlmWait === true) {
+    throw new Error('suspendOnLlmWait is not yet implemented');
+  }
+
   return {
     storage,
     development: options?.development ?? false,
@@ -396,7 +400,7 @@ function resolveEngineOptions(
     checkpointSizeWarningThreshold: options?.checkpointSizeWarningThreshold ?? 65_536,
     maxNestingDepth: options?.maxNestingDepth ?? 10,
     broadcastEvents: options?.broadcastEvents ?? false,
-    suspendOnLlmWait: options?.suspendOnLlmWait ?? false,
+    suspendOnLlmWait: false,
     retention: normalizeRetentionPolicy(options?.retention, 'options.retention'),
     retentionSweepIntervalMs:
       normalizeRetentionDuration(
