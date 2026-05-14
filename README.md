@@ -178,6 +178,8 @@ const orders = await engine.list({
 });
 ```
 
+Workflow visibility extends the same list surface with operator filters for `idPrefix`, `tenantId`, failure categories, created/updated/deadline ranges, and status arrays. Use `engine.aggregate()` or `GET /v1/workflows/aggregate` for grouped counts by status, type, tenant, failure category, or a search attribute. Existing Bun SQLite deployments should run the [workflow visibility backfill](documentation/guides/workflow-visibility-backfill.md) before relying on the indexed fast path for older workflows.
+
 ### Human-in-the-Loop Review
 
 Weft can pause a workflow at any checkpoint and surface a decision payload to a human reviewer. The workflow resumes with the reviewer's decision—no polling, no special infrastructure.
@@ -401,6 +403,7 @@ Getting started:
 
 - [Installation](documentation/getting-started/installation.md)
 - [Hello World](documentation/getting-started/hello-world.md)
+- [Transports](documentation/getting-started/transports.md)
 - [Key Concepts](documentation/getting-started/key-concepts.md)
 
 Guides:
