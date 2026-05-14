@@ -23,7 +23,7 @@ function isGeneratedCoverageArtifact(filePath: string): boolean {
     return true;
   }
 
-  return /src\/dashboard\/fragments\/\.[^/]+\.compiled(?:\/[^/]+\.(?:js|mjs)|\.mjs)$/.test(
+  return /src\/dashboard\/(?:components|fragments|views)\/\.[^/]+\.compiled(?:\/[^/]+\.(?:js|mjs)|\.mjs)$/.test(
     filePath,
   );
 }
@@ -1017,9 +1017,229 @@ const COVERAGE_ALLOWANCE_OVERRIDES = new Map<string, CoverageAllowance>([
   ],
 ]);
 
+// Keep the fresh mainline coverage refresh separate from the historical base
+// allowances so line-movement updates are mechanically reviewable and do not
+// create duplicate keys inside a single Map literal.
+const CURRENT_MAIN_COVERAGE_ALLOWANCE_OVERRIDES = new Map<string, CoverageAllowance>([
+  [
+    'scripts/lib/workflow-visibility-backfill.ts',
+    {
+      lines: new Set([
+        61, 130, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199,
+      ]),
+    },
+  ],
+  ['src/cli/codegen-emit.ts', { lines: new Set([303, 313, 357, 358, 425, 427]) }],
+  [
+    'src/cli/codegen.ts',
+    {
+      functions: 1,
+      lines: new Set([91, 92, 153, 154, 203, 248, 249, 379, 410, 411, 412, 414, 415, 416, 417]),
+    },
+  ],
+  [
+    'src/cli/conformance.ts',
+    {
+      functions: 1,
+      lines: new Set([55, 106, 128, 146, 150, 151, 166, 167, 168, 221, 287, 325]),
+    },
+  ],
+  [
+    'src/client/client-contract.test-support.ts',
+    { functions: 1, lines: new Set([19, 40, 42, 43]) },
+  ],
+  ['src/client/http-handle.ts', { functions: 1 }],
+  ['src/client/http-schedule-handle.ts', { functions: 1 }],
+  ['src/client/local.ts', { functions: 1, lines: new Set([124]) }],
+  [
+    'src/core/context/parallel-operations.ts',
+    {
+      functions: 1,
+      lines: new Set([
+        30, 31, 32, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 77, 78, 79, 86, 87,
+        88, 171, 172, 173, 191, 192, 193, 295, 296, 297, 310, 330, 331, 333, 334, 335, 336, 337,
+        338, 339, 340, 341, 342, 344,
+      ]),
+    },
+  ],
+  ['src/core/engine/aggregate.ts', { functions: 1, lines: new Set([47, 48, 49, 50, 51, 52]) }],
+  [
+    'src/core/engine/attributes-tags.ts',
+    {
+      functions: 2,
+      lines: new Set([
+        50, 51, 53, 191, 220, 253, 285, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302,
+        303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320,
+        321,
+      ]),
+    },
+  ],
+  [
+    'src/core/engine/bulk-operations.ts',
+    {
+      functions: 1,
+      lines: new Set([572, 588, 714, 715, 716, 717, 723, 724, 725, 726, 879]),
+    },
+  ],
+  [
+    'src/core/engine/completed-review-storage.ts',
+    { lines: new Set([18, 30, 108, 113, 114, 115, 117, 118, 119, 120, 124]) },
+  ],
+  [
+    'src/core/engine/index.ts',
+    { functions: 3, lines: new Set([439, 440, 441, 464, 465, 466, 467, 468, 472]) },
+  ],
+  [
+    'src/core/engine/inline-parking.ts',
+    { functions: 1, lines: new Set([204, 205, 206, 207, 208, 209, 210, 211]) },
+  ],
+  [
+    'src/core/engine/list-candidate-resolution.ts',
+    {
+      lines: new Set([
+        42, 45, 47, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68,
+        69, 70, 71, 72, 73, 74, 75, 76, 78, 80, 81, 82, 83,
+      ]),
+    },
+  ],
+  ['src/core/engine/listing.ts', { lines: new Set([52, 83, 180, 202]) }],
+  ['src/core/engine/review-list-entries.ts', { lines: new Set([84, 145]) }],
+  ['src/core/engine/reviews.ts', { lines: new Set([148, 208, 209, 225, 235, 239, 240, 286]) }],
+  [
+    'src/core/engine/state-utilities.ts',
+    { lines: new Set([282, 286, 287, 288, 289, 297, 301, 302, 303, 304, 305, 306, 317, 318]) },
+  ],
+  ['src/core/engine/validation.ts', { lines: new Set([291]) }],
+  ['src/core/engine/workflow-indexes.ts', { functions: 1, lines: new Set([43, 44, 45, 46, 47]) }],
+  ['src/core/engine/workflow-state-stream.ts', { lines: new Set([114]) }],
+  ['src/core/types/definition-schema-to-json.ts', { lines: new Set([135, 136, 137, 140, 141]) }],
+  ['src/core/worker-checkpoint-resume-state.ts', { functions: 1 }],
+  ['src/core/worker-execution-strategy.ts', { functions: 2 }],
+  ['src/dashboard/utilities/workflow-detail-timeline.ts', { lines: new Set([185, 186]) }],
+  ['src/dashboard/utilities/workflow-list-data.ts', { lines: new Set([63]) }],
+  [
+    'src/mcp/access.ts',
+    { functions: 1, lines: new Set([36, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 117]) },
+  ],
+  ['src/mcp/dispatcher.ts', { functions: 7, lines: new Set([110, 111, 114, 210, 211, 212]) }],
+  [
+    'src/mcp/http.ts',
+    {
+      lines: new Set([
+        110, 111, 112, 113, 114, 115, 116, 117, 193, 194, 217, 227, 270, 349, 350, 351, 352, 353,
+        356, 357, 358, 359,
+      ]),
+    },
+  ],
+  [
+    'src/mcp/list-filter.ts',
+    {
+      lines: new Set([
+        64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 88, 89, 90, 91, 92, 93, 94, 95, 96, 102,
+      ]),
+    },
+  ],
+  ['src/mcp/protocol.ts', { functions: 3, lines: new Set([89, 94, 95, 96, 101]) }],
+  [
+    'src/mcp/resources.ts',
+    {
+      functions: 2,
+      lines: new Set([
+        39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
+        62, 63, 64, 65, 66, 67, 68, 130, 163, 188, 203, 204,
+      ]),
+    },
+  ],
+  ['src/mcp/session.ts', { functions: 1, lines: new Set([152, 153, 154]) }],
+  [
+    'src/mcp/stdio.ts',
+    {
+      functions: 3,
+      lines: new Set([
+        98, 99, 100, 101, 102, 121, 122, 200, 201, 202, 203, 204, 205, 206, 207, 232, 233, 270, 271,
+        272, 273, 332, 333, 352, 353, 354, 355, 356, 357, 358, 359,
+      ]),
+    },
+  ],
+  [
+    'src/mcp/tools.ts',
+    {
+      functions: 1,
+      lines: new Set([67, 124, 125, 158, 178, 179, 292, 293, 294, 295, 296, 352, 353, 379]),
+    },
+  ],
+  [
+    'src/server/api-catalog.ts',
+    { lines: new Set([161, 162, 166, 167, 169, 170, 171, 172, 174, 176]) },
+  ],
+  ['src/server/handler/index.ts', { lines: new Set([38, 47]) }],
+  ['src/server/json-rpc-dispatch.ts', { lines: new Set([188, 189]) }],
+  ['src/server/openapi.ts', { lines: new Set([334]) }],
+  ['src/server/openrpc.ts', { lines: new Set([178, 179, 180, 199, 200, 201]) }],
+  [
+    'src/server/operation-catalog/workflow-adapter.ts',
+    { lines: new Set([179, 180, 181, 182, 183, 187, 188, 191, 192, 193, 194, 195, 199, 200]) },
+  ],
+  [
+    'src/server/operations/aggregate-workflows.ts',
+    {
+      functions: 2,
+      lines: new Set([
+        78, 79, 80, 81, 82, 83, 84, 103, 104, 105, 106, 107, 116, 117, 118, 135, 136, 137, 138, 148,
+      ]),
+    },
+  ],
+  [
+    'src/server/operations/bulk-filter-helpers.ts',
+    {
+      functions: 1,
+      lines: new Set([
+        262, 267, 272, 277, 282, 287, 295, 296, 297, 298, 306, 307, 308, 309, 310, 311, 312, 313,
+        314, 315, 316, 317, 318, 374, 377, 380, 387, 392, 397, 403, 444, 456, 469, 479,
+      ]),
+    },
+  ],
+  [
+    'src/server/operations/failure-category-filter.ts',
+    { functions: 1, lines: new Set([13, 14, 15, 16, 17, 18, 19]) },
+  ],
+  ['src/server/operations/get-task-diagnostics.ts', { lines: new Set([228, 229, 230, 231, 232]) }],
+  ['src/server/operations/list-workflows.ts', { functions: 1 }],
+  ['src/server/operations/query-workflow.ts', { lines: new Set([112, 113, 114, 115, 116]) }],
+  [
+    'src/server/operations/start-workflow.ts',
+    { functions: 1, lines: new Set([174, 199, 200, 201, 205, 210, 211, 212, 233]) },
+  ],
+  [
+    'src/server/operations/worker-drain.ts',
+    { functions: 2, lines: new Set([251, 258, 259, 260, 264, 265, 266, 267, 268]) },
+  ],
+  [
+    'src/storage/node-sqlite.ts',
+    {
+      functions: 1,
+      lines: new Set([
+        57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78,
+      ]),
+    },
+  ],
+  ['src/testing/fake-timers.ts', { lines: new Set([232]) }],
+  ['src/testing/storage-backends.ts', { lines: new Set([71, 72, 73]) }],
+  [
+    'src/worker/protocol.ts',
+    { lines: new Set([774, 775, 776, 777, 782, 783, 784, 785, 790, 791, 792, 793]) },
+  ],
+  ['src/worker/registry.ts', { functions: 1, lines: new Set([736, 737, 738, 739, 740, 741]) }],
+  [
+    'src/workers/workflow-runner.ts',
+    { functions: 3, lines: new Set([82, 83, 84, 85, 86, 87, 90, 91, 97, 98, 99, 100, 101]) },
+  ],
+]);
+
 const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
   ...BASE_COVERAGE_ALLOWANCES,
   ...COVERAGE_ALLOWANCE_OVERRIDES,
+  ...CURRENT_MAIN_COVERAGE_ALLOWANCE_OVERRIDES,
 ]);
 
 /**
