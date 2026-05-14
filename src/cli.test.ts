@@ -1301,7 +1301,7 @@ describe('executeConformance', () => {
     };
     expect(report.ok).toBe(false);
     expect(report.checks[0]?.message).toMatch(
-      /disconnected (?:before heartbeat readiness check|while waiting for heartbeat)/,
+      /^Worker register-exit-worker-[0-9a-f-]+ disconnected before heartbeat was observed$/,
     );
   });
 

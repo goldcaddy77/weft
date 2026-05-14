@@ -135,15 +135,16 @@ async function waitForWorkerHeartbeat(
   workerId: string,
   timeoutMs: number,
 ): Promise<void> {
+  const disconnectedMessage = `Worker ${workerId} disconnected before heartbeat was observed`;
   const heartbeatBefore = server.registry.getWorker(workerId)?.lastHeartbeat;
   if (heartbeatBefore === undefined) {
-    throw new Error(`Worker ${workerId} disconnected before heartbeat readiness check`);
+    throw new Error(disconnectedMessage);
   }
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
     const worker = server.registry.getWorker(workerId);
     if (worker === undefined) {
-      throw new Error(`Worker ${workerId} disconnected while waiting for heartbeat`);
+      throw new Error(disconnectedMessage);
     }
     if (worker.lastHeartbeat > heartbeatBefore) return;
     await Bun.sleep(25);

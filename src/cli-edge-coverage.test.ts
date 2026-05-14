@@ -116,7 +116,7 @@ describe('CLI edge coverage', () => {
       stderr: 'Error: replay not found for diff 1 -> 99',
       exitCode: 1,
     });
-  }, 30_000);
+  }, 2_000);
 
   it('shows a friendly message when a workflow has no timeline entries', async () => {
     const databasePath = createTimelineDatabasePath();
