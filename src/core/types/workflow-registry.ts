@@ -1,4 +1,5 @@
 import type { DefinitionSchema } from './definition-schema.ts';
+import type { SearchAttributeSchema } from './search-attributes.ts';
 
 /**
  * Read-only metadata exposed by the engine for a registered workflow type.
@@ -26,4 +27,6 @@ export interface RegisteredWorkflowDefinition<TInput = unknown, TOutput = unknow
   inputSchema?: DefinitionSchema<unknown, TInput>;
   /** Optional output schema metadata for introspection; core execution does not validate output against it. */
   outputSchema?: DefinitionSchema<unknown, TOutput>;
+  /** Optional search attribute schema used for indexing and runtime validation. */
+  searchAttributes?: SearchAttributeSchema;
 }

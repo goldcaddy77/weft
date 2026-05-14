@@ -426,6 +426,13 @@ beforeAll(() => {
   engine.register('echo', echoWorkflow);
   engine.register('client-contract-echo', clientContractEchoWorkflow);
   engine.register('client-contract-waiting', clientContractWaitingWorkflow);
+  engine.register('client-contract-search-attributes', {
+    handler: clientContractWaitingWorkflow,
+    searchAttributes: {
+      customerId: { type: 'string' },
+      createdAt: { type: 'string', format: 'date-time' },
+    },
+  });
 
   server = Bun.serve({
     port: 0, // random available port
@@ -536,13 +543,14 @@ describe('HttpClient', () => {
     });
 
     it('forwards StartOptions.searchAttributes through the HTTP client', async () => {
-      const handle = await client.start('client-contract-waiting', 'searchable', {
+      const createdAt = new Date('2026-01-02T03:04:05.000Z');
+      const handle = await client.start('client-contract-search-attributes', 'searchable', {
         id: 'http-client-search-attributes',
-        searchAttributes: { customerId: 'acme', attempt: 2 },
+        searchAttributes: { customerId: 'acme', createdAt },
       });
 
-      const attributes = await client.getAttributes('http-client-search-attributes');
-      expect(attributes).toEqual({ customerId: 'acme', attempt: 2 });
+      const attributes = await engine.getAttributes('http-client-search-attributes');
+      expect(attributes).toEqual({ customerId: 'acme', createdAt });
 
       await handle.cancel();
     });

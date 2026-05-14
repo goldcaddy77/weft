@@ -380,6 +380,9 @@ function copyWorkflowDefinition(
     ...(registration.description === undefined ? {} : { description: registration.description }),
     ...(registration.inputSchema === undefined ? {} : { inputSchema: registration.inputSchema }),
     ...(registration.outputSchema === undefined ? {} : { outputSchema: registration.outputSchema }),
+    ...(registration.searchAttributes === undefined
+      ? {}
+      : { searchAttributes: registration.searchAttributes }),
   };
 }
 

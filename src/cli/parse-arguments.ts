@@ -14,6 +14,7 @@ import type {
 } from './types.ts';
 
 const KNOWN_SUBCOMMANDS = new Set([
+  'serve',
   'doctor',
   'version:check',
   'validate',
@@ -43,6 +44,7 @@ const SCHEDULE_ACTIONS = new Set(['list', 'create', 'pause', 'resume', 'cancel']
 const VALID_SCHEDULE_OVERLAP_POLICIES = new Set(['skip', 'queue', 'cancel-running', 'allow']);
 
 const SUBCOMMAND_PARSERS: Record<string, (args: string[]) => CliCommand> = {
+  serve: parseServeArguments,
   doctor: parseDoctorArguments,
   'version:check': parseVersionCheckArguments,
   validate: parseValidateArguments,
@@ -73,24 +75,10 @@ function findSubcommand(args: string[]): ParsedSubcommand {
       return { subcommand: arg, subcommandIndex: index };
     }
 
-    if (!looksLikeFilePath(arg)) {
-      throw new Error(formatUnknownCommandError(arg, KNOWN_SUBCOMMAND_LIST));
-    }
-
-    break;
+    throw new Error(formatUnknownCommandError(arg, KNOWN_SUBCOMMAND_LIST));
   }
 
   return { subcommandIndex: -1 };
-}
-
-function looksLikeFilePath(value: string): boolean {
-  return (
-    value.startsWith('.') ||
-    value.startsWith('/') ||
-    value.startsWith('~') ||
-    value.includes('/') ||
-    /\.[cm]?tsx?$/.test(value)
-  );
 }
 
 function removeSubcommand(args: string[], subcommandIndex: number): string[] {
@@ -146,7 +134,7 @@ function parseServeArguments(args: string[]): CliCommand {
       help: { type: 'boolean', short: 'h', default: false },
     },
     strict: true,
-    allowPositionals: true,
+    allowPositionals: false,
     allowNegative: true,
   });
 
