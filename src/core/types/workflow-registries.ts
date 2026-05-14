@@ -86,9 +86,6 @@ export type DefaultActivityTypes = ActivityTypes & {
 export type IsDefaultWorkflowRegistry<TRegistry extends object> =
   TRegistry extends DefaultWorkflowRegistry ? true : false;
 
-export type IsDefaultActivityTypes<TActivities extends object> =
-  TActivities extends DefaultActivityTypes ? true : false;
-
 /**
  * Broad workflow-definition constraint used by {@link Engine.create} and the
  * typed builder methods. `never` in the input position lets concrete

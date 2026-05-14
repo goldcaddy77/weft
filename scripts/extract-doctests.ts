@@ -217,7 +217,7 @@ function main(): void {
     return cached;
   }
 
-  let totalBlocks = 0;
+  let regularBlocks = 0;
   let isolatedBlocks = 0;
   const missingImports: string[] = [];
   const malformedFences: string[] = [];
@@ -259,7 +259,11 @@ function main(): void {
         return;
       }
       const outputRoot = needsIsolatedDoctest(block) ? ISOLATED_DOCTESTS_DIR : DOCTESTS_DIR;
-      if (outputRoot === ISOLATED_DOCTESTS_DIR) isolatedBlocks += entry.publicFaces.length;
+      if (outputRoot === ISOLATED_DOCTESTS_DIR) {
+        isolatedBlocks += entry.publicFaces.length;
+      } else {
+        regularBlocks += entry.publicFaces.length;
+      }
       const batchDir = resolve(outputRoot, slugify(batchSlug));
       mkdirSync(batchDir, { recursive: true });
       // Emit one doctest file per face — same source block, different filename
@@ -277,7 +281,6 @@ function main(): void {
         const filePath = resolve(batchDir, filename);
         const wrapped = `// auto-generated from @example block of ${face.importPath}#${face.exportName}#${face.kind}\n${block}\n`;
         writeFileSync(filePath, wrapped, 'utf8');
-        totalBlocks++;
       }
     });
   }
@@ -311,7 +314,7 @@ function main(): void {
     process.exit(1);
   }
 
-  console.log(`Wrote ${totalBlocks} doctest files under ${DOCTESTS_DIR}`);
+  console.log(`Wrote ${regularBlocks} doctest files under ${DOCTESTS_DIR}`);
   console.log(`Wrote ${isolatedBlocks} isolated doctest files under ${ISOLATED_DOCTESTS_DIR}`);
   console.log(`Wrote ${resolve(DOCTESTS_DIR, 'tsconfig.json')}`);
   console.log(`Wrote ${resolve(ISOLATED_DOCTESTS_DIR, 'tsconfig.json')}`);
