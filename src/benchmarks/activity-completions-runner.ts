@@ -1,4 +1,5 @@
 import { Engine } from '../core/engine.ts';
+import { runtimeWorkflowEngine } from '../core/runtime-workflow-engine.ts';
 import { activity, type WorkflowContext } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 
@@ -20,7 +21,7 @@ async function measureActivityCompletionRound(
   startBatchSize: number,
 ): Promise<number> {
   const storage = new BunSQLiteStorage(':memory:');
-  const engine = new Engine({ storage });
+  const engine = runtimeWorkflowEngine(new Engine({ storage }));
 
   try {
     engine.register(echoActivity);

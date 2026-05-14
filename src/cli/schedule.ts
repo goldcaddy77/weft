@@ -1,4 +1,5 @@
 import type { Engine } from '../core/engine.ts';
+import { runtimeWorkflowEngine } from '../core/runtime-workflow-engine.ts';
 import type { WorkflowRegistration } from '../core/types.ts';
 import { createStorage } from './storage-factory.ts';
 import type {
@@ -90,7 +91,7 @@ async function registerScheduleWorkflows(
 ): Promise<void> {
   const loaded = await loadRegistrationsFromModule(workflowsPath);
   for (const [workflowType, registration] of Object.entries(loaded.registrations)) {
-    engine.register(workflowType, registration);
+    runtimeWorkflowEngine(engine).register(workflowType, registration);
   }
 }
 

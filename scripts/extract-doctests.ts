@@ -24,6 +24,8 @@ import { buildManifest, type PublicFace } from './lib/jsdoc-manifest.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
 const DOCTESTS_DIR = resolve(REPO_ROOT, 'tmp/doctests');
+const ISOLATED_DOCTESTS_DIR = resolve(REPO_ROOT, 'tmp/doctests-isolated');
+const PUBLIC_MODULE_AUGMENTATION_PATTERN = /\bdeclare\s+module\s+['"]weft(?:\/[^'"]*)?['"]/;
 
 // ---------------------------------------------------------------------------
 // Slugification helpers — keep filenames safe across filesystems.
@@ -142,6 +144,10 @@ function readJSDocComment(comment: ts.JSDocTag['comment']): string {
   return out;
 }
 
+function needsIsolatedDoctest(block: string): boolean {
+  return PUBLIC_MODULE_AUGMENTATION_PATTERN.test(block);
+}
+
 // ---------------------------------------------------------------------------
 // Validate that an example block imports the documented export from at least
 // one of the symbol's publicFaces import paths. Accepts value, type-only, or
@@ -192,7 +198,11 @@ function main(): void {
 
   // Reset the doctests directory.
   if (existsSync(DOCTESTS_DIR)) rmSync(DOCTESTS_DIR, { recursive: true, force: true });
+  if (existsSync(ISOLATED_DOCTESTS_DIR)) {
+    rmSync(ISOLATED_DOCTESTS_DIR, { recursive: true, force: true });
+  }
   mkdirSync(DOCTESTS_DIR, { recursive: true });
+  mkdirSync(ISOLATED_DOCTESTS_DIR, { recursive: true });
 
   // Cache parsed source files.
   const sourceCache = new Map<string, ts.SourceFile>();
@@ -207,7 +217,8 @@ function main(): void {
     return cached;
   }
 
-  let totalBlocks = 0;
+  let regularBlocks = 0;
+  let isolatedBlocks = 0;
   const missingImports: string[] = [];
   const malformedFences: string[] = [];
 
@@ -233,8 +244,6 @@ function main(): void {
     if (examples.length === 0) continue;
     const batchSlug =
       entry.classification === 'unclassified' ? 'unclassified' : entry.classification;
-    const batchDir = resolve(DOCTESTS_DIR, slugify(batchSlug));
-    mkdirSync(batchDir, { recursive: true });
 
     // The example must import from at least one of the entry's publicFaces.
     // For multi-face symbols (re-exported from both `'weft'` and a subpath),
@@ -249,6 +258,14 @@ function main(): void {
         );
         return;
       }
+      const outputRoot = needsIsolatedDoctest(block) ? ISOLATED_DOCTESTS_DIR : DOCTESTS_DIR;
+      if (outputRoot === ISOLATED_DOCTESTS_DIR) {
+        isolatedBlocks += entry.publicFaces.length;
+      } else {
+        regularBlocks += entry.publicFaces.length;
+      }
+      const batchDir = resolve(outputRoot, slugify(batchSlug));
+      mkdirSync(batchDir, { recursive: true });
       // Emit one doctest file per face — same source block, different filename
       // so the per-face declaration check has a per-face artifact to point at.
       // Filenames are lowercased and disambiguated with a short case-tag because
@@ -264,7 +281,6 @@ function main(): void {
         const filePath = resolve(batchDir, filename);
         const wrapped = `// auto-generated from @example block of ${face.importPath}#${face.exportName}#${face.kind}\n${block}\n`;
         writeFileSync(filePath, wrapped, 'utf8');
-        totalBlocks++;
       }
     });
   }
@@ -272,6 +288,11 @@ function main(): void {
   writeDoctestTsconfig({
     repositoryRoot: REPO_ROOT,
     doctestsDirectory: DOCTESTS_DIR,
+    publicEntryPoints: manifest.publicEntryPoints,
+  });
+  writeDoctestTsconfig({
+    repositoryRoot: REPO_ROOT,
+    doctestsDirectory: ISOLATED_DOCTESTS_DIR,
     publicEntryPoints: manifest.publicEntryPoints,
   });
 
@@ -293,8 +314,10 @@ function main(): void {
     process.exit(1);
   }
 
-  console.log(`Wrote ${totalBlocks} doctest files under ${DOCTESTS_DIR}`);
+  console.log(`Wrote ${regularBlocks} doctest files under ${DOCTESTS_DIR}`);
+  console.log(`Wrote ${isolatedBlocks} isolated doctest files under ${ISOLATED_DOCTESTS_DIR}`);
   console.log(`Wrote ${resolve(DOCTESTS_DIR, 'tsconfig.json')}`);
+  console.log(`Wrote ${resolve(ISOLATED_DOCTESTS_DIR, 'tsconfig.json')}`);
 }
 
 main();

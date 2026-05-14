@@ -16,7 +16,7 @@ import type {
   SearchAttributeHandle,
   SearchAttributeValue,
   SignalDefinition,
-  UnregisteredName,
+  UnknownActivityNameWhenRegistryIsEmpty,
   UpdateDefinition,
   WorkflowContext,
   WorkflowMapOptions,
@@ -249,7 +249,7 @@ export class Context implements WorkflowContext {
     ...rest: [...ActivityArguments<ActivityTypes, TName>, ActivityCallOptions]
   ): Generator<ContextOperationRequest, ActivityResult<ActivityTypes, TName>, unknown>;
   run<TName extends string>(
-    name: UnregisteredName<TName, Extract<keyof ActivityTypes, string>>,
+    name: UnknownActivityNameWhenRegistryIsEmpty<TName>,
     input?: unknown,
     options?: ActivityCallOptions,
   ): Generator<ContextOperationRequest, unknown, unknown>;

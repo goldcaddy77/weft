@@ -10,6 +10,10 @@
 
 import type { Engine, WorkflowHandle } from '../core/engine.ts';
 import type { WeftEventMap } from '../core/events.ts';
+import {
+  runtimeWorkflowEngine,
+  type RuntimeWorkflowEngine,
+} from '../core/runtime-workflow-engine.ts';
 import type {
   AttributeFilterKey,
   BulkCancelResult,
@@ -122,10 +126,10 @@ class LocalScheduleHandle extends ScheduleHandleDelegation<LocalClient> {
  * ```
  */
 export class LocalClient implements WeftClient {
-  readonly #engine: Engine;
+  readonly #engine: RuntimeWorkflowEngine;
 
   constructor(engine: Engine) {
-    this.#engine = engine;
+    this.#engine = runtimeWorkflowEngine(engine);
   }
 
   async start(type: string, input: unknown, options?: StartOptions): Promise<ClientHandle> {

@@ -1,4 +1,8 @@
 import { Engine, ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING } from '../core/engine.ts';
+import {
+  runtimeWorkflowEngine,
+  type RuntimeWorkflowEngine,
+} from '../core/runtime-workflow-engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 import { isConstrainedCodexRunner } from './benchmark-environment.ts';
@@ -73,7 +77,7 @@ export async function measureMemoryPerWorkflow(
   totalWorkflows: number,
 ): Promise<MemoryPerWorkflowMeasurement> {
   const storage = new BunSQLiteStorage(':memory:');
-  const engine = new Engine({ storage });
+  const engine = runtimeWorkflowEngine(new Engine({ storage }));
 
   try {
     engine.register('idle', async function* (ctx: WorkflowContext) {
@@ -191,7 +195,10 @@ if (import.meta.main) {
   console.log(JSON.stringify(measurement));
 }
 
-async function waitForParkedWorkflows(engine: Engine, expectedCount: number): Promise<void> {
+async function waitForParkedWorkflows(
+  engine: RuntimeWorkflowEngine,
+  expectedCount: number,
+): Promise<void> {
   const timeoutMilliseconds = isConstrainedCodexRunner() ? 180_000 : 60_000;
   const deadline = Date.now() + timeoutMilliseconds;
 

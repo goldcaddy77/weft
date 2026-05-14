@@ -53,6 +53,11 @@ engine.register(
   }),
 );
 
+// @ts-expect-error registered activity names must match the public package-root augmentation.
+engine.registerActivity('packageRootRuntimeFormatGreeting', async (input: { name: string }) => {
+  return `Hello, ${input.name}`;
+});
+
 engine.register(
   'packageRootWelcome',
   async function* (ctx: WorkflowContext, input: PackageRootWelcomeInput) {
@@ -75,6 +80,8 @@ engine.register(
     const typedRunAllResult: { greeting: string; count: number } = runAllResult;
     // @ts-expect-error string-name activity arguments must match the package-root augmentation.
     yield* ctx.run('packageRootFormatGreeting', { id: 'wrong' });
+    // @ts-expect-error string-name activities must match the package-root augmentation.
+    yield* ctx.run('packageRootRuntimeFormatGreeting', { name: input.name });
     // @ts-expect-error child workflow options are closed to fields the engine reads.
     yield* ctx.startChild('packageRootWelcome', input, { unknownOption: true });
     approval.approved.valueOf();
@@ -137,5 +144,5 @@ async function verifyPackageRootBulkSignalTyping(): Promise<void> {
 }
 void verifyPackageRootBulkSignalTyping;
 
-// Dynamic names are still available to package consumers.
+// @ts-expect-error workflow names must match the public package-root augmentation.
 void engine.start('runtime-discovered-package-root', { id: 'dynamic' });
