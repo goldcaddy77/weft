@@ -237,3 +237,5 @@ await using engine = await Engine.create({ storage, recover: true });
 ## Next Steps
 
 You've got the fundamentals: activities, sleeps, signals, parallel execution, and persistent storage. Before diving deeper, take a look at the [Key Concepts](key-concepts.md) page to build a vocabulary for the rest of the documentation.
+
+When you want to see those primitives working together in one production-shaped flow, open the [order processing reference example](../../examples/order-processing/README.md). It adds updates, queries, search attributes, human review, child workflows, schedules, and a runnable dashboard setup.

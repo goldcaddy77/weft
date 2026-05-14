@@ -1,3 +1,4 @@
+import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { isRecord, safeDebugStringify } from '../core/debug-output.ts';
@@ -8,6 +9,15 @@ function isGlobPattern(value: string): boolean {
 
 function normalizeGlobPatternPath(entryPath: string): string {
   return entryPath.replaceAll('\\', '/');
+}
+
+function shouldIgnoreExpandedGlobPath(entryPath: string): boolean {
+  const normalizedEntryPath = normalizeGlobPatternPath(entryPath);
+  return (
+    normalizedEntryPath.split('/').includes('node_modules') ||
+    /\.test\.[cm]?tsx?$/.test(normalizedEntryPath) ||
+    /\.spec\.[cm]?tsx?$/.test(normalizedEntryPath)
+  );
 }
 
 /** Splits a glob entry path into the directory to scan and the pattern to match. */
@@ -49,12 +59,54 @@ export async function expandGlobEntryPaths(entryPaths: string[]): Promise<string
     }
 
     const { scanRoot, pattern } = splitGlobPattern(entryPath);
-    const matchedPaths = await Array.fromAsync(new Bun.Glob(pattern).scan(scanRoot));
+    const matchedPaths = await scanGlobMatches(scanRoot, pattern);
     const matches = matchedPaths.map((match) => join(scanRoot, match)).toSorted();
     expandedEntryPaths.push(...(matches.length === 0 ? [entryPath] : matches));
   }
 
   return Array.from(new Set(expandedEntryPaths));
+}
+
+async function scanGlobMatches(scanRoot: string, pattern: string): Promise<string[]> {
+  const glob = new Bun.Glob(pattern);
+  const matchedPaths: string[] = [];
+
+  await walkGlobScanRoot(scanRoot, '', glob, matchedPaths);
+
+  return matchedPaths;
+}
+
+async function walkGlobScanRoot(
+  absoluteDirectory: string,
+  relativeDirectory: string,
+  glob: Bun.Glob,
+  matchedPaths: string[],
+): Promise<void> {
+  const directoryEntries = await readdir(absoluteDirectory, { withFileTypes: true });
+
+  for (const directoryEntry of directoryEntries) {
+    const relativePath = relativeDirectory
+      ? `${relativeDirectory}/${directoryEntry.name}`
+      : directoryEntry.name;
+
+    if (shouldIgnoreExpandedGlobPath(relativePath)) {
+      continue;
+    }
+
+    if (directoryEntry.isDirectory()) {
+      await walkGlobScanRoot(
+        join(absoluteDirectory, directoryEntry.name),
+        relativePath,
+        glob,
+        matchedPaths,
+      );
+      continue;
+    }
+
+    if (directoryEntry.isFile() && glob.match(relativePath)) {
+      matchedPaths.push(relativePath);
+    }
+  }
 }
 
 export function formatValue(value: unknown): string {

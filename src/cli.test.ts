@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { waitForCondition } from './testing/fake-timers.ts';
 
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -25,6 +25,7 @@ import {
   parseCliArguments,
   splitGlobPattern,
 } from './cli/index.ts';
+import { expandGlobEntryPaths } from './cli/utilities.ts';
 import { encode } from './core/codec.ts';
 import type { WorkflowContext } from './core/types.ts';
 import { KEYS } from './storage/interface.ts';
@@ -1522,10 +1523,36 @@ describe('executeValidate', () => {
       hasLoadErrors: false,
       hasValidationErrors: false,
     });
-    expect(parsed.entries.map((entry) => entry.entryPath)).toEqual([
-      'examples/customer-profile.ts',
-      'examples/hello-world.ts',
-    ]);
+    const validatedEntryPaths = parsed.entries.map((entry) => entry.entryPath);
+    expect(validatedEntryPaths).toContain('examples/customer-profile.ts');
+    expect(validatedEntryPaths).toContain('examples/hello-world.ts');
+    expect(validatedEntryPaths).toContain('examples/order-processing/src/workflows/order.ts');
+    expect(new Set(validatedEntryPaths).size).toBe(validatedEntryPaths.length);
+  });
+
+  it('prunes nested node_modules directories before expanding validation globs', async () => {
+    const workspacePath = join(tmpdir(), `weft-validate-glob-prune-${crypto.randomUUID()}`);
+    const examplePath = join(workspacePath, 'examples', 'order-processing');
+    const nestedPackagePath = join(examplePath, 'node_modules', 'weft', 'examples', 'recursive');
+
+    try {
+      mkdirSync(nestedPackagePath, { recursive: true });
+      await Bun.write(join(examplePath, 'src.ts'), 'export const workflow = "clean";');
+      await Bun.write(
+        join(examplePath, 'src.test.ts'),
+        'throw new Error("test file should be ignored");',
+      );
+      await Bun.write(
+        join(nestedPackagePath, 'bad.ts'),
+        'throw new Error("node_modules should be ignored");',
+      );
+
+      await expect(
+        expandGlobEntryPaths([join(workspacePath, 'examples/**/*.ts')]),
+      ).resolves.toEqual([join(workspacePath, 'examples/order-processing/src.ts')]);
+    } finally {
+      rmSync(workspacePath, { recursive: true, force: true });
+    }
   });
 
   it('returns exitCode 2 when a clean entry and a missing entry are validated together', async () => {
