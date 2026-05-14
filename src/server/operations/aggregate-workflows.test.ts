@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
+import { AggregateDistinctKeyCapExceededError } from '../../core/aggregate-validation.ts';
 import { Engine } from '../../core/engine.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
@@ -35,6 +36,30 @@ describe('weft.workflows.aggregate', () => {
     expect(await response.json()).toEqual({
       error:
         'Unknown search attribute "unknownAttribute". Aggregate groupBy requires a declared attribute.',
+    });
+
+    engine[Symbol.dispose]();
+  });
+
+  it('maps aggregate distinct-key cap errors to Unprocessable REST responses', async () => {
+    const engine = new Engine({ storage: new MemoryStorage() });
+    engine.aggregate = async () => {
+      throw new AggregateDistinctKeyCapExceededError(3);
+    };
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/workflows/aggregate?group_by=type', {
+        method: 'GET',
+      }),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get('content-type')).toBe('application/json');
+    expect(await response.json()).toEqual({
+      error:
+        'Aggregate query would exceed the distinct-key cap of 3. Narrow the filter or choose a lower-cardinality groupBy.',
     });
 
     engine[Symbol.dispose]();
