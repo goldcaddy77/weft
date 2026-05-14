@@ -22,9 +22,10 @@ import type { TenantQuotaOptions } from './tenants.ts';
  * execution; `tags` and `searchAttributes` make the workflow discoverable
  * via filters.
  *
- * `HttpClient.start` does not yet forward `idempotencyKey` or
- * `searchAttributes` to the server (silent drop) — pass `LocalClient` for
- * full StartOptions support, or add the fields after start via `setAttributes`.
+ * `HttpClient.start` forwards `searchAttributes` to the server. It rejects
+ * `idempotencyKey` until the HTTP start protocol exposes matching
+ * single-execution semantics, so callers do not accidentally rely on a
+ * silently dropped option.
  *
  * @example Start a delayed workflow with tags and search attributes
  * ```ts

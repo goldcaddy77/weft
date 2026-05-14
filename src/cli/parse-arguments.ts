@@ -2,6 +2,7 @@ import { parseArgs } from 'node:util';
 
 import type { ScheduleOverlapPolicy } from '../core/types.ts';
 import { parseCodegenArguments } from './codegen-arguments.ts';
+import { formatUnknownCommandError } from './command-suggestions.ts';
 import type {
   CliCommand,
   PersistentStorageBackend,
@@ -13,6 +14,7 @@ import type {
 } from './types.ts';
 
 const KNOWN_SUBCOMMANDS = new Set([
+  'serve',
   'doctor',
   'version:check',
   'validate',
@@ -42,6 +44,7 @@ const SCHEDULE_ACTIONS = new Set(['list', 'create', 'pause', 'resume', 'cancel']
 const VALID_SCHEDULE_OVERLAP_POLICIES = new Set(['skip', 'queue', 'cancel-running', 'allow']);
 
 const SUBCOMMAND_PARSERS: Record<string, (args: string[]) => CliCommand> = {
+  serve: parseServeArguments,
   doctor: parseDoctorArguments,
   'version:check': parseVersionCheckArguments,
   validate: parseValidateArguments,
@@ -50,6 +53,8 @@ const SUBCOMMAND_PARSERS: Record<string, (args: string[]) => CliCommand> = {
   schedule: parseScheduleArguments,
   codegen: parseCodegenArguments,
 };
+
+const KNOWN_SUBCOMMAND_LIST = [...KNOWN_SUBCOMMANDS];
 
 type ParsedSubcommand = {
   subcommand?: string;
@@ -70,7 +75,7 @@ function findSubcommand(args: string[]): ParsedSubcommand {
       return { subcommand: arg, subcommandIndex: index };
     }
 
-    break;
+    throw new Error(formatUnknownCommandError(arg, KNOWN_SUBCOMMAND_LIST));
   }
 
   return { subcommandIndex: -1 };
@@ -129,7 +134,7 @@ function parseServeArguments(args: string[]): CliCommand {
       help: { type: 'boolean', short: 'h', default: false },
     },
     strict: true,
-    allowPositionals: true,
+    allowPositionals: false,
     allowNegative: true,
   });
 

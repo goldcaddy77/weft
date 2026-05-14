@@ -15,6 +15,15 @@ function createEngine(): Engine {
   engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
     return input;
   });
+  engine.register('with-search-attributes', {
+    handler: async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    },
+    searchAttributes: {
+      createdAt: { type: 'string', format: 'date-time' },
+      attempt: { type: 'number' },
+    },
+  });
   return engine;
 }
 
@@ -107,6 +116,67 @@ describe('weft.workflows.start', () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: 'Provide only one of startAt or startAfter' });
+  });
+
+  it('returns 400 when idempotencyKey is sent over raw REST', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      jsonRequest('POST', '/v1/workflows', {
+        type: 'echo',
+        idempotencyKey: 'dedupe-key',
+      }),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error:
+        'idempotencyKey is not supported over HttpClient because the start workflow HTTP protocol does not implement start idempotency',
+    });
+  });
+
+  it('coerces date-time search attributes before starting from raw REST', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      jsonRequest('POST', '/v1/workflows', {
+        type: 'with-search-attributes',
+        id: 'start-workflow-date-attribute',
+        searchAttributes: { createdAt: '2026-01-02T03:04:05.000Z', attempt: 2 },
+      }),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(response.status).toBe(201);
+    expect(await engine.getAttributes('start-workflow-date-attribute')).toEqual({
+      createdAt: new Date('2026-01-02T03:04:05.000Z'),
+      attempt: 2,
+    });
+  });
+
+  it('returns 400 when search attributes do not match the registered schema', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      jsonRequest('POST', '/v1/workflows', {
+        type: 'with-search-attributes',
+        searchAttributes: { attempt: 'not-a-number' },
+      }),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(response.status).toBe(400);
+    expect((await response.json()) as { error: string }).toEqual(
+      expect.objectContaining({
+        error: expect.stringContaining(
+          'Search attribute "attempt" is declared as "number" but received string',
+        ),
+      }),
+    );
   });
 
   it('returns 400 when engine.start throws StartWorkflowValidationError', async () => {

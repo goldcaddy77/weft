@@ -426,6 +426,13 @@ beforeAll(() => {
   engine.register('echo', echoWorkflow);
   engine.register('client-contract-echo', clientContractEchoWorkflow);
   engine.register('client-contract-waiting', clientContractWaitingWorkflow);
+  engine.register('client-contract-search-attributes', {
+    handler: clientContractWaitingWorkflow,
+    searchAttributes: {
+      customerId: { type: 'string' },
+      createdAt: { type: 'string', format: 'date-time' },
+    },
+  });
 
   server = Bun.serve({
     port: 0, // random available port
@@ -533,6 +540,25 @@ describe('HttpClient', () => {
 
       const state = await client.get('http-client-tags');
       expect(state?.tags).toEqual(['nightly', 'v2']);
+    });
+
+    it('forwards StartOptions.searchAttributes through the HTTP client', async () => {
+      const createdAt = new Date('2026-01-02T03:04:05.000Z');
+      const handle = await client.start('client-contract-search-attributes', 'searchable', {
+        id: 'http-client-search-attributes',
+        searchAttributes: { customerId: 'acme', createdAt },
+      });
+
+      const attributes = await engine.getAttributes('http-client-search-attributes');
+      expect(attributes).toEqual({ customerId: 'acme', createdAt });
+
+      await handle.cancel();
+    });
+
+    it('rejects StartOptions.idempotencyKey instead of silently dropping it', async () => {
+      await expect(
+        client.start('echo', 'dedupe', { idempotencyKey: 'dedupe-key' }),
+      ).rejects.toThrow('idempotencyKey is not supported over HttpClient');
     });
   });
 
