@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — failure category semantics
+
+`FailureCategory` remains part of the public workflow visibility surface, but
+its values are now execution-oriented instead of AI-agent-oriented:
+`application`, `timeout`, `cancellation`, `resource`, and `system`. Fresh
+workflow failures persist only the new values. Stored records with the old
+`memory`, `reflection`, `planning`, or `action` categories are normalized on
+read (`memory` to `resource`, the others to `application`) so existing workflow
+state and legacy search-attribute records still surface through the new public
+type.
+
+### Changed — API surface polish
+
+- `ctx.all([...])`, `ctx.race([...])`, and `ctx.runAll({ ... })` now preserve
+  per-branch output inference in TypeScript instead of collapsing results to
+  `unknown[]`, `unknown`, or `Record<key, unknown>`.
+- `ChildWorkflowOptions` is now a closed shape with only the `id` field the
+  engine currently reads.
+- Standard Schema and Standard JSON Schema helper types moved from the package
+  root to `weft/json-schema`.
+- OpenTelemetry, trace propagation, metrics, and Prometheus infrastructure
+  types moved from the package root to `weft/observability`.
+
+### Renamed (breaking)
+
+- `EngineOptions.workerExecution.concurrency` is now
+  `EngineOptions.workerExecution.poolSize`, matching
+  `activityExecution.poolSize`.
+
+### Changed — Engine lifecycle and registration ergonomics
+
+`Engine.create()` no longer recovers stored workflows by default. Pass
+`recover: true` to run `recoverAll()` after definition registration, or call
+`await engine.recoverAll()` explicitly after manual registration. This matches
+the constructor path, where recovery has always been an explicit async step.
+
+Activity definitions now register through `engine.register(activityDefinition)`.
+The previous `engine.registerActivity()`, `engine.withWorkflow()`, and
+`engine.withActivity()` sibling methods were removed so workflow and activity
+definitions share one registration surface. Leaked engines now emit a
+development warning when garbage collection observes that `[Symbol.dispose]`
+was never called.
+
 ### Added — workflow visibility surface
 
 `engine.list` and the `weft.workflows.list` operation now accept a richer

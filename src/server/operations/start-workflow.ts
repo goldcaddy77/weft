@@ -5,6 +5,7 @@ import {
   WorkflowAlreadyExistsError,
   WorkflowNotRegisteredError,
 } from '../../core/engine/errors.ts';
+import { validateAttributeType } from '../../core/search-attributes.ts';
 import {
   assertExclusiveStartWorkflowOptions,
   coerceStartWorkflowDuration,
@@ -14,7 +15,11 @@ import {
   StartWorkflowValidationError,
 } from '../../core/start-workflow-validation.ts';
 import { QuotaExceededError } from '../../core/tenant-quotas.ts';
-import type { StartOptions } from '../../core/types.ts';
+import type {
+  SearchAttributeSchema,
+  SearchAttributeValue,
+  StartOptions,
+} from '../../core/types.ts';
 import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
@@ -32,6 +37,8 @@ const startWorkflowInput = z.object({
   startAt: z.unknown().optional(),
   startAfter: z.unknown().optional(),
   tags: z.unknown().optional(),
+  idempotencyKey: z.unknown().optional(),
+  searchAttributes: z.unknown().optional(),
 });
 
 const startWorkflowOutput = z.object({
@@ -64,7 +71,10 @@ export const startWorkflowOperation = defineOperation<StartWorkflowInput, StartW
 
     let options: StartOptions;
     try {
-      options = buildStartWorkflowOptions(input);
+      options = buildStartWorkflowOptions(
+        input,
+        typedEngine.getWorkflowDefinition(type)?.searchAttributes,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw invalidParamsFault(message);
@@ -113,7 +123,10 @@ export const startWorkflowOperation = defineOperation<StartWorkflowInput, StartW
   },
 });
 
-function buildStartWorkflowOptions(input: StartWorkflowInput): StartOptions {
+function buildStartWorkflowOptions(
+  input: StartWorkflowInput,
+  searchAttributeSchema: SearchAttributeSchema | undefined,
+): StartOptions {
   const options: StartOptions = {};
 
   if (input.id !== undefined) {
@@ -134,10 +147,102 @@ function buildStartWorkflowOptions(input: StartWorkflowInput): StartOptions {
   if (input.tags !== undefined) {
     options.tags = coerceStartWorkflowTags(input.tags, 'Field "tags"');
   }
+  if (input.idempotencyKey !== undefined) {
+    throw new StartWorkflowValidationError(
+      'idempotencyKey is not supported over HttpClient because the start workflow HTTP protocol does not implement start idempotency',
+    );
+  }
+  if (input.searchAttributes !== undefined) {
+    options.searchAttributes = coerceStartWorkflowSearchAttributes(
+      input.searchAttributes,
+      'Field "searchAttributes"',
+      searchAttributeSchema,
+    );
+  }
 
   assertExclusiveStartWorkflowOptions(options.startAt, options.startAfter);
 
   return options;
+}
+
+function coerceStartWorkflowSearchAttributes(
+  value: unknown,
+  fieldName: string,
+  schema: SearchAttributeSchema | undefined,
+): Record<string, SearchAttributeValue> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new StartWorkflowValidationError(`${fieldName} must be an object`);
+  }
+
+  // Null-prototype record keeps untrusted attribute keys from touching Object.prototype setters.
+  const attributes = Object.create(null) as Record<string, SearchAttributeValue>;
+  for (const [key, attributeValue] of Object.entries(value)) {
+    const coercedValue = coerceStartWorkflowSearchAttributeValue(
+      key,
+      attributeValue,
+      fieldName,
+      schema,
+    );
+    attributes[key] = coercedValue;
+  }
+
+  return attributes;
+}
+
+function coerceStartWorkflowSearchAttributeValue(
+  key: string,
+  value: unknown,
+  fieldName: string,
+  schema: SearchAttributeSchema | undefined,
+): SearchAttributeValue {
+  if (!isSearchAttributeValue(value)) {
+    throw new StartWorkflowValidationError(
+      `${fieldName}.${key} must be a string, number, boolean, Date, or string array`,
+    );
+  }
+
+  if (schema === undefined) {
+    return value;
+  }
+
+  const definition = schema[key];
+  if (definition === undefined) {
+    throw new StartWorkflowValidationError(
+      `Unknown search attribute "${key}". Registered attributes: ${Object.keys(schema).join(', ')}`,
+    );
+  }
+
+  const normalizedValue =
+    definition.type === 'string' && definition.format === 'date-time' && typeof value === 'string'
+      ? coerceDateTimeSearchAttribute(key, value, fieldName)
+      : value;
+
+  try {
+    validateAttributeType(key, normalizedValue, definition);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new StartWorkflowValidationError(message);
+  }
+
+  return normalizedValue;
+}
+
+function coerceDateTimeSearchAttribute(key: string, value: string, fieldName: string): Date {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new StartWorkflowValidationError(`${fieldName}.${key} must be a valid date-time string`);
+  }
+  return date;
+}
+
+function isSearchAttributeValue(value: unknown): value is SearchAttributeValue {
+  return (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    value instanceof Date ||
+    (Array.isArray(value) && value.every((item) => typeof item === 'string'))
+  );
 }
 
 export const startWorkflowRestBinding: UnknownRestBinding = {
@@ -153,6 +258,8 @@ export const startWorkflowRestBinding: UnknownRestBinding = {
     startAt: { kind: 'body-field', bodyField: 'startAt' },
     startAfter: { kind: 'body-field', bodyField: 'startAfter' },
     tags: { kind: 'body-field', bodyField: 'tags' },
+    idempotencyKey: { kind: 'body-field', bodyField: 'idempotencyKey' },
+    searchAttributes: { kind: 'body-field', bodyField: 'searchAttributes' },
   },
   extractInput: async (request) => {
     let body: unknown;
@@ -178,6 +285,8 @@ export const startWorkflowRestBinding: UnknownRestBinding = {
       startAt: record['startAt'],
       startAfter: record['startAfter'],
       tags: record['tags'],
+      idempotencyKey: record['idempotencyKey'],
+      searchAttributes: record['searchAttributes'],
     };
   },
   success: { kind: 'json', status: 201 },

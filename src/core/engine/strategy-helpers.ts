@@ -1,4 +1,5 @@
 import { serializeCheckpoint } from '../checkpoint.ts';
+import { errorFromFailedOperationOutcome } from '../failure-categories.ts';
 import type { ComposedActivityInterceptor, ComposedWorkflowInterceptor } from '../interceptor.ts';
 import {
   composeActivityInterceptors,
@@ -39,7 +40,10 @@ export function feedOperationResult(
     } else {
       internals.inlineStrategy.throwIntoWorkflow(
         workflowId,
-        originalReason !== undefined ? originalReason.value : new Error(outcome.error),
+        originalReason !== undefined
+          ? originalReason.value
+          : errorFromFailedOperationOutcome(outcome),
+        outcome.failureCategory,
       );
     }
     return;
