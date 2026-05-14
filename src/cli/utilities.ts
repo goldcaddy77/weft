@@ -21,9 +21,9 @@ function isMissingDirectoryError(error: unknown): boolean {
   );
 }
 
-function globPatternIncludesTestFiles(entryPath: string): boolean {
+function globPatternIncludesTestFiles(pattern: string): boolean {
   return /(?:^|[./{,])(?:test|tests|spec|specs)(?:[.}/,]|$)/.test(
-    normalizeGlobPatternPath(entryPath),
+    normalizeGlobPatternPath(pattern),
   );
 }
 
@@ -78,11 +78,16 @@ export async function expandGlobEntryPaths(entryPaths: string[]): Promise<string
     }
 
     const { scanRoot, pattern } = splitGlobPattern(entryPath);
-    const matchedPaths = await scanGlobMatches(scanRoot, pattern, {
-      ignoreTestFiles: !globPatternIncludesTestFiles(entryPath),
+    const { matchedPaths, ignoredMatchCount } = await scanGlobMatches(scanRoot, pattern, {
+      ignoreTestFiles: !globPatternIncludesTestFiles(pattern),
+      recurseIntoSubdirectories: globPatternMayMatchNestedPath(pattern),
     });
     const matches = matchedPaths.map((match) => join(scanRoot, match)).toSorted();
-    expandedEntryPaths.push(...(matches.length === 0 ? [entryPath] : matches));
+    if (matches.length > 0) {
+      expandedEntryPaths.push(...matches);
+    } else if (ignoredMatchCount === 0) {
+      expandedEntryPaths.push(entryPath);
+    }
   }
 
   return Array.from(new Set(expandedEntryPaths));
@@ -91,14 +96,15 @@ export async function expandGlobEntryPaths(entryPaths: string[]): Promise<string
 async function scanGlobMatches(
   scanRoot: string,
   pattern: string,
-  options: { ignoreTestFiles: boolean },
-): Promise<string[]> {
+  options: { ignoreTestFiles: boolean; recurseIntoSubdirectories: boolean },
+): Promise<{ ignoredMatchCount: number; matchedPaths: string[] }> {
   const glob = new Bun.Glob(pattern);
   const matchedPaths: string[] = [];
+  const scanState = { ignoredMatchCount: 0 };
 
-  await walkGlobScanRoot(scanRoot, '', glob, matchedPaths, options);
+  await walkGlobScanRoot(scanRoot, '', glob, matchedPaths, scanState, options);
 
-  return matchedPaths;
+  return { ignoredMatchCount: scanState.ignoredMatchCount, matchedPaths };
 }
 
 async function walkGlobScanRoot(
@@ -106,7 +112,8 @@ async function walkGlobScanRoot(
   relativeDirectory: string,
   glob: Bun.Glob,
   matchedPaths: string[],
-  options: { ignoreTestFiles: boolean },
+  scanState: { ignoredMatchCount: number },
+  options: { ignoreTestFiles: boolean; recurseIntoSubdirectories: boolean },
 ): Promise<void> {
   let directoryEntries: Dirent[];
   try {
@@ -123,25 +130,53 @@ async function walkGlobScanRoot(
       ? `${relativeDirectory}/${directoryEntry.name}`
       : directoryEntry.name;
 
+    if (handleGlobFileEntry(directoryEntry, relativePath, glob, matchedPaths, scanState, options)) {
+      continue;
+    }
+
     if (shouldIgnoreExpandedGlobPath(relativePath, options.ignoreTestFiles)) {
       continue;
     }
 
     if (directoryEntry.isDirectory()) {
+      if (!options.recurseIntoSubdirectories) {
+        continue;
+      }
       await walkGlobScanRoot(
         join(absoluteDirectory, directoryEntry.name),
         relativePath,
         glob,
         matchedPaths,
+        scanState,
         options,
       );
-      continue;
-    }
-
-    if (directoryEntry.isFile() && glob.match(relativePath)) {
-      matchedPaths.push(relativePath);
     }
   }
+}
+
+function handleGlobFileEntry(
+  directoryEntry: Dirent,
+  relativePath: string,
+  glob: Bun.Glob,
+  matchedPaths: string[],
+  scanState: { ignoredMatchCount: number },
+  options: { ignoreTestFiles: boolean },
+): boolean {
+  if (!directoryEntry.isFile() || !glob.match(relativePath)) {
+    return false;
+  }
+
+  if (shouldIgnoreExpandedGlobPath(relativePath, options.ignoreTestFiles)) {
+    scanState.ignoredMatchCount += 1;
+  } else {
+    matchedPaths.push(relativePath);
+  }
+
+  return true;
+}
+
+function globPatternMayMatchNestedPath(pattern: string): boolean {
+  return pattern.includes('/') || pattern.includes('**');
 }
 
 export function formatValue(value: unknown): string {

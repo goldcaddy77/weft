@@ -21,7 +21,13 @@ if (import.meta.main) {
   using storage = new SQLiteStorage(databasePath);
   await using engine = createOrderProcessingEngine(new Engine({ storage }));
   await engine.recoverAll({ acknowledgeUnknownWorkflowTypes: true });
-  await engine.schedule(orderProcessingSchedule);
+  try {
+    await engine.schedule(orderProcessingSchedule);
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes('already exists')) {
+      throw error;
+    }
+  }
   const dashboard = await loadDashboard();
 
   await using server = serve({

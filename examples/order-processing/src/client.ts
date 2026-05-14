@@ -2,7 +2,7 @@ import { Engine, WorkflowAlreadyExistsError, type WorkflowHandle } from 'weft';
 import { SQLiteStorage } from 'weft/storage/sqlite';
 
 import { addItemUpdate, cancelOrderSignal, orderStatusQuery } from './messages';
-import type { AddItemInput, OrderProcessingInput } from './model';
+import { calculateOrderTotal, type AddItemInput, type OrderProcessingInput } from './model';
 import { createOrderProcessingEngine } from './registry';
 import { highValueOrderInput, standardOrderInput } from './sample-data';
 
@@ -23,7 +23,13 @@ if (import.meta.main) {
         unitPrice: 5,
         warehouseId: 'denver',
       };
-      await handle.update(addItemUpdate, giftWrapItem);
+      const status = await handle.query(orderStatusQuery);
+      if (
+        status.status === 'received' &&
+        status.totalAmount === calculateOrderTotal(highValueOrderInput.items)
+      ) {
+        await handle.update(addItemUpdate, giftWrapItem);
+      }
       const reviews = await engine.listReviews({ workflowId: highValueOrderInput.orderId });
       console.log({
         orderId: highValueOrderInput.orderId,
@@ -71,7 +77,7 @@ async function startOrResume(
       searchAttributes: {
         customerId: input.customerId,
         orderStatus: 'received',
-        totalAmount: input.totalAmount,
+        totalAmount: calculateOrderTotal(input.items),
       },
     });
   } catch (error) {

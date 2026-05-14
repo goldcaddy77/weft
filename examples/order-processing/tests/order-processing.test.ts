@@ -1,18 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import { TestEngine } from 'weft/testing';
 
+import { addItemUpdate, cancelOrderSignal, orderStatusQuery } from '../src/messages';
+import { calculateOrderTotal, type AddItemInput } from '../src/model';
 import { createOrderProcessingEngine, orderProcessingSchedule } from '../src/registry';
-import {
-  addItemUpdate,
-  cancelOrderSignal,
-  orderStatusQuery,
-} from '../src/messages';
-import {
-  highValueOrderInput,
-  staleOrderSweepInput,
-  standardOrderInput,
-} from '../src/sample-data';
-import type { AddItemInput } from '../src/model';
+import { highValueOrderInput, standardOrderInput } from '../src/sample-data';
 
 describe('order-processing reference example', () => {
   it('runs the happy path across activities, updates, queries, review, child workflow, and search attributes', async () => {
@@ -23,7 +15,7 @@ describe('order-processing reference example', () => {
       searchAttributes: {
         customerId: highValueOrderInput.customerId,
         orderStatus: 'received',
-        totalAmount: highValueOrderInput.totalAmount,
+        totalAmount: calculateOrderTotal(highValueOrderInput.items),
       },
     });
 
@@ -37,14 +29,15 @@ describe('order-processing reference example', () => {
     expect(updateResult).toEqual({
       accepted: true,
       itemCount: highValueOrderInput.items.length + 1,
-      totalAmount: highValueOrderInput.totalAmount + 5,
+      totalAmount: calculateOrderTotal(highValueOrderInput.items) + 5,
     });
+    await engine.advanceTime(highValueOrderInput.itemUpdateWindowMs!);
 
     await expect(handle.query(orderStatusQuery)).resolves.toEqual({
       itemCount: highValueOrderInput.items.length + 1,
       orderId: highValueOrderInput.orderId,
       status: 'awaiting-review',
-      totalAmount: highValueOrderInput.totalAmount + 5,
+      totalAmount: calculateOrderTotal(highValueOrderInput.items) + 5,
     });
 
     const pendingReviews = await engine.listReviews({ workflowId: highValueOrderInput.orderId });
@@ -71,7 +64,9 @@ describe('order-processing reference example', () => {
     });
 
     const allWorkflows = await engine.list();
-    expect(allWorkflows.items.map((workflow) => workflow.id)).toContain(highValueOrderInput.orderId);
+    expect(allWorkflows.items.map((workflow) => workflow.id)).toContain(
+      highValueOrderInput.orderId,
+    );
     expect(allWorkflows.items).toContainEqual(
       expect.objectContaining({
         status: 'completed',
@@ -83,9 +78,16 @@ describe('order-processing reference example', () => {
   it('compensates inventory and payment when cancellation arrives before shipment', async () => {
     await using engine = createOrderProcessingEngine(new TestEngine());
 
-    const handle = await engine.start('orderProcessingOrder', standardOrderInput, {
-      id: standardOrderInput.orderId,
-    });
+    const handle = await engine.start(
+      'orderProcessingOrder',
+      {
+        ...standardOrderInput,
+        allowCancellationBeforeShipment: true,
+      },
+      {
+        id: standardOrderInput.orderId,
+      },
+    );
 
     await handle.signal(cancelOrderSignal, { reason: 'customer-requested' });
 
@@ -97,11 +99,29 @@ describe('order-processing reference example', () => {
     });
   });
 
+  it('ships standard orders when no cancellation signal arrives', async () => {
+    await using engine = createOrderProcessingEngine(new TestEngine());
+
+    const handle = await engine.start('orderProcessingOrder', {
+      ...standardOrderInput,
+      orderId: 'order_standard_ship',
+    });
+
+    await engine.advanceTime(1);
+
+    await expect(handle.result()).resolves.toMatchObject({
+      orderId: 'order_standard_ship',
+      status: 'shipped',
+      trackingNumber: expect.stringContaining('trk_'),
+    });
+  });
+
   it('uses the scheduled sweep workflow to cancel stale running orders', async () => {
     await using engine = createOrderProcessingEngine(new TestEngine());
 
     const handle = await engine.start('orderProcessingOrder', {
       ...standardOrderInput,
+      allowCancellationBeforeShipment: true,
       orderId: 'order_stale',
     });
 
@@ -111,10 +131,11 @@ describe('order-processing reference example', () => {
       status: 'active',
       workflowType: 'orderProcessingSweepStaleOrders',
     });
-    await expect(engine.listSchedules({ workflowType: 'orderProcessingSweepStaleOrders' })).resolves
-      .toMatchObject({
-        items: [expect.objectContaining({ id: scheduleHandle.id })],
-      });
+    await expect(
+      engine.listSchedules({ workflowType: 'orderProcessingSweepStaleOrders' }),
+    ).resolves.toMatchObject({
+      items: [expect.objectContaining({ id: scheduleHandle.id })],
+    });
 
     const scheduleDescription = await scheduleHandle.describe();
     expect(scheduleDescription.nextFireAt).toBeNumber();

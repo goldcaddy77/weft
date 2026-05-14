@@ -1,22 +1,17 @@
 import { searchAttribute, workflow, type WorkflowContext } from 'weft';
 
-import { reserveInventory, releaseInventory } from '../activities/inventory';
+import { releaseInventory, reserveInventory } from '../activities/inventory';
 import { chargePayment, refundPayment } from '../activities/payment';
-import {
-  addItemUpdate,
-  cancelOrderSignal,
-  orderStatusQuery,
-} from '../messages';
+import { addItemUpdate, cancelOrderSignal, orderStatusQuery } from '../messages';
 import {
   calculateOrderTotal,
   groupItemsByWarehouse,
   highValueReviewThreshold,
   orderAttributes,
   type AddItemInput,
+  type AddItemResult,
   type ChargePaymentInput,
-  type InventoryReservation,
   type OrderCompletion,
-  type OrderItem,
   type OrderProcessingInput,
   type OrderStatus,
   type OrderStatusName,
@@ -41,6 +36,7 @@ export const orderWorkflow = workflow({
     let items = [...input.items];
     let status: OrderStatusName = 'received';
     let totalAmount = calculateOrderTotal(items);
+    let updatesOpen = true;
 
     const setStatus = (nextStatus: OrderStatusName) => {
       status = nextStatus;
@@ -53,19 +49,14 @@ export const orderWorkflow = workflow({
       totalAmount,
     });
 
-    context.onUpdate(addItemUpdate, (item: AddItemInput) => {
-      items = [...items, item];
-      totalAmount = calculateOrderTotal(items);
-      context.setAttribute(totalAmountAttribute, totalAmount);
-      return {
-        accepted: true,
-        itemCount: items.length,
-        totalAmount,
-      };
-    });
     context.onQuery(orderStatusQuery, currentStatus);
+    context.onUpdate(addItemUpdate, addItemBeforeReservation);
+    if (input.itemUpdateWindowMs !== undefined) {
+      yield* context.sleep(input.itemUpdateWindowMs);
+    }
 
     context.setAttribute(customerIdAttribute, input.customerId);
+    updatesOpen = false;
     setStatus('reserving');
     const reservations = yield* context.all(
       groupItemsByWarehouse(items).map(([warehouseId, warehouseItems]) =>
@@ -106,7 +97,7 @@ export const orderWorkflow = workflow({
     }
 
     setStatus('awaiting-shipment');
-    if (totalAmount < highValueReviewThreshold) {
+    if (input.allowCancellationBeforeShipment === true) {
       yield* context.waitForSignal(cancelOrderSignal);
       return yield* compensateCancelledOrder(context, input.orderId, charge, reservationIds);
     }
@@ -125,6 +116,25 @@ export const orderWorkflow = workflow({
       status: 'shipped',
       trackingNumber: shipment.trackingNumber,
     };
+
+    function addItemBeforeReservation(item: AddItemInput): AddItemResult {
+      if (!updatesOpen) {
+        return {
+          accepted: false,
+          reason: 'Orders can only be changed before inventory reservation starts.',
+          status,
+        };
+      }
+
+      items = [...items, item];
+      totalAmount = calculateOrderTotal(items);
+      context.setAttribute(totalAmountAttribute, totalAmount);
+      return {
+        accepted: true,
+        itemCount: items.length,
+        totalAmount,
+      };
+    }
   },
 });
 

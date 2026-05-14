@@ -1593,6 +1593,39 @@ describe('executeValidate', () => {
     }
   });
 
+  it('does not infer test-file intent from absolute checkout path segments', async () => {
+    const workspacePath = join(tmpdir(), `weft-test-parent-${crypto.randomUUID()}`);
+    const examplePath = join(workspacePath, 'examples', 'order-processing');
+
+    try {
+      mkdirSync(examplePath, { recursive: true });
+      await Bun.write(join(examplePath, 'src.ts'), 'export const workflow = "clean";');
+      await Bun.write(join(examplePath, 'src.test.ts'), 'export const testWorkflow = "clean";');
+
+      await expect(
+        expandGlobEntryPaths([join(workspacePath, 'examples/**/*.ts')]),
+      ).resolves.toEqual([join(workspacePath, 'examples/order-processing/src.ts')]);
+    } finally {
+      rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it('does not return a literal glob when all matches are intentionally ignored', async () => {
+    const workspacePath = join(tmpdir(), `weft-validate-ignored-only-${crypto.randomUUID()}`);
+    const examplePath = join(workspacePath, 'examples');
+
+    try {
+      mkdirSync(examplePath, { recursive: true });
+      await Bun.write(join(examplePath, 'only.test.ts'), 'export const testWorkflow = "clean";');
+
+      await expect(expandGlobEntryPaths([join(workspacePath, 'examples/*.ts')])).resolves.toEqual(
+        [],
+      );
+    } finally {
+      rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it('reports a validation load error instead of throwing when a glob root is missing', async () => {
     const missingGlobPath = join(
       tmpdir(),

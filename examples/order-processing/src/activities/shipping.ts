@@ -1,6 +1,6 @@
 import { activity } from 'weft';
 
-import type { ShipmentInput, ShipmentResult } from '../model';
+import type { CancelStaleOrderInput, ShipmentInput, ShipmentResult } from '../model';
 
 export const shipOrder = activity({
   name: 'orderProcessingShipOrder',
@@ -18,5 +18,20 @@ export const shipOrder = activity({
       orderId: input.orderId,
       trackingNumber: `trk_${input.orderId}_${input.reservationIds.length}`,
     };
+  },
+});
+
+export const cancelStaleOrder = activity({
+  name: 'orderProcessingCancelStaleOrder',
+  idempotent: true,
+  timeout: '10s',
+  retry: {
+    backoffMultiplier: 2,
+    initialBackoff: '100ms',
+    maxAttempts: 3,
+    maxBackoff: '2s',
+  },
+  execute: async (input: CancelStaleOrderInput): Promise<string> => {
+    return input.orderId;
   },
 });

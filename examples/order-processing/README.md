@@ -4,9 +4,19 @@ This example is the next stop after Hello World. It keeps one concrete domain in
 
 ## Run It
 
-From this directory:
+Build the workspace package once so the example resolves the same package exports a published
+consumer would use:
 
 ```bash
+cd ../..
+bun install
+bun run build
+```
+
+Then run the example from this directory:
+
+```bash
+cd examples/order-processing
 bun install
 bun run verify
 ```

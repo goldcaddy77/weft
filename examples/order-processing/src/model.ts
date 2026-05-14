@@ -12,21 +12,28 @@ export interface OrderItem {
 }
 
 export interface OrderProcessingInput {
+  allowCancellationBeforeShipment?: boolean;
   customerId: string;
   customerEmail: string;
+  itemUpdateWindowMs?: number;
   items: OrderItem[];
   orderId: string;
   placedAt: string;
-  totalAmount: number;
 }
 
 export interface AddItemInput extends OrderItem {}
 
-export interface AddItemResult {
-  accepted: true;
-  itemCount: number;
-  totalAmount: number;
-}
+export type AddItemResult =
+  | {
+      accepted: true;
+      itemCount: number;
+      totalAmount: number;
+    }
+  | {
+      accepted: false;
+      reason: string;
+      status: OrderStatusName;
+    };
 
 export interface OrderStatus {
   itemCount: number;
@@ -94,6 +101,11 @@ export interface ShipmentResult {
   trackingNumber: string;
 }
 
+export interface CancelStaleOrderInput {
+  orderId: string;
+  reason: 'stale-order-sweep';
+}
+
 export type OrderCompletion = CancelledOrderCompletion | ShippedOrderCompletion;
 
 export interface CancelledOrderCompletion {
@@ -137,7 +149,7 @@ export function groupItemsByWarehouse(
 }
 
 export function orderAttributes(
-  input: Pick<OrderProcessingInput, 'customerId' | 'totalAmount'>,
+  input: Pick<OrderProcessingInput, 'customerId'> & { totalAmount: number },
   status: OrderStatusName,
 ): Record<string, SearchAttributeValue> {
   return {

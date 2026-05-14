@@ -9,19 +9,18 @@ export const standardOrderInput: OrderProcessingInput = {
   ],
   orderId: 'order_standard',
   placedAt: '2026-05-14T05:00:00.000Z',
-  totalAmount: 185,
 };
 
 export const highValueOrderInput: OrderProcessingInput = {
   customerEmail: 'grace@example.com',
   customerId: 'cust_grace',
+  itemUpdateWindowMs: 1_000,
   items: [
     { quantity: 2, sku: 'laptop', unitPrice: 1_199, warehouseId: 'denver' },
     { quantity: 1, sku: 'dock', unitPrice: 239, warehouseId: 'atlanta' },
   ],
   orderId: 'order_high_value',
   placedAt: '2026-05-14T05:05:00.000Z',
-  totalAmount: 2_637,
 };
 
 export const staleOrderSweepInput: SweepStaleOrdersInput = {
