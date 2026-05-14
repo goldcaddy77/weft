@@ -121,7 +121,7 @@ export async function resolveConstrainedIds(
 
 /** Query a single search-attribute index filter and return matching workflow IDs. */
 // oxlint-disable-next-line complexity -- ID:core-engine-query-attribute-index-complexity
-async function queryAttributeIndex(
+export async function queryAttributeIndex(
   internals: EngineInternals,
   filter: AttributeFilter,
 ): Promise<Set<string>> {
