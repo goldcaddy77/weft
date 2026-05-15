@@ -15,21 +15,27 @@ function isTimerEntryKind(value: unknown): value is TimerEntry['kind'] {
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function hasStringProperty(value: Record<string, unknown>, property: string): boolean {
+  return typeof value[property] === 'string';
+}
+
+function hasFiniteNumberProperty(value: Record<string, unknown>, property: string): boolean {
+  const propertyValue = value[property];
+  return typeof propertyValue === 'number' && Number.isFinite(propertyValue);
+}
+
 /** Runtime type guard for decoded timer entries. */
-// oxlint-disable-next-line complexity -- ID:core-scheduler-is-timer-entry-complexity
 export function isTimerEntry(value: unknown): value is TimerEntry {
   return (
-    typeof value === 'object' &&
-    value !== null &&
-    'id' in value &&
-    typeof value.id === 'string' &&
-    'workflowId' in value &&
-    typeof value.workflowId === 'string' &&
-    'fireAt' in value &&
-    typeof value.fireAt === 'number' &&
-    Number.isFinite(value.fireAt) &&
-    'kind' in value &&
-    isTimerEntryKind(value.kind)
+    isRecord(value) &&
+    hasStringProperty(value, 'id') &&
+    hasStringProperty(value, 'workflowId') &&
+    hasFiniteNumberProperty(value, 'fireAt') &&
+    isTimerEntryKind(value['kind'])
   );
 }
 

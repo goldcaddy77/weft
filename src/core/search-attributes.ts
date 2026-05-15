@@ -148,7 +148,6 @@ export function decodeAttributeValue(encoded: string, type: string): SearchAttri
  * Validate that a value's runtime type matches the declared schema type.
  * Throws a descriptive error on mismatch.
  */
-// oxlint-disable-next-line complexity -- ID:core-search-attributes-validate-attribute-type-complexity
 export function validateAttributeType(
   attributeName: string,
   value: SearchAttributeValue,
@@ -158,57 +157,82 @@ export function validateAttributeType(
 
   switch (declaredType) {
     case 'string':
-      if (definition.format === 'date-time') {
-        if (!(value instanceof Date)) {
-          throw new Error(
-            `Search attribute "${attributeName}" is declared as "string" with format "date-time" but received ${typeof value}.`,
-          );
-        }
-        break;
-      }
-      if (typeof value !== 'string') {
-        throw new Error(
-          `Search attribute "${attributeName}" is declared as "string" but received ${typeof value}.`,
-        );
-      }
+      validateStringAttribute(attributeName, value, definition);
       break;
     case 'integer':
-      if (typeof value !== 'number' || !Number.isInteger(value)) {
-        throw new Error(
-          `Search attribute "${attributeName}" is declared as "integer" but received ${typeof value}.`,
-        );
-      }
+      validateIntegerAttribute(attributeName, value);
       break;
     case 'number':
-      if (typeof value !== 'number') {
-        throw new Error(
-          `Search attribute "${attributeName}" is declared as "number" but received ${typeof value}.`,
-        );
-      }
+      validateNumberAttribute(attributeName, value);
       break;
     case 'boolean':
-      if (typeof value !== 'boolean') {
-        throw new Error(
-          `Search attribute "${attributeName}" is declared as "boolean" but received ${typeof value}.`,
-        );
-      }
+      validateBooleanAttribute(attributeName, value);
       break;
     case 'array':
-      if (!Array.isArray(value)) {
-        throw new Error(
-          `Search attribute "${attributeName}" is declared as "array" but received ${typeof value}.`,
-        );
-      }
-      if (!value.every((element) => typeof element === 'string')) {
-        throw new Error(
-          `Search attribute "${attributeName}" is declared as "array" but array contains non-string elements.`,
-        );
-      }
+      validateArrayAttribute(attributeName, value);
       break;
     default: {
       const _exhaustive: never = declaredType;
       throw new Error(`Unknown search attribute type declaration: ${String(_exhaustive)}`);
     }
+  }
+}
+
+function validateStringAttribute(
+  attributeName: string,
+  value: SearchAttributeValue,
+  definition: Extract<SearchAttributeDefinition, { type: 'string' }>,
+): void {
+  if (definition.format === 'date-time') {
+    if (!(value instanceof Date)) {
+      throw new Error(
+        `Search attribute "${attributeName}" is declared as "string" with format "date-time" but received ${typeof value}.`,
+      );
+    }
+    return;
+  }
+
+  if (typeof value !== 'string') {
+    throw new Error(
+      `Search attribute "${attributeName}" is declared as "string" but received ${typeof value}.`,
+    );
+  }
+}
+
+function validateIntegerAttribute(attributeName: string, value: SearchAttributeValue): void {
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    throw new Error(
+      `Search attribute "${attributeName}" is declared as "integer" but received ${typeof value}.`,
+    );
+  }
+}
+
+function validateNumberAttribute(attributeName: string, value: SearchAttributeValue): void {
+  if (typeof value !== 'number') {
+    throw new Error(
+      `Search attribute "${attributeName}" is declared as "number" but received ${typeof value}.`,
+    );
+  }
+}
+
+function validateBooleanAttribute(attributeName: string, value: SearchAttributeValue): void {
+  if (typeof value !== 'boolean') {
+    throw new Error(
+      `Search attribute "${attributeName}" is declared as "boolean" but received ${typeof value}.`,
+    );
+  }
+}
+
+function validateArrayAttribute(attributeName: string, value: SearchAttributeValue): void {
+  if (!Array.isArray(value)) {
+    throw new Error(
+      `Search attribute "${attributeName}" is declared as "array" but received ${typeof value}.`,
+    );
+  }
+  if (!value.every((element) => typeof element === 'string')) {
+    throw new Error(
+      `Search attribute "${attributeName}" is declared as "array" but array contains non-string elements.`,
+    );
   }
 }
 
@@ -237,7 +261,6 @@ const EMPTY_VALUE = new Uint8Array(0);
  * console.log(ops.length > 0); // true
  * ```
  */
-// oxlint-disable-next-line complexity -- ID:core-search-attributes-build-index-operations-complexity
 export function buildIndexOperations(
   workflowId: string,
   previous: Record<string, SearchAttributeValue>,
@@ -247,100 +270,176 @@ export function buildIndexOperations(
   const allKeys = new Set([...Object.keys(previous), ...Object.keys(current)]);
 
   for (const attributeName of allKeys) {
-    const oldValue = previous[attributeName];
-    const newValue = current[attributeName];
+    operations.push(...buildAttributeIndexOperations(attributeName, workflowId, previous, current));
+  }
 
-    const hadOld = attributeName in previous;
-    const hasNew = attributeName in current;
+  return operations;
+}
 
-    const oldIsArray = Array.isArray(oldValue);
-    const newIsArray = Array.isArray(newValue);
+function buildAttributeIndexOperations(
+  attributeName: string,
+  workflowId: string,
+  previous: Record<string, SearchAttributeValue>,
+  current: Record<string, SearchAttributeValue>,
+): BatchOperation[] {
+  const oldValue = previous[attributeName];
+  const newValue = current[attributeName];
+  const hadOld = attributeName in previous;
+  const hasNew = attributeName in current;
 
-    // Handle string arrays element-by-element, while preserving correct index
-    // mutations when a schema-free attribute changes between scalar and array.
-    if (oldIsArray || newIsArray) {
-      if (oldIsArray && newIsArray) {
-        const oldElements = new Set(oldValue);
-        const newElements = new Set(newValue);
+  if (Array.isArray(oldValue) || Array.isArray(newValue)) {
+    return buildArrayTransitionOperations({
+      attributeName,
+      workflowId,
+      oldValue,
+      newValue,
+      hadOld,
+      hasNew,
+    });
+  }
 
-        for (const element of oldElements) {
-          if (!newElements.has(element)) {
-            operations.push({
-              type: 'delete',
-              key: KEYS.attributeIndex(attributeName, encodeAttributeValue(element), workflowId),
-            });
-          }
-        }
+  return buildScalarTransitionOperations({
+    attributeName,
+    workflowId,
+    oldValue,
+    newValue,
+    hadOld,
+    hasNew,
+  });
+}
 
-        for (const element of newElements) {
-          if (!oldElements.has(element)) {
-            operations.push({
-              type: 'put',
-              key: KEYS.attributeIndex(attributeName, encodeAttributeValue(element), workflowId),
-              value: EMPTY_VALUE,
-            });
-          }
-        }
+function buildScalarTransitionOperations(parameters: {
+  attributeName: string;
+  workflowId: string;
+  oldValue: SearchAttributeValue | undefined;
+  newValue: SearchAttributeValue | undefined;
+  hadOld: boolean;
+  hasNew: boolean;
+}): BatchOperation[] {
+  const { attributeName, workflowId, oldValue, newValue, hadOld, hasNew } = parameters;
 
-        continue;
-      }
+  if (hadOld && !hasNew) {
+    return [deleteIndexOperation(attributeName, oldValue!, workflowId)];
+  }
 
-      if (hadOld) {
-        const oldValues = oldIsArray ? oldValue : [oldValue!];
-        for (const element of oldValues) {
-          operations.push({
-            type: 'delete',
-            key: KEYS.attributeIndex(attributeName, encodeAttributeValue(element), workflowId),
-          });
-        }
-      }
+  if (!hadOld && hasNew) {
+    return [putIndexOperation(attributeName, newValue!, workflowId)];
+  }
 
-      if (hasNew) {
-        const newValues = newIsArray ? newValue : [newValue!];
-        for (const element of newValues) {
-          operations.push({
-            type: 'put',
-            key: KEYS.attributeIndex(attributeName, encodeAttributeValue(element), workflowId),
-            value: EMPTY_VALUE,
-          });
-        }
-      }
+  if (hadOld && hasNew && !valuesEqual(oldValue!, newValue!)) {
+    return [
+      deleteIndexOperation(attributeName, oldValue!, workflowId),
+      putIndexOperation(attributeName, newValue!, workflowId),
+    ];
+  }
 
-      continue;
+  return [];
+}
+
+function putIndexOperation(
+  attributeName: string,
+  value: SearchAttributeValue,
+  workflowId: string,
+): Extract<BatchOperation, { type: 'put' }> {
+  return {
+    type: 'put',
+    key: KEYS.attributeIndex(attributeName, encodeAttributeValue(value), workflowId),
+    value: EMPTY_VALUE,
+  };
+}
+
+function deleteIndexOperation(
+  attributeName: string,
+  value: SearchAttributeValue,
+  workflowId: string,
+): Extract<BatchOperation, { type: 'delete' }> {
+  return {
+    type: 'delete',
+    key: KEYS.attributeIndex(attributeName, encodeAttributeValue(value), workflowId),
+  };
+}
+
+function buildArrayTransitionOperations(parameters: {
+  attributeName: string;
+  workflowId: string;
+  oldValue: SearchAttributeValue | undefined;
+  newValue: SearchAttributeValue | undefined;
+  hadOld: boolean;
+  hasNew: boolean;
+}): BatchOperation[] {
+  const { oldValue, newValue } = parameters;
+
+  if (Array.isArray(oldValue) && Array.isArray(newValue)) {
+    return buildArrayDiffOperations(
+      parameters.attributeName,
+      oldValue,
+      newValue,
+      parameters.workflowId,
+    );
+  }
+
+  return [
+    ...buildDeleteOperationsForValues(
+      parameters.attributeName,
+      parameters.hadOld ? oldValue : undefined,
+      parameters.workflowId,
+    ),
+    ...buildPutOperationsForValues(
+      parameters.attributeName,
+      parameters.hasNew ? newValue : undefined,
+      parameters.workflowId,
+    ),
+  ];
+}
+
+function buildArrayDiffOperations(
+  attributeName: string,
+  oldValues: string[],
+  newValues: string[],
+  workflowId: string,
+): BatchOperation[] {
+  const operations: BatchOperation[] = [];
+  const oldElements = new Set(oldValues);
+  const newElements = new Set(newValues);
+
+  for (const element of oldElements) {
+    if (!newElements.has(element)) {
+      operations.push(deleteIndexOperation(attributeName, element, workflowId));
     }
+  }
 
-    // Scalar attribute: removed
-    if (hadOld && !hasNew) {
-      operations.push({
-        type: 'delete',
-        key: KEYS.attributeIndex(attributeName, encodeAttributeValue(oldValue!), workflowId),
-      });
-      continue;
-    }
-
-    // Scalar attribute: added
-    if (!hadOld && hasNew) {
-      operations.push({
-        type: 'put',
-        key: KEYS.attributeIndex(attributeName, encodeAttributeValue(newValue!), workflowId),
-        value: EMPTY_VALUE,
-      });
-      continue;
-    }
-
-    // Scalar attribute: changed
-    if (hadOld && hasNew && !valuesEqual(oldValue!, newValue!)) {
-      operations.push({
-        type: 'delete',
-        key: KEYS.attributeIndex(attributeName, encodeAttributeValue(oldValue!), workflowId),
-      });
-      operations.push({
-        type: 'put',
-        key: KEYS.attributeIndex(attributeName, encodeAttributeValue(newValue!), workflowId),
-        value: EMPTY_VALUE,
-      });
+  for (const element of newElements) {
+    if (!oldElements.has(element)) {
+      operations.push(putIndexOperation(attributeName, element, workflowId));
     }
   }
 
   return operations;
+}
+
+function buildDeleteOperationsForValues(
+  attributeName: string,
+  value: SearchAttributeValue | undefined,
+  workflowId: string,
+): BatchOperation[] {
+  return valuesForIndexTransition(value).map((element) =>
+    deleteIndexOperation(attributeName, element, workflowId),
+  );
+}
+
+function buildPutOperationsForValues(
+  attributeName: string,
+  value: SearchAttributeValue | undefined,
+  workflowId: string,
+): BatchOperation[] {
+  return valuesForIndexTransition(value).map((element) =>
+    putIndexOperation(attributeName, element, workflowId),
+  );
+}
+
+function valuesForIndexTransition(value: SearchAttributeValue | undefined): SearchAttributeValue[] {
+  if (value === undefined) {
+    return [];
+  }
+  return Array.isArray(value) ? value : [value];
 }

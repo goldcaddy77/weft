@@ -49,7 +49,54 @@ function parseNamedValue(
   return normalizedValue;
 }
 
-// oxlint-disable-next-line complexity -- ID:core-schedule-parse-cron-field-complexity
+function buildWildcardCronField(minimum: number, maximum: number): CronField {
+  return {
+    values: Array.from({ length: maximum - minimum + 1 }, (_, index) => minimum + index),
+    wildcard: true,
+  };
+}
+
+function parseCronStep(segment: string, stepPart: string | undefined): number {
+  const step = stepPart === undefined ? 1 : Number.parseInt(stepPart, 10);
+  if (!Number.isInteger(step) || step <= 0) {
+    throw new Error(`Invalid cron step "${segment}"`);
+  }
+
+  return step;
+}
+
+function addSteppedValues(values: Set<number>, start: number, end: number, step: number): void {
+  for (let value = start; value <= end; value += step) {
+    values.add(value);
+  }
+}
+
+function addCronSegmentValues(
+  values: Set<number>,
+  segment: string,
+  minimum: number,
+  maximum: number,
+  names: Map<string, number> | undefined,
+): void {
+  const [rangePart = '', stepPart] = segment.split('/');
+  const step = parseCronStep(segment, stepPart);
+
+  if (rangePart === '*' || rangePart === '?') {
+    addSteppedValues(values, minimum, maximum, step);
+    return;
+  }
+
+  const [startToken, endToken] = rangePart.split('-');
+  const start = parseNamedValue(startToken!, names, minimum, maximum);
+  const end = endToken === undefined ? start : parseNamedValue(endToken, names, minimum, maximum);
+
+  if (start > end) {
+    throw new Error(`Invalid cron range "${segment}"`);
+  }
+
+  addSteppedValues(values, start, end, step);
+}
+
 function parseCronField(
   field: string,
   minimum: number,
@@ -58,10 +105,7 @@ function parseCronField(
 ): CronField {
   const trimmedField = field.trim();
   if (trimmedField === '*' || trimmedField === '?') {
-    return {
-      values: Array.from({ length: maximum - minimum + 1 }, (_, index) => minimum + index),
-      wildcard: true,
-    };
+    return buildWildcardCronField(minimum, maximum);
   }
 
   const values = new Set<number>();
@@ -73,30 +117,7 @@ function parseCronField(
       throw new Error(`Invalid cron field "${field}"`);
     }
 
-    const [rangePart = '', stepPart] = segment.split('/');
-    const step = stepPart === undefined ? 1 : Number.parseInt(stepPart, 10);
-    if (!Number.isInteger(step) || step <= 0) {
-      throw new Error(`Invalid cron step "${segment}"`);
-    }
-
-    if (rangePart === '*' || rangePart === '?') {
-      for (let value = minimum; value <= maximum; value += step) {
-        values.add(value);
-      }
-      continue;
-    }
-
-    const [startToken, endToken] = rangePart.split('-');
-    const start = parseNamedValue(startToken!, names, minimum, maximum);
-    const end = endToken === undefined ? start : parseNamedValue(endToken, names, minimum, maximum);
-
-    if (start > end) {
-      throw new Error(`Invalid cron range "${segment}"`);
-    }
-
-    for (let value = start; value <= end; value += step) {
-      values.add(maximum === 6 && value === 7 ? 0 : value);
-    }
+    addCronSegmentValues(values, segment, minimum, maximum, names);
   }
 
   return {

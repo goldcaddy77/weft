@@ -15,7 +15,6 @@ type RunningSubprocess = Bun.Subprocess<'ignore', 'pipe', 'pipe'>;
  * ```
  */
 export type SubprocessSignal = 'SIGINT' | 'SIGKILL' | 'SIGTERM';
-
 /**
  * Configuration for starting a Weft server in a child Bun process.
  *
@@ -53,14 +52,11 @@ interface NormalizedSubprocessServerOptions {
 
 const subprocessServerHandleBrand: unique symbol = Symbol('SubprocessServerHandle');
 
-/**
- * Minimal public view of the child process managed by a
- * {@link SubprocessServerHandle}.
- *
+/** Minimal public view of the child process managed by a {@link SubprocessServerHandle}.
  * @example
  * ```ts
- * import { spawnServerSubprocess, type SubprocessServerProcess } from 'weft/testing';
- * const server = await spawnServerSubprocess({ entrypoint: './tmp/entrypoint.ts', databasePath: './tmp/weft.db' });
+ * import type { SubprocessServerProcess } from 'weft/testing';
+ * declare const server: { process: SubprocessServerProcess };
  * const process: SubprocessServerProcess = server.process;
  * ```
  */
@@ -70,7 +66,6 @@ export interface SubprocessServerProcess {
   readonly signalCode: SubprocessSignal | null;
   kill(signal?: SubprocessSignal): void;
 }
-
 /**
  * Handle for a running Weft server subprocess started by
  * {@link spawnServerSubprocess}.
@@ -278,7 +273,14 @@ function createReadyWatcher(
       reject(error);
     }
 
-    void process.exited.then((exitCode) => {
+    void process.exited.then(async (exitCode) => {
+      await Bun.sleep(0);
+      const url = findReadyUrl(output.stdout, normalizedReadyPattern);
+      if (url !== undefined) {
+        settleWithUrl(url);
+        return;
+      }
+
       fail(
         new Error(
           `Subprocess exited with code ${exitCode} before readiness.\n${formatOutput(output)}`,
@@ -481,10 +483,8 @@ export async function killAndReboot(
  * @example
  * ```ts
  * import { withSubprocessServer } from 'weft/testing';
- * await withSubprocessServer(
- *   { entrypoint: './tmp/entrypoint.ts', databasePath: './tmp/weft.db' },
- *   async (server) => fetch(`${server.url}/v1/health`),
- * );
+ * declare const options: Parameters<typeof withSubprocessServer>[0];
+ * await withSubprocessServer(options, async (server) => fetch(`${server.url}/v1/health`));
  * ```
  */
 export async function withSubprocessServer<T>(

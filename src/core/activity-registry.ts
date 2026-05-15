@@ -107,50 +107,66 @@ export type RegisteredActivityFunction = (input?: unknown, context?: unknown) =>
  * The helper assigns `name`, `execute`, and optional catalog and dispatch
  * metadata as own properties on the returned function.
  */
-// oxlint-disable-next-line complexity -- ID:core-activity-registry-extract-definition-metadata-complexity
 function extractDefinitionMetadata(name: string, fn: object): Partial<ActivityRegistrationOptions> {
-  const result: Partial<ActivityRegistrationOptions> = {};
   const record = fn as Record<string, unknown>;
 
-  if ('description' in fn && typeof record['description'] === 'string') {
-    result.description = record['description'];
-  }
-  if (
-    'tags' in fn &&
-    Array.isArray(record['tags']) &&
-    record['tags'].every((tag) => typeof tag === 'string')
-  ) {
-    result.tags = [...record['tags']];
-  }
-  if ('inputSchema' in fn) {
-    result.inputSchema = validateDefinitionSchemaMetadata(
-      record['inputSchema'],
-      `activity definition "${name}".inputSchema`,
-    );
-  }
-  if ('outputSchema' in fn) {
-    result.outputSchema = validateDefinitionSchemaMetadata(
-      record['outputSchema'],
-      `activity definition "${name}".outputSchema`,
-    );
-  }
-  if ('queue' in fn && typeof record['queue'] === 'string') {
-    result.queue = record['queue'];
-  }
-  if ('retry' in fn && typeof record['retry'] === 'object' && record['retry'] !== null) {
-    result.retry = record['retry'] as RetryPolicy;
-  }
-  if (
-    'timeout' in fn &&
-    (typeof record['timeout'] === 'string' || typeof record['timeout'] === 'number')
-  ) {
-    result.timeout = record['timeout'];
-  }
-  if ('idempotent' in fn && typeof record['idempotent'] === 'boolean') {
-    result.idempotent = record['idempotent'];
-  }
+  return {
+    ...extractCatalogMetadata(record),
+    ...extractSchemaMetadata(name, record),
+    ...extractDispatchMetadata(record),
+  };
+}
 
-  return result;
+function extractCatalogMetadata(
+  record: Record<string, unknown>,
+): Pick<ActivityRegistrationOptions, 'description' | 'tags'> {
+  return {
+    ...(typeof record['description'] === 'string' ? { description: record['description'] } : {}),
+    ...(Array.isArray(record['tags']) && record['tags'].every((tag) => typeof tag === 'string')
+      ? { tags: [...record['tags']] }
+      : {}),
+  };
+}
+
+function extractSchemaMetadata(
+  name: string,
+  record: Record<string, unknown>,
+): Pick<ActivityRegistrationOptions, 'inputSchema' | 'outputSchema'> {
+  return {
+    ...('inputSchema' in record
+      ? {
+          inputSchema: validateDefinitionSchemaMetadata(
+            record['inputSchema'],
+            `activity definition "${name}".inputSchema`,
+          ),
+        }
+      : {}),
+    ...('outputSchema' in record
+      ? {
+          outputSchema: validateDefinitionSchemaMetadata(
+            record['outputSchema'],
+            `activity definition "${name}".outputSchema`,
+          ),
+        }
+      : {}),
+  };
+}
+
+function extractDispatchMetadata(
+  record: Record<string, unknown>,
+): Pick<ActivityRegistrationOptions, 'queue' | 'retry' | 'timeout' | 'idempotent'> {
+  return {
+    ...(typeof record['queue'] === 'string' ? { queue: record['queue'] } : {}),
+    ...(isRetryPolicyCandidate(record['retry']) ? { retry: record['retry'] } : {}),
+    ...(typeof record['timeout'] === 'string' || typeof record['timeout'] === 'number'
+      ? { timeout: record['timeout'] }
+      : {}),
+    ...(typeof record['idempotent'] === 'boolean' ? { idempotent: record['idempotent'] } : {}),
+  };
+}
+
+function isRetryPolicyCandidate(value: unknown): value is RetryPolicy {
+  return typeof value === 'object' && value !== null;
 }
 
 export function copyActivityMetadata(metadata: ActivityMetadata): ActivityMetadata {
@@ -174,6 +190,116 @@ function copyRetryPolicy(retry: RetryPolicy): RetryPolicy {
       ? {}
       : { nonRetryableErrors: [...retry.nonRetryableErrors] }),
   };
+}
+
+function resolveSchemaMetadata(
+  name: string,
+  extracted: Partial<ActivityRegistrationOptions>,
+  options: ActivityRegistrationOptions | undefined,
+): Pick<Partial<ActivityMetadata>, 'inputSchema' | 'outputSchema'> {
+  const inputSchema =
+    options?.inputSchema === undefined
+      ? extracted.inputSchema
+      : validateDefinitionSchemaMetadata(
+          options.inputSchema,
+          `activity registration "${name}".inputSchema`,
+        );
+  const outputSchema =
+    options?.outputSchema === undefined
+      ? extracted.outputSchema
+      : validateDefinitionSchemaMetadata(
+          options.outputSchema,
+          `activity registration "${name}".outputSchema`,
+        );
+
+  return {
+    ...(inputSchema === undefined ? {} : { inputSchema }),
+    ...(outputSchema === undefined ? {} : { outputSchema }),
+  };
+}
+
+function preferOptionValue<Value>(
+  optionValue: Value | undefined,
+  extractedValue: Value | undefined,
+): Value | undefined {
+  return optionValue ?? extractedValue;
+}
+
+function applyOptionalActivityMetadata(
+  metadata: ActivityMetadata,
+  values: Omit<Partial<ActivityMetadata>, 'name' | 'queue'>,
+): void {
+  if (values.description !== undefined) metadata.description = values.description;
+  if (values.tags !== undefined) metadata.tags = [...values.tags];
+  if (values.inputSchema !== undefined) metadata.inputSchema = values.inputSchema;
+  if (values.outputSchema !== undefined) metadata.outputSchema = values.outputSchema;
+  if (values.retry !== undefined) metadata.retry = copyRetryPolicy(values.retry);
+  if (values.timeout !== undefined) metadata.timeout = values.timeout;
+  if (values.idempotent !== undefined) metadata.idempotent = values.idempotent;
+}
+
+function assignOptionalActivityMetadataValue<
+  Key extends keyof Omit<ActivityMetadata, 'name' | 'queue'>,
+>(
+  metadata: Omit<Partial<ActivityMetadata>, 'name' | 'queue'>,
+  key: Key,
+  value: ActivityMetadata[Key] | undefined,
+): void {
+  if (value !== undefined) {
+    metadata[key] = value;
+  }
+}
+
+function buildOptionalActivityMetadata(
+  name: string,
+  extracted: Partial<ActivityRegistrationOptions>,
+  options: ActivityRegistrationOptions | undefined,
+): Omit<Partial<ActivityMetadata>, 'name' | 'queue'> {
+  const optionalMetadata: Omit<Partial<ActivityMetadata>, 'name' | 'queue'> = {
+    ...resolveSchemaMetadata(name, extracted, options),
+  };
+
+  assignOptionalActivityMetadataValue(
+    optionalMetadata,
+    'description',
+    preferOptionValue(options?.description, extracted.description),
+  );
+  assignOptionalActivityMetadataValue(
+    optionalMetadata,
+    'tags',
+    preferOptionValue(options?.tags, extracted.tags),
+  );
+  assignOptionalActivityMetadataValue(
+    optionalMetadata,
+    'retry',
+    preferOptionValue(options?.retry, extracted.retry),
+  );
+  assignOptionalActivityMetadataValue(
+    optionalMetadata,
+    'timeout',
+    preferOptionValue(options?.timeout, extracted.timeout),
+  );
+  assignOptionalActivityMetadataValue(
+    optionalMetadata,
+    'idempotent',
+    preferOptionValue(options?.idempotent, extracted.idempotent),
+  );
+
+  return optionalMetadata;
+}
+
+function buildActivityMetadata(
+  name: string,
+  extracted: Partial<ActivityRegistrationOptions>,
+  options: ActivityRegistrationOptions | undefined,
+): ActivityMetadata {
+  const metadata: ActivityMetadata = {
+    name,
+    queue: preferOptionValue(options?.queue, extracted.queue) ?? 'default',
+  };
+  applyOptionalActivityMetadata(metadata, buildOptionalActivityMetadata(name, extracted, options));
+
+  return metadata;
 }
 
 // ---------------------------------------------------------------------------
@@ -242,7 +368,6 @@ export class ActivityRegistry {
    * auto-extracted from its colocated properties. Explicit `options`
    * take precedence over auto-extracted values.
    */
-  // oxlint-disable-next-line complexity -- ID:core-activity-registry-constructor-complexity
   register(name: string, fn: Function, options?: ActivityRegistrationOptions): void {
     // Keep function-reference metadata aligned when this name moves to a
     // different function. Aliased functions retarget to a remaining name;
@@ -253,44 +378,7 @@ export class ActivityRegistry {
     }
 
     const extracted = extractDefinitionMetadata(name, fn);
-
-    const metadata: ActivityMetadata = {
-      name,
-      queue: options?.queue ?? extracted.queue ?? 'default',
-    };
-
-    const description = options?.description ?? extracted.description;
-    if (description !== undefined) metadata.description = description;
-
-    const tags = options?.tags ?? extracted.tags;
-    if (tags !== undefined) metadata.tags = [...tags];
-
-    const inputSchema =
-      options?.inputSchema === undefined
-        ? extracted.inputSchema
-        : validateDefinitionSchemaMetadata(
-            options.inputSchema,
-            `activity registration "${name}".inputSchema`,
-          );
-    if (inputSchema !== undefined) metadata.inputSchema = inputSchema;
-
-    const outputSchema =
-      options?.outputSchema === undefined
-        ? extracted.outputSchema
-        : validateDefinitionSchemaMetadata(
-            options.outputSchema,
-            `activity registration "${name}".outputSchema`,
-          );
-    if (outputSchema !== undefined) metadata.outputSchema = outputSchema;
-
-    const retry = options?.retry ?? extracted.retry;
-    if (retry !== undefined) metadata.retry = copyRetryPolicy(retry);
-
-    const timeout = options?.timeout ?? extracted.timeout;
-    if (timeout !== undefined) metadata.timeout = timeout;
-
-    const idempotent = options?.idempotent ?? extracted.idempotent;
-    if (idempotent !== undefined) metadata.idempotent = idempotent;
+    const metadata = buildActivityMetadata(name, extracted, options);
 
     this.#metadata.set(fn, metadata);
     this.#definitions.set(name, metadata);
