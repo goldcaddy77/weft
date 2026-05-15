@@ -504,7 +504,7 @@ Apply multiple put/delete operations as a single batch.
 - **Required scopes** — `storage:write` or `storage:admin`.
 - **Success response** — `204 No Content`.
 
-The interface-level guarantee: the operations are submitted to the underlying storage's `batch` primitive in a single call. Atomicity guarantees come from the backend—`SQLiteStorage`, `IndexedDBStorage`, `LMDBStorage`, and `TursoStorage` apply batches inside a transaction; see [the storage backend matrix](../guides/storage.md#backend-selection-matrix) for per-backend behavior.
+The interface-level guarantee: the operations are submitted to the underlying storage's `batch` primitive in a single call. Atomicity guarantees come from the backend—`SQLiteStorage`, `IndexedDBStorage`, `LMDBStorage`, and `TursoStorage` apply batches inside a transaction; see [the storage backend configuration notes](../guides/storage.md#per-backend-configuration) for per-backend behavior.
 
 #### `POST /v1/storage/-/conditional-batch`
 
@@ -530,7 +530,7 @@ Apply a compare-and-swap batch: validate every condition before applying any ope
 
 The `applied` boolean tells the caller whether the conditions all passed and the operations ran. The HTTP status is `200` either way—a `false` result is not an error, it's an expected CAS failure.
 
-The interface-level guarantee: all conditions are checked before any operation is applied. If any condition fails, no operation runs. The application of the operations themselves is delegated to the storage backend's batch primitive; backend-specific transaction guarantees vary—see [the storage backend matrix](../guides/storage.md#backend-selection-matrix).
+The interface-level guarantee: all conditions are checked before any operation is applied. If any condition fails, no operation runs. The application of the operations themselves is delegated to the storage backend's batch primitive; backend-specific transaction guarantees vary—see [the storage backend configuration notes](../guides/storage.md#per-backend-configuration).
 
 ### Metrics
 

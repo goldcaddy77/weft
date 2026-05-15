@@ -2,18 +2,11 @@
 
 Most workflow state lives in local variables and is checkpointed whenever the workflow yields. That is still the right default. `ctx.state` is for the cases where you need a named state slot with an explicit scope.
 
-The scope ladder is:
-
-- **Session state:** `ctx.state.session(key, options?)` lives inside the current workflow checkpoint. It is private to one workflow execution.
-- **Execution state:** `ctx.state.execution(key, options?)` lives in storage and is shared by a parent workflow, durable child workflows, and concurrent branches in that execution tree.
-- **Workflow state:** `ctx.state.workflow(key, options?)` lives in storage and is shared by every run of the current workflow type within the current tenant.
-- **Tenant state:** `ctx.state.tenant(key, options?)` lives in storage and is shared by every workflow in the current tenant.
-
-Use the narrowest scope that matches the job. Session state is cheapest because it is checkpoint-local. The other scopes are CAS-backed storage records and require `yield*` because the engine commits them as durable operations.
+Checkpoints hold local variables. For named persistent state shared across runs, use `ctx.state.execution()` when the value should be shared within this execution tree.
 
 ## Session State
 
-Session state is synchronous:
+Session state is the default state handle to reach for. It lives inside the current workflow checkpoint, is private to one workflow execution, and is synchronous because it is updated with the rest of the checkpoint.
 
 ```typescript partial
 const attempts = ctx.state.session<number>('chargeAttempts', { initial: 0 });
@@ -28,7 +21,7 @@ Session state is useful for counters, flags, and small pieces of private workflo
 
 ## Durable State
 
-Execution, workflow, and tenant state handles use the same method names, but their methods are workflow operations:
+Execution, workflow, and tenant state handles live in storage and can be shared outside the current checkpoint. They use the same method names as session state, but their methods are workflow operations:
 
 ```typescript partial
 const findings = ctx.state.execution<{ articles: string[]; totalCost: number }>('findings', {
@@ -41,6 +34,19 @@ yield * findings.merge({ articles: ['https://example.com/research'] });
 The durable scopes are backed by `AtomicState`. Updates use compare-and-swap with automatic retry. If another writer commits between your read and write, Weft rereads the latest value and reruns your update function.
 
 Durable state options accept `initial` and `maxRetries`. `initial` is captured when the handle is constructed. `maxRetries` controls how many compare-and-swap attempts an `update`, `set`, `delete`, or convenience method can make before emitting `exhausted` and throwing `AtomicStateConflictError`.
+
+## Scope Reference
+
+Use the narrowest scope that matches the job:
+
+| Scope         | Workflow API                         | Lifetime and sharing                                                                                |
+| ------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| **Session**   | `ctx.state.session(key, options?)`   | Checkpoint-local state private to one workflow execution.                                           |
+| **Execution** | `ctx.state.execution(key, options?)` | Storage-backed state shared by a parent workflow, durable child workflows, and concurrent branches. |
+| **Workflow**  | `ctx.state.workflow(key, options?)`  | Storage-backed state shared by every run of the current workflow type within the current tenant.    |
+| **Tenant**    | `ctx.state.tenant(key, options?)`    | Storage-backed state shared by every workflow in the current tenant.                                |
+
+Session state is cheapest because it is checkpoint-local. The other scopes are CAS-backed storage records and require `yield*` because the engine commits them as durable operations.
 
 ## Admin Access
 

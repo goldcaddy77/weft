@@ -44,6 +44,8 @@ The `async function*` declaration gives you a function that can pause itself wit
 
 So when you write `yield* ctx.run(greet, { name: input.name })`, two things happen: the named activity executes, and Weft captures a checkpoint of your workflow's state. If the process crashes after that line but before the next `yield*`, recovery resumes from the checkpoint---not from the top of the function.
 
+Weft checkpoints instead of replaying workflow code, so recovery resumes from saved state without determinism constraints; the [Checkpoint vs. Replay architecture note](../architecture/checkpoint-versus-replay.md) is the canonical deep dive.
+
 ## The workflow lifecycle
 
 Every workflow moves through a state machine with six possible states:
