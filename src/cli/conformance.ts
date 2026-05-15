@@ -317,8 +317,8 @@ async function runConformanceChecks(
       timeoutMs,
       'original worker disconnect',
     );
-    await waitForResolvedStatus(storage, reconnectOperationId, 'completed', timeoutMs);
     await waitForWorkerIdle(server, replacementWorkerId, timeoutMs);
+    await waitForResolvedStatus(storage, reconnectOperationId, 'completed', timeoutMs);
     checks.push(createCheck('reconnect', true, 'in-flight task completed after reconnect'));
 
     const shutdownWorkerId = server.registry.getWorker(replacementWorkerId)?.id;
