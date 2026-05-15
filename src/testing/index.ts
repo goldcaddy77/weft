@@ -19,6 +19,7 @@
 // build with direct re-exports.
 import { ChaosNonRetryableError, ChaosTimeoutError, ChaosTransientError, withChaos } from './chaos';
 import { ActivityMockRegistry } from './mocks';
+import { killAndReboot, spawnServerSubprocess, withSubprocessServer } from './subprocess-engine';
 import { TestEngine } from './test-engine';
 import { TimeControl } from './time-control';
 
@@ -106,15 +107,57 @@ const exportedTimeControl = TimeControl;
  */
 const exportedWithChaos = withChaos;
 
+/**
+ * Re-exported {@link spawnServerSubprocess}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { spawnServerSubprocess } from 'weft/testing';
+ * void spawnServerSubprocess;
+ * ```
+ */
+const exportedSpawnServerSubprocess = spawnServerSubprocess;
+
+/**
+ * Re-exported {@link killAndReboot}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { killAndReboot } from 'weft/testing';
+ * void killAndReboot;
+ * ```
+ */
+const exportedKillAndReboot = killAndReboot;
+
+/**
+ * Re-exported {@link withSubprocessServer}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { withSubprocessServer } from 'weft/testing';
+ * void withSubprocessServer;
+ * ```
+ */
+const exportedWithSubprocessServer = withSubprocessServer;
+
 export type { ChaosScenario, FaultClass } from './chaos';
 export type { MockCall, MockedActivity, MockHandle } from './mocks';
+export type {
+  SubprocessServerHandle,
+  SubprocessServerOptions,
+  SubprocessServerProcess,
+  SubprocessSignal,
+} from './subprocess-engine';
 export type { RunNOptions, RunNResult } from './test-engine';
 export {
   exportedActivityMockRegistry as ActivityMockRegistry,
   exportedChaosNonRetryableError as ChaosNonRetryableError,
   exportedChaosTimeoutError as ChaosTimeoutError,
   exportedChaosTransientError as ChaosTransientError,
+  exportedKillAndReboot as killAndReboot,
+  exportedSpawnServerSubprocess as spawnServerSubprocess,
   exportedTestEngine as TestEngine,
   exportedTimeControl as TimeControl,
   exportedWithChaos as withChaos,
+  exportedWithSubprocessServer as withSubprocessServer,
 };

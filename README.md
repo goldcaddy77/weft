@@ -412,7 +412,7 @@ Architecture and reference:
 
 Contributing:
 
-- [Development Setup](documentation/contributing/development-setup.md), [Documentation Maintenance](documentation/contributing/documentation-maintenance.md), [Architecture Decisions](documentation/contributing/architecture-decisions.md)
+- [Development Setup](documentation/contributing/development-setup.md), [Documentation Maintenance](documentation/contributing/documentation-maintenance.md), [Subprocess Durability Tests](documentation/contributing/subprocess-durability-tests.md), [Architecture Decisions](documentation/contributing/architecture-decisions.md)
 
 ## License
 
