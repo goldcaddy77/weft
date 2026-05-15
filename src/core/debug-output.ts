@@ -60,12 +60,69 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+type ObjectSanitizerResult = { supported: true; value: unknown } | { supported: false };
+
+type ObjectSanitizer = (value: object, seen: WeakSet<object>) => ObjectSanitizerResult;
+
+function unsupportedObject(): ObjectSanitizerResult {
+  return { supported: false };
+}
+
+function supportedObject(value: unknown): ObjectSanitizerResult {
+  return { supported: true, value };
+}
+
 function isPlainObject(value: object): value is Record<string, unknown> {
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
 }
 
-// oxlint-disable-next-line complexity -- ID:core-debug-output-sanitize-object-complexity
+function sanitizeMap(value: Map<unknown, unknown>, seen: WeakSet<object>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, entryValue] of value) {
+    const normalizedKey = String(key);
+    result[normalizedKey] = isSensitiveKey(normalizedKey)
+      ? REDACTED_VALUE
+      : sanitizeDebugValue(entryValue, seen);
+  }
+  return result;
+}
+
+function sanitizePlainObject(
+  value: Record<string, unknown>,
+  seen: WeakSet<object>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, entryValue] of Object.entries(value)) {
+    result[key] = isSensitiveKey(key) ? REDACTED_VALUE : sanitizeDebugValue(entryValue, seen);
+  }
+  return result;
+}
+
+const objectSanitizers: ObjectSanitizer[] = [
+  (value) => (value instanceof Date ? supportedObject(value.toISOString()) : unsupportedObject()),
+  (value) =>
+    value instanceof Error
+      ? supportedObject({ name: value.name, message: sanitizeDebugString(value.message) })
+      : unsupportedObject(),
+  (value) =>
+    value instanceof Uint8Array
+      ? supportedObject(`[Uint8Array(${value.byteLength})]`)
+      : unsupportedObject(),
+  (value, seen) =>
+    Array.isArray(value)
+      ? supportedObject(value.map((entry) => sanitizeDebugValue(entry, seen)))
+      : unsupportedObject(),
+  (value, seen) =>
+    value instanceof Set
+      ? supportedObject([...value].map((entry) => sanitizeDebugValue(entry, seen)))
+      : unsupportedObject(),
+  (value, seen) =>
+    value instanceof Map ? supportedObject(sanitizeMap(value, seen)) : unsupportedObject(),
+  (value, seen) =>
+    isPlainObject(value) ? supportedObject(sanitizePlainObject(value, seen)) : unsupportedObject(),
+];
+
 function sanitizeObject(value: object, seen: WeakSet<object>): unknown {
   if (seen.has(value)) {
     return CIRCULAR_REFERENCE_VALUE;
@@ -74,46 +131,11 @@ function sanitizeObject(value: object, seen: WeakSet<object>): unknown {
   seen.add(value);
 
   try {
-    if (value instanceof Date) {
-      return value.toISOString();
-    }
-
-    if (value instanceof Error) {
-      return {
-        name: value.name,
-        message: sanitizeDebugString(value.message),
-      };
-    }
-
-    if (value instanceof Uint8Array) {
-      return `[Uint8Array(${value.byteLength})]`;
-    }
-
-    if (Array.isArray(value)) {
-      return value.map((entry) => sanitizeDebugValue(entry, seen));
-    }
-
-    if (value instanceof Set) {
-      return [...value].map((entry) => sanitizeDebugValue(entry, seen));
-    }
-
-    if (value instanceof Map) {
-      const result: Record<string, unknown> = {};
-      for (const [key, entryValue] of value) {
-        const normalizedKey = String(key);
-        result[normalizedKey] = isSensitiveKey(normalizedKey)
-          ? REDACTED_VALUE
-          : sanitizeDebugValue(entryValue, seen);
+    for (const sanitizer of objectSanitizers) {
+      const sanitized = sanitizer(value, seen);
+      if (sanitized.supported) {
+        return sanitized.value;
       }
-      return result;
-    }
-
-    if (isPlainObject(value)) {
-      const result: Record<string, unknown> = {};
-      for (const [key, entryValue] of Object.entries(value)) {
-        result[key] = isSensitiveKey(key) ? REDACTED_VALUE : sanitizeDebugValue(entryValue, seen);
-      }
-      return result;
     }
 
     return Object.prototype.toString.call(value);

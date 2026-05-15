@@ -214,6 +214,42 @@ function formatFieldDiffs(diffs: FieldDiff[]): string {
   return `\nCheckpoint shape changes:\n${lines.join('\n')}`;
 }
 
+function hasWorkflowVersionDiff(versionDiff: WorkflowVersionDiff | undefined): boolean {
+  return (
+    versionDiff !== undefined &&
+    (versionDiff.workflowVersion !== undefined ||
+      versionDiff.agentVersion !== undefined ||
+      (versionDiff.toolVersions?.length ?? 0) > 0)
+  );
+}
+
+function createVersionMismatchMessage(parameters: {
+  workflowId: string;
+  workflowType: string;
+  storedVersion: string;
+  registeredVersion: string;
+  fieldDiffs: FieldDiff[] | undefined;
+  versionDiff: WorkflowVersionDiff | undefined;
+}): string {
+  const { workflowId, workflowType, storedVersion, registeredVersion, fieldDiffs, versionDiff } =
+    parameters;
+  const hasPersistedStateDrift =
+    storedVersion === registeredVersion &&
+    ((fieldDiffs?.length ?? 0) > 0 || hasWorkflowVersionDiff(versionDiff));
+  const baseMessage = hasPersistedStateDrift
+    ? `Version mismatch for workflow "${workflowType}" (${workflowId}): ` +
+      `stored version ${storedVersion} matches registered version ${registeredVersion}, ` +
+      `but the persisted state is incompatible with the registered definition`
+    : `Version mismatch for workflow "${workflowType}" (${workflowId}): ` +
+      `stored version ${storedVersion} does not match registered version ${registeredVersion}`;
+
+  return (
+    baseMessage +
+    (fieldDiffs && fieldDiffs.length > 0 ? formatFieldDiffs(fieldDiffs) : '') +
+    (versionDiff ? formatWorkflowVersionDiff(versionDiff) : '')
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Error
 // ---------------------------------------------------------------------------
@@ -261,7 +297,6 @@ export class VersionMismatchError extends Error {
   readonly fieldDiffs: FieldDiff[] | undefined;
   readonly versionDiff: WorkflowVersionDiff | undefined;
 
-  // oxlint-disable-next-line complexity -- ID:core-versioning-constructor-complexity
   constructor(
     workflowId: string,
     workflowType: string,
@@ -273,25 +308,17 @@ export class VersionMismatchError extends Error {
     const diffs = shapeDiff
       ? diffCheckpointShapes(shapeDiff.oldShape, shapeDiff.newShape)
       : undefined;
-    const hasVersionDiff =
-      versionDiff !== undefined &&
-      (versionDiff.workflowVersion !== undefined ||
-        versionDiff.agentVersion !== undefined ||
-        (versionDiff.toolVersions?.length ?? 0) > 0);
-    const hasPersistedStateDrift =
-      storedVersion === registeredVersion && ((diffs?.length ?? 0) > 0 || hasVersionDiff);
 
-    const baseMessage = hasPersistedStateDrift
-      ? `Version mismatch for workflow "${workflowType}" (${workflowId}): ` +
-        `stored version ${storedVersion} matches registered version ${registeredVersion}, ` +
-        `but the persisted state is incompatible with the registered definition`
-      : `Version mismatch for workflow "${workflowType}" (${workflowId}): ` +
-        `stored version ${storedVersion} does not match registered version ${registeredVersion}`;
-
-    const diffSuffix = diffs && diffs.length > 0 ? formatFieldDiffs(diffs) : '';
-    const versionSuffix = versionDiff ? formatWorkflowVersionDiff(versionDiff) : '';
-
-    super(baseMessage + diffSuffix + versionSuffix);
+    super(
+      createVersionMismatchMessage({
+        workflowId,
+        workflowType,
+        storedVersion,
+        registeredVersion,
+        fieldDiffs: diffs,
+        versionDiff,
+      }),
+    );
     this.name = 'VersionMismatchError';
     this.workflowId = workflowId;
     this.workflowType = workflowType;
