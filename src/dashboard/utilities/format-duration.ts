@@ -1,47 +1,64 @@
 /** Format a duration in milliseconds to a human-readable string (e.g., "45s", "3m 12s", "2h 15m"). */
+type DurationUnit = {
+  label: string;
+  milliseconds: number;
+};
+
+const displayDurationUnits: readonly DurationUnit[] = [
+  { label: 'h', milliseconds: 60 * 60 * 1_000 },
+  { label: 'm', milliseconds: 60 * 1_000 },
+  { label: 's', milliseconds: 1_000 },
+];
+
 export function formatDuration(milliseconds: number): string;
 export function formatDuration(
   start: Date | string | number | null,
   end: Date | string | number | null,
 ): string;
-// oxlint-disable-next-line complexity -- ID:dashboard-utilities-format-duration-format-duration-complexity
 export function formatDuration(
   startOrMilliseconds: number | Date | string | null,
   end?: Date | string | number | null,
 ): string {
-  let milliseconds: number;
-
-  if (end !== undefined) {
-    if (startOrMilliseconds === null || end === null) return '-';
-
-    const startTime =
-      typeof startOrMilliseconds === 'number'
-        ? startOrMilliseconds
-        : new Date(startOrMilliseconds).getTime();
-    const endTime = typeof end === 'number' ? end : new Date(end).getTime();
-    milliseconds = endTime - startTime;
-  } else {
-    if (startOrMilliseconds === null) return '-';
-    milliseconds = typeof startOrMilliseconds === 'number' ? startOrMilliseconds : 0;
-  }
+  const milliseconds = getDurationMilliseconds(startOrMilliseconds, end);
 
   if (milliseconds < 0) return '-';
+  return formatPositiveDuration(milliseconds);
+}
 
-  const seconds = Math.floor(milliseconds / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
+function getDurationMilliseconds(
+  startOrMilliseconds: number | Date | string | null,
+  end: Date | string | number | null | undefined,
+): number {
+  if (startOrMilliseconds === null || end === null) return -1;
+  if (end === undefined) return typeof startOrMilliseconds === 'number' ? startOrMilliseconds : 0;
 
-  if (hours > 0) {
-    const remainingMinutes = minutes % 60;
-    return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+  return readTimestamp(end) - readTimestamp(startOrMilliseconds);
+}
+
+function readTimestamp(value: Date | string | number): number {
+  return typeof value === 'number' ? value : new Date(value).getTime();
+}
+
+function formatPositiveDuration(milliseconds: number): string {
+  for (const [index, unit] of displayDurationUnits.entries()) {
+    if (milliseconds >= unit.milliseconds) return formatDurationFromUnit(milliseconds, index);
   }
-
-  if (minutes > 0) {
-    const remainingSeconds = seconds % 60;
-    return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
-  }
-
-  if (seconds > 0) return `${seconds}s`;
 
   return `${milliseconds}ms`;
+}
+
+function formatDurationFromUnit(milliseconds: number, unitIndex: number): string {
+  const unit = displayDurationUnits[unitIndex];
+  if (unit === undefined) return `${milliseconds}ms`;
+
+  const value = Math.floor(milliseconds / unit.milliseconds);
+  const nextUnit = displayDurationUnits[unitIndex + 1];
+  const remainder =
+    nextUnit === undefined
+      ? 0
+      : Math.floor((milliseconds % unit.milliseconds) / nextUnit.milliseconds);
+
+  return remainder > 0
+    ? `${value}${unit.label} ${remainder}${nextUnit?.label}`
+    : `${value}${unit.label}`;
 }

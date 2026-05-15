@@ -196,47 +196,12 @@ naming the alternative that was rejected.
 - **Symbol**: `startWorkflow`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
-## `dashboard-api-client-build-workflow-filter-params`
-
-- **File**: `src/dashboard/api-client.ts`
-- **Rule**: `complexity`
-- **Symbol**: `buildWorkflowFilterSearchParams`
-- **Reason**: Shared serializer for every supported ListFilter dimension. Each branch is a one-liner mapping one field to its query-parameter shape — splitting the function would fragment the per-field contract that the API-client tests assert against a single point of truth.
-
 ## `dashboard-build-workflow-list-filter`
 
 - **File**: `src/dashboard/utilities/workflow-list-data.ts`
 - **Rule**: `complexity`
 - **Symbol**: `buildWorkflowListFilter`
 - **Reason**: Mirrors `buildWorkflowFilterSearchParams` on the application side — one branch per `WorkflowListFilters` field deciding whether to round-trip it. Splitting would not reduce branch count, just move it elsewhere.
-
-## `dashboard-fragments-workflow-execution-timeline-collect-value-diffs-complexity`
-
-- **File**: `src/dashboard/fragments/workflow-execution-timeline.ts`
-- **Rule**: `complexity`
-- **Symbol**: `collectValueDiffs`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `dashboard-fragments-workflow-execution-timeline-format-timeline-diff-value-complexity`
-
-- **File**: `src/dashboard/fragments/workflow-execution-timeline.ts`
-- **Rule**: `complexity`
-- **Symbol**: `formatTimelineDiffValue`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `dashboard-utilities-format-duration-format-duration-complexity`
-
-- **File**: `src/dashboard/utilities/format-duration.ts`
-- **Rule**: `complexity`
-- **Symbol**: `formatDuration`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `dashboard-utilities-workflow-detail-timeline-synchronize-workflow-timeline-inspection-state-complexity`
-
-- **File**: `src/dashboard/utilities/workflow-detail-timeline.ts`
-- **Rule**: `complexity`
-- **Symbol**: `synchronizeWorkflowTimelineInspectionState`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
 ## `diagnostics-doctor-collect-database-health-complexity`
 
@@ -576,13 +541,6 @@ naming the alternative that was rejected.
 - **Rule**: `max-lines`
 - **Symbol**: entire module
 - **Reason**: `TaskQueue` carries its data structures plus a stable snapshot projection (`getQueueSummaries`) used by the public `weft.task.queues.list` operation. Keeping the projection beside the state it reads is more honest than exposing private fields through a sibling module.
-
-## `dashboard-api-client-max-lines`
-
-- **File**: `src/dashboard/api-client.ts`
-- **Rule**: `max-lines`
-- **Symbol**: entire module
-- **Reason**: Single typed fetch wrapper for the Weft REST API. The file is dominated by interface/type declarations describing the API surface; splitting them across multiple files would scatter the contract that dashboard call sites import from one place. Method bodies are short and the file is read top-to-bottom as a directory of REST routes.
 
 ## `server-operations-extract-list-filter-from-query`
 

@@ -52,7 +52,6 @@ export function clearWorkflowTimelineInspectionState(): WorkflowTimelineInspecti
   };
 }
 
-// oxlint-disable-next-line complexity -- ID:dashboard-utilities-workflow-detail-timeline-synchronize-workflow-timeline-inspection-state-complexity
 export function synchronizeWorkflowTimelineInspectionState(
   timeline: readonly WorkflowTimelineEntry[],
   current: WorkflowTimelineInspectionState,
@@ -62,33 +61,24 @@ export function synchronizeWorkflowTimelineInspectionState(
     return clearWorkflowTimelineInspectionState();
   }
 
-  const availableSteps = new Set(timeline.map((entry) => entry.step));
-  const firstStep = timeline[0]?.step ?? null;
-  const lastStep = timeline.at(-1)?.step ?? null;
-  const selectedStep =
-    current.selectedStep !== null && availableSteps.has(current.selectedStep)
-      ? current.selectedStep
-      : firstStep;
-
+  const timelineSteps = getTimelineStepSelection(timeline);
   const shouldResetDiff = options.resetDiff === true;
 
   return {
-    selectedStep,
+    selectedStep: selectTimelineStep(current.selectedStep, timelineSteps),
     diffFromStep: selectTimelineDiffStep({
       currentStep: current.diffFromStep,
-      fallbackStep: firstStep,
-      availableSteps,
+      fallbackStep: timelineSteps.firstStep,
+      availableSteps: timelineSteps.availableSteps,
       shouldResetDiff,
     }),
     diffToStep: selectTimelineDiffStep({
       currentStep: current.diffToStep,
-      fallbackStep: lastStep,
-      availableSteps,
+      fallbackStep: timelineSteps.lastStep,
+      availableSteps: timelineSteps.availableSteps,
       shouldResetDiff,
     }),
-    diffRows: shouldResetDiff ? [] : current.diffRows,
-    diffLoading: shouldResetDiff ? false : current.diffLoading,
-    diffError: shouldResetDiff ? null : current.diffError,
+    ...selectTimelineDiffRequestState(current, shouldResetDiff),
   };
 }
 
@@ -167,6 +157,40 @@ function selectTimelineDiffStep({
   }
 
   return fallbackStep === null ? '' : String(fallbackStep);
+}
+
+function getTimelineStepSelection(timeline: readonly WorkflowTimelineEntry[]): {
+  availableSteps: ReadonlySet<number>;
+  firstStep: number | null;
+  lastStep: number | null;
+} {
+  return {
+    availableSteps: new Set(timeline.map((entry) => entry.step)),
+    firstStep: timeline[0]?.step ?? null,
+    lastStep: timeline.at(-1)?.step ?? null,
+  };
+}
+
+function selectTimelineStep(
+  currentStep: number | null,
+  timelineSteps: ReturnType<typeof getTimelineStepSelection>,
+): number | null {
+  return currentStep !== null && timelineSteps.availableSteps.has(currentStep)
+    ? currentStep
+    : timelineSteps.firstStep;
+}
+
+function selectTimelineDiffRequestState(
+  current: WorkflowTimelineInspectionState,
+  shouldResetDiff: boolean,
+): Pick<WorkflowTimelineInspectionState, 'diffRows' | 'diffLoading' | 'diffError'> {
+  return shouldResetDiff
+    ? { diffRows: [], diffLoading: false, diffError: null }
+    : {
+        diffRows: current.diffRows,
+        diffLoading: current.diffLoading,
+        diffError: current.diffError,
+      };
 }
 
 function formatWorkflowTimelineError(error: unknown): string {
