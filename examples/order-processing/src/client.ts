@@ -50,7 +50,15 @@ if (import.meta.main) {
       break;
     }
     case 'cancel': {
-      const handle = await startOrResume(engine, standardOrderInput.orderId, standardOrderInput);
+      const cancellableOrderInput: OrderProcessingInput = {
+        ...standardOrderInput,
+        allowCancellationBeforeShipment: true,
+      };
+      const handle = await startOrResume(
+        engine,
+        cancellableOrderInput.orderId,
+        cancellableOrderInput,
+      );
       await handle.signal(cancelOrderSignal, { reason: 'customer-requested' });
       console.log(await handle.result());
       break;
