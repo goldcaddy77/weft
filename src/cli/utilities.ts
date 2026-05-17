@@ -79,7 +79,7 @@ export async function expandGlobEntryPaths(entryPaths: string[]): Promise<string
 
     const { scanRoot, pattern } = splitGlobPattern(entryPath);
     const { matchedPaths, ignoredMatchCount } = await scanGlobMatches(scanRoot, pattern, {
-      ignoreTestFiles: !globPatternIncludesTestFiles(pattern),
+      ignoreTestFiles: !globPatternIncludesTestFiles(entryPath),
       recurseIntoSubdirectories: globPatternMayMatchNestedPath(pattern),
     });
     const matches = matchedPaths.map((match) => join(scanRoot, match)).toSorted();

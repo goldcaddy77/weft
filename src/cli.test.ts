@@ -1603,6 +1603,27 @@ describe('executeValidate', () => {
     }
   });
 
+  it('includes test files when the scan root explicitly targets a tests directory', async () => {
+    const workspacePath = join(tmpdir(), `weft-validate-tests-scanroot-${crypto.randomUUID()}`);
+    const testsPath = join(workspacePath, 'examples', 'order-processing', 'tests');
+
+    try {
+      mkdirSync(testsPath, { recursive: true });
+      await Bun.write(
+        join(testsPath, 'order-processing.test.ts'),
+        'export const workflow = "test";',
+      );
+
+      await expect(
+        expandGlobEntryPaths([join(workspacePath, 'examples/order-processing/tests/**/*.ts')]),
+      ).resolves.toEqual([
+        join(workspacePath, 'examples/order-processing/tests/order-processing.test.ts'),
+      ]);
+    } finally {
+      rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it('does not infer test-file intent from absolute checkout path segments', async () => {
     const workspacePath = join(tmpdir(), `weft-test-parent-${crypto.randomUUID()}`);
     const examplePath = join(workspacePath, 'examples', 'order-processing');
