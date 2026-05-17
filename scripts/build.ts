@@ -3,12 +3,59 @@ import sveltePlugin from 'bun-plugin-svelte';
 
 await $`rm -rf dist`;
 
-// Node/Bun target — main bundle + per-backend storage submodules.
-// Heavy backends (lmdb, @libsql/client) are externalized so consumers
-// only pay for what they actually import.
+const typescriptTranspiler = new Bun.Transpiler({ loader: 'ts', target: 'bun' });
+
+function rewriteRelativeJavaScriptSpecifiers(source: string): string {
+  return source
+    .replace(/from (["'])(\.\.?\/[^"']+)\1/g, (match, quote: string, specifier: string) => {
+      if (/\.(js|json|html|css)$/.test(specifier)) return match;
+      const withoutTypeScriptExtension = specifier.endsWith('.ts')
+        ? specifier.slice(0, -3)
+        : specifier;
+      return `from ${quote}${withoutTypeScriptExtension}.js${quote}`;
+    })
+    .replace(/import\((["'])(\.\.?\/[^"']+)\1\)/g, (match, quote: string, specifier: string) => {
+      if (/\.(js|json|html|css)$/.test(specifier)) return match;
+      const withoutTypeScriptExtension = specifier.endsWith('.ts')
+        ? specifier.slice(0, -3)
+        : specifier;
+      return `import(${quote}${withoutTypeScriptExtension}.js${quote})`;
+    });
+}
+
+async function writeUnbundledRuntimeModules(): Promise<void> {
+  const sourceGlob = new Bun.Glob('src/**/*.ts');
+
+  for await (const sourcePath of sourceGlob.scan('.')) {
+    if (
+      sourcePath.endsWith('.test.ts') ||
+      sourcePath.endsWith('.test-d.ts') ||
+      sourcePath.endsWith('.test-support.ts') ||
+      sourcePath.endsWith('.bench.ts') ||
+      sourcePath.endsWith('-fixture.ts') ||
+      sourcePath.startsWith('src/benchmarks/') ||
+      sourcePath.includes('/__tests__/') ||
+      sourcePath.includes('/__fixtures__/')
+    ) {
+      continue;
+    }
+
+    const outputPath = sourcePath.replace(/^src\//, 'dist/').replace(/\.ts$/, '.js');
+    const transformed = typescriptTranspiler.transformSync(await Bun.file(sourcePath).text());
+    await Bun.write(outputPath, rewriteRelativeJavaScriptSpecifiers(transformed));
+  }
+}
+
+// Baseline runtime modules. Specialized builds below overwrite the public
+// subpaths that need bundling, minification, browser targeting, or constructor
+// name preservation.
+await writeUnbundledRuntimeModules();
+
+// Node/Bun target — per-backend storage and integration submodules.
+// Heavy backends (lmdb, @libsql/client) are externalized so consumers only pay
+// for what they actually import.
 await Bun.build({
   entrypoints: [
-    './src/index.ts',
     // Storage submodule entry points (one per subpath export)
     './src/storage/interface.ts',
     './src/storage/memory.ts',

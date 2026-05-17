@@ -37,25 +37,15 @@ const engine = new Engine({
 
 The database file is created automatically. No migrations to run.
 
-## Server Mode
+## Standalone Binary
 
-For larger deployments where you want a standalone Weft server with a REST API, WebSocket worker connections, and a web dashboard, build your own binary using the project's build script:
-
-```bash
-bun run build:binary
-```
-
-This produces a self-contained binary that includes the Weft engine, server, and web dashboard. See `scripts/build-binary-main.ts` for the build entrypoint and cross-compilation options.
-
-## Compile Your Own Binary
-
-You can also bake your workflow code directly into a standalone binary. This is useful when you want a single artifact that includes the Weft engine _and_ your application logic---no runtime dependencies, nothing to install on the target machine.
+For larger deployments, build a standalone binary with the Weft engine, server, web dashboard, and your workflow code in one artifact. This is useful when you want REST API endpoints, WebSocket worker connections, and application logic with no runtime dependencies on the target machine.
 
 ```bash
 bun run build:binary
 ```
 
-The build script (`scripts/build-binary-main.ts`) produces a binary that bundles the Bun runtime, the Weft engine, your workflows, and (if you include the server) the web dashboard. For cross-compilation targets, see the script's Bun `--target` options. Ship it anywhere.
+The build script (`scripts/build-binary-main.ts`) bundles the Bun runtime, the Weft engine, your workflows, and the server dashboard. For cross-compilation targets, see the script's Bun `--target` options.
 
 ## Supported Platforms
 

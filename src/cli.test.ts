@@ -1300,15 +1300,25 @@ describe('executeConformance', () => {
       checks: Array<{ name: string; ok: boolean; message: string }>;
     };
     expect(report.ok).toBe(false);
-    expect(report.checks[0]?.message).toContain('disconnected before heartbeat readiness check');
+    expect(report.checks[0]?.message).toMatch(
+      /^Worker register-exit-worker-[0-9a-f-]+ disconnected before heartbeat was observed$/,
+    );
   });
 
   it('surfaces a replacement worker that disconnects before graceful shutdown', async () => {
+    const launchStateFile = join(tmpdir(), `weft-short-sleep-exit-${crypto.randomUUID()}.txt`);
     const result = await executeConformance({
       timeoutMs: 1_000,
       json: true,
-      workerCommand: ['bun', './src/cli/__fixtures__/conformance-short-sleep-exit-worker.ts'],
+      workerCommand: [
+        'env',
+        'WEFT_SHORT_SLEEP_EXIT_MODE=replacement-disconnect',
+        `WEFT_SHORT_SLEEP_EXIT_STATE_FILE=${launchStateFile}`,
+        'bun',
+        './src/cli/__fixtures__/conformance-short-sleep-exit-worker.ts',
+      ],
     });
+    rmSync(launchStateFile, { force: true });
 
     expect(result.exitCode).toBe(1);
     const report = JSON.parse(result.stdout) as {

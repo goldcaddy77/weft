@@ -87,16 +87,9 @@ If you'd rather wire things up by hand — useful for tests, multi-tenant setups
 
 ## How It Works
 
-Weft uses a **checkpoint model**, not a replay model. This is the single most important design decision and it shapes everything else.
+Weft uses a **checkpoint model**, not a replay model. At each `yield*`, the engine snapshots the workflow's current state, including live local variables and the generator position, then resumes from that snapshot after a crash. The checkpoint is the source of truth for "where am I and what do I know."
 
-In a replay-based system (Temporal, Cadence), the workflow runtime re-executes your function from the beginning on every recovery, replaying recorded activity results to reconstruct state. That's why those systems demand strict determinism—no `Date.now()`, no `Math.random()`, no random control flow—and why they need separate sandboxes, bundlers, and version-pinning protocols.
-
-Weft does the opposite. At each `yield*`, the engine snapshots the workflow's current state—the values of local variables in scope at that boundary, plus the position in the generator—using `structuredClone` semantics, and writes that snapshot to storage. On recovery the engine reads the snapshot and resumes from the same boundary. Your code can use `Date.now()`, `Math.random()`, dynamic imports, anything—because nothing replays. The checkpoint is the source of truth for "where am I and what do I know."
-
-A few consequences fall out of this:
-
-- **Checkpoint size is bounded by live state, not history length.** Long-running workflows don't accumulate ever-growing event logs. The snapshot reflects whatever's currently in scope at the yield boundary, so a workflow that processes 100 large API responses but only retains a summary checkpoints just that summary.
-- **No `continueAsNew` ceremony.** Workflows can run for years without special handling.
+Because recovery never re-executes the workflow from the beginning, your workflow code does not inherit replay determinism rules. `Date.now()`, `Math.random()`, dynamic imports, and normal TypeScript control flow are all fine; side effects still belong in activities. The [Checkpoint vs. Replay architecture note](documentation/architecture/checkpoint-versus-replay.md) covers the full design and tradeoffs.
 
 ## Core Concepts
 
@@ -260,7 +253,7 @@ await using server = serve({ engine, port: 7233 });
 // server.url is e.g. "http://0.0.0.0:7233"
 ```
 
-Endpoints under `/v1/` cover the full lifecycle: start workflows, list, signal, update, query, cancel, fork, and stream events. Content negotiation supports JSON and MessagePack. The server also embeds a built-in dashboard for inspecting live workflows, checkpoints, and history.
+Endpoints under `/v1/` cover the full lifecycle: start workflows, list, signal, update, query, cancel, fork, and stream events. Content negotiation supports JSON and MessagePack. The server can also serve the built-in dashboard at `/ui`; see the [server guide](documentation/guides/server.md#dashboard) for how to enable it, lock it down, and disable it.
 
 ### Remote Workers
 
@@ -404,7 +397,6 @@ Getting started:
 - [Installation](documentation/getting-started/installation.md)
 - [Hello World](documentation/getting-started/hello-world.md)
 - [Transports](documentation/getting-started/transports.md)
-- [Key Concepts](documentation/getting-started/key-concepts.md)
 
 Guides:
 
@@ -423,7 +415,7 @@ Architecture and reference:
 
 Contributing:
 
-- [Development Setup](documentation/contributing/development-setup.md), [Documentation Maintenance](documentation/contributing/documentation-maintenance.md), [Architecture Decisions](documentation/contributing/architecture-decisions.md)
+- [Development Setup](documentation/contributing/development-setup.md), [Documentation Maintenance](documentation/contributing/documentation-maintenance.md), [Subprocess Durability Tests](documentation/contributing/subprocess-durability-tests.md), [Architecture Decisions](documentation/contributing/architecture-decisions.md)
 
 ## License
 

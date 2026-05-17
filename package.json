@@ -26,7 +26,10 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "bun": "./dist/index.js",
+      "bun": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
@@ -126,7 +129,9 @@
     },
     "./server": {
       "types": "./dist/server/index.d.ts",
-      "bun": "./dist/server/index.js"
+      "bun": "./dist/server/index.js",
+      "import": "./dist/server/index.js",
+      "default": "./dist/server/index.js"
     },
     "./server/handler": {
       "types": "./dist/server/handler.d.ts",

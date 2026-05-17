@@ -1,5 +1,3 @@
-/* oxlint-disable max-lines -- ID:client-http-client-public-surface */
-import { assertScopedBulkWorkflowFilter } from '../core/bulk-workflow-filter.ts';
 import type { StoredStreamChunk } from '../core/context.ts';
 import type {
   AttributeFilterKey,
@@ -34,12 +32,28 @@ import type {
   WorkflowTimelineEntry,
 } from '../core/types.ts';
 import { messageName } from '../core/types.ts';
+import {
+  cancelAllWorkflowRequests,
+  deleteAllWorkflowRequests,
+  forkWorkflowRequest,
+  getQuotaUsageRequest,
+  getRetentionOverviewRequest,
+  getStreamChunkRequests,
+  getUpdateResultRequest,
+  listReviewRequests,
+  purgeWorkflowRequests,
+  signalAllWorkflowRequests,
+  submitCoordinatedUpdateRequest,
+  submitReviewRequest,
+  tagAllWorkflowRequests,
+  untagAllWorkflowRequests,
+} from './http-client-requests.ts';
 import { HttpHandle } from './http-handle.ts';
-import { HttpClientError, request, type HttpClientOptions } from './http-request.ts';
+import { request, type HttpClientOptions } from './http-request.ts';
 import { HttpScheduleHandle } from './http-schedule-handle.ts';
 import type { ClientHandle, ClientScheduleHandle, UpdateResult, WeftClient } from './interface.ts';
 import { buildScheduleListSearchParams } from './schedule-list-search-params.ts';
-import { buildReviewListSearchParams, buildWorkflowListSearchParams } from './search-params.ts';
+import { buildWorkflowListSearchParams } from './search-params.ts';
 import { buildStartBody } from './start-body.ts';
 
 /**
@@ -365,30 +379,15 @@ export class HttpClient implements WeftClient {
   }
 
   async listReviews(filter?: ReviewListFilter): Promise<ReviewListEntry[]> {
-    const search = buildReviewListSearchParams(filter).toString();
-    const path = search.length > 0 ? `/reviews?${search}` : '/reviews';
-    const response = await request<{ items: ReviewListEntry[] }>(this.baseUrl, path, this.headers);
-    return response.items;
+    return listReviewRequests(this, filter);
   }
 
   async submitReview(reviewId: string, options: SubmitReviewOptions): Promise<void> {
-    await request<unknown>(
-      this.baseUrl,
-      `/reviews/${encodeURIComponent(reviewId)}/decision`,
-      this.headers,
-      {
-        method: 'POST',
-        body: JSON.stringify(options),
-      },
-    );
+    return submitReviewRequest(this, reviewId, options);
   }
 
   async getQuotaUsage(tenantId: string): Promise<TenantQuotaUsage> {
-    return request<TenantQuotaUsage>(
-      this.baseUrl,
-      `/tenants/${encodeURIComponent(tenantId)}/quota`,
-      this.headers,
-    );
+    return getQuotaUsageRequest(this, tenantId);
   }
 
   async getStreamChunks(
@@ -396,90 +395,40 @@ export class HttpClient implements WeftClient {
     key: string,
     options?: { after?: number },
   ): Promise<StoredStreamChunk[]> {
-    const search = new URLSearchParams();
-    if (options?.after !== undefined) {
-      search.set('after', String(options.after));
-    }
-
-    const query = search.size > 0 ? `?${search.toString()}` : '';
-    const response = await request<{ chunks: StoredStreamChunk[] }>(
-      this.baseUrl,
-      `/workflows/${encodeURIComponent(workflowId)}/streams/${encodeURIComponent(key)}${query}`,
-      this.headers,
-    );
-    return response.chunks;
+    return getStreamChunkRequests(this, workflowId, key, options);
   }
 
   async fork(id: string, options?: ForkOptions): Promise<ClientHandle> {
-    const body: Record<string, unknown> = {};
-    if (options?.fromStep !== undefined) {
-      body['fromStep'] = options.fromStep;
-    }
-
-    const response = await request<{ id: string }>(
-      this.baseUrl,
-      `/workflows/${encodeURIComponent(id)}/fork`,
-      this.headers,
-      {
-        method: 'POST',
-        body: JSON.stringify(body),
-      },
-    );
-    return new HttpHandle(response.id, this);
+    const workflowId = await forkWorkflowRequest(this, id, options);
+    return new HttpHandle(workflowId, this);
   }
 
   async getRetentionOverview(): Promise<RetentionOverview> {
-    return request<RetentionOverview>(this.baseUrl, '/retention', this.headers);
+    return getRetentionOverviewRequest(this);
   }
 
   async purge(filter?: ListFilter): Promise<PurgeResult> {
-    return request<PurgeResult>(this.baseUrl, '/workflows/purge', this.headers, {
-      method: 'POST',
-      body: JSON.stringify({ filter }),
-    });
+    return purgeWorkflowRequests(this, filter);
   }
 
   async cancelAll(filter: ListFilter): Promise<BulkCancelResult> {
-    assertScopedBulkWorkflowFilter(filter);
-    return request<BulkCancelResult>(this.baseUrl, '/workflows/bulk/cancel', this.headers, {
-      method: 'POST',
-      body: JSON.stringify({ filter }),
-    });
+    return cancelAllWorkflowRequests(this, filter);
   }
 
   async signalAll(filter: ListFilter, name: string, payload?: unknown): Promise<BulkSignalResult> {
-    assertScopedBulkWorkflowFilter(filter);
-    if (name.length === 0) {
-      throw new Error('Field "name" must be a non-empty string');
-    }
-    return request<BulkSignalResult>(this.baseUrl, '/workflows/bulk/signal', this.headers, {
-      method: 'POST',
-      body: JSON.stringify({ filter, name, payload }),
-    });
+    return signalAllWorkflowRequests(this, filter, name, payload);
   }
 
   async deleteAll(filter: ListFilter): Promise<BulkDeleteResult> {
-    assertScopedBulkWorkflowFilter(filter);
-    return request<BulkDeleteResult>(this.baseUrl, '/workflows/bulk', this.headers, {
-      method: 'DELETE',
-      body: JSON.stringify({ filter }),
-    });
+    return deleteAllWorkflowRequests(this, filter);
   }
 
   async tagAll(filter: ListFilter, tags: string[]): Promise<BulkTagResult> {
-    assertScopedBulkWorkflowFilter(filter);
-    return request<BulkTagResult>(this.baseUrl, '/workflows/bulk/tags', this.headers, {
-      method: 'PATCH',
-      body: JSON.stringify({ filter, tags, operation: 'add' }),
-    });
+    return tagAllWorkflowRequests(this, filter, tags);
   }
 
   async untagAll(filter: ListFilter, tags: string[]): Promise<BulkTagResult> {
-    assertScopedBulkWorkflowFilter(filter);
-    return request<BulkTagResult>(this.baseUrl, '/workflows/bulk/tags', this.headers, {
-      method: 'PATCH',
-      body: JSON.stringify({ filter, tags, operation: 'remove' }),
-    });
+    return untagAllWorkflowRequests(this, filter, tags);
   }
 
   async submitCoordinatedUpdate(
@@ -488,40 +437,10 @@ export class HttpClient implements WeftClient {
     payload?: unknown,
     options?: { timeout?: number; idempotencyKey?: string },
   ): Promise<CoordinatedUpdateResult> {
-    const body: Record<string, unknown> = { payload };
-    if (options?.timeout !== undefined) body['timeout'] = options.timeout;
-    if (options?.idempotencyKey !== undefined) body['idempotencyKey'] = options.idempotencyKey;
-
-    try {
-      return await request<CoordinatedUpdateResult>(
-        this.baseUrl,
-        `/workflows/${encodeURIComponent(id)}/update/${encodeURIComponent(name)}`,
-        this.headers,
-        {
-          method: 'POST',
-          body: JSON.stringify(body),
-        },
-      );
-    } catch (error) {
-      if (error instanceof HttpClientError && (error.status === 400 || error.status === 422)) {
-        return { updateId: '', error: error.message };
-      }
-      throw error;
-    }
+    return submitCoordinatedUpdateRequest(this, id, name, payload, options);
   }
 
   async getUpdateResult(updateId: string): Promise<UpdateResult> {
-    const response = await request<{ status: string; result?: unknown; error?: string } | null>(
-      this.baseUrl,
-      `/updates/${encodeURIComponent(updateId)}`,
-      this.headers,
-    );
-
-    if (response === null || response.status === 'pending') return null;
-
-    const out: NonNullable<UpdateResult> = { updateId };
-    if (response.result !== undefined) out.result = response.result;
-    if (response.error !== undefined) out.error = response.error;
-    return out;
+    return getUpdateResultRequest(this, updateId);
   }
 }

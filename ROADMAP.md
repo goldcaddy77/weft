@@ -33,3 +33,20 @@ These items are still present in `reference/architecture.md` and are not complet
   - The default test suite does not require a Temporal server, but the comparison command fails clearly when the required Temporal dependency is missing or not running.
   - `reference/IMPORTANT.md` and `documentation/architecture/performance.md` record the latest measured ratio and link to the benchmark command.
   - Verification passes with `bun run lint`, `bun run typecheck`, `bun run benchmark:temporal-workflow-starts` in an environment with Temporal available, and `bun run verify:documentation`.
+
+## 2. Oxlint Strict Cleanup
+
+Recent cleanup work removed several clusters of `oxlint-disable` directives, but the repository still carries active suppressions across core, diagnostics, server, worker, storage, dashboard, and testing surfaces. The task graph now tracks each remaining domain-specific refactor and a final enforcement task.
+
+- [ ] **Finish the remaining oxlint suppression refactors.**
+
+  **Where:** `src/core/**`, `src/diagnostics/**`, `src/server/**`, `src/worker/**`, `src/storage/**`, `src/dashboard/**`, `src/testing/**`, and the task graph entries tagged `oxlint-strict`.
+
+  The merged CLI, client, engine-operations, checkpoint, and codec cleanup pull requests reduced the inventory, but current source still contains suppressions for core context, scheduler/search-attribute/tenant-quota helpers, diagnostics and observability, server transports and operations, worker protocol and registry code, dashboard helpers, storage delete-prefix paths, and testing helpers. Keep each domain refactor behavior-preserving and remove suppressions only when the code is genuinely below the enforced threshold or the remaining directive has a durable architectural rationale.
+
+  **Acceptance criteria:**
+  - Every live `oxlint-strict` blocker task is completed or explicitly narrowed to justified permanent suppressions.
+  - `rg -n "oxlint-disable" src` shows at most five permanent production suppressions, each with an inline rationale.
+  - `scripts/check-lint-disables.ts` enforces the permanent-suppression ceiling and inline-rationale requirement.
+  - The capstone task removes stale inventory assumptions and documents the resulting policy.
+  - Verification passes with `bun run lint`, `bun run typecheck`, `bun run typecheck:tests`, `bun test`, and `bun run verify:documentation`.

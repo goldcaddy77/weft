@@ -162,59 +162,81 @@ extensionCodec.register({
  * Recursively replace `undefined` with the sentinel so msgpack's encoder
  * routes it through the extension codec instead of encoding it as null.
  */
-// oxlint-disable-next-line complexity -- ID:core-codec-replace-undefined-complexity
 export function replaceUndefined(value: unknown, visited: Set<object>): unknown {
   if (value === undefined) return undefinedSentinel;
   if (value === null || typeof value !== 'object') return value;
-
   if (visited.has(value)) return value;
-  visited.add(value);
 
-  if (Array.isArray(value)) {
-    const result: unknown[] = Array.from({ length: value.length });
-    for (let i = 0; i < value.length; i++) {
-      result[i] = replaceUndefined(value[i], visited);
-    }
+  visited.add(value);
+  try {
+    return replaceObjectUndefined(value, visited);
+  } finally {
     visited.delete(value);
-    return result;
+  }
+}
+
+function replaceObjectUndefined(value: object, visited: Set<object>): unknown {
+  if (Array.isArray(value)) {
+    return replaceArrayUndefined(value, visited);
   }
 
   if (value instanceof Map) {
-    const result = new Map<unknown, unknown>();
-    for (const [key, mapValue] of value) {
-      result.set(replaceUndefined(key, visited), replaceUndefined(mapValue, visited));
-    }
-    visited.delete(value);
-    return result;
+    return replaceMapUndefined(value, visited);
   }
 
   if (value instanceof Set) {
-    const result = new Set<unknown>();
-    for (const setValue of value) {
-      result.add(replaceUndefined(setValue, visited));
-    }
-    visited.delete(value);
-    return result;
+    return replaceSetUndefined(value, visited);
   }
 
-  // Skip types that don't contain nested values
-  if (
+  if (isNestedValueFree(value)) {
+    return value;
+  }
+
+  return replaceRecordUndefined(value, visited);
+}
+
+function replaceArrayUndefined(value: unknown[], visited: Set<object>): unknown[] {
+  const result: unknown[] = Array.from({ length: value.length });
+  for (let index = 0; index < value.length; index++) {
+    result[index] = replaceUndefined(value[index], visited);
+  }
+  return result;
+}
+
+function replaceMapUndefined(
+  value: Map<unknown, unknown>,
+  visited: Set<object>,
+): Map<unknown, unknown> {
+  const result = new Map<unknown, unknown>();
+  for (const [key, mapValue] of value) {
+    result.set(replaceUndefined(key, visited), replaceUndefined(mapValue, visited));
+  }
+  return result;
+}
+
+function replaceSetUndefined(value: Set<unknown>, visited: Set<object>): Set<unknown> {
+  const result = new Set<unknown>();
+  for (const setValue of value) {
+    result.add(replaceUndefined(setValue, visited));
+  }
+  return result;
+}
+
+function isNestedValueFree(value: object): boolean {
+  return (
     value instanceof Date ||
     value instanceof RegExp ||
     value instanceof Error ||
     value instanceof Uint8Array ||
     value instanceof ArrayBuffer
-  ) {
-    visited.delete(value);
-    return value;
-  }
+  );
+}
 
-  // Plain objects
+function replaceRecordUndefined(value: object, visited: Set<object>): Record<string, unknown> {
   const record = value as Record<string, unknown>;
   const result: Record<string, unknown> = {};
   for (const key of Object.keys(record)) {
     result[key] = replaceUndefined(record[key], visited);
   }
-  visited.delete(value);
   return result;
 }
