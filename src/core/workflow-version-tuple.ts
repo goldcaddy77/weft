@@ -70,7 +70,6 @@ export function collectToolVersions(
  * Only fields that actually differ are included in the output. An empty
  * object means the tuples are identical.
  */
-// oxlint-disable-next-line complexity -- ID:core-workflow-version-tuple-diff-workflow-version-tuples-complexity
 export function diffWorkflowVersionTuples(
   stored: WorkflowVersionTuple,
   registered: WorkflowVersionTuple,
@@ -89,25 +88,7 @@ export function diffWorkflowVersionTuples(
     diff.agentVersion = [storedAgent, registeredAgent];
   }
 
-  // Tool versions — parse "name@version" strings into a map for diffing
-  const storedTools = parseToolVersionMap(stored.toolVersions ?? []);
-  const registeredTools = parseToolVersionMap(registered.toolVersions ?? []);
-
-  const allToolNames = new Set([...storedTools.keys(), ...registeredTools.keys()]);
-  const toolChanges: WorkflowToolVersionChange[] = [];
-
-  for (const name of allToolNames) {
-    const from = storedTools.get(name);
-    const to = registeredTools.get(name);
-
-    if (from === undefined && to !== undefined) {
-      toolChanges.push({ tool: name, change: 'added', to });
-    } else if (from !== undefined && to === undefined) {
-      toolChanges.push({ tool: name, change: 'removed', from });
-    } else if (from !== undefined && to !== undefined && from !== to) {
-      toolChanges.push({ tool: name, change: 'changed', from, to });
-    }
-  }
+  const toolChanges = diffToolVersions(stored.toolVersions ?? [], registered.toolVersions ?? []);
 
   if (toolChanges.length > 0) {
     diff.toolVersions = toolChanges;
@@ -172,4 +153,43 @@ function parseToolVersionMap(versions: string[]): Map<string, string> {
     }
   }
   return map;
+}
+
+function diffToolVersions(
+  storedVersions: string[],
+  registeredVersions: string[],
+): WorkflowToolVersionChange[] {
+  const storedTools = parseToolVersionMap(storedVersions);
+  const registeredTools = parseToolVersionMap(registeredVersions);
+  const allToolNames = new Set([...storedTools.keys(), ...registeredTools.keys()]);
+  const toolChanges: WorkflowToolVersionChange[] = [];
+
+  for (const name of allToolNames) {
+    const change = diffToolVersion(name, storedTools.get(name), registeredTools.get(name));
+    if (change !== undefined) {
+      toolChanges.push(change);
+    }
+  }
+
+  return toolChanges;
+}
+
+function diffToolVersion(
+  tool: string,
+  from: string | undefined,
+  to: string | undefined,
+): WorkflowToolVersionChange | undefined {
+  if (from === undefined && to !== undefined) {
+    return { tool, change: 'added', to };
+  }
+
+  if (from !== undefined && to === undefined) {
+    return { tool, change: 'removed', from };
+  }
+
+  if (from !== undefined && to !== undefined && from !== to) {
+    return { tool, change: 'changed', from, to };
+  }
+
+  return undefined;
 }

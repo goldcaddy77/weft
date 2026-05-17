@@ -57,56 +57,64 @@ export function deserializeCheckpoint(bytes: Uint8Array, serializer?: Serializer
 // Shape validation (internal)
 // ---------------------------------------------------------------------------
 
-// oxlint-disable-next-line complexity -- ID:core-checkpoint-validate-checkpoint-shape-complexity
 export function validateCheckpointShape(value: unknown): asserts value is Checkpoint {
+  const record = assertCheckpointRecord(value);
+  assertStringField(record, 'workflowId');
+  assertNumberField(record, 'step');
+  assertRecordField(record, 'locals');
+  validateSessionStateLocals(record['locals'] as Record<string, unknown>);
+  normalizeAccumulatedResults(record);
+  assertArrayField(record, 'pendingSignals');
+  assertRecordField(record, 'searchAttributes');
+  assertStringField(record, 'version');
+  assertNumberField(record, 'createdAt');
+  assertCurrentSchemaVersion(record);
+}
+
+function assertCheckpointRecord(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null) {
     throw new Error('Invalid checkpoint: expected an object');
   }
 
-  const record = value as Record<string, unknown>;
+  return value as Record<string, unknown>;
+}
 
-  if (typeof record['workflowId'] !== 'string') {
-    throw new Error('Invalid checkpoint: missing or invalid "workflowId" (expected string)');
+function assertStringField(record: Record<string, unknown>, field: string): void {
+  if (typeof record[field] !== 'string') {
+    throw new Error(`Invalid checkpoint: missing or invalid "${field}" (expected string)`);
   }
+}
 
-  if (typeof record['step'] !== 'number') {
-    throw new Error('Invalid checkpoint: missing or invalid "step" (expected number)');
+function assertNumberField(record: Record<string, unknown>, field: string): void {
+  if (typeof record[field] !== 'number') {
+    throw new Error(`Invalid checkpoint: missing or invalid "${field}" (expected number)`);
   }
+}
 
-  if (typeof record['locals'] !== 'object' || record['locals'] === null) {
-    throw new Error('Invalid checkpoint: missing or invalid "locals" (expected object)');
+function assertRecordField(record: Record<string, unknown>, field: string): void {
+  if (typeof record[field] !== 'object' || record[field] === null) {
+    throw new Error(`Invalid checkpoint: missing or invalid "${field}" (expected object)`);
   }
+}
 
-  validateSessionStateLocals(record['locals'] as Record<string, unknown>);
+function assertArrayField(record: Record<string, unknown>, field: string): void {
+  if (!Array.isArray(record[field])) {
+    throw new Error(`Invalid checkpoint: missing or invalid "${field}" (expected array)`);
+  }
+}
 
-  // Backwards compatibility: treat missing accumulatedResults as empty
+function normalizeAccumulatedResults(record: Record<string, unknown>): void {
   if (!('accumulatedResults' in record)) {
     record['accumulatedResults'] = [];
-  } else if (!Array.isArray(record['accumulatedResults'])) {
+    return;
+  }
+
+  if (!Array.isArray(record['accumulatedResults'])) {
     throw new Error('Invalid checkpoint: invalid "accumulatedResults" (expected array)');
   }
+}
 
-  if (!Array.isArray(record['pendingSignals'])) {
-    throw new Error('Invalid checkpoint: missing or invalid "pendingSignals" (expected array)');
-  }
-
-  if (typeof record['searchAttributes'] !== 'object' || record['searchAttributes'] === null) {
-    throw new Error('Invalid checkpoint: missing or invalid "searchAttributes" (expected object)');
-  }
-
-  if (typeof record['version'] !== 'string') {
-    throw new Error('Invalid checkpoint: missing or invalid "version" (expected string)');
-  }
-
-  if (typeof record['createdAt'] !== 'number') {
-    throw new Error('Invalid checkpoint: missing or invalid "createdAt" (expected number)');
-  }
-
-  // Schema version gate. Pre-1.0 we refuse to load any checkpoint that
-  // doesn't match CURRENT_CHECKPOINT_SCHEMA_VERSION exactly. Older
-  // checkpoints (no field, or numeric < current) are rejected with a
-  // clear migration message; newer checkpoints (numeric > current)
-  // surface as "engine too old."
+function assertCurrentSchemaVersion(record: Record<string, unknown>): void {
   const schemaVersion = record['schemaVersion'];
   if (schemaVersion === undefined) {
     throw new CheckpointSchemaVersionError('pre-versioned', CURRENT_CHECKPOINT_SCHEMA_VERSION);

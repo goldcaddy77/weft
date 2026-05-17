@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Most configuration flows through typed option objects rather than environment variables. Some integrations (OpenTelemetry, observability exporters) may read standard env vars from their own SDKs, but Weft itself does not require any env vars to be set.
+Most configuration flows through typed option objects rather than environment variables. Some integrations ([OpenTelemetry](https://opentelemetry.io/), observability exporters) may read standard env vars from their own SDKs, and a small set of Weft CLI/server paths read explicit `WEFT_*` overrides listed below.
 
 ---
 
@@ -97,12 +97,31 @@ The returned `WeftServer` exposes the resolved `port`, `hostname`, and `url`, al
 **Example:**
 
 ```ts partial
-import { Engine, serve } from 'weft';
+import { Engine } from 'weft';
+import { serve } from 'weft/server';
 
 const engine = new Engine();
 const server = serve({ engine, port: 8080 });
 console.log(`Weft server running at ${server.url}`);
 ```
+
+---
+
+## Environment Variables
+
+Weft's library API does not require environment variables. These variables are read by user-facing runtime, CLI, or conformance paths when you opt into those features. Internal benchmark, coverage, and smoke-test toggles are intentionally documented near the tests and scripts that consume them instead of in this runtime configuration reference.
+
+| Variable                                  | Consumed by                                   | Description                                                                                                                                                       |
+| ----------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WEFT_DEFAULT_STORAGE_PATH`               | `src/storage/auto.ts`                         | Default SQLite path used by automatic storage resolution when no explicit storage path is supplied.                                                               |
+| `WEFT_STRICT_FAULTS`                      | `src/server/operation-catalog/raise-fault.ts` | Set to `1` to use strict server fault details even when `NODE_ENV` is `production`.                                                                               |
+| `WEFT_ALLOW_UNTRUSTED_API_CATALOG_ORIGIN` | `src/server/handler/route-dispatch.ts`        | Local development or CI escape hatch for serving browser-facing API catalog routes without a trusted same-origin request; do not use as production configuration. |
+| `WEFT_TOKEN`                              | `src/cli/codegen.ts`                          | Bearer token fallback for `weft codegen --server` when `--token` is omitted.                                                                                      |
+| `WEFT_WORKER_URL`                         | `src/cli/conformance.ts`                      | Temporary WebSocket task-stream URL injected into worker commands launched by `weft conformance`.                                                                 |
+| `WEFT_WORKER_QUEUE`                       | `src/cli/conformance.ts`                      | Queue name injected into worker commands launched by `weft conformance`.                                                                                          |
+| `WEFT_WORKER_ACTIVITIES`                  | `src/cli/conformance.ts`                      | Comma-separated activity names the conformance worker must expose.                                                                                                |
+| `WEFT_WORKER_PROTOCOL_VERSION`            | `src/cli/conformance.ts`                      | Remote worker protocol version expected by the conformance harness.                                                                                               |
+| `WEFT_CONFORMANCE_HEARTBEAT_INTERVAL_MS`  | `src/cli/conformance.ts`                      | Heartbeat interval injected into repository conformance fixtures; custom workers can ignore it unless needed.                                                     |
 
 ---
 

@@ -4,7 +4,7 @@ Every checkpoint, workflow state, signal, and timer in Weft is ultimately a key-
 
 ## Quick start
 
-The fastest path: let Weft pick a backend.
+SQLite is the default for Bun and Node. IndexedDB is the browser default. For local Bun or Node work, `resolveDefaultStorage()` picks the matching SQLite backend and gives you a persistent database without extra setup.
 
 ```ts
 import { Engine } from 'weft';
@@ -18,21 +18,19 @@ void engine;
 This works under Bun and Node. The path lives under `${tmpdir()}/weft-default/<cwd-hash>.db` (or `WEFT_DEFAULT_STORAGE_PATH` if set).
 
 > [!WARNING]
-> `weft/storage/auto` requires Bun or Node. It throws in browser and Service Worker contexts because it statically imports `node:fs`, `node:os`, `node:path`, and `node:crypto`. For browsers, import `IndexedDBStorage` from `weft/storage/indexeddb` directly, or use `setupServiceWorker()` from `weft/service-worker`.
+> `weft/storage/auto` requires Bun or Node. For browsers, import `IndexedDBStorage` from `weft/storage/indexeddb` directly, or use `setupServiceWorker()` from `weft/service-worker`.
 
-`resolveDefaultStorage()` is for development, demos, and Hello World. Production deployments should pick an explicit adapter—see the [backend selection matrix](#backend-selection-matrix) below.
+`resolveDefaultStorage()` is for development, demos, and Hello World. Production deployments usually pick an explicit adapter so the storage path and backend are part of deployment configuration.
 
 ## Choosing a backend
 
-The shortest version: SQLite is the default for production on Bun or Node, IndexedDB for browsers, WebExtension storage for browser extensions, and HTTP for remote engines. The full picture:
-
-### Backend selection matrix
+Use the narrowest adapter that matches where the engine runs:
 
 | Backend                | Environment       | Persistence | Optional dep     | Notes                                     |
 | ---------------------- | ----------------- | ----------- | ---------------- | ----------------------------------------- |
 | `MemoryStorage`        | All               | No          | None             | Tests/demos only—data lost on restart.    |
 | `SQLiteStorage` (Bun)  | Bun               | Yes         | None             | Default for the Bun runtime.              |
-| `SQLiteStorage` (Node) | Node ≥ 22         | Yes         | None             | Default for the Node runtime.             |
+| `SQLiteStorage` (Node) | Node >= 22        | Yes         | None             | Default for the Node runtime.             |
 | `LMDBStorage`          | Bun/Node          | Yes         | `lmdb`           | High-throughput memory-mapped key-value.  |
 | `TursoStorage`         | Bun/Node          | Yes         | `@libsql/client` | libSQL/Turso for edge or serverless.      |
 | `IndexedDBStorage`     | Browser           | Yes         | None             | Browser native; no SQL passthrough.       |
@@ -40,9 +38,20 @@ The shortest version: SQLite is the default for production on Bun or Node, Index
 | `HTTPStorage`          | All               | Remote      | None             | Connects to a remote Weft storage API.    |
 | `CompressedStorage`    | All               | Wrapper     | None             | Wraps another adapter; compresses values. |
 
-## Using `resolveStorage()`
+## Advanced: choosing a backend explicitly
 
-For runtime-driven selection, `resolveStorage(configuration)` from `weft/storage` (or `weft/storage/resolve`) takes a discriminated `StorageConfiguration` union and returns the matching adapter, lazy-loading the module so optional dependencies aren't required unless you select that backend.
+Use a direct adapter import when you know the deployment target:
+
+```ts
+import { Engine } from 'weft';
+import { SQLiteStorage } from 'weft/storage/sqlite';
+
+using storage = new SQLiteStorage('./weft.db');
+using engine = new Engine({ storage });
+void engine;
+```
+
+Use `resolveStorage(configuration)` when backend choice comes from configuration. It accepts a discriminated `StorageConfiguration` union and lazy-loads the matching adapter, so optional dependencies are only required when you select that backend.
 
 ```ts
 import { Engine } from 'weft';
@@ -76,14 +85,12 @@ type RemoteStorage = ResolvedStorage<HTTPStorageConfiguration>;
 // RemoteStorage is HTTPStorage
 ```
 
-`resolveStorage({ type: 'auto' })` is broader than `resolveDefaultStorage()`—it falls through Bun/Node to WebExtension, then IndexedDB, then `MemoryStorage` as a last resort. Use it when you need one configuration object that works across runtimes including browsers.
+`resolveStorage({ type: 'auto' })` is broader than `resolveDefaultStorage()`: it tries Bun, Node, browser extension storage, IndexedDB, then `MemoryStorage`. Use it only when one configuration object must run across several runtimes.
 
-> [!IMPORTANT]
-> **Bundle vs. runtime safety.** Both `weft/storage` and `weft/storage/resolve` are statically browser-bundle-safe — they only use `import()` (dynamic imports) for backend adapters, so a bundler targeting the browser won't pull in `bun:sqlite` or `node:sqlite` at static-analysis time. But at runtime, calling `resolveStorage({ type: 'sqlite' })` from a browser will throw when the lazy import resolves, because those modules don't load there. `resolveStorage({ type: 'auto' })` handles this by checking runtime globals before picking a backend, but only if the bundler honors dynamic imports correctly (most modern ones do; some legacy webpack configurations require `webpackIgnore` magic comments).
->
-> If you're targeting browser bundles, prefer importing the specific adapter you need (`weft/storage/indexeddb`, `weft/storage/web-extension`) and skip the resolver entirely. Use `resolveStorage({ type: 'auto' })` only in genuinely cross-runtime code where the workflow author cannot know the deployment target ahead of time.
+> [!WARNING]
+> The final `MemoryStorage` fallback is non-durable. Do not use `resolveStorage({ type: 'auto' })` for production recovery unless you also validate that the resolved adapter is persistent for your deployment target.
 
-## Auto-detection order
+### Auto-detection order
 
 `resolveDefaultStorage()` from `weft/storage/auto` checks two globals, in order:
 
@@ -91,15 +98,13 @@ type RemoteStorage = ResolvedStorage<HTTPStorageConfiguration>;
 2. Else if `process.versions.node` is a string, returns `NodeSQLiteStorage`.
 3. Else throws with the exact runtime detection it saw.
 
-Browser and WebExtension contexts intentionally throw—that's a feature. The thrown error tells you to use `IndexedDBStorage` or `setupServiceWorker()` directly.
+Browser and WebExtension contexts intentionally throw. The thrown error tells you to use `IndexedDBStorage` or `setupServiceWorker()` directly.
 
 `resolveStorage({ type: 'auto' })` adds two more steps after Bun and Node:
 
 3. If `chrome.storage` or `browser.storage` is defined, returns `WebExtensionStorage`.
 4. Else if `globalThis.indexedDB` is defined, returns `IndexedDBStorage`.
 5. Else returns `MemoryStorage`.
-
-If you want a single config that runs everywhere, prefer `resolveStorage({ type: 'auto' })`. If you specifically want to fail loudly when run in a browser, prefer `resolveDefaultStorage()`.
 
 ## The Storage interface
 
@@ -163,6 +168,8 @@ This listing covers the primary keys. The full canonical list---including `wf:{i
 All timestamps are zero-padded to 16 digits for correct lexicographic ordering. So `scan("op:default:")` returns all operations on the "default" queue in scheduled order—the core hot path is a single range scan, regardless of backend.
 
 ## Per-backend configuration
+
+Backend transaction guarantees live with each adapter below. `SQLiteStorage`, `IndexedDBStorage`, `LMDBStorage`, and `TursoStorage` apply `batch()` operations atomically; remote or wrapper adapters inherit the guarantee of the storage they delegate to.
 
 ### `MemoryStorage`
 

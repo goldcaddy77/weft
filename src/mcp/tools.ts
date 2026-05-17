@@ -1,5 +1,6 @@
 import type { Engine } from '../core/engine.ts';
 import { RegistrySchemaConversionError } from '../core/registry-snapshot.ts';
+import { runtimeWorkflowEngine } from '../core/runtime-workflow-engine.ts';
 import { definitionSchemaToJsonSchema } from '../core/types/definition-schema-to-json.ts';
 import type { DefinitionSchema } from '../core/types/definition-schema.ts';
 import {
@@ -153,7 +154,9 @@ function buildToolImplementations(engine: Engine): ToolImplementation[] {
           if (context.session.isRequestCancelled(context.requestId)) {
             throw new McpToolExecutionError('Workflow cancelled');
           }
-          const handle = await context.engine.start(definition.type, input, { id: workflowId });
+          const handle = await runtimeWorkflowEngine(context.engine).start(definition.type, input, {
+            id: workflowId,
+          });
           if (context.session.isRequestCancelled(context.requestId)) {
             await context.engine.cancel(handle.id);
           }
@@ -201,7 +204,7 @@ function builtInTools(): ToolImplementation[] {
         const type = requireString(args['type'], 'type');
         const input = applyPrincipalTenantToInput(context.principal, args['input'] ?? {});
         const options = typeof args['id'] === 'string' ? { id: args['id'] } : undefined;
-        const handle = await context.engine.start(type, input, options);
+        const handle = await runtimeWorkflowEngine(context.engine).start(type, input, options);
         return { workflowId: handle.id };
       },
     },

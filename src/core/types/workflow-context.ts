@@ -26,7 +26,7 @@ import type {
   ActivityArguments,
   ActivityResult,
   ActivityTypes,
-  UnregisteredName,
+  UnknownActivityNameWhenRegistryIsEmpty,
 } from './workflow-registries.ts';
 
 export type WorkflowOperationResult<TOperation> =
@@ -114,7 +114,7 @@ export interface WorkflowContext {
     ...rest: [...ActivityArguments<ActivityTypes, TName>, ActivityCallOptions]
   ): WorkflowOperation<ActivityResult<ActivityTypes, TName>>;
   run<TName extends string>(
-    name: UnregisteredName<TName, Extract<keyof ActivityTypes, string>>,
+    name: UnknownActivityNameWhenRegistryIsEmpty<TName>,
     input?: unknown,
     options?: ActivityCallOptions,
   ): WorkflowOperation<unknown>;

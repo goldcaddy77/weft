@@ -118,7 +118,7 @@ export function createWorkerEntryUrl(
 const registrations = new Map();
 ${registrationEntries}
 
-import { initializeWorkerMessageLoop } from '${import.meta.url.replace(/workflow-worker-entry\.[^/]+$/, 'workflow-worker-entry.ts')}';
+import { initializeWorkerMessageLoop } from '${import.meta.url}';
 initializeWorkerMessageLoop((type) => registrations.get(type));
 `;
 

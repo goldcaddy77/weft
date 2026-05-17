@@ -19,6 +19,15 @@ export interface SchedulerOptions {
   getNow?: () => number;
 }
 
+type TimerScanIterators = {
+  deadline: AsyncIterable<[string, Uint8Array]>;
+  delayedStart: AsyncIterable<[string, Uint8Array]>;
+  schedule: AsyncIterable<[string, Uint8Array]>;
+  terminalCleanup: AsyncIterable<[string, Uint8Array]>;
+};
+
+type TimerProcessingResult = 'processed' | 'retry';
+
 /**
  * Scheduler manages durable timers and polls for expired deadlines.
  *
@@ -124,52 +133,18 @@ export class Scheduler implements Disposable {
    *  stop() is called concurrently. flush() passes false so it can drain
    *  timers even after stop().
    */
-  // oxlint-disable-next-line complexity -- ID:core-scheduler-process-expired-timers-complexity
   async #processExpiredTimers(
     now: number | undefined,
     { respectStopped }: { respectStopped: boolean },
   ): Promise<void> {
     const currentTime = now ?? this.#getNow();
-    const deadlineIterator = this.#storage.scan('wf-deadline:', {
-      lt: resolvePrefixRangeEnd(KEYS.deadline(currentTime, '')),
-    });
-    const delayedStartIterator = this.#storage.scan('wf-delayed:', {
-      lt: resolvePrefixRangeEnd(KEYS.delayedStart(currentTime, '')),
-    });
-    const scheduleIterator = this.#storage.scan('schedule-due:', {
-      lt: resolvePrefixRangeEnd(KEYS.scheduleTick(currentTime, '')),
-    });
-    const terminalCleanupIterator = this.#storage.scan('wf-cleanup:', {
-      lt: resolvePrefixRangeEnd(KEYS.terminalCleanup(currentTime, '')),
-    });
-    const timerSources = [
-      {
-        iterator: deadlineIterator[Symbol.asyncIterator](),
-        next: null as ScannedTimerEntry | null,
-        readNext: readNextScannedTimerEntry,
-      },
-      {
-        iterator: delayedStartIterator[Symbol.asyncIterator](),
-        next: null as ScannedTimerEntry | null,
-        readNext: readNextScannedTimerEntry,
-      },
-      {
-        iterator: scheduleIterator[Symbol.asyncIterator](),
-        next: null as ScannedTimerEntry | null,
-        readNext: readNextScannedTimerEntry,
-      },
-      {
-        iterator: terminalCleanupIterator[Symbol.asyncIterator](),
-        next: null as ScannedTimerEntry | null,
-        readNext: readNextTerminalCleanupTimerEntry,
-      },
-    ] satisfies TimerSource[];
+    const timerSources = this.#createTimerSources(this.#scanExpiredTimers(currentTime));
 
     for (const timerSource of timerSources) {
       await advanceTimerSource(timerSource, this.#storage);
     }
 
-    while (timerSources.some((timerSource) => timerSource.next !== null)) {
+    while (this.#hasPendingTimer(timerSources)) {
       const selectedSource = selectNextTimerSource(timerSources);
       const nextEntry = selectedSource?.next;
       if (!nextEntry || !selectedSource) {
@@ -181,46 +156,124 @@ export class Scheduler implements Disposable {
       // skips this check because its purpose is to drain remaining timers.
       if (respectStopped && this.#stopped) return;
 
-      try {
-        await this.#onTimerFired(nextEntry.entry);
-      } catch (error) {
-        // Callback failed — leave the timer in storage so it retries on the
-        // next tick. Do not fall through to the delete below.
-        console.error(`Timer callback failed for timer ${nextEntry.entry.id}:`, error);
+      const processingResult = await this.#processSelectedTimer(nextEntry);
+      if (processingResult === 'retry') {
         await advanceTimerSource(selectedSource, this.#storage);
         continue;
       }
 
-      const indexKey = `timer-idx:${nextEntry.entry.id}`;
-
-      // Callback succeeded — clean up the timer keys. If this delete fails,
-      // the timer will re-fire on the next tick (duplicate execution), but we
-      // surface the error rather than silently swallowing it.
-      try {
-        const cleanupOperations: BatchOperation[] = [{ type: 'delete', key: nextEntry.key }];
-        if (nextEntry.entry.kind === 'schedule') {
-          const indexValue = await this.#storage.get(indexKey);
-          if (indexValue !== null) {
-            const decodedIndexValue = decode(indexValue);
-
-            // Schedule callbacks re-arm the next tick with the same timer id.
-            // Only remove the index when it still points at the timer that just
-            // fired; otherwise we would delete the freshly-registered next tick.
-            if (typeof decodedIndexValue !== 'string' || decodedIndexValue === nextEntry.key) {
-              cleanupOperations.push({ type: 'delete', key: indexKey });
-            }
-          }
-        } else if (shouldDeleteTimerIndexWithoutLookup(nextEntry.entry)) {
-          cleanupOperations.push({ type: 'delete', key: indexKey });
-        }
-
-        await this.#storage.batch(cleanupOperations);
-      } catch (deleteError) {
-        console.error(`Failed to delete timer keys for ${nextEntry.entry.id}:`, deleteError);
-      }
-
       await advanceTimerSource(selectedSource, this.#storage);
     }
+  }
+
+  #scanExpiredTimers(currentTime: number): TimerScanIterators {
+    return {
+      deadline: this.#storage.scan('wf-deadline:', {
+        lt: resolvePrefixRangeEnd(KEYS.deadline(currentTime, '')),
+      }),
+      delayedStart: this.#storage.scan('wf-delayed:', {
+        lt: resolvePrefixRangeEnd(KEYS.delayedStart(currentTime, '')),
+      }),
+      schedule: this.#storage.scan('schedule-due:', {
+        lt: resolvePrefixRangeEnd(KEYS.scheduleTick(currentTime, '')),
+      }),
+      terminalCleanup: this.#storage.scan('wf-cleanup:', {
+        lt: resolvePrefixRangeEnd(KEYS.terminalCleanup(currentTime, '')),
+      }),
+    };
+  }
+
+  #createTimerSources(iterators: TimerScanIterators): TimerSource[] {
+    return [
+      {
+        iterator: iterators.deadline[Symbol.asyncIterator](),
+        next: null as ScannedTimerEntry | null,
+        readNext: readNextScannedTimerEntry,
+      },
+      {
+        iterator: iterators.delayedStart[Symbol.asyncIterator](),
+        next: null as ScannedTimerEntry | null,
+        readNext: readNextScannedTimerEntry,
+      },
+      {
+        iterator: iterators.schedule[Symbol.asyncIterator](),
+        next: null as ScannedTimerEntry | null,
+        readNext: readNextScannedTimerEntry,
+      },
+      {
+        iterator: iterators.terminalCleanup[Symbol.asyncIterator](),
+        next: null as ScannedTimerEntry | null,
+        readNext: readNextTerminalCleanupTimerEntry,
+      },
+    ] satisfies TimerSource[];
+  }
+
+  #hasPendingTimer(timerSources: TimerSource[]): boolean {
+    return timerSources.some((timerSource) => timerSource.next !== null);
+  }
+
+  async #processSelectedTimer(nextEntry: ScannedTimerEntry): Promise<TimerProcessingResult> {
+    try {
+      await this.#onTimerFired(nextEntry.entry);
+    } catch (error) {
+      // Callback failed — leave the timer in storage so it retries on the
+      // next tick. Do not fall through to the delete below.
+      console.error(`Timer callback failed for timer ${nextEntry.entry.id}:`, error);
+      return 'retry';
+    }
+
+    await this.#deleteTimerKeysAfterCallback(nextEntry);
+    return 'processed';
+  }
+
+  async #deleteTimerKeysAfterCallback(nextEntry: ScannedTimerEntry): Promise<void> {
+    try {
+      await this.#storage.batch(await this.#buildTimerCleanupOperations(nextEntry));
+    } catch (deleteError) {
+      console.error(`Failed to delete timer keys for ${nextEntry.entry.id}:`, deleteError);
+    }
+  }
+
+  async #buildTimerCleanupOperations(nextEntry: ScannedTimerEntry): Promise<BatchOperation[]> {
+    const cleanupOperations: BatchOperation[] = [{ type: 'delete', key: nextEntry.key }];
+    const indexDeleteOperation = await this.#buildTimerIndexDeleteOperation(nextEntry);
+    if (indexDeleteOperation) {
+      cleanupOperations.push(indexDeleteOperation);
+    }
+
+    return cleanupOperations;
+  }
+
+  async #buildTimerIndexDeleteOperation(
+    nextEntry: ScannedTimerEntry,
+  ): Promise<BatchOperation | null> {
+    const indexKey = `timer-idx:${nextEntry.entry.id}`;
+    if (nextEntry.entry.kind === 'schedule') {
+      return this.#buildScheduleTimerIndexDeleteOperation(nextEntry, indexKey);
+    }
+
+    return shouldDeleteTimerIndexWithoutLookup(nextEntry.entry)
+      ? { type: 'delete', key: indexKey }
+      : null;
+  }
+
+  async #buildScheduleTimerIndexDeleteOperation(
+    nextEntry: ScannedTimerEntry,
+    indexKey: string,
+  ): Promise<BatchOperation | null> {
+    const indexValue = await this.#storage.get(indexKey);
+    if (indexValue === null) {
+      return null;
+    }
+
+    const decodedIndexValue = decode(indexValue);
+
+    // Schedule callbacks re-arm the next tick with the same timer id.
+    // Only remove the index when it still points at the timer that just
+    // fired; otherwise we would delete the freshly-registered next tick.
+    return typeof decodedIndexValue !== 'string' || decodedIndexValue === nextEntry.key
+      ? { type: 'delete', key: indexKey }
+      : null;
   }
 
   [Symbol.dispose](): void {

@@ -3,8 +3,11 @@ import { describe, expect, it } from 'bun:test';
 import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { AggregateDistinctKeyCapExceededError } from '../aggregate-validation.ts';
+import { encode } from '../codec.ts';
 import { Engine } from '../engine.ts';
-import type { WorkflowContext } from '../types.ts';
+import type { WorkflowContext, WorkflowState } from '../types.ts';
+import { aggregate as aggregateWorkflows } from './aggregate.ts';
+import { getInternals } from './internals.ts';
 
 async function startAndComplete(
   engine: Engine,
@@ -13,6 +16,25 @@ async function startAndComplete(
 ): Promise<void> {
   const handle = await engine.start(workflowType, null, { id: workflowId });
   await handle.result();
+}
+
+async function writeDistinctTypeWorkflows(storage: MemoryStorage, count: number): Promise<void> {
+  const now = Date.now();
+  await storage.batch(
+    Array.from({ length: count }, (_, index) => {
+      const workflowId = `distinct-type-${index}`;
+      const state: WorkflowState = {
+        id: workflowId,
+        type: `distinct-type-${index}`,
+        status: 'completed',
+        input: null,
+        version: 'test',
+        createdAt: now + index,
+        updatedAt: now + index,
+      };
+      return { type: 'put', key: KEYS.workflow(workflowId), value: encode(state) };
+    }),
+  );
 }
 
 describe('engine.aggregate', () => {
@@ -165,6 +187,51 @@ describe('engine.aggregate', () => {
     await expect(
       engine.aggregate(undefined, { groupBy: { attribute: 'unknownAttribute' } }),
     ).rejects.toThrow(/Unknown search attribute/);
+    engine[Symbol.dispose]();
+  });
+
+  it('throws when an aggregate would materialize too many distinct group keys', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    await writeDistinctTypeWorkflows(storage, 4);
+
+    try {
+      await aggregateWorkflows(
+        getInternals(engine),
+        undefined,
+        { groupBy: 'type' },
+        {
+          distinctKeyCap: 3,
+        },
+      );
+      throw new Error('Expected aggregate to reject after exceeding the distinct-key cap');
+    } catch (error) {
+      expect(error).toBeInstanceOf(AggregateDistinctKeyCapExceededError);
+      if (error instanceof AggregateDistinctKeyCapExceededError) {
+        expect(error.cap).toBe(3);
+      }
+    } finally {
+      engine[Symbol.dispose]();
+    }
+  });
+
+  it('allows aggregates exactly at the distinct-key cap', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    await writeDistinctTypeWorkflows(storage, 3);
+
+    const result = await aggregateWorkflows(
+      getInternals(engine),
+      undefined,
+      { groupBy: 'type' },
+      {
+        distinctKeyCap: 3,
+      },
+    );
+
+    expect(result.total).toBe(3);
+    expect(result.groups).toHaveLength(3);
+    expect(result.truncated).toBe(false);
     engine[Symbol.dispose]();
   });
 

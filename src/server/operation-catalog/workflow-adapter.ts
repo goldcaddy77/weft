@@ -1,10 +1,10 @@
 import { z } from 'zod';
 
-import type { Engine } from '../../core/engine.ts';
 import {
   WorkflowAlreadyExistsError,
   WorkflowNotRegisteredError,
 } from '../../core/engine/errors.ts';
+import { runtimeWorkflowEngine } from '../../core/runtime-workflow-engine.ts';
 import { StartWorkflowValidationError } from '../../core/start-workflow-validation.ts';
 import { QuotaExceededError } from '../../core/tenant-quotas.ts';
 import type { WorkflowRegistration } from '../../core/types.ts';
@@ -99,10 +99,10 @@ export function catalogWorkflow<Input>(
     unknownKeyPolicy: { ...options.unknownKeyPolicy },
     ...(options.authorize === undefined ? {} : { authorize: options.authorize }),
     invoke: async ({ input, engine }): Promise<StartHandle> => {
-      // Engine is supplied by the dispatch context. The cast to `Engine`
-      // matches the project-accepted pattern in start-workflow.ts; it
-      // narrows from the dispatcher's `unknown` engine slot.
-      const typedEngine = engine as Engine;
+      // Engine is supplied by the dispatch context, whose shared shape keeps
+      // the engine slot unknown. The runtime view keeps workflow-type strings
+      // validated by Engine.start() instead of by a module augmentation.
+      const typedEngine = runtimeWorkflowEngine(engine);
 
       try {
         const handle = await typedEngine.start(options.workflowType, input);

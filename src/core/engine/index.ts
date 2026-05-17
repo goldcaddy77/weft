@@ -18,8 +18,6 @@ import {
   DEFAULT_RETENTION_SWEEP_BATCH_SIZE,
   DEFAULT_RETENTION_SWEEP_INTERVAL_MS,
   messageName,
-  type ActivityTypes,
-  type AllowsDynamicWorkflowNames,
   type AnyActivityDefinition,
   type AnyWorkflowDefinition,
   type AttributeFilterKey,
@@ -35,6 +33,7 @@ import {
   type CheckpointState,
   type CheckpointSummary,
   type CoordinatedUpdateResult,
+  type DefaultActivityTypes,
   type DefaultWorkflowRegistry,
   type EngineOptions,
   type ForkOptions,
@@ -42,6 +41,7 @@ import {
   type InferActivityEntry,
   type InferWorkflowEntries,
   type InferWorkflowEntry,
+  type IsDefaultWorkflowRegistry,
   type ListFilter,
   type ListOptions,
   type MessageName,
@@ -64,7 +64,6 @@ import {
   type SubmitReviewOptions,
   type TenantQuotaUsage,
   type TypedListFilter,
-  type UnregisteredName,
   type UpdateDefinition,
   type WorkerOutboundMessage,
   type WorkflowEvent,
@@ -78,6 +77,7 @@ import {
   type WorkflowTimelineEntry,
 } from '../types.ts';
 import type { TimerEntry } from '../types/checkpoint.ts';
+import type { UnknownNameWhenRegistryHasNoKnownNames } from '../types/registry-type-helpers.ts';
 import { UpdateCoordinator } from '../updates.ts';
 import { WorkerExecutionStrategy } from '../worker-execution-strategy.ts';
 import {
@@ -333,9 +333,12 @@ type EngineCreateRuntimeOptions = EngineConstructorOptions & {
   acknowledgeUnknownWorkflowTypes?: boolean | undefined;
 };
 
-type DynamicWorkflowName<TWorkflows extends object, TName extends string> =
-  AllowsDynamicWorkflowNames<TWorkflows> extends true
-    ? UnregisteredName<TName, KnownWorkflowNames<TWorkflows>>
+type UnknownWorkflowNameWhenDefaultRegistryIsEmpty<
+  TWorkflows extends object,
+  TName extends string,
+> =
+  IsDefaultWorkflowRegistry<TWorkflows> extends true
+    ? UnknownNameWhenRegistryHasNoKnownNames<TName, KnownWorkflowNames<TWorkflows>>
     : never;
 
 type ActivityDefinitionName<TDefinition extends AnyActivityDefinition> = TDefinition extends {
@@ -682,7 +685,7 @@ export const ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING = Symbol('engineSignalWaiter
  */
 export class Engine<
   TWorkflows extends object = DefaultWorkflowRegistry,
-  TActivities extends object = ActivityTypes,
+  TActivities extends object = DefaultActivityTypes,
 >
   extends EventTarget
   implements Disposable, AsyncDisposable
@@ -1032,11 +1035,11 @@ export class Engine<
     >,
   ): this;
   register<TName extends string, TInput = unknown, TOutput = unknown>(
-    name: UnregisteredName<TName, KnownWorkflowNames<TWorkflows>>,
+    name: UnknownWorkflowNameWhenDefaultRegistryIsEmpty<TWorkflows, TName>,
     handler: WorkflowFunction<TInput, TOutput> | StepWorkflowFunction<TInput, TOutput>,
   ): this;
   register<TName extends string, TInput = unknown, TOutput = unknown>(
-    name: UnregisteredName<TName, KnownWorkflowNames<TWorkflows>>,
+    name: UnknownWorkflowNameWhenDefaultRegistryIsEmpty<TWorkflows, TName>,
     registration: WorkflowRegistration<TInput, TOutput>,
   ): this;
   register(nameOrDefinition: unknown, handlerOrRegistrationOrOptions?: unknown): unknown {
@@ -1089,7 +1092,7 @@ export class Engine<
     options?: StartOptions,
   ): Promise<WorkflowHandle<WorkflowOutput<TWorkflows, TName>>>;
   async start<TName extends string>(
-    type: DynamicWorkflowName<TWorkflows, TName>,
+    type: UnknownWorkflowNameWhenDefaultRegistryIsEmpty<TWorkflows, TName>,
     input: unknown,
     options?: StartOptions,
   ): Promise<WorkflowHandle>;

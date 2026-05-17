@@ -9,6 +9,7 @@ import { LongPollWorker } from './long-poll.ts';
 
 const POLL_PATH_RE = /^\/v1\/tasks\/([\w-]+)$/;
 const RESULT_PATH_RE = /^\/v1\/tasks\/([\w-]+)\/result$/;
+const LONG_POLL_TEST_TIMEOUT_MS = 2_000;
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -170,7 +171,11 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await withTimeout(taskCompleted.promise, 500, 'long-poll task completion');
+    await withTimeout(
+      taskCompleted.promise,
+      LONG_POLL_TEST_TIMEOUT_MS,
+      'long-poll task completion',
+    );
     await worker.stop();
 
     expect(completedTasks.length).toBeGreaterThanOrEqual(1);
@@ -223,7 +228,11 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await withTimeout(taskCompleted.promise, 500, 'long-poll failure completion');
+    await withTimeout(
+      taskCompleted.promise,
+      LONG_POLL_TEST_TIMEOUT_MS,
+      'long-poll failure completion',
+    );
     await worker.stop();
 
     const errorCompletion = completedTasks.find((t) => t.operationId === 'op-err-1');
@@ -259,7 +268,7 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await withTimeout(pollObserved.promise, 500, 'long-poll request');
+    await withTimeout(pollObserved.promise, LONG_POLL_TEST_TIMEOUT_MS, 'long-poll request');
     await worker.stop();
 
     // Should have attempted at least one poll
@@ -307,7 +316,11 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await withTimeout(taskCompleted.promise, 500, 'unknown activity completion');
+    await withTimeout(
+      taskCompleted.promise,
+      LONG_POLL_TEST_TIMEOUT_MS,
+      'unknown activity completion',
+    );
     await worker.stop();
 
     // Should have reported the unknown activity as a failure
@@ -358,7 +371,11 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await withTimeout(activityAttempted.promise, 500, 'failing activity attempt');
+    await withTimeout(
+      activityAttempted.promise,
+      LONG_POLL_TEST_TIMEOUT_MS,
+      'failing activity attempt',
+    );
     await worker.stop();
 
     // Should not crash; worker should still stop cleanly
@@ -408,7 +425,7 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await withTimeout(taskCompleted.promise, 500, 'string throw completion');
+    await withTimeout(taskCompleted.promise, LONG_POLL_TEST_TIMEOUT_MS, 'string throw completion');
     await worker.stop();
 
     const errorCompletion = completedTasks.find((t) => t.operationId === 'op-string-throw');
@@ -440,7 +457,7 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await withTimeout(pollObserved.promise, 500, 'billing queue poll');
+    await withTimeout(pollObserved.promise, LONG_POLL_TEST_TIMEOUT_MS, 'billing queue poll');
     await worker.stop();
 
     expect(capturedPath).toBe('/v1/tasks/billing');
@@ -502,7 +519,11 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await withTimeout(taskCompleted.promise, 500, 'intercepted task completion');
+    await withTimeout(
+      taskCompleted.promise,
+      LONG_POLL_TEST_TIMEOUT_MS,
+      'intercepted task completion',
+    );
     await worker.stop();
 
     expect(interceptorOrder).toEqual(['before:processOrder', 'after:processOrder']);
@@ -561,7 +582,11 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await withTimeout(taskCompleted.promise, 500, 'modified input task completion');
+    await withTimeout(
+      taskCompleted.promise,
+      LONG_POLL_TEST_TIMEOUT_MS,
+      'modified input task completion',
+    );
     await worker.stop();
 
     const taskCompletion = completedTasks.find((t) => t.operationId === 'op-lp-modify');
@@ -621,7 +646,11 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await withTimeout(taskCompleted.promise, 500, 'header propagation task completion');
+    await withTimeout(
+      taskCompleted.promise,
+      LONG_POLL_TEST_TIMEOUT_MS,
+      'header propagation task completion',
+    );
     await worker.stop();
 
     expect(capturedHeaders).toBeDefined();

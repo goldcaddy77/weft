@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 
 import { Engine } from '../core/engine.ts';
+import {
+  runtimeWorkflowEngine,
+  type RuntimeWorkflowEngine,
+} from '../core/runtime-workflow-engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { activity } from '../core/types.ts';
 
@@ -20,7 +24,7 @@ const TOOL_LATENCY_MS = Number(process.env['WEFT_SPECULATION_BENCH_LATENCY_MS'] 
 const TARGET_REDUCTION = 0.3;
 
 async function measureWorkflowDuration(
-  engine: Engine,
+  engine: RuntimeWorkflowEngine,
   type: string,
   runs: number,
 ): Promise<number> {
@@ -37,7 +41,7 @@ async function measureWorkflowDuration(
 
 describe('Track 3 speculation benchmark', () => {
   it('Track 3 speculation benchmark: ≥30% latency reduction with zero incorrect results', async () => {
-    const engine = new Engine();
+    const engine = runtimeWorkflowEngine(new Engine());
 
     const mockToolTurn = activity({
       name: 'mock-tool-turn',
