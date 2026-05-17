@@ -13,6 +13,7 @@ description: >-
 - Restoring verified 100 percent coverage from `coverage/lcov.info` or `scripts/check-coverage.ts`.
 - Covering protocol parsing, OpenAPI or AsyncAPI schema branches, conformance harness output, shutdown, or observability helpers.
 - Covering codegen declaration output, doctest extraction, skip-count parsing, or generated fixture typechecking.
+- Covering workflow visibility indexes, aggregate distinct-key caps, failure-category query aliases, backfill watermarks, or Bun SQLite smoke paths.
 - Deciding whether a coverage allowance is justified.
 - Building a structural test double to reach a branch hidden by normal constructors or registries.
 
@@ -28,8 +29,9 @@ description: >-
 2. Decide whether the branch is reachable, dead, generated, or race-only before editing source.
 3. Prefer focused regression tests that prove a real invariant, such as component-name collision suffixing or conformance error formatting.
 4. For codegen and doctest work, pin both successful output and failure behavior: byte-stable `.d.ts` fixtures, strict typecheck consumers, invalid snapshot diagnostics, and malformed skip-count files.
-5. Use structural test doubles when normal builders enforce invariants that prevent exercising the target branch.
-6. Keep allowlist entries narrow, documented, and removable; remove stale allowances when coverage becomes real.
+5. For workflow visibility coverage, prove both indexed and fallback paths when relevant; include conflict/drop behavior for backfills and cap failures for aggregates instead of only testing happy-path lists.
+6. Use structural test doubles when normal builders enforce invariants that prevent exercising the target branch.
+7. Keep allowlist entries narrow, documented, and removable; remove stale allowances when coverage becomes real.
 
 ## Verification
 

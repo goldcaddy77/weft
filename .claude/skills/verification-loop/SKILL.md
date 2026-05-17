@@ -61,7 +61,7 @@ For focused verification during development, run tests for just the affected are
 ```bash
 bun test src/core        # Core engine tests
 bun test src/storage     # Storage backend tests
-bun test src/ai          # AI/agent tests
+bun test src/mcp         # MCP transport tests
 bun test src/server      # Server API tests
 bun test src/testing     # Testing infrastructure tests
 ```
@@ -79,7 +79,7 @@ Every addition or removal in `src/index.ts` is a public API change. Verify:
 - New exports are intentional and properly typed
 - No internal types or implementation details leaked into the public surface
 - Removed exports are truly unused by consumers
-- Also check the secondary entrypoints: `./service-worker`, `./storage/indexeddb`, `./storage/text-value-store`, `./server/handler`
+- Also check the secondary entrypoints: `./service-worker`, `./storage/indexeddb`, `./storage/text-value-store`, `./storage/compressed`, `./server`, `./server/handler`, `./mcp`
 
 ### Documentation Gates
 

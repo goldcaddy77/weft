@@ -16,8 +16,8 @@ Checklist for reviewing security-sensitive changes in the weft durable execution
 
 ## When to Activate
 
-- Adding or modifying server routes (`src/server/handler.ts`)
-- Changing MCP authentication or credential handling (`src/ai/mcp/`)
+- Adding or modifying server routes (`src/server/handler.ts`, `src/server/operations/**`, `src/server/handler/**`)
+- Changing MCP discovery, authentication, sessions, tools, or resources (`src/mcp/**`, `src/server/mcp-discovery.ts`)
 - Modifying workflow execution, checkpoint replay, or activity dispatch (`src/core/`)
 - Changing storage backends or serialization (`src/storage/`, `src/core/codec.ts`)
 - Adding new public API surface (`src/index.ts`)
@@ -29,24 +29,26 @@ Checklist for reviewing security-sensitive changes in the weft durable execution
 
 **File**: `src/server/handler.ts`
 
-The server exposes 12 REST routes via `handleRequest(request, engine)`. For each route that accepts input:
+The server routes through operation handlers plus transport-specific discovery endpoints. For each route that accepts input:
 
 - [ ] Path parameters are decoded safely (`decodeURIComponent` is already used — verify no double-decoding)
 - [ ] Request bodies are parsed with try/catch (malformed JSON returns 400, not 500)
-- [ ] Query parameters (`status`, `type`, `limit`, `offset`) are validated before use — check for NaN on numeric params, validate enum values against allowed sets
+- [ ] Query parameters (`status`, `type`, `tenant_id`, `failure_category`, date ranges, `limit`, `offset`) are validated before use — check for NaN on numeric params, validate enum values against allowed sets
 - [ ] No user-controlled strings are interpolated into storage keys without sanitization
 - [ ] Error messages do not leak internal state (stack traces, storage keys, file paths)
+- [ ] Discovery documents that emit absolute URLs use `publicOrigin` or trusted host validation, not arbitrary Host-header text
 
-Routes that accept bodies: `POST /v1/workflows`, `POST /v1/workflows/{id}/signal/{name}`, `POST /v1/workflows/{id}/update/{name}`, `PATCH /v1/workflows/{id}/attributes`
+Routes that accept bodies include workflow start, signal, update, query, attributes, review decisions, bulk actions, JSON-RPC, HTTP storage, and MCP `POST /mcp`.
 
 ### 2. MCP Authentication
 
-**Files**: `src/ai/mcp/authentication.ts`, `src/ai/mcp/client.ts`
+**Files**: `src/mcp/**`, `src/server/runtime/authentication-bridge.ts`, `src/server/mcp-discovery.ts`
 
-- [ ] Bearer tokens and API keys from `MCPAuthConfig` are never logged, serialized to checkpoints, or included in error messages
-- [ ] `buildAuthHeaders()` does not leak credentials through header names in error paths
-- [ ] Token values are not stored in workflow state that gets persisted to storage
-- [ ] If MCP connections fail, retry logic does not log the auth headers
+- [ ] Bearer tokens, startup tokens, API keys, and authenticated principals are never logged, serialized to checkpoints, or included in error messages
+- [ ] `initialize` binds the authenticated principal to the MCP session, and subsequent POST/GET/DELETE requests cannot switch principals by changing headers
+- [ ] Tenant-scoped MCP sessions can only list, read, or mutate workflows in their tenant; cross-tenant resources should appear not found
+- [ ] Local stdio admission requires `--startup-token` or an explicit trusted-boundary flag
+- [ ] Workflow tool failures return MCP tool results with `isError: true` without leaking server internals
 
 ### 3. Workflow Trust Boundary
 

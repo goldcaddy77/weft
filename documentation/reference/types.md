@@ -489,7 +489,7 @@ interface EngineOptions {
   tenantResolver?: TenantResolver;
   quotas?: TenantQuotaOptions;
   retention?: RetentionPolicy;
-  compression?: boolean;
+  compression?: CompressionOptions;
   workerExecution?: WorkerExecutionOptions;
   activityExecution?: ActivityExecutionOptions;
   alerts?: AlertOptions[];
@@ -497,6 +497,17 @@ interface EngineOptions {
 ```
 
 See [Configuration](./configuration.md) for detailed field descriptions and defaults.
+
+### `CompressionOptions`
+
+```ts
+type CompressionOptions = {
+  threshold?: number;
+  algorithm?: 'gzip' | 'brotli' | 'none';
+};
+```
+
+Compression is storage-layer framing for checkpoints and activity results. Payloads get a two-byte header before storage so engine-level compression and `CompressedStorage` can distinguish gzip, brotli, and uncompressed values during reads.
 
 ### `StartOptions`
 
