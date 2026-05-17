@@ -1,5 +1,6 @@
 import { workflow, type WorkflowContext } from 'weft';
 
+import { cancelStaleOrder } from '../activities/shipping';
 import type { SweepStaleOrdersInput, SweepStaleOrdersResult } from '../model';
 
 export const sweepStaleOrdersWorkflow = workflow({
@@ -9,21 +10,17 @@ export const sweepStaleOrdersWorkflow = workflow({
     input: SweepStaleOrdersInput,
   ): AsyncGenerator<unknown, SweepStaleOrdersResult, unknown> {
     yield* context.memo(`sweep:${input.now}`, () => input.staleOrderIds.length);
-    const cancelledOrderResults = yield* context.all(
+    const cancelledOrderIds = yield* context.all(
       input.staleOrderIds.map((orderId) =>
-        context.run('orderProcessingCancelStaleOrder', {
+        context.run(cancelStaleOrder, {
           orderId,
           reason: 'stale-order-sweep',
         }),
       ),
     );
     return {
-      cancelledOrderIds: cancelledOrderResults.filter(isString),
+      cancelledOrderIds,
       scannedOrderCount: input.staleOrderIds.length,
     };
   },
 });
-
-function isString(value: unknown): value is string {
-  return typeof value === 'string';
-}

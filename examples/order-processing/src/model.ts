@@ -103,7 +103,7 @@ export interface ShipmentResult {
 
 export interface CancelStaleOrderInput {
   orderId: string;
-  reason: 'stale-order-sweep';
+  reason: string;
 }
 
 export type OrderCompletion = CancelledOrderCompletion | ShippedOrderCompletion;
