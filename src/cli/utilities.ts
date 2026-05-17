@@ -21,10 +21,13 @@ function isMissingDirectoryError(error: unknown): boolean {
   );
 }
 
-function globPatternIncludesTestFiles(pattern: string): boolean {
-  return /(?:^|[./{,])(?:test|tests|spec|specs)(?:[.}/,]|$)/.test(
-    normalizeGlobPatternPath(pattern),
-  );
+function globPatternIncludesTestFiles(scanRoot: string, pattern: string): boolean {
+  const testSegmentRegex = /(?:^|[./{,])(?:test|tests|spec|specs)(?:[.}/,]|$)/;
+  if (testSegmentRegex.test(normalizeGlobPatternPath(pattern))) {
+    return true;
+  }
+  const lastScanRootSegment = normalizeGlobPatternPath(scanRoot).split('/').pop() ?? '';
+  return testSegmentRegex.test(lastScanRootSegment);
 }
 
 function shouldIgnoreExpandedGlobPath(entryPath: string, ignoreTestFiles: boolean): boolean {
@@ -79,7 +82,7 @@ export async function expandGlobEntryPaths(entryPaths: string[]): Promise<string
 
     const { scanRoot, pattern } = splitGlobPattern(entryPath);
     const { matchedPaths, ignoredMatchCount } = await scanGlobMatches(scanRoot, pattern, {
-      ignoreTestFiles: !globPatternIncludesTestFiles(entryPath),
+      ignoreTestFiles: !globPatternIncludesTestFiles(scanRoot, pattern),
       recurseIntoSubdirectories: globPatternMayMatchNestedPath(pattern),
     });
     const matches = matchedPaths.map((match) => join(scanRoot, match)).toSorted();
