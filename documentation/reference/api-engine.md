@@ -28,7 +28,7 @@ Creates a new engine instance. All options are optional -- sensible defaults are
 | `tenantResolver`                 | `TenantResolver`           | `undefined`           | Resolves tenant context from workflow start options for multi-tenant isolation |
 | `quotas`                         | `TenantQuotaOptions`       | `undefined`           | Per-tenant quota configuration for workflow creation rate limiting             |
 | `retention`                      | `RetentionPolicy`          | `undefined`           | Default retention policy for completed/failed/cancelled workflows              |
-| `compression`                    | `boolean`                  | `false`               | Enable checkpoint compression                                                  |
+| `compression`                    | `CompressionOptions`       | `undefined`           | Enable framed storage payload compression for checkpoints and activity results |
 | `workerExecution`                | `WorkerExecutionOptions`   | `undefined`           | Configuration for offloading workflow execution to Web Workers                 |
 | `activityExecution`              | `ActivityExecutionOptions` | `undefined`           | Configuration for activity execution behavior                                  |
 | `alerts`                         | `AlertOptions[]`           | `undefined`           | Metric alert thresholds that fire `AlertFiredEvent` / `AlertResolvedEvent`     |
@@ -328,7 +328,7 @@ interface EngineOptions {
   tenantResolver?: TenantResolver;
   quotas?: TenantQuotaOptions;
   retention?: RetentionPolicy;
-  compression?: boolean;
+  compression?: CompressionOptions;
   workerExecution?: WorkerExecutionOptions;
   activityExecution?: ActivityExecutionOptions;
   alerts?: AlertOptions[];

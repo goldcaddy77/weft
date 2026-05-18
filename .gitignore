@@ -108,4 +108,8 @@ tmp/
 weft.db
 weft.db-shm
 weft.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
 .codex-worktrees/
+tmp/

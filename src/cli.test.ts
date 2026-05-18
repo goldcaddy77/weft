@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { waitForCondition } from './testing/fake-timers.ts';
 
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -25,6 +25,7 @@ import {
   parseCliArguments,
   splitGlobPattern,
 } from './cli/index.ts';
+import { expandGlobEntryPaths } from './cli/utilities.ts';
 import { encode } from './core/codec.ts';
 import type { WorkflowContext } from './core/types.ts';
 import { KEYS } from './storage/interface.ts';
@@ -1532,10 +1533,152 @@ describe('executeValidate', () => {
       hasLoadErrors: false,
       hasValidationErrors: false,
     });
-    expect(parsed.entries.map((entry) => entry.entryPath)).toEqual([
-      'examples/customer-profile.ts',
-      'examples/hello-world.ts',
-    ]);
+    const validatedEntryPaths = parsed.entries.map((entry) => entry.entryPath);
+    expect(validatedEntryPaths).toContain('examples/customer-profile.ts');
+    expect(validatedEntryPaths).toContain('examples/hello-world.ts');
+    expect(validatedEntryPaths).toContain('examples/order-processing/src/workflows/order.ts');
+    expect(new Set(validatedEntryPaths).size).toBe(validatedEntryPaths.length);
+  });
+
+  it('prunes nested node_modules directories before expanding validation globs', async () => {
+    const workspacePath = join(tmpdir(), `weft-validate-glob-prune-${crypto.randomUUID()}`);
+    const examplePath = join(workspacePath, 'examples', 'order-processing');
+    const nestedPackagePath = join(examplePath, 'node_modules', 'weft', 'examples', 'recursive');
+
+    try {
+      mkdirSync(nestedPackagePath, { recursive: true });
+      await Bun.write(join(examplePath, 'src.ts'), 'export const workflow = "clean";');
+      await Bun.write(
+        join(examplePath, 'src.test.ts'),
+        'throw new Error("test file should be ignored");',
+      );
+      await Bun.write(
+        join(nestedPackagePath, 'bad.ts'),
+        'throw new Error("node_modules should be ignored");',
+      );
+
+      await expect(
+        expandGlobEntryPaths([join(workspacePath, 'examples/**/*.ts')]),
+      ).resolves.toEqual([join(workspacePath, 'examples/order-processing/src.ts')]);
+    } finally {
+      rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it('includes test files when validation globs explicitly target tests', async () => {
+    const workspacePath = join(tmpdir(), `weft-validate-explicit-test-glob-${crypto.randomUUID()}`);
+    const examplePath = join(workspacePath, 'examples', 'order-processing');
+
+    try {
+      mkdirSync(examplePath, { recursive: true });
+      await Bun.write(join(examplePath, 'src.ts'), 'export const workflow = "clean";');
+      await Bun.write(join(examplePath, 'src.test.ts'), 'export const testWorkflow = "clean";');
+
+      await expect(
+        expandGlobEntryPaths([join(workspacePath, 'examples/**/*.test.ts')]),
+      ).resolves.toEqual([join(workspacePath, 'examples/order-processing/src.test.ts')]);
+    } finally {
+      rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it('includes test files when validation globs explicitly target a tests directory', async () => {
+    const workspacePath = join(tmpdir(), `weft-validate-tests-directory-${crypto.randomUUID()}`);
+    const testsPath = join(workspacePath, 'examples', 'order-processing', 'tests');
+
+    try {
+      mkdirSync(testsPath, { recursive: true });
+      await Bun.write(
+        join(testsPath, 'order-processing.test.ts'),
+        'export const workflow = "test";',
+      );
+
+      await expect(
+        expandGlobEntryPaths([join(workspacePath, 'examples/**/tests/**/*.ts')]),
+      ).resolves.toEqual([
+        join(workspacePath, 'examples/order-processing/tests/order-processing.test.ts'),
+      ]);
+    } finally {
+      rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it('includes test files when the scan root explicitly targets a tests directory', async () => {
+    const workspacePath = join(tmpdir(), `weft-validate-tests-scanroot-${crypto.randomUUID()}`);
+    const testsPath = join(workspacePath, 'examples', 'order-processing', 'tests');
+
+    try {
+      mkdirSync(testsPath, { recursive: true });
+      await Bun.write(
+        join(testsPath, 'order-processing.test.ts'),
+        'export const workflow = "test";',
+      );
+
+      await expect(
+        expandGlobEntryPaths([join(workspacePath, 'examples/order-processing/tests/**/*.ts')]),
+      ).resolves.toEqual([
+        join(workspacePath, 'examples/order-processing/tests/order-processing.test.ts'),
+      ]);
+    } finally {
+      rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it('does not infer test-file intent from absolute checkout path segments', async () => {
+    const workspacePath = join(tmpdir(), `weft-test-parent-${crypto.randomUUID()}`);
+    const examplePath = join(workspacePath, 'examples', 'order-processing');
+
+    try {
+      mkdirSync(examplePath, { recursive: true });
+      await Bun.write(join(examplePath, 'src.ts'), 'export const workflow = "clean";');
+      await Bun.write(join(examplePath, 'src.test.ts'), 'export const testWorkflow = "clean";');
+
+      await expect(
+        expandGlobEntryPaths([join(workspacePath, 'examples/**/*.ts')]),
+      ).resolves.toEqual([join(workspacePath, 'examples/order-processing/src.ts')]);
+    } finally {
+      rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it('does not return a literal glob when all matches are intentionally ignored', async () => {
+    const workspacePath = join(tmpdir(), `weft-validate-ignored-only-${crypto.randomUUID()}`);
+    const examplePath = join(workspacePath, 'examples');
+
+    try {
+      mkdirSync(examplePath, { recursive: true });
+      await Bun.write(join(examplePath, 'only.test.ts'), 'export const testWorkflow = "clean";');
+
+      await expect(expandGlobEntryPaths([join(workspacePath, 'examples/*.ts')])).resolves.toEqual(
+        [],
+      );
+    } finally {
+      rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a validation load error instead of throwing when a glob root is missing', async () => {
+    const missingGlobPath = join(
+      tmpdir(),
+      `weft-validate-missing-glob-${crypto.randomUUID()}`,
+      'examples/**/*.ts',
+    );
+
+    const result = await executeValidate({
+      entryPaths: [missingGlobPath],
+      json: true,
+    });
+
+    expect(result.exitCode).toBe(2);
+    const parsed = JSON.parse(result.stdout) as {
+      entries: Array<{ entryPath: string; loadError?: string }>;
+      hasLoadErrors: boolean;
+    };
+    expect(parsed.hasLoadErrors).toBe(true);
+    expect(parsed.entries[0]).toMatchObject({
+      entryPath: missingGlobPath,
+    });
+    expect(parsed.entries[0]?.loadError).toContain('Cannot find module');
   });
 
   it('returns exitCode 2 when a clean entry and a missing entry are validated together', async () => {

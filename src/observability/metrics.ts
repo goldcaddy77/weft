@@ -9,7 +9,7 @@
  */
 
 import { METRICS } from './metrics-catalog.ts';
-import type { MetricsSnapshot } from './metrics-snapshot.ts';
+import type { MetricDefinition, MetricType, MetricsSnapshot } from './metrics-snapshot.ts';
 import type { OpenTelemetryMeter } from './no-op-telemetry';
 import { getOpenTelemetryApi } from './no-op-telemetry';
 
@@ -19,8 +19,8 @@ export type {
   GaugeMetric,
   HistogramMetric,
   MetricDefinition,
-  MetricsSnapshot,
   MetricType,
+  MetricsSnapshot,
 } from './metrics-snapshot.ts';
 
 // ---------------------------------------------------------------------------
@@ -277,6 +277,66 @@ export interface PrometheusExporter {
   serialize(): string | Promise<string>;
 }
 
+type MetricFormatter = (
+  safeName: string,
+  collected: MetricsSnapshot[string] | undefined,
+) => string[];
+
+function formatHistogramLines(
+  safeName: string,
+  collected: MetricsSnapshot[string] | undefined,
+): string[] {
+  const count = collected?.type === 'histogram' ? collected.count : 0;
+  const sum = collected?.type === 'histogram' ? collected.sum : 0;
+  return [`# TYPE ${safeName} histogram`, `${safeName}_count ${count}`, `${safeName}_sum ${sum}`];
+}
+
+function formatCounterLines(
+  safeName: string,
+  collected: MetricsSnapshot[string] | undefined,
+): string[] {
+  const value = collected?.type === 'counter' ? collected.value : 0;
+  return [`# TYPE ${safeName} counter`, `${safeName}_total ${value}`];
+}
+
+function formatGaugeLines(
+  safeName: string,
+  collected: MetricsSnapshot[string] | undefined,
+): string[] {
+  const value = collected?.type === 'gauge' ? collected.value : 0;
+  return [`# TYPE ${safeName} gauge`, `${safeName} ${value}`];
+}
+
+const METRIC_FORMATTERS: Record<MetricType, MetricFormatter> = {
+  histogram: formatHistogramLines,
+  counter: formatCounterLines,
+  gauge: formatGaugeLines,
+};
+
+function formatMetric(metric: MetricDefinition, snapshot: MetricsSnapshot): string[] {
+  const safeName = metric.name.replace(/\./g, '_');
+  const collected = snapshot[metric.name];
+  return [
+    `# HELP ${safeName} ${metric.description}`,
+    ...METRIC_FORMATTERS[metric.type](safeName, collected),
+  ];
+}
+
+// Derived DPMO gauge: (defects / operations) * 1_000_000.
+function formatDpmoGaugeLines(snapshot: MetricsSnapshot): string[] {
+  const defectsEntry = snapshot[METRICS.dpmoDefects.name];
+  const operationsEntry = snapshot[METRICS.dpmoOperations.name];
+  const defects = defectsEntry?.type === 'counter' ? defectsEntry.value : 0;
+  const operations = operationsEntry?.type === 'counter' ? operationsEntry.value : 0;
+  const value = operations === 0 ? 0 : (defects * 1_000_000) / operations;
+  const name = 'weft_dpmo';
+  return [
+    `# HELP ${name} Defects per million operations (failed workflows / started workflows * 1e6)`,
+    `# TYPE ${name} gauge`,
+    `${name} ${value}`,
+  ];
+}
+
 /**
  * Serialize a {@link MetricsSnapshot} as Prometheus text format using the
  * definitions registered in {@link METRICS}. Metrics that aren't in the
@@ -293,46 +353,12 @@ export interface PrometheusExporter {
  * console.log(body.includes('weft_workflow_started_total'));
  * ```
  */
-// oxlint-disable-next-line complexity -- ID:observability-metrics-serialize-metrics-snapshot-for-prometheus-complexity
 export function serializeMetricsSnapshotForPrometheus(snapshot: MetricsSnapshot): string {
   const lines: string[] = [];
-
   for (const metric of Object.values(METRICS)) {
-    const safeName = metric.name.replace(/\./g, '_');
-    const collected = snapshot[metric.name];
-
-    lines.push(`# HELP ${safeName} ${metric.description}`);
-
-    if (metric.type === 'histogram') {
-      lines.push(`# TYPE ${safeName} histogram`);
-      const count = collected?.type === 'histogram' ? collected.count : 0;
-      const sum = collected?.type === 'histogram' ? collected.sum : 0;
-      lines.push(`${safeName}_count ${count}`);
-      lines.push(`${safeName}_sum ${sum}`);
-    } else if (metric.type === 'counter') {
-      lines.push(`# TYPE ${safeName} counter`);
-      const value = collected?.type === 'counter' ? collected.value : 0;
-      lines.push(`${safeName}_total ${value}`);
-    } else {
-      lines.push(`# TYPE ${safeName} gauge`);
-      const value = collected?.type === 'gauge' ? collected.value : 0;
-      lines.push(`${safeName} ${value}`);
-    }
+    lines.push(...formatMetric(metric, snapshot));
   }
-
-  // Derived DPMO gauge: (defects / operations) * 1_000_000
-  const dpmoDefectsEntry = snapshot[METRICS.dpmoDefects.name];
-  const dpmoOperationsEntry = snapshot[METRICS.dpmoOperations.name];
-  const dpmoDefects = dpmoDefectsEntry?.type === 'counter' ? dpmoDefectsEntry.value : 0;
-  const dpmoOperations = dpmoOperationsEntry?.type === 'counter' ? dpmoOperationsEntry.value : 0;
-  const dpmoValue = dpmoOperations === 0 ? 0 : (dpmoDefects * 1_000_000) / dpmoOperations;
-  const dpmoGaugeName = 'weft_dpmo';
-  lines.push(
-    `# HELP ${dpmoGaugeName} Defects per million operations (failed workflows / started workflows * 1e6)`,
-  );
-  lines.push(`# TYPE ${dpmoGaugeName} gauge`);
-  lines.push(`${dpmoGaugeName} ${dpmoValue}`);
-
+  lines.push(...formatDpmoGaugeLines(snapshot));
   return lines.join('\n') + '\n';
 }
 

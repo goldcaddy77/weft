@@ -16,6 +16,7 @@ description: >-
 - Updating `JSONValue`, tool-call, tool-result, checkpoint, storage, or effect-log data.
 - Adding compatibility with another package while Weft still owns the runtime contract.
 - Generating or validating cross-process declarations from registry snapshots, or wrapping byte-oriented storage for string-oriented consumers.
+- Normalizing failure-category values, changing workflow visibility index keys, or changing framed compressed-storage payloads.
 
 ## Do not use
 
@@ -30,7 +31,9 @@ description: >-
 3. Add old-vs-new fixtures before changing implementation behavior when existing stored records may exist.
 4. Normalize replayed values through the same path as fresh values, especially JSON-safe outputs and lossy codec values.
 5. For registry codegen, pin deterministic output and make unsupported JSON Schema keywords degrade to `unknown` rather than emitting an unsound type.
-6. Keep external compatibility structural and dev/test-only; do not import sibling package runtime types into Weft runtime source.
+6. For failure-category changes, preserve read/query compatibility for legacy stored values while keeping new public filter input limited to the current taxonomy.
+7. For compression changes, keep the two-byte framing contract pinned so gzip, brotli, and uncompressed values remain distinguishable without storage-side metadata.
+8. Keep external compatibility structural and dev/test-only; do not import sibling package runtime types into Weft runtime source.
 
 ## Verification
 
