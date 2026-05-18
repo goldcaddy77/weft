@@ -53,12 +53,10 @@ function formatDurationFromUnit(milliseconds: number, unitIndex: number): string
 
   const value = Math.floor(milliseconds / unit.milliseconds);
   const nextUnit = displayDurationUnits[unitIndex + 1];
-  const remainder =
-    nextUnit === undefined
-      ? 0
-      : Math.floor((milliseconds % unit.milliseconds) / nextUnit.milliseconds);
+  if (nextUnit === undefined) return `${value}${unit.label}`;
 
-  return remainder > 0
-    ? `${value}${unit.label} ${remainder}${nextUnit?.label}`
-    : `${value}${unit.label}`;
+  const remainder = Math.floor((milliseconds % unit.milliseconds) / nextUnit.milliseconds);
+  if (remainder === 0) return `${value}${unit.label}`;
+
+  return `${value}${unit.label} ${remainder}${nextUnit.label}`;
 }

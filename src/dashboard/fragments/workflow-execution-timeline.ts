@@ -208,20 +208,6 @@ function collectRecordValueDiffs(
   }
 }
 
-function collectNestedValueDiffs(
-  section: WorkflowTimelineDiffSection,
-  label: string,
-  traversal: DiffTraversal,
-  rows: WorkflowTimelineDiffRow[],
-): void {
-  if (traversal.kind === 'array') {
-    collectArrayValueDiffs(section, label, traversal.before, traversal.after, rows);
-    return;
-  }
-
-  collectRecordValueDiffs(section, label, traversal.before, traversal.after, rows);
-}
-
 function collectValueDiffs(
   section: WorkflowTimelineDiffSection,
   label: string,
@@ -235,12 +221,17 @@ function collectValueDiffs(
 
   const traversal = getDiffTraversal(beforeValue, afterValue);
 
-  if (traversal !== null) {
-    collectNestedValueDiffs(section, label, traversal, rows);
+  if (traversal === null) {
+    addLeafDiff(section, label, beforeValue, afterValue, rows);
     return;
   }
 
-  addLeafDiff(section, label, beforeValue, afterValue, rows);
+  if (traversal.kind === 'array') {
+    collectArrayValueDiffs(section, label, traversal.before, traversal.after, rows);
+    return;
+  }
+
+  collectRecordValueDiffs(section, label, traversal.before, traversal.after, rows);
 }
 
 function collectBudgetDiff(
@@ -347,17 +338,6 @@ export function buildWorkflowTimelineDiff(
   ];
 }
 
-function getTimelineDiffValueFormatter(value: unknown): () => string {
-  if (value === undefined) return () => '-';
-  if (value === null) return () => 'null';
-  if (typeof value === 'string') return () => value;
-  if (typeof value === 'number' || typeof value === 'boolean') return () => String(value);
-  if (typeof value === 'bigint' || typeof value === 'symbol') return () => String(value);
-  if (typeof value === 'function') return () => '[function]';
-
-  return () => stringifyTimelineDiffValue(value);
-}
-
 function stringifyTimelineDiffValue(value: unknown): string {
   try {
     const serialized = JSON.stringify(value);
@@ -368,5 +348,12 @@ function stringifyTimelineDiffValue(value: unknown): string {
 }
 
 export function formatTimelineDiffValue(value: unknown): string {
-  return getTimelineDiffValueFormatter(value)();
+  if (value === undefined) return '-';
+  if (value === null) return 'null';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (typeof value === 'bigint' || typeof value === 'symbol') return String(value);
+  if (typeof value === 'function') return '[function]';
+
+  return stringifyTimelineDiffValue(value);
 }
