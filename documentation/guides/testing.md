@@ -95,6 +95,7 @@ mockShip
   .mockRejectionOnce(new Error('Carrier unavailable'))
   .mockReturnValueOnce({ tracking: 'TRACK-RETRY' });
 
+// After a workflow that calls `ship` twice (e.g. one retry on failure):
 expect(mockShip.callCount).toBe(2);
 expect(mockShip.lastCall?.result).toEqual({ tracking: 'TRACK-RETRY' });
 ```
