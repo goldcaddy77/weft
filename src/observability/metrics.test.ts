@@ -462,6 +462,9 @@ function replaceLines(input: string, replacements: Record<string, string>): stri
   const lines = input.split('\n');
   const updated = lines.map((line) => {
     for (const [prefix, value] of Object.entries(replacements)) {
+      // The trailing space prevents a shorter prefix (e.g. 'weft_dpmo') from
+      // matching a line whose name starts with that prefix but continues
+      // (e.g. 'weft_dpmo_defects_total 0').
       if (line.startsWith(prefix + ' ')) return prefix + ' ' + value;
     }
     return line;

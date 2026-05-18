@@ -303,6 +303,23 @@ export default {
     await expect(result.activities[0]!.execute('payload')).resolves.toEqual({ sent: true });
   });
 
+  it('keeps default-export registrations when a named export uses the same key', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'weft-validate-'));
+    const filePath = join(dir, 'conflict.ts');
+    await writeFile(
+      filePath,
+      `
+const defaultGreet = { handler: async function* () { return 'default'; } };
+export const greet = { handler: async function* () { return 'named'; } };
+export default { greet: defaultGreet };
+`,
+    );
+
+    const { registrations } = await loadRegistrationsFromModule(filePath);
+    const iterator = registrations['greet']!.handler({} as never, undefined);
+    await expect(iterator.next()).resolves.toEqual({ value: 'default', done: true });
+  });
+
   it('ignores primitive exports that are neither registrations nor activity definitions', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'weft-validate-'));
     const filePath = join(dir, 'mixed-exports.ts');

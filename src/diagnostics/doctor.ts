@@ -74,21 +74,6 @@ export async function collectDiagnostics(
 // Database health
 // ---------------------------------------------------------------------------
 
-function buildEmptyDatabaseHealth(sizeLimitBytes: number): DatabaseHealth {
-  return {
-    sizeBytes: 0,
-    sizeLimitBytes,
-    walSizeBytes: null,
-    integrityOk: true,
-    integrityError: null,
-    fragmentationPercent: 0,
-    journalMode: 'unknown',
-    pageCount: 0,
-    pageSize: 0,
-    freelistCount: 0,
-  };
-}
-
 type DatabasePragmas = {
   pageCount: number;
   pageSize: number;
@@ -97,26 +82,37 @@ type DatabasePragmas = {
   journalMode: string;
 };
 
-async function readPragmaColumn<T>(
-  query: NonNullable<Storage['query']>,
-  pragma: string,
-  column: string,
-  fallback: T,
-): Promise<T> {
-  const rows = await query<Record<string, unknown>>(`PRAGMA ${pragma}`);
+function firstNumber(rows: ReadonlyArray<Record<string, unknown>>, column: string): number {
   const value = rows[0]?.[column];
-  return (value ?? fallback) as T;
+  return typeof value === 'number' ? value : 0;
+}
+
+function firstString(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  column: string,
+  fallback: string,
+): string {
+  const value = rows[0]?.[column];
+  return typeof value === 'string' ? value : fallback;
 }
 
 async function readDatabasePragmas(query: NonNullable<Storage['query']>): Promise<DatabasePragmas> {
-  const [pageCount, pageSize, freelistCount, integrityResult, journalMode] = await Promise.all([
-    readPragmaColumn<number>(query, 'page_count', 'page_count', 0),
-    readPragmaColumn<number>(query, 'page_size', 'page_size', 0),
-    readPragmaColumn<number>(query, 'freelist_count', 'freelist_count', 0),
-    readPragmaColumn<string>(query, 'integrity_check', 'integrity_check', 'ok'),
-    readPragmaColumn<string>(query, 'journal_mode', 'journal_mode', 'unknown'),
-  ]);
-  return { pageCount, pageSize, freelistCount, integrityResult, journalMode };
+  const [pageCountRows, pageSizeRows, freelistRows, integrityRows, journalRows] = await Promise.all(
+    [
+      query<Record<string, unknown>>('PRAGMA page_count'),
+      query<Record<string, unknown>>('PRAGMA page_size'),
+      query<Record<string, unknown>>('PRAGMA freelist_count'),
+      query<Record<string, unknown>>('PRAGMA integrity_check'),
+      query<Record<string, unknown>>('PRAGMA journal_mode'),
+    ],
+  );
+  return {
+    pageCount: firstNumber(pageCountRows, 'page_count'),
+    pageSize: firstNumber(pageSizeRows, 'page_size'),
+    freelistCount: firstNumber(freelistRows, 'freelist_count'),
+    integrityResult: firstString(integrityRows, 'integrity_check', 'ok'),
+    journalMode: firstString(journalRows, 'journal_mode', 'unknown'),
+  };
 }
 
 function measureDatabaseFiles(databasePath: string): {
@@ -139,7 +135,18 @@ async function collectDatabaseHealth(
   sizeLimitBytes: number,
 ): Promise<DatabaseHealth> {
   if (typeof storage.query !== 'function') {
-    return buildEmptyDatabaseHealth(sizeLimitBytes);
+    return {
+      sizeBytes: 0,
+      sizeLimitBytes,
+      walSizeBytes: null,
+      integrityOk: true,
+      integrityError: null,
+      fragmentationPercent: 0,
+      journalMode: 'unknown',
+      pageCount: 0,
+      pageSize: 0,
+      freelistCount: 0,
+    };
   }
 
   const pragmas = await readDatabasePragmas(storage.query.bind(storage));
