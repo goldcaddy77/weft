@@ -1,0 +1,18 @@
+services:
+  order-processing:
+    image: oven/bun:1.3.13
+    working_dir: /workspace
+    command: >
+      bash -lc "bun install --frozen-lockfile --ignore-scripts &&
+      bun run build &&
+      cd examples/order-processing &&
+      bun install --frozen-lockfile --ignore-scripts &&
+      bun run server"
+    environment:
+      HOST: 0.0.0.0
+      PORT: '7321'
+      WEFT_DATABASE_PATH: /workspace/examples/order-processing/order-processing.sqlite
+    ports:
+      - '7321:7321'
+    volumes:
+      - ../..:/workspace

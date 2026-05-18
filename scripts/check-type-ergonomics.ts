@@ -4,7 +4,7 @@
  * anti-patterns that the type surface now makes unnecessary.
  */
 
-import { Glob, file } from 'bun';
+import { $, file } from 'bun';
 import { join } from 'node:path';
 
 const repoRoot = join(import.meta.dir, '..');
@@ -51,20 +51,23 @@ async function scanFile(relPath: string): Promise<void> {
 
 const globs = ['README.md', 'documentation/**/*.md', 'examples/**/*.ts', 'src/**/*.ts'];
 
-for (const pattern of globs) {
-  const glob = new Glob(pattern);
-  for await (const relPath of glob.scan({ cwd: repoRoot })) {
-    if (
-      relPath.endsWith('.test.ts') ||
-      relPath.endsWith('.spec.ts') ||
-      relPath.endsWith('.test-d.ts') ||
-      relPath.includes('/__tests__/') ||
-      relPath.startsWith('documentation/engine-split-log/')
-    ) {
-      continue;
-    }
-    await scanFile(relPath);
+const gitListOutput =
+  await $`git -C ${repoRoot} ls-files -z --cached --others --exclude-standard -- ${globs}`
+    .quiet()
+    .text();
+
+for (const relPath of gitListOutput.split('\0')) {
+  if (
+    relPath === '' ||
+    relPath.endsWith('.test.ts') ||
+    relPath.endsWith('.spec.ts') ||
+    relPath.endsWith('.test-d.ts') ||
+    relPath.includes('/__tests__/') ||
+    relPath.startsWith('documentation/engine-split-log/')
+  ) {
+    continue;
   }
+  await scanFile(relPath);
 }
 
 if (violations.length > 0) {
