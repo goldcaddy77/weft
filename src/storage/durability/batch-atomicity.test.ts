@@ -12,7 +12,16 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
-import { availableAdapterSpecs, FixtureScope } from './adapter-spec.ts';
+import { availableAdapterSpecs, FixtureScope, type OpenedAdapter } from './adapter-spec.ts';
+
+async function closeIfOpen(handle: OpenedAdapter | undefined): Promise<void> {
+  if (handle === undefined) return;
+  try {
+    await handle.close();
+  } catch {
+    // best-effort
+  }
+}
 
 for (const spec of availableAdapterSpecs()) {
   describe(`batch atomicity — ${spec.name}`, () => {
@@ -27,11 +36,13 @@ for (const spec of availableAdapterSpecs()) {
     });
 
     it('a failing entry inside batch() rolls back all entries in the same transaction', async () => {
+      let writer: OpenedAdapter | undefined;
+      let reader: OpenedAdapter | undefined;
       try {
         const directory = scope.makeTempDirectory('batch-atomicity');
         const databasePath = join(directory, 'weft.db');
 
-        const writer = await spec.open(databasePath);
+        writer = await spec.open(databasePath);
 
         // Seed the pre-batch baseline.
         await writer.storage.put('before:1', new Uint8Array([1]));
@@ -44,18 +55,21 @@ for (const spec of availableAdapterSpecs()) {
         // The transaction must have rolled back: no `mid:` entries at all,
         // including the ones that came before the failing index.
         await writer.close();
+        writer = undefined;
 
-        const reader = await spec.open(databasePath);
+        reader = await spec.open(databasePath);
         expect(await reader.storage.get('before:1')).not.toBeNull();
         expect(await reader.storage.get('before:2')).not.toBeNull();
         for (let index = 0; index < 5; index++) {
           const key = `mid:${index.toString().padStart(6, '0')}`;
           expect(await reader.storage.get(key)).toBeNull();
         }
-        await reader.close();
       } catch (error) {
         scope.markFailed();
         throw error;
+      } finally {
+        await closeIfOpen(writer);
+        await closeIfOpen(reader);
       }
     });
   });

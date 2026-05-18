@@ -4,10 +4,15 @@
  * Two complementary tests per adapter:
  *
  *   - 3a (adapter-batch kill window): subprocess opens the real adapter,
- *     starts a long `batch()`, parent SIGKILLs after observing readiness.
- *     The kill may land before, during, or after the SQL transaction. The
- *     claim is intentionally narrow: at most the pre-batch state survives,
- *     and the batch never silently committed before the kill.
+ *     seeds a pre-batch marker, prints `WEFT_DURABILITY_READY`, then calls
+ *     a large `batch()`. The parent SIGKILLs after seeing readiness. The
+ *     readiness marker is emitted BEFORE `batch()` starts, so the kill may
+ *     land before, during, or after the SQL transaction — the test does
+ *     not (and cannot) claim the kill is mid-transaction. The narrow
+ *     claim is: "a SIGKILL anywhere from the moment the batch is
+ *     scheduled through commit leaves at most the pre-batch state, and
+ *     no partial `mid:` rows are visible." The full `mid:` prefix is
+ *     scanned to make partial commits loud.
  *
  *   - 3b (deterministic in-transaction kill, Bun/Node only): subprocess
  *     opens the real adapter to create file/schema/pragmas, disposes,
@@ -20,11 +25,11 @@
  * Cleanup invariant: every spawn is wrapped in try/finally. In finally:
  * if the child has not exited, send SIGKILL and race `process.exited`
  * against a 2s timeout. Timeout throws so a leaked subprocess never
- * deadlocks the runner.
+ * deadlocks the runner. The reader handle opened in the parent is also
+ * closed in `finally` so a thrown assertion never leaves a SQLite handle
+ * open against a temp directory that's about to be removed.
  */
 
-import { mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -34,6 +39,7 @@ import {
   availableBunNodeAdapterSpecs,
   FixtureScope,
   type AdapterSpec,
+  type OpenedAdapter,
 } from './adapter-spec.ts';
 
 function realSleep(milliseconds: number): Promise<void> {
@@ -60,25 +66,82 @@ async function killAndWait(child: RunningChild): Promise<void> {
   }
 }
 
-async function readUntil(
-  stream: ReadableStream<Uint8Array>,
+function expectReadableStream(
+  stream: ReadableStream<Uint8Array> | number | undefined,
+  label: 'stdout' | 'stderr',
+): ReadableStream<Uint8Array> {
+  if (stream === undefined || typeof stream === 'number') {
+    throw new Error(
+      `Expected ${label} to be a piped ReadableStream — got ${typeof stream}. ` +
+        `Did the Bun.spawn options forget \`${label}: 'pipe'\`?`,
+    );
+  }
+  return stream;
+}
+
+async function drainStream(stream: ReadableStream<Uint8Array>): Promise<string> {
+  const decoder = new TextDecoder();
+  let text = '';
+  const reader = stream.getReader();
+  try {
+    for (;;) {
+      const result = await Promise.race([
+        reader.read(),
+        realSleep(200).then(() => ({ value: undefined, done: true as const })),
+      ]);
+      if (result.done) break;
+      if (result.value) text += decoder.decode(result.value, { stream: true });
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // best-effort
+    }
+  }
+  return text;
+}
+
+/**
+ * Wait for the marker on stdout or for the subprocess to exit. If the
+ * subprocess exits before the marker arrives, throw a diagnostic error that
+ * includes the exit code, signal, captured stdout, and remaining stderr.
+ */
+async function readUntilMarkerOrExit(
+  child: RunningChild,
   marker: string,
   deadlineMs: number,
 ): Promise<string> {
   const decoder = new TextDecoder();
-  const reader = stream.getReader();
+  const stdoutStream = expectReadableStream(child.stdout, 'stdout');
+  const reader = stdoutStream.getReader();
   let buffer = '';
   const deadline = Date.now() + deadlineMs;
+  let earlyExit = false;
+  type ReadResult = Awaited<ReturnType<typeof reader.read>>;
+  type RaceResult =
+    | { kind: 'read'; readResult: ReadResult }
+    | { kind: 'exited' }
+    | { kind: 'timeout' };
   try {
     while (Date.now() < deadline) {
-      const remaining = deadline - Date.now();
-      const result = await Promise.race([
-        reader.read(),
-        realSleep(remaining).then(() => ({ value: undefined, done: true })),
+      const remaining = Math.max(0, deadline - Date.now());
+      const result: RaceResult = await Promise.race([
+        reader.read().then((readResult): RaceResult => ({ kind: 'read', readResult })),
+        child.exited.then((): RaceResult => ({ kind: 'exited' })),
+        realSleep(remaining).then((): RaceResult => ({ kind: 'timeout' })),
       ]);
-      if (result.done) break;
-      if (result.value) {
-        buffer += decoder.decode(result.value, { stream: true });
+      if (result.kind === 'exited') {
+        earlyExit = true;
+        break;
+      }
+      if (result.kind === 'timeout') break;
+      if (result.readResult.done) {
+        earlyExit = true;
+        break;
+      }
+      if (result.readResult.value) {
+        buffer += decoder.decode(result.readResult.value, { stream: true });
         if (buffer.includes(marker)) return buffer;
       }
     }
@@ -89,7 +152,15 @@ async function readUntil(
       // best-effort
     }
   }
-  throw new Error(`Timed out waiting for marker ${JSON.stringify(marker)}. Got:\n${buffer}`);
+  if (earlyExit) {
+    const stderr = await drainStream(expectReadableStream(child.stderr, 'stderr'));
+    throw new Error(
+      `Subprocess exited before marker ${JSON.stringify(marker)} appeared.\n` +
+        `exitCode=${String(child.exitCode)} signalCode=${String(child.signalCode)}\n` +
+        `stdout:\n${buffer}\nstderr:\n${stderr}`,
+    );
+  }
+  throw new Error(`Timed out waiting for marker ${JSON.stringify(marker)}.\nstdout:\n${buffer}`);
 }
 
 function importLineFor(spec: AdapterSpec): string {
@@ -168,10 +239,21 @@ await new Promise(() => {});
 `;
 }
 
-function makeFixtureDirectory(label: string): string {
-  const directory = join(tmpdir(), `weft-durability-${label}-${crypto.randomUUID()}`);
-  mkdirSync(directory, { recursive: true });
-  return directory;
+async function closeIfOpen(handle: OpenedAdapter | undefined): Promise<void> {
+  if (handle === undefined) return;
+  try {
+    await handle.close();
+  } catch {
+    // best-effort
+  }
+}
+
+async function countMidRows(reader: OpenedAdapter): Promise<number> {
+  let count = 0;
+  for await (const _entry of reader.storage.scan('mid:')) {
+    count++;
+  }
+  return count;
 }
 
 for (const spec of availableAdapterSpecs()) {
@@ -186,7 +268,7 @@ for (const spec of availableAdapterSpecs()) {
       scope.cleanup();
     });
 
-    it('SIGKILL during or before batch() leaves at most pre-batch state', async () => {
+    it('SIGKILL during the adapter batch leaves at most pre-batch state with zero partial rows', async () => {
       const directory = scope.makeTempDirectory('batch-kill');
       const entrypointPath = join(directory, 'entrypoint.ts');
       const databasePath = join(directory, 'weft.db');
@@ -198,29 +280,30 @@ for (const spec of availableAdapterSpecs()) {
         stderr: 'pipe',
       });
 
+      let reader: OpenedAdapter | undefined;
       try {
-        const stdoutBuffer = await readUntil(child.stdout, 'WEFT_DURABILITY_READY', 5000);
+        const stdoutBuffer = await readUntilMarkerOrExit(child, 'WEFT_DURABILITY_READY', 5000);
         await killAndWait(child);
 
-        // If the batch ever completed before SIGKILL, the child printed
-        // WEFT_DURABILITY_UNREACHABLE. Catch that.
+        // Best-effort early signal: if the child managed to print the
+        // unreachable marker before SIGKILL was delivered, the batch must
+        // have committed. The authoritative check is the full `mid:`
+        // prefix scan below.
         expect(stdoutBuffer).not.toContain('WEFT_DURABILITY_UNREACHABLE');
 
-        const reader = await spec.open(databasePath);
+        reader = await spec.open(databasePath);
         expect(await reader.storage.get('before:ok')).not.toBeNull();
 
-        // No mid: rows survived. We sample a few; if any one is present,
-        // either the batch committed (UNREACHABLE check would have caught
-        // it) or partial state leaked.
-        for (const index of [0, 1, 10, 100, 1000, 49_999]) {
-          const key = `mid:${index.toString().padStart(8, '0')}`;
-          expect(await reader.storage.get(key)).toBeNull();
-        }
-        await reader.close();
+        // Authoritative assertion: scan the entire `mid:` prefix. A
+        // partial commit anywhere in the 50k entries would show up as a
+        // non-zero count.
+        const partialMidCount = await countMidRows(reader);
+        expect(partialMidCount).toBe(0);
       } catch (error) {
         scope.markFailed();
         throw error;
       } finally {
+        await closeIfOpen(reader);
         await killAndWait(child);
       }
     }, 15_000);
@@ -251,23 +334,26 @@ for (const spec of availableBunNodeAdapterSpecs()) {
         stderr: 'pipe',
       });
 
+      let reader: OpenedAdapter | undefined;
       try {
-        await readUntil(child.stdout, 'WEFT_DURABILITY_IN_TRANSACTION', 5000);
+        await readUntilMarkerOrExit(child, 'WEFT_DURABILITY_IN_TRANSACTION', 5000);
         await killAndWait(child);
 
-        const reader = await spec.open(databasePath);
+        // Verify the child was actually killed by SIGKILL, not by a crash
+        // mid-setup. If the child exited from a thrown error, that's an
+        // environment/test bug, not a durability claim.
+        expect(child.signalCode).toBe('SIGKILL');
+
+        reader = await spec.open(databasePath);
         expect(await reader.storage.get('before:ok')).not.toBeNull();
         expect(await reader.storage.get('mid:in-transaction')).toBeNull();
-        await reader.close();
       } catch (error) {
         scope.markFailed();
         throw error;
       } finally {
+        await closeIfOpen(reader);
         await killAndWait(child);
       }
     }, 15_000);
   });
 }
-
-// Suppress unused-import warning when the suite skips Node specs.
-void makeFixtureDirectory;

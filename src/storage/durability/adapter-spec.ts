@@ -8,7 +8,7 @@
  * surface.
  */
 
-import { mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,17 +22,21 @@ import { TursoStorage } from '../turso.ts';
 
 type BetterSqliteRow = { busy: number; log: number; checkpointed: number };
 
-type BetterSqliteDatabaseHandle = {
+/** Matches the surface of `BetterSqliteDatabase` in `src/storage/node-sqlite.ts`. */
+type BetterSqliteDatabase = {
   pragma(source: string): unknown;
   close(): void;
 };
 
-type BetterSqliteConstructor = new (path: string) => BetterSqliteDatabaseHandle;
+type BetterSqliteConstructor = new (path: string) => BetterSqliteDatabase;
 
 let cachedBetterSqlite: BetterSqliteConstructor | undefined;
 
 function loadBetterSqlite3Locally(): BetterSqliteConstructor {
   if (cachedBetterSqlite !== undefined) return cachedBetterSqlite;
+  // `createRequire` because this project is ESM and better-sqlite3 is a CJS
+  // native binding. The intersection covers both ESM-default-export and
+  // direct-export wrapper shapes — same pattern as `node-sqlite.ts`.
   const requireFromHere = createRequire(import.meta.url);
   const mod = requireFromHere('better-sqlite3') as BetterSqliteConstructor & {
     default?: BetterSqliteConstructor;
@@ -60,9 +64,10 @@ export type OpenedAdapter = {
   /**
    * Build a batch the adapter accepts but whose `failAtIndex`-th entry
    * triggers a SQLite constraint violation inside the adapter's own native
-   * transaction. Test-only; uses casts to construct an invalid put.
+   * transaction. `totalEntries` is the full batch length, including the
+   * failing entry. Test-only; uses casts to construct an invalid put.
    */
-  makeFailingBatch(failAtIndex: number, validEntries: number): BatchOperation[];
+  makeFailingBatch(failAtIndex: number, totalEntries: number): BatchOperation[];
 };
 
 /** A disk-backed SQLite adapter under test. */
@@ -80,11 +85,14 @@ export type AdapterSpec = {
  * `value BLOB NOT NULL`, so a NULL value violates the column constraint and
  * the adapter's native transaction rolls back.
  */
-function makeNullValueFailingBatch(failAtIndex: number, validEntries: number): BatchOperation[] {
+function makeNullValueFailingBatch(failAtIndex: number, totalEntries: number): BatchOperation[] {
   const operations: BatchOperation[] = [];
-  for (let index = 0; index < validEntries; index++) {
+  for (let index = 0; index < totalEntries; index++) {
     const key = `mid:${index.toString().padStart(6, '0')}`;
     if (index === failAtIndex) {
+      // Intentional constraint violation: NULL into `value BLOB NOT NULL`
+      // forces SQLITE_CONSTRAINT inside the adapter's native transaction,
+      // which rolls back all prior puts in the same batch.
       operations.push({ type: 'put', key, value: null as unknown as Uint8Array });
     } else {
       operations.push({ type: 'put', key, value: new Uint8Array([index & 0xff]) });
@@ -113,11 +121,26 @@ function bunSqliteCheckpoint(databasePath: string): CheckpointResult {
       >('PRAGMA wal_checkpoint(TRUNCATE)')
       .all();
     const raw = rows[0];
-    const truncated = raw !== undefined && raw.busy === 0;
-    return { truncated, raw };
+    return { truncated: isFullyCheckpointed(raw, databasePath), raw };
   } finally {
     database.close();
   }
+}
+
+/**
+ * A checkpoint is considered "fully checkpointed" only when the pragma row
+ * reports `busy === 0` AND every WAL frame is mirrored into the main
+ * database (`log === checkpointed`). The TRUNCATE variant additionally
+ * resets the WAL file itself — after a successful run the `-wal` file is
+ * either absent or zero bytes.
+ */
+function isFullyCheckpointed(row: BetterSqliteRow | undefined, databasePath: string): boolean {
+  if (row === undefined) return false;
+  if (row.busy !== 0) return false;
+  if (row.log !== row.checkpointed) return false;
+  const walPath = `${databasePath}-wal`;
+  if (!existsSync(walPath)) return true;
+  return statSync(walPath).size === 0;
 }
 
 const bunSqliteSpec: AdapterSpec = {
@@ -148,15 +171,14 @@ const nodeSqliteSpec: AdapterSpec = {
       storage,
       databasePath,
       async checkpoint(): Promise<CheckpointResult> {
-        const BetterSqliteDatabase = loadBetterSqlite3Locally();
-        const database = new BetterSqliteDatabase(databasePath);
+        const BetterSqlite3Constructor = loadBetterSqlite3Locally();
+        const database = new BetterSqlite3Constructor(databasePath);
         try {
           const raw = database.pragma('wal_checkpoint(TRUNCATE)') as
             | readonly BetterSqliteRow[]
             | BetterSqliteRow;
           const row = Array.isArray(raw) ? raw[0] : raw;
-          const truncated = row !== undefined && row.busy === 0;
-          return { truncated, raw };
+          return { truncated: isFullyCheckpointed(row, databasePath), raw };
         } finally {
           database.close();
         }
