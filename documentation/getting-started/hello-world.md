@@ -120,7 +120,7 @@ console.log(result);
 // { greeting: "Hello, World!", notified: true }
 ```
 
-Each `ctx.step()` call is a checkpoint boundary. The engine converts this to the generator form at registration time. When you need features like durable timers, signals, or parallel execution, switch to the generator API shown above.
+Each `ctx.step()` call is a checkpoint boundary. The engine converts this to the generator form at registration time. When you need features like durable timers, signals, or parallel execution, switch to the generator API shown above. The inline form `engine.register('name', handler)` shown here and the builder form `engine.register(workflow({ name, handler }))` used in the README register the same thing two different ways—pick whichever reads cleaner at the call site.
 
 ## How It Works
 

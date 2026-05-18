@@ -66,11 +66,7 @@ interface ActivityInterceptor {
 }
 ```
 
-This one is async (not a generator) because activity execution is a normal async function, not a durable generator.
-
-## Unified registration
-
-Register interceptors with a single `interceptors` constructor option or the `engine.addInterceptor()` method. An interceptor that implements hooks from both the workflow and activity sides participates in both pipelines.
+This one is async (not a generator) because activity execution is a normal async function, not a durable generator. Register interceptors via the `interceptors` constructor option or `engine.addInterceptor()`—an interceptor implementing both workflow and activity hooks participates in both pipelines.
 
 ## Interception context types
 

@@ -255,6 +255,7 @@ interface MockHandle<TInput, TResult> {
   readonly calls: ReadonlyArray<MockCall<TInput, TResult>>;
   readonly callCount: number;
   readonly lastCall: MockCall<TInput, TResult> | undefined;
+  readonly currentImplementation: (input: TInput) => TResult | Promise<TResult>;
   mockImplementation(implementation: (input: TInput) => TResult | Promise<TResult>): void;
   mockReturnValueOnce(value: TResult): MockHandle<TInput, TResult>;
   mockRejectionOnce(error: Error): MockHandle<TInput, TResult>;
@@ -265,16 +266,17 @@ interface MockHandle<TInput, TResult> {
 
 A handle to a mocked activity, returned by `testEngine.mock()` or `registry.mock()`.
 
-| Property/Method              | Description                                 |
-| ---------------------------- | ------------------------------------------- |
-| `calls`                      | Read-only array of all recorded calls       |
-| `callCount`                  | Total number of times the mock was called   |
-| `lastCall`                   | The most recent call record, or `undefined` |
-| `mockImplementation(fn)`     | Replace the mock's base implementation      |
-| `mockReturnValueOnce(value)` | Queue a one-shot return value (chainable)   |
-| `mockRejectionOnce(error)`   | Queue a one-shot rejection (chainable)      |
-| `resetCalls()`               | Clear the call history                      |
-| `restore()`                  | Remove the mock from the registry           |
+| Property/Method              | Description                                                     |
+| ---------------------------- | --------------------------------------------------------------- |
+| `calls`                      | Read-only array of all recorded calls                           |
+| `callCount`                  | Total number of times the mock was called                       |
+| `lastCall`                   | The most recent call record, or `undefined`                     |
+| `currentImplementation`      | The base implementation in effect after one-shots are exhausted |
+| `mockImplementation(fn)`     | Replace the mock's base implementation                          |
+| `mockReturnValueOnce(value)` | Queue a one-shot return value (chainable)                       |
+| `mockRejectionOnce(error)`   | Queue a one-shot rejection (chainable)                          |
+| `resetCalls()`               | Clear the call history                                          |
+| `restore()`                  | Remove the mock from the registry                               |
 
 ```ts partial
 const handle = engine.mock(sendEmail, async () => ({ messageId: 'ok' }));

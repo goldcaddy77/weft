@@ -1,24 +1,25 @@
 # Resource Management
 
-A workflow engine is a long-running process. It holds database connections, worker threads, interval timers, and in-memory caches. If any of those leak, you get slow degradation that turns into a 3 AM page. Weft uses Explicit Resource Management---the `using` and `await using` declarations from TC39's Stage 4 proposal---to make cleanup automatic.
+Declare `await using engine = new Engine(...)` and shutdown is automatic on scope exit—pending operations abort, the scheduler stops, internal state clears. No try/finally, no manual `.close()`.
 
 ## The pattern
 
-When you declare a variable with `using`, its `[Symbol.dispose]()` method is called when the enclosing block exits. `await using` does the same but calls `[Symbol.asyncDispose]()` for async cleanup. No try/finally. No manual `.close()` calls.
-
 ```typescript partial
+import { Engine } from 'weft';
 import { SQLiteStorage } from 'weft/storage/sqlite';
 
+declare const orderWorkflow: never; // your registered workflow
+
 {
-  using engine = new Engine({ storage: new SQLiteStorage('./weft.db') });
+  await using engine = new Engine({ storage: new SQLiteStorage('./weft.db') });
 
   engine.register('order', orderWorkflow);
   const handle = await engine.start('order', { orderId: 'abc' });
   await handle.result();
-} // engine[Symbol.dispose]() called automatically
+} // engine[Symbol.asyncDispose]() called automatically
 ```
 
-When the block exits---whether normally or via an exception---the engine shuts down: it aborts pending operations, stops the scheduler, and clears internal state.
+`using` calls `[Symbol.dispose]()` on scope exit; `await using` calls `[Symbol.asyncDispose]()` and awaits it. Both come from TC39's Explicit Resource Management proposal—see [MDN's `using` reference](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/using) if you want the underlying mechanics.
 
 ## What is disposable
 

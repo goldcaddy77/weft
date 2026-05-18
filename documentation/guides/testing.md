@@ -52,36 +52,7 @@ console.log(engine.now); // milliseconds since epoch
 
 ## TimeControl
 
-Under the hood, `TestEngine` uses a `TimeControl` instance. You can also use it directly if you need finer control.
-
-```typescript
-import { TimeControl } from 'weft/testing';
-
-const clock = new TimeControl(1700000000000);
-console.log(clock.now); // 1700000000000
-
-await clock.advance('10 minutes');
-console.log(clock.now); // 1700000600000
-
-await clock.advanceTo(1700001000000);
-console.log(clock.now); // 1700001000000
-```
-
-`TimeControl` doesn't monkey-patch global timers. It provides an explicit `now` property and a `schedule()` method for registering callbacks that fire when virtual time passes their target.
-
-```typescript partial
-const cancel = clock.schedule(clock.now + 5000, () => {
-  console.log('Fired at', clock.now);
-});
-
-await clock.advance(5000); // "Fired at 1700000005000"
-```
-
-Useful properties for assertions:
-
-- `clock.pendingTimerCount` --- how many timers haven't fired yet
-- `clock.nextTimerAt` --- the fire time of the earliest pending timer
-- `clock.reset(startTime?)` --- reset to initial state
+Under the hood, `TestEngine` uses a `TimeControl` instance. Use it directly only when you need a virtual clock without an engine attached—see [`TimeControl` in api-testing](../reference/api-testing.md#timecontrol).
 
 ## Mocking activities
 
@@ -103,59 +74,33 @@ The mock is type-safe---the implementation must match the original function's si
 
 ## MockHandle
 
-`mock()` returns a `MockHandle` with call recording and override capabilities:
+`mock()` returns a `MockHandle`—the object you reach for when assertions need to inspect what the engine called, or when a single test needs different mock behavior across attempts.
 
-```typescript
-interface MockHandle<TInput, TResult> {
-  readonly calls: ReadonlyArray<MockCall<TInput, TResult>>;
-  readonly callCount: number;
-  readonly lastCall: MockCall<TInput, TResult> | undefined;
-  readonly currentImplementation: (input: TInput) => TResult | Promise<TResult>;
-  mockImplementation(impl: (input: TInput) => TResult | Promise<TResult>): void;
-  mockReturnValueOnce(value: TResult): MockHandle<TInput, TResult>;
-  mockRejectionOnce(error: Error): MockHandle<TInput, TResult>;
-  resetCalls(): void;
-  restore(): void;
-}
-```
-
-Each recorded call captures input, result (or error), and timestamp:
-
-```typescript
-interface MockCall<TInput, TResult> {
-  readonly input: TInput;
-  readonly result: TResult | undefined;
-  readonly error: Error | undefined;
-  readonly timestamp: number;
-}
-```
-
-Use it in assertions:
-
-```typescript partial
-expect(mockCharge.callCount).toBe(1);
-expect(mockCharge.lastCall?.input).toEqual({ items: ['widget'], total: 99 });
-expect(mockCharge.lastCall?.result).toEqual({
-  id: 'pay_test_123',
-  amount: 99,
-  status: 'succeeded',
-});
-```
-
-## One-shot overrides
-
-Chain `.mockReturnValueOnce()` and `.mockRejectionOnce()` for per-call behavior. These are consumed in order---after they're exhausted, the base implementation runs.
+| Method or property           | Summary                                                         |
+| ---------------------------- | --------------------------------------------------------------- |
+| `calls`                      | Read-only array of every recorded call                          |
+| `callCount`                  | Total number of times the mock was invoked                      |
+| `lastCall`                   | The most recent call record, or `undefined`                     |
+| `currentImplementation`      | The base implementation in effect after one-shots are exhausted |
+| `mockImplementation(fn)`     | Replace the base implementation                                 |
+| `mockReturnValueOnce(value)` | Queue a one-shot return value (chainable)                       |
+| `mockRejectionOnce(error)`   | Queue a one-shot rejection (chainable)                          |
+| `resetCalls()`               | Clear call history without touching implementations             |
+| `restore()`                  | Remove the mock entirely                                        |
 
 ```typescript partial
 const mockShip = engine.mock(ship, () => ({ tracking: 'TRACK-001' }));
 
-// First call fails, second succeeds
 mockShip
   .mockRejectionOnce(new Error('Carrier unavailable'))
   .mockReturnValueOnce({ tracking: 'TRACK-RETRY' });
+
+// After a workflow that calls `ship` twice (e.g. one retry on failure):
+expect(mockShip.callCount).toBe(2);
+expect(mockShip.lastCall?.result).toEqual({ tracking: 'TRACK-RETRY' });
 ```
 
-This is perfect for testing retry logic. The first attempt fails, the engine retries, and the second attempt succeeds with the one-shot value.
+One-shots are consumed in order; once exhausted, the base implementation runs. See [`MockHandle` in api-testing](../reference/api-testing.md#mockhandle) for the full type signature and `MockCall` record shape.
 
 ## Crash recovery simulation
 

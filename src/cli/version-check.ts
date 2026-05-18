@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+
 import type { CommandOutput } from './types.ts';
 
 /** Checks stored workflow history against the current workflow registrations. */
@@ -21,7 +23,8 @@ export async function executeVersionCheck(options: {
   const storage = new BunSQLiteStorage(options.database);
 
   try {
-    const registrations = await import(options.workflows);
+    const workflowsPath = resolve(process.cwd(), options.workflows);
+    const registrations = await import(workflowsPath);
     const report = await runVersionCheck(storage, registrations.default);
     const stdout = options.json
       ? JSON.stringify(report, null, 2)

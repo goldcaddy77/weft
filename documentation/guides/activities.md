@@ -134,29 +134,18 @@ interface ActivityDefinition<TInput, TOutput> {
 }
 ```
 
-See the JSDoc on `ActivityDefinition` for additional fields: `verify` (post-execution result verifier), `visibilityTimeout` (claim timeout override), `compensate` (saga rollback function), `resourceScope` (resource-level lock key), and a function-form `idempotencyKey` for per-input key generation.
+See [the activity definition reference](../reference/api-definitions.md#activity-definitions) for advanced fields: `verify`, `visibilityTimeout`, `compensate`, `resourceScope`, and function-form `idempotencyKey`.
 
 Here is what that looks like in practice.
 
 ```typescript partial
 const charge: ActivityDefinition<Order, PaymentResult> = {
   name: 'charge',
-  retry: {
-    maxAttempts: 3,
-    initialBackoff: '1s',
-    backoffMultiplier: 2,
-    maxBackoff: '30s',
-  },
+  retry: { maxAttempts: 3, initialBackoff: '1s', backoffMultiplier: 2, maxBackoff: '30s' },
   timeout: '30s',
   queue: 'payments',
-  idempotent: true,
-
-  async execute(order, context) {
-    const result = await stripe.charges.create({
-      amount: order.total,
-      signal: context?.signal,
-    });
-    context?.heartbeat({ status: 'processing', chargeId: result.id });
+  async execute(order) {
+    const result = await stripe.charges.create({ amount: order.total });
     return { id: result.id, amount: result.amount };
   },
 };

@@ -1,6 +1,10 @@
 import { activity } from 'weft';
 
-import type { InventoryReservation, InventoryReservationInput, ReleaseInventoryInput } from '../model';
+import type {
+  InventoryReservation,
+  InventoryReservationInput,
+  ReleaseInventoryInput,
+} from '../model';
 
 export const reserveInventory = activity({
   name: 'orderProcessingReserveInventory',
