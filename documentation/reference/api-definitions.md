@@ -2,83 +2,47 @@
 
 Weft's public definitions are object-shaped runtime values with enough metadata for registration, indexing, scheduling, and typed message surfaces.
 
-## Activities
+## Activity definitions
 
 ```ts
 import { activity } from 'weft';
-
-declare const provider: {
-  send(input: { email: string; body: string }): Promise<void>;
-};
-
-const normalizeEmail = activity(async function normalizeEmail(input: { email: string }) {
-  return input.email.trim().toLowerCase();
-});
 
 const sendEmail = activity({
   name: 'sendEmail',
   queue: 'messages',
   timeout: '30s',
   execute: async (input: { email: string; body: string }) => {
-    await provider.send(input);
-  },
-});
-
-void normalizeEmail;
-void sendEmail;
-```
-
-Bare activity functions must be named. Workflow calls use one input value plus optional call options:
-
-```ts
-import { activity } from 'weft';
-import type { WorkflowContext } from 'weft';
-
-const sendEmail = activity({
-  name: 'sendEmail',
-  execute: async (input: { email: string; body: string }) => {
     void input;
   },
 });
 
-async function* notify(ctx: WorkflowContext, input: { email: string; body: string }) {
-  yield* ctx.run(sendEmail, input, { queue: 'messages' });
-}
-
-void notify;
+void sendEmail;
 ```
+
+Bare activity functions passed to `activity(fn)` must be named. Workflow calls use one input value plus optional call options.
+
+See [the activities guide](../guides/activities.md) for usage patterns and motivation.
 
 ## Workflows
 
 ```ts
-import { activity, Engine, searchAttribute, workflow } from 'weft';
+import { workflow } from 'weft';
 import type { WorkflowContext } from 'weft';
-
-const loadOrder = activity({
-  name: 'loadOrder',
-  execute: async (input: { orderId: string }) => ({
-    customerId: 'cust_123',
-    id: input.orderId,
-  }),
-});
 
 const checkout = workflow({
   name: 'checkout',
   version: '1.0.0',
-  searchAttributes: {
-    customerId: searchAttribute('customerId', 'string'),
-  },
   handler: async function* checkout(ctx: WorkflowContext, input: { orderId: string }) {
-    const order = yield* ctx.run(loadOrder, input);
-    return order;
+    return input.orderId;
   },
 });
 
-const engine = new Engine();
-engine.register(checkout);
+void checkout;
 ```
 
 `workflow(namedGenerator)` is also supported. Anonymous bare workflow functions throw at definition time.
+
+See [the workflows guide](../guides/workflows.md) for usage patterns and motivation.
 
 ## Messages
 
@@ -127,28 +91,17 @@ The runtime value for each handle is only `{ name }`; the generic parameters exi
 
 ```ts
 import { searchAttribute } from 'weft';
-import type { SearchAttributeHandle, SearchAttributeValue } from 'weft';
-
-declare const ctx: {
-  setAttribute<TValue extends SearchAttributeValue>(
-    attribute: SearchAttributeHandle<TValue>,
-    value: TValue,
-  ): void;
-};
 
 const customerId = searchAttribute('customerId', 'string');
-const createdAt = searchAttribute('createdAt', { type: 'string', format: 'date-time' });
-const labels = searchAttribute('labels', {
-  type: 'array',
-  items: { type: 'string' },
-});
+const labels = searchAttribute('labels', { type: 'array', items: { type: 'string' } });
 
-ctx.setAttribute(customerId, 'cust_123');
-ctx.setAttribute(labels, ['priority', 'manual-review']);
-ctx.setAttribute(createdAt, new Date());
+void customerId;
+void labels;
 ```
 
 Search attribute definitions normalize primitive strings and JSON Schema fragments into the existing validation and indexing path.
+
+See [the search attributes guide](../guides/search-attributes.md) for usage patterns and motivation.
 
 ## Interceptors, Constraints, And Schedules
 
