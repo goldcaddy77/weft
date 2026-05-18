@@ -130,6 +130,7 @@ interface ActivityDefinition<TInput, TOutput> {
   retry?: RetryPolicy;
   timeout?: Duration;
   queue?: string;
+  idempotent?: boolean;
 }
 ```
 

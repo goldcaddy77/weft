@@ -5,7 +5,10 @@ Declare `await using engine = new Engine(...)` and shutdown is automatic on scop
 ## The pattern
 
 ```typescript partial
+import { Engine } from 'weft';
 import { SQLiteStorage } from 'weft/storage/sqlite';
+
+declare const orderWorkflow: never; // your registered workflow
 
 {
   await using engine = new Engine({ storage: new SQLiteStorage('./weft.db') });

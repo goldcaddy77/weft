@@ -88,7 +88,7 @@ bun run clean
 
 ### Verification scripts
 
-Run `bun run validate` before opening a pull request. It is the one-shot gate that composes `bun run lint`, `bun run typecheck`, `bun run typecheck:tests`, `bun run verify:documentation`, `bun run verify:no-test-sleeps`, `bun run verify:public-api-jsdoc`, and `bun test`.
+Run `bun run validate` before opening a pull request. It is the one-shot gate that composes `bun run lint`, `bun run typecheck`, `bun run typecheck:tests`, `bun run verify:documentation`, `bun run verify:no-test-sleeps`, `bun run verify:public-api-jsdoc`, and `bun run test`.
 
 ```bash
 bun run validate

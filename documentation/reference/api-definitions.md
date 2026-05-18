@@ -21,6 +21,8 @@ void sendEmail;
 
 Bare activity functions passed to `activity(fn)` must be named. Workflow calls use one input value plus optional call options.
 
+In addition to the fields shown above, `ActivityDefinition` accepts `idempotent?: boolean` (informs saga and validation guidance), `verify`, `visibilityTimeout`, `compensate`, `resourceScope`, and a function-form `idempotencyKey`. See the JSDoc on `ActivityDefinition` for the full surface.
+
 See [the activities guide](../guides/activities.md) for usage patterns and motivation.
 
 ## Workflows
