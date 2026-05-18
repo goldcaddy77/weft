@@ -161,7 +161,25 @@ export function validateRegistrations(
  *
  * Returns `{ registrations, activities }` extracted from the module.
  */
-// oxlint-disable-next-line complexity -- ID:diagnostics-validate-load-registrations-from-module-complexity
+function collectFromExports(
+  entries: Iterable<[string, unknown]>,
+  registrations: Record<string, WorkflowRegistration>,
+  activities: ActivityDefinition[],
+  options: { allowOverwrite: boolean },
+): void {
+  for (const [key, value] of entries) {
+    if (isWorkflowRegistration(value)) {
+      if (options.allowOverwrite || !(key in registrations)) {
+        registrations[key] = value;
+      }
+    } else if (isActivityDefinition(value)) {
+      if (options.allowOverwrite || !activities.includes(value)) {
+        activities.push(value);
+      }
+    }
+  }
+}
+
 export async function loadRegistrationsFromModule(modulePath: string): Promise<{
   registrations: Record<string, WorkflowRegistration>;
   activities: ActivityDefinition[];
@@ -172,27 +190,20 @@ export async function loadRegistrationsFromModule(modulePath: string): Promise<{
   const registrations: Record<string, WorkflowRegistration> = {};
   const activities: ActivityDefinition[] = [];
 
-  // Prefer `default` export.
   const defaultExport = mod.default as unknown;
   if (defaultExport !== null && typeof defaultExport === 'object') {
-    for (const [key, value] of Object.entries(defaultExport as Record<string, unknown>)) {
-      if (isWorkflowRegistration(value)) {
-        registrations[key] = value;
-      } else if (isActivityDefinition(value)) {
-        activities.push(value);
-      }
-    }
+    collectFromExports(
+      Object.entries(defaultExport as Record<string, unknown>),
+      registrations,
+      activities,
+      { allowOverwrite: true },
+    );
   }
 
-  // Also scan named exports for registrations and activities.
-  for (const [key, value] of Object.entries(mod as Record<string, unknown>)) {
-    if (key === 'default') continue;
-    if (isWorkflowRegistration(value) && !(key in registrations)) {
-      registrations[key] = value;
-    } else if (isActivityDefinition(value) && !activities.includes(value)) {
-      activities.push(value);
-    }
-  }
+  const namedEntries = Object.entries(mod as Record<string, unknown>).filter(
+    ([key]) => key !== 'default',
+  );
+  collectFromExports(namedEntries, registrations, activities, { allowOverwrite: false });
 
   return { registrations, activities };
 }

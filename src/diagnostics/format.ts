@@ -91,6 +91,76 @@ export function formatDuration(milliseconds: number): string {
 // Diagnostic report formatter (weft doctor)
 // ---------------------------------------------------------------------------
 
+function appendDatabaseSection(lines: string[], database: DiagnosticReport['database']): void {
+  lines.push(color.bold('Database:'));
+  lines.push(
+    `  Size: ${formatBytes(database.sizeBytes)} (of ${formatBytes(database.sizeLimitBytes)})`,
+  );
+  lines.push(
+    `  WAL size: ${database.walSizeBytes !== null ? formatBytes(database.walSizeBytes) : 'N/A'}`,
+  );
+  lines.push(`  Integrity: ${database.integrityOk ? 'OK' : `FAILED: ${database.integrityError}`}`);
+  lines.push(`  Fragmentation: ${database.fragmentationPercent}%`);
+}
+
+function appendWorkflowsSection(lines: string[], workflows: DiagnosticReport['workflows']): void {
+  lines.push('');
+  lines.push(color.bold('Workflows:'));
+  if (workflows.total === 0) {
+    lines.push('  Total: 0 (no workflows)');
+    return;
+  }
+  const counts = workflows.statusCounts;
+  lines.push(
+    `  Total: ${workflows.total} (${counts.running} running, ${counts.completed} completed, ${counts.failed} failed)`,
+  );
+  if (workflows.longestRunning) {
+    const longest = workflows.longestRunning;
+    lines.push(
+      `  Longest running: ${longest.id} (started ${formatDuration(longest.elapsedMilliseconds)} ago, step ${longest.currentStep})`,
+    );
+  }
+  if (workflows.largestCheckpoint) {
+    const largest = workflows.largestCheckpoint;
+    lines.push(`  Largest checkpoint: ${largest.workflowId} (${formatBytes(largest.sizeBytes)})`);
+  }
+}
+
+function appendActivitiesSection(lines: string[], queues: DiagnosticReport['queues']): void {
+  lines.push('');
+  lines.push(color.bold('Activities:'));
+  if (queues.length === 0) {
+    lines.push('  No activity queues');
+    return;
+  }
+  for (const queue of queues) {
+    lines.push(
+      `  Queue "${queue.name}": ${queue.pendingCount} pending, ${queue.inflightCount} in-flight`,
+    );
+  }
+}
+
+function recommendationIcon(
+  severity: DiagnosticReport['recommendations'][number]['severity'],
+): string {
+  return severity === 'critical' ? '!!' : '!';
+}
+
+function appendRecommendationsSection(
+  lines: string[],
+  recommendations: DiagnosticReport['recommendations'],
+): void {
+  lines.push('');
+  lines.push(color.bold('Recommendations:'));
+  if (recommendations.length === 0) {
+    lines.push('  No issues found.');
+    return;
+  }
+  for (const recommendation of recommendations) {
+    lines.push(`  ${recommendationIcon(recommendation.severity)} ${recommendation.message}`);
+  }
+}
+
 /**
  * Format a DiagnosticReport into a human-readable multi-section string.
  *
@@ -103,70 +173,12 @@ export function formatDuration(milliseconds: number): string {
  * console.log(formatDiagnosticReport(report));
  * ```
  */
-// oxlint-disable-next-line complexity -- ID:diagnostics-format-format-diagnostic-report-complexity
 export function formatDiagnosticReport(report: DiagnosticReport): string {
   const lines: string[] = [];
-
-  // Database section
-  lines.push(color.bold('Database:'));
-  lines.push(
-    `  Size: ${formatBytes(report.database.sizeBytes)} (of ${formatBytes(report.database.sizeLimitBytes)})`,
-  );
-  lines.push(
-    `  WAL size: ${report.database.walSizeBytes !== null ? formatBytes(report.database.walSizeBytes) : 'N/A'}`,
-  );
-  lines.push(
-    `  Integrity: ${report.database.integrityOk ? 'OK' : `FAILED: ${report.database.integrityError}`}`,
-  );
-  lines.push(`  Fragmentation: ${report.database.fragmentationPercent}%`);
-
-  // Workflows section
-  lines.push('');
-  lines.push(color.bold('Workflows:'));
-  if (report.workflows.total === 0) {
-    lines.push('  Total: 0 (no workflows)');
-  } else {
-    const counts = report.workflows.statusCounts;
-    lines.push(
-      `  Total: ${report.workflows.total} (${counts.running} running, ${counts.completed} completed, ${counts.failed} failed)`,
-    );
-    if (report.workflows.longestRunning) {
-      const longest = report.workflows.longestRunning;
-      lines.push(
-        `  Longest running: ${longest.id} (started ${formatDuration(longest.elapsedMilliseconds)} ago, step ${longest.currentStep})`,
-      );
-    }
-    if (report.workflows.largestCheckpoint) {
-      const largest = report.workflows.largestCheckpoint;
-      lines.push(`  Largest checkpoint: ${largest.workflowId} (${formatBytes(largest.sizeBytes)})`);
-    }
-  }
-
-  // Activities section
-  lines.push('');
-  lines.push(color.bold('Activities:'));
-  if (report.queues.length === 0) {
-    lines.push('  No activity queues');
-  } else {
-    for (const queue of report.queues) {
-      lines.push(
-        `  Queue "${queue.name}": ${queue.pendingCount} pending, ${queue.inflightCount} in-flight`,
-      );
-    }
-  }
-
-  // Recommendations section
-  lines.push('');
-  lines.push(color.bold('Recommendations:'));
-  if (report.recommendations.length === 0) {
-    lines.push('  No issues found.');
-  } else {
-    for (const recommendation of report.recommendations) {
-      const icon = recommendation.severity === 'critical' ? '!!' : '!';
-      lines.push(`  ${icon} ${recommendation.message}`);
-    }
-  }
-
+  appendDatabaseSection(lines, report.database);
+  appendWorkflowsSection(lines, report.workflows);
+  appendActivitiesSection(lines, report.queues);
+  appendRecommendationsSection(lines, report.recommendations);
   return lines.join('\n');
 }
 
