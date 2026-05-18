@@ -24,7 +24,7 @@ bun test                  # Run all tests
 bun test src/utils        # Run tests in specific directory
 bun test logger          # Run tests matching pattern
 bun test --watch         # Watch mode
-bun test --coverage      # Generate coverage report
+bun run test:coverage    # Generate coverage report (sets WEFT_COVERAGE_MODE=1, applies project timeout)
 ```
 
 ### Code Quality
