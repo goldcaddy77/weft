@@ -88,7 +88,13 @@ bun run clean
 
 ### Verification scripts
 
-Several `verify:*` scripts run additional checks beyond lint and typecheck:
+Run `bun run validate` before opening a pull request. It is the one-shot gate that composes `bun run lint`, `bun run typecheck`, `bun run typecheck:tests`, `bun run verify:documentation`, `bun run verify:no-test-sleeps`, `bun run verify:public-api-jsdoc`, and `bun test`.
+
+```bash
+bun run validate
+```
+
+When iterating on a single area, you can run the individual scripts that `validate` composes:
 
 ```bash
 bun run verify:exports          # Check all public exports resolve correctly
@@ -103,12 +109,6 @@ For dashboard development, run:
 
 ```bash
 bun run dev:dashboard  # Start the Svelte dashboard dev server
-```
-
-There's also a combined validation command that runs lint, typecheck, and tests together:
-
-```bash
-bun run validate
 ```
 
 ## Git hooks
