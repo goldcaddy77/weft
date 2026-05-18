@@ -133,6 +133,57 @@ describe('workflow execution timeline helpers', () => {
     ]);
   });
 
+  it('reports nested array additions, removals, and object changes with stable labels', () => {
+    const before = makeReplay(
+      1,
+      {
+        cart: {
+          items: [
+            { sku: 'book', quantity: 1 },
+            { sku: 'pen', quantity: 2 },
+          ],
+        },
+      },
+      {},
+    );
+    const after = makeReplay(
+      2,
+      {
+        cart: {
+          items: [
+            { sku: 'book', quantity: 3 },
+            { sku: 'sticker', quantity: 1 },
+          ],
+        },
+      },
+      {},
+    );
+
+    expect(buildWorkflowTimelineDiff(before, after)).toEqual([
+      expect.objectContaining({
+        section: 'locals',
+        label: 'locals.cart.items[0].quantity',
+        change: 'changed',
+        before: 1,
+        after: 3,
+      }),
+      expect.objectContaining({
+        section: 'locals',
+        label: 'locals.cart.items[1].quantity',
+        change: 'changed',
+        before: 2,
+        after: 1,
+      }),
+      expect.objectContaining({
+        section: 'locals',
+        label: 'locals.cart.items[1].sku',
+        change: 'changed',
+        before: 'pen',
+        after: 'sticker',
+      }),
+    ]);
+  });
+
   it('formats primitive, object, and missing diff values for compact tables', () => {
     expect(formatTimelineDiffValue(undefined)).toBe('-');
     expect(formatTimelineDiffValue('approved')).toBe('approved');
@@ -140,6 +191,14 @@ describe('workflow execution timeline helpers', () => {
     expect(formatTimelineDiffValue({ total: 42 })).toBe('{"total":42}');
     expect(formatTimelineDiffValue(Symbol('phase'))).toBe('Symbol(phase)');
     expect(formatTimelineDiffValue(() => 'ignored')).toBe('[function]');
+  });
+
+  it('formats values that JSON cannot serialize', () => {
+    const circularValue: Record<string, unknown> = {};
+    circularValue['self'] = circularValue;
+
+    expect(formatTimelineDiffValue(circularValue)).toBe('[unserializable]');
+    expect(formatTimelineDiffValue(BigInt(42))).toBe('42');
   });
 
   it('ignores stale replay responses when rapid step selections resolve out of order', async () => {

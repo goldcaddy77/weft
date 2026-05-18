@@ -332,7 +332,8 @@ function wrapMocksWithChaos(
     saved.set(activity, original);
 
     // Derive a per-run seed so each run gets a different fault sequence.
-    const perRunChaos = chaos.seed !== undefined ? { ...chaos, seed: chaos.seed + runIndex } : chaos;
+    const perRunChaos =
+      chaos.seed !== undefined ? { ...chaos, seed: chaos.seed + runIndex } : chaos;
 
     const chaosWrapped = withChaos(
       (activityInput: unknown) => original(activityInput),

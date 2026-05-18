@@ -28,6 +28,17 @@ export class WorkflowTimelineRequestGuard {
 type DiffCandidate =
   | { readonly missing: true }
   | { readonly missing: false; readonly value: unknown };
+type DiffTraversal =
+  | {
+      readonly kind: 'array';
+      readonly before: readonly unknown[];
+      readonly after: readonly unknown[];
+    }
+  | {
+      readonly kind: 'record';
+      readonly before: Record<string, unknown>;
+      readonly after: Record<string, unknown>;
+    };
 
 const missingValue: DiffCandidate = { missing: true };
 const dedicatedBudgetSearchAttributeKey = 'weft:tokenCost';
@@ -136,7 +147,67 @@ function addLeafDiff(
   });
 }
 
-// oxlint-disable-next-line complexity -- ID:dashboard-fragments-workflow-execution-timeline-collect-value-diffs-complexity
+function hasSamePresentValue(beforeValue: DiffCandidate, afterValue: DiffCandidate): boolean {
+  return (
+    !beforeValue.missing && !afterValue.missing && Object.is(beforeValue.value, afterValue.value)
+  );
+}
+
+function getDiffTraversal(
+  beforeValue: DiffCandidate,
+  afterValue: DiffCandidate,
+): DiffTraversal | null {
+  if (beforeValue.missing || afterValue.missing) return null;
+
+  if (Array.isArray(beforeValue.value) && Array.isArray(afterValue.value)) {
+    return { kind: 'array', before: beforeValue.value, after: afterValue.value };
+  }
+
+  if (isPlainObjectRecord(beforeValue.value) && isPlainObjectRecord(afterValue.value)) {
+    return { kind: 'record', before: beforeValue.value, after: afterValue.value };
+  }
+
+  return null;
+}
+
+function collectArrayValueDiffs(
+  section: WorkflowTimelineDiffSection,
+  label: string,
+  beforeArray: readonly unknown[],
+  afterArray: readonly unknown[],
+  rows: WorkflowTimelineDiffRow[],
+): void {
+  const length = Math.max(beforeArray.length, afterArray.length);
+  for (let index = 0; index < length; index++) {
+    collectValueDiffs(
+      section,
+      `${label}[${index}]`,
+      index in beforeArray ? presentValue(beforeArray[index]) : missingValue,
+      index in afterArray ? presentValue(afterArray[index]) : missingValue,
+      rows,
+    );
+  }
+}
+
+function collectRecordValueDiffs(
+  section: WorkflowTimelineDiffSection,
+  label: string,
+  beforeRecord: Record<string, unknown>,
+  afterRecord: Record<string, unknown>,
+  rows: WorkflowTimelineDiffRow[],
+): void {
+  const keys = new Set([...Object.keys(beforeRecord), ...Object.keys(afterRecord)]);
+  for (const key of [...keys].toSorted()) {
+    collectValueDiffs(
+      section,
+      `${label}.${key}`,
+      Object.hasOwn(beforeRecord, key) ? presentValue(beforeRecord[key]) : missingValue,
+      Object.hasOwn(afterRecord, key) ? presentValue(afterRecord[key]) : missingValue,
+      rows,
+    );
+  }
+}
+
 function collectValueDiffs(
   section: WorkflowTimelineDiffSection,
   label: string,
@@ -144,57 +215,23 @@ function collectValueDiffs(
   afterValue: DiffCandidate,
   rows: WorkflowTimelineDiffRow[],
 ): void {
-  if (
-    !beforeValue.missing &&
-    !afterValue.missing &&
-    Object.is(beforeValue.value, afterValue.value)
-  ) {
+  if (hasSamePresentValue(beforeValue, afterValue)) {
     return;
   }
 
-  if (
-    !beforeValue.missing &&
-    !afterValue.missing &&
-    Array.isArray(beforeValue.value) &&
-    Array.isArray(afterValue.value)
-  ) {
-    const beforeArray = beforeValue.value;
-    const afterArray = afterValue.value;
-    const length = Math.max(beforeArray.length, afterArray.length);
-    for (let index = 0; index < length; index++) {
-      collectValueDiffs(
-        section,
-        `${label}[${index}]`,
-        index in beforeArray ? presentValue(beforeArray[index]) : missingValue,
-        index in afterArray ? presentValue(afterArray[index]) : missingValue,
-        rows,
-      );
-    }
+  const traversal = getDiffTraversal(beforeValue, afterValue);
+
+  if (traversal === null) {
+    addLeafDiff(section, label, beforeValue, afterValue, rows);
     return;
   }
 
-  if (
-    !beforeValue.missing &&
-    !afterValue.missing &&
-    isPlainObjectRecord(beforeValue.value) &&
-    isPlainObjectRecord(afterValue.value)
-  ) {
-    const beforeRecord = beforeValue.value;
-    const afterRecord = afterValue.value;
-    const keys = new Set([...Object.keys(beforeRecord), ...Object.keys(afterRecord)]);
-    for (const key of [...keys].toSorted()) {
-      collectValueDiffs(
-        section,
-        `${label}.${key}`,
-        Object.hasOwn(beforeRecord, key) ? presentValue(beforeRecord[key]) : missingValue,
-        Object.hasOwn(afterRecord, key) ? presentValue(afterRecord[key]) : missingValue,
-        rows,
-      );
-    }
+  if (traversal.kind === 'array') {
+    collectArrayValueDiffs(section, label, traversal.before, traversal.after, rows);
     return;
   }
 
-  addLeafDiff(section, label, beforeValue, afterValue, rows);
+  collectRecordValueDiffs(section, label, traversal.before, traversal.after, rows);
 }
 
 function collectBudgetDiff(
@@ -301,36 +338,22 @@ export function buildWorkflowTimelineDiff(
   ];
 }
 
-// oxlint-disable-next-line complexity -- ID:dashboard-fragments-workflow-execution-timeline-format-timeline-diff-value-complexity
-export function formatTimelineDiffValue(value: unknown): string {
-  if (value === undefined) {
-    return '-';
-  }
-
-  if (value === null) {
-    return 'null';
-  }
-
-  if (typeof value === 'string') {
-    return value;
-  }
-
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    return String(value);
-  }
-
-  if (typeof value === 'bigint' || typeof value === 'symbol') {
-    return value.toString();
-  }
-
-  if (typeof value === 'function') {
-    return '[function]';
-  }
-
+function stringifyTimelineDiffValue(value: unknown): string {
   try {
     const serialized = JSON.stringify(value);
     return serialized === undefined ? '[unserializable]' : serialized;
   } catch {
     return '[unserializable]';
   }
+}
+
+export function formatTimelineDiffValue(value: unknown): string {
+  if (value === undefined) return '-';
+  if (value === null) return 'null';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (typeof value === 'bigint' || typeof value === 'symbol') return String(value);
+  if (typeof value === 'function') return '[function]';
+
+  return stringifyTimelineDiffValue(value);
 }
