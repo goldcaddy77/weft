@@ -18,17 +18,7 @@ async function* enrichOrder(ctx: Context, order: Order) {
 }
 ```
 
-Rejection mirrors `Promise.all()`---any branch fails and the whole operation fails. The difference is what happens next. When one branch rejects, every other branch's settled value is recorded in the parent operation's in-memory cache entry **before the rejection propagates**. On the workflow's next yield, that entry is persisted; a resumed run replays at the same step and the fulfilled activities don't fire a second time.
-
-> [!IMPORTANT] Failure semantics contract
-> Fulfilled branches' values go into the parent's in-memory cache entry **before** the rejection is thrown into the workflow. That entry becomes durable only when the workflow yields again. Miss that yield---let the rejection propagate all the way to termination---and you lose those partial results.
-
-Here's what that means for your code:
-
-1. **Design your catch blocks around the yield boundary.** If you catch the rejection and yield any operation (`ctx.run(retry)`, `ctx.sleep(1000)`, `ctx.waitForSignal(...)`), the next checkpoint locks in the partial entry and replays will reuse it. If you let the error propagate to termination without yielding, the partial entry is abandoned and you're back to duplicate side effects. Use idempotency keys for branches whose side effects must not happen twice.
-2. **Slow siblings now delay rejection.** Surviving branches no longer abort when one fails---they run to completion so their results can be captured. A slow sibling will delay the parent's rejection until it settles. If you need cancel-on-first-failure, use `ctx.race` with a guard branch instead.
-3. **`ctx.all` matches branches by position, not identity.** If your branch list is dynamic between attempts (`[sendEmail, scheduleShipping]` on attempt 1 → `[scheduleShipping, sendEmail]` on attempt 2), you risk silent slot mismatch. Prefer `ctx.runAll`---it keys on branch name and surfaces reordering as a `BranchTopologyChangedError`.
-4. **Partial-failure preservation is top-level inline execution only.** A `ctx.all` nested inside another sub-operation lives inside its parent's slot; it gets no partial entry of its own. Workflows running through `workerExecution` also cannot persist partial branch slots because the worker protocol does not expose the inline context cache. If a worker-mode `ctx.all` or `ctx.runAll` has both a fulfilled branch and a failed sibling, Weft rejects with an explicit unsupported-boundary error. Use inline execution for this guarantee, or add idempotency keys.
+Rejection mirrors `Promise.all()`---any branch fails and the whole operation fails. If a branch rejects, surviving branches still finish and their values become recoverable on the next yield—see [Advanced: failure semantics](#advanced-failure-semantics).
 
 You can mix operation types freely. Sleeps, signals, and activity calls all work inside `ctx.all()`:
 
@@ -40,6 +30,18 @@ async function* example(ctx: Context) {
   ]);
 }
 ```
+
+## Advanced: failure semantics
+
+> [!IMPORTANT] Failure semantics contract
+> Fulfilled branches' values go into the parent's in-memory cache entry **before** the rejection is thrown into the workflow. That entry becomes durable only when the workflow yields again. Miss that yield---let the rejection propagate all the way to termination---and you lose those partial results.
+
+Here's what that means for your code:
+
+1. **Design your catch blocks around the yield boundary.** If you catch the rejection and yield any operation (`ctx.run(retry)`, `ctx.sleep(1000)`, `ctx.waitForSignal(...)`), the next checkpoint locks in the partial entry and replays will reuse it. If you let the error propagate to termination without yielding, the partial entry is abandoned and you're back to duplicate side effects. Use idempotency keys for branches whose side effects must not happen twice.
+2. **Slow siblings now delay rejection.** Surviving branches no longer abort when one fails---they run to completion so their results can be captured. A slow sibling will delay the parent's rejection until it settles. If you need cancel-on-first-failure, use `ctx.race` with a guard branch instead.
+3. **`ctx.all` matches branches by position, not identity.** If your branch list is dynamic between attempts (`[sendEmail, scheduleShipping]` on attempt 1 → `[scheduleShipping, sendEmail]` on attempt 2), you risk silent slot mismatch. Prefer `ctx.runAll`---it keys on branch name and surfaces reordering as a `BranchTopologyChangedError`.
+4. **Partial-failure preservation is top-level inline execution only.** A `ctx.all` nested inside another sub-operation lives inside its parent's slot; it gets no partial entry of its own. Workflows running through `workerExecution` also cannot persist partial branch slots because the worker protocol does not expose the inline context cache. If a worker-mode `ctx.all` or `ctx.runAll` has both a fulfilled branch and a failed sibling, Weft rejects with an explicit unsupported-boundary error. Use inline execution for this guarantee, or add idempotency keys.
 
 ## First-wins with `ctx.race()`
 
