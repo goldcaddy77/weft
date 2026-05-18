@@ -74,69 +74,92 @@ export async function collectDiagnostics(
 // Database health
 // ---------------------------------------------------------------------------
 
-// oxlint-disable-next-line complexity -- ID:diagnostics-doctor-collect-database-health-complexity
+function buildEmptyDatabaseHealth(sizeLimitBytes: number): DatabaseHealth {
+  return {
+    sizeBytes: 0,
+    sizeLimitBytes,
+    walSizeBytes: null,
+    integrityOk: true,
+    integrityError: null,
+    fragmentationPercent: 0,
+    journalMode: 'unknown',
+    pageCount: 0,
+    pageSize: 0,
+    freelistCount: 0,
+  };
+}
+
+type DatabasePragmas = {
+  pageCount: number;
+  pageSize: number;
+  freelistCount: number;
+  integrityResult: string;
+  journalMode: string;
+};
+
+async function readPragmaColumn<T>(
+  query: NonNullable<Storage['query']>,
+  pragma: string,
+  column: string,
+  fallback: T,
+): Promise<T> {
+  const rows = await query<Record<string, unknown>>(`PRAGMA ${pragma}`);
+  const value = rows[0]?.[column];
+  return (value ?? fallback) as T;
+}
+
+async function readDatabasePragmas(query: NonNullable<Storage['query']>): Promise<DatabasePragmas> {
+  const [pageCount, pageSize, freelistCount, integrityResult, journalMode] = await Promise.all([
+    readPragmaColumn<number>(query, 'page_count', 'page_count', 0),
+    readPragmaColumn<number>(query, 'page_size', 'page_size', 0),
+    readPragmaColumn<number>(query, 'freelist_count', 'freelist_count', 0),
+    readPragmaColumn<string>(query, 'integrity_check', 'integrity_check', 'ok'),
+    readPragmaColumn<string>(query, 'journal_mode', 'journal_mode', 'unknown'),
+  ]);
+  return { pageCount, pageSize, freelistCount, integrityResult, journalMode };
+}
+
+function measureDatabaseFiles(databasePath: string): {
+  sizeBytes: number;
+  walSizeBytes: number | null;
+} {
+  if (databasePath === ':memory:') {
+    return { sizeBytes: 0, walSizeBytes: null };
+  }
+  const walSize = fileSize(databasePath + '-wal');
+  return {
+    sizeBytes: fileSize(databasePath),
+    walSizeBytes: walSize > 0 ? walSize : null,
+  };
+}
+
 async function collectDatabaseHealth(
   storage: Storage,
   databasePath: string,
   sizeLimitBytes: number,
 ): Promise<DatabaseHealth> {
   if (typeof storage.query !== 'function') {
-    return {
-      sizeBytes: 0,
-      sizeLimitBytes,
-      walSizeBytes: null,
-      integrityOk: true,
-      integrityError: null,
-      fragmentationPercent: 0,
-      journalMode: 'unknown',
-      pageCount: 0,
-      pageSize: 0,
-      freelistCount: 0,
-    };
+    return buildEmptyDatabaseHealth(sizeLimitBytes);
   }
 
-  const query = storage.query.bind(storage);
+  const pragmas = await readDatabasePragmas(storage.query.bind(storage));
+  const { sizeBytes, walSizeBytes } = measureDatabaseFiles(databasePath);
 
-  const [pageCountRows, pageSizeRows, freelistRows, integrityRows, journalRows] = await Promise.all(
-    [
-      query<{ page_count: number }>('PRAGMA page_count'),
-      query<{ page_size: number }>('PRAGMA page_size'),
-      query<{ freelist_count: number }>('PRAGMA freelist_count'),
-      query<{ integrity_check: string }>('PRAGMA integrity_check'),
-      query<{ journal_mode: string }>('PRAGMA journal_mode'),
-    ],
-  );
-
-  const pageCount = pageCountRows[0]?.page_count ?? 0;
-  const pageSize = pageSizeRows[0]?.page_size ?? 0;
-  const freelistCount = freelistRows[0]?.freelist_count ?? 0;
-  const integrityResult = integrityRows[0]?.integrity_check ?? 'ok';
-  const journalMode = journalRows[0]?.journal_mode ?? 'unknown';
-
-  const integrityOk = integrityResult === 'ok';
-  const integrityError = integrityOk ? null : integrityResult;
-
-  const fragmentationPercent = pageCount > 0 ? (freelistCount / pageCount) * 100 : 0;
-
-  const sizeBytes = databasePath === ':memory:' ? 0 : fileSize(databasePath);
-
-  let walSizeBytes: number | null = null;
-  if (databasePath !== ':memory:') {
-    const walSize = fileSize(databasePath + '-wal');
-    walSizeBytes = walSize > 0 ? walSize : null;
-  }
+  const integrityOk = pragmas.integrityResult === 'ok';
+  const fragmentationPercent =
+    pragmas.pageCount > 0 ? (pragmas.freelistCount / pragmas.pageCount) * 100 : 0;
 
   return {
     sizeBytes,
     sizeLimitBytes,
     walSizeBytes,
     integrityOk,
-    integrityError,
+    integrityError: integrityOk ? null : pragmas.integrityResult,
     fragmentationPercent,
-    journalMode,
-    pageCount,
-    pageSize,
-    freelistCount,
+    journalMode: pragmas.journalMode,
+    pageCount: pragmas.pageCount,
+    pageSize: pragmas.pageSize,
+    freelistCount: pragmas.freelistCount,
   };
 }
 
@@ -144,11 +167,17 @@ async function collectDatabaseHealth(
 // Workflow statistics
 // ---------------------------------------------------------------------------
 
-// oxlint-disable-next-line complexity -- ID:diagnostics-doctor-collect-workflow-statistics-complexity
-async function collectWorkflowStatistics(
-  storage: Storage,
-  now: number,
-): Promise<WorkflowStatistics> {
+function mapStatusKey(status: WorkflowState['status']): keyof WorkflowStatusCounts {
+  return status === 'timed-out' ? 'timedOut' : status;
+}
+
+type WorkflowScanResult = {
+  total: number;
+  statusCounts: WorkflowStatusCounts;
+  longestRunning: LongestRunningWorkflow | null;
+};
+
+async function aggregateWorkflowScan(storage: Storage, now: number): Promise<WorkflowScanResult> {
   const statusCounts: WorkflowStatusCounts = {
     pending: 0,
     running: 0,
@@ -157,24 +186,16 @@ async function collectWorkflowStatistics(
     cancelled: 0,
     timedOut: 0,
   };
-
   let total = 0;
   let longestRunning: LongestRunningWorkflow | null = null;
   let earliestCreatedAt = Infinity;
 
-  // Collect all workflow states and track the longest running
   for await (const [key, value] of storage.scan('wf:')) {
-    // Skip checkpoint keys: wf:{id}:ckpt and wf:{id}:ckpt:{step}
     if (key.includes(':ckpt')) continue;
-
     const state = decode(value) as WorkflowState;
     total++;
+    statusCounts[mapStatusKey(state.status)]++;
 
-    // Map status to counts
-    const statusKey = state.status === 'timed-out' ? 'timedOut' : state.status;
-    statusCounts[statusKey]++;
-
-    // Track longest running
     if (state.status === 'running' && state.createdAt < earliestCreatedAt) {
       earliestCreatedAt = state.createdAt;
       longestRunning = {
@@ -186,47 +207,49 @@ async function collectWorkflowStatistics(
       };
     }
   }
+  return { total, statusCounts, longestRunning };
+}
 
-  // Load checkpoint for longest running workflow to get the current step
-  if (longestRunning) {
-    const checkpointValue = await storage.get(KEYS.checkpoint(longestRunning.id));
-    if (checkpointValue) {
-      const checkpoint = decode(checkpointValue) as Checkpoint;
-      longestRunning.currentStep = checkpoint.step;
-    }
-  }
+async function hydrateLongestRunningStep(
+  storage: Storage,
+  longestRunning: LongestRunningWorkflow,
+): Promise<void> {
+  const checkpointValue = await storage.get(KEYS.checkpoint(longestRunning.id));
+  if (!checkpointValue) return;
+  const checkpoint = decode(checkpointValue) as Checkpoint;
+  longestRunning.currentStep = checkpoint.step;
+}
 
-  // Track largest checkpoint
+async function findLargestCheckpoint(storage: Storage): Promise<LargestCheckpoint | null> {
   let largestCheckpoint: LargestCheckpoint | null = null;
   let largestSize = 0;
-
   for await (const [key, value] of storage.scan('wf:')) {
-    // Match exactly wf:{id}:ckpt — not wf:{id}:ckpt:{step}
-    // The key must contain :ckpt and the part after the last :ckpt must be empty
-    if (!key.includes(':ckpt')) continue;
-
-    // Split to verify this is wf:{id}:ckpt and not wf:{id}:ckpt:{step}
+    // Match exactly wf:{id}:ckpt — not wf:{id}:ckpt:{step}.
     const checkpointIndex = key.indexOf(':ckpt');
-    const afterCheckpoint = key.slice(checkpointIndex + ':ckpt'.length);
-    if (afterCheckpoint.length > 0) continue;
-
-    const workflowId = key.slice('wf:'.length, checkpointIndex);
+    if (checkpointIndex === -1) continue;
+    if (key.length > checkpointIndex + ':ckpt'.length) continue;
 
     if (value.byteLength > largestSize) {
       largestSize = value.byteLength;
       largestCheckpoint = {
-        workflowId,
+        workflowId: key.slice('wf:'.length, checkpointIndex),
         sizeBytes: value.byteLength,
       };
     }
   }
+  return largestCheckpoint;
+}
 
-  return {
-    total,
-    statusCounts,
-    longestRunning,
-    largestCheckpoint,
-  };
+async function collectWorkflowStatistics(
+  storage: Storage,
+  now: number,
+): Promise<WorkflowStatistics> {
+  const { total, statusCounts, longestRunning } = await aggregateWorkflowScan(storage, now);
+  if (longestRunning) {
+    await hydrateLongestRunningStep(storage, longestRunning);
+  }
+  const largestCheckpoint = await findLargestCheckpoint(storage);
+  return { total, statusCounts, longestRunning, largestCheckpoint };
 }
 
 // ---------------------------------------------------------------------------

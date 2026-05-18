@@ -19,6 +19,75 @@ interface WorkflowTypeGroup {
   versionCounts: Map<string, number>;
 }
 
+async function groupActiveWorkflowsByType(
+  storage: Storage,
+): Promise<Map<string, WorkflowTypeGroup>> {
+  const groups = new Map<string, WorkflowTypeGroup>();
+  for await (const [key, bytes] of storage.scan('wf:')) {
+    if (key.includes(':ckpt')) continue;
+    const state = decode(bytes) as WorkflowState;
+    if (state.status !== 'running' && state.status !== 'pending') continue;
+
+    let group = groups.get(state.type);
+    if (!group) {
+      group = { count: 0, versionCounts: new Map() };
+      groups.set(state.type, group);
+    }
+    group.count++;
+    group.versionCounts.set(state.version, (group.versionCounts.get(state.version) ?? 0) + 1);
+  }
+  return groups;
+}
+
+function findMostCommonVersion(versionCounts: Map<string, number>): string {
+  let storedVersion = '';
+  let maxCount = 0;
+  for (const [version, count] of versionCounts) {
+    if (count > maxCount) {
+      maxCount = count;
+      storedVersion = version;
+    }
+  }
+  return storedVersion;
+}
+
+function buildWorkflowTypeReports(
+  groups: Map<string, WorkflowTypeGroup>,
+  registrations: Record<string, WorkflowRegistration>,
+): WorkflowTypeReport[] {
+  const reports: WorkflowTypeReport[] = [];
+  for (const [type, group] of groups) {
+    const registration = registrations[type];
+    if (!registration) continue;
+
+    const storedVersion = findMostCommonVersion(group.versionCounts);
+    const registeredVersion = registration.version ?? DEFAULT_WORKFLOW_VERSION;
+    const hasMigration = !!registration.migrate;
+    const compatibility = checkVersionCompatibility(storedVersion, registeredVersion, hasMigration);
+
+    reports.push({
+      type,
+      storedVersion,
+      registeredVersion,
+      runningCount: group.count,
+      compatibility,
+      hasMigration,
+    });
+  }
+  return reports;
+}
+
+function computeOverallVerdict(
+  reports: WorkflowTypeReport[],
+): VersionCheckReport['overallVerdict'] {
+  let verdict: VersionCheckReport['overallVerdict'] = 'safe';
+  for (const report of reports) {
+    if (report.compatibility === 'incompatible') return 'unsafe';
+    if (report.compatibility === 'needs-migration') verdict = 'needs-migration';
+  }
+  return verdict;
+}
+
 /**
  * Scans active (running and pending) workflows in `storage`, groups them by
  * type, and compares stored workflow versions against currently registered
@@ -42,79 +111,12 @@ interface WorkflowTypeGroup {
  * console.log(report.overallVerdict); // 'safe'
  * ```
  */
-// oxlint-disable-next-line complexity -- ID:diagnostics-version-check-run-version-check-complexity
 export async function runVersionCheck(
   storage: Storage,
   registrations: Record<string, WorkflowRegistration>,
 ): Promise<VersionCheckReport> {
-  // 1. Scan all wf: keys, skip checkpoint keys
-  const groups = new Map<string, WorkflowTypeGroup>();
-
-  for await (const [key, bytes] of storage.scan('wf:')) {
-    // Skip checkpoint keys (contain :ckpt)
-    if (key.includes(':ckpt')) continue;
-
-    const state = decode(bytes) as WorkflowState;
-
-    // 2. Filter to only running or pending workflows
-    if (state.status !== 'running' && state.status !== 'pending') continue;
-
-    // 3. Group by type and track version counts
-    let group = groups.get(state.type);
-    if (!group) {
-      group = { count: 0, versionCounts: new Map() };
-      groups.set(state.type, group);
-    }
-    group.count++;
-    group.versionCounts.set(state.version, (group.versionCounts.get(state.version) ?? 0) + 1);
-  }
-
-  // 4. Build WorkflowTypeReport for each type
-  const workflowTypes: WorkflowTypeReport[] = [];
-
-  for (const [type, group] of groups) {
-    const registration = registrations[type];
-
-    // Skip unregistered types
-    if (!registration) continue;
-
-    // Find the most common stored version
-    let storedVersion = '';
-    let maxCount = 0;
-    for (const [version, count] of group.versionCounts) {
-      if (count > maxCount) {
-        maxCount = count;
-        storedVersion = version;
-      }
-    }
-
-    const registeredVersion = registration.version ?? DEFAULT_WORKFLOW_VERSION;
-    const hasMigration = !!registration.migrate;
-    const compatibility = checkVersionCompatibility(storedVersion, registeredVersion, hasMigration);
-
-    workflowTypes.push({
-      type,
-      storedVersion,
-      registeredVersion,
-      runningCount: group.count,
-      compatibility,
-      hasMigration,
-    });
-  }
-
-  // 5. Compute overall verdict
-  let overallVerdict: VersionCheckReport['overallVerdict'] = 'safe';
-
-  for (const typeReport of workflowTypes) {
-    if (typeReport.compatibility === 'incompatible') {
-      // Versions differ but no migration — unsafe
-      overallVerdict = 'unsafe';
-      break;
-    }
-    if (typeReport.compatibility === 'needs-migration') {
-      overallVerdict = 'needs-migration';
-    }
-  }
-
+  const groups = await groupActiveWorkflowsByType(storage);
+  const workflowTypes = buildWorkflowTypeReports(groups, registrations);
+  const overallVerdict = computeOverallVerdict(workflowTypes);
   return { workflowTypes, overallVerdict };
 }

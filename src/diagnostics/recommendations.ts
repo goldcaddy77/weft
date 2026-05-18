@@ -15,6 +15,117 @@ import type {
 } from './types.ts';
 import { THRESHOLDS } from './types.ts';
 
+type ResolvedThresholds = { readonly [K in keyof typeof THRESHOLDS]: number };
+
+type RuleContext = {
+  readonly database: DatabaseHealth;
+  readonly workflows: WorkflowStatistics;
+  readonly queues: QueueStatistics[];
+  readonly thresholds: ResolvedThresholds;
+};
+
+type Rule = (context: RuleContext) => Recommendation[];
+
+function integrityFailureRule({ database }: RuleContext): Recommendation[] {
+  if (database.integrityOk) return [];
+  return [
+    {
+      severity: 'critical',
+      section: 'database',
+      message: `Database integrity check failed: ${database.integrityError}`,
+    },
+  ];
+}
+
+function databaseSizeRule({ database, thresholds }: RuleContext): Recommendation[] {
+  if (database.sizeLimitBytes <= 0) return [];
+  const fraction = database.sizeBytes / database.sizeLimitBytes;
+  const message = `Database is at ${(fraction * 100).toFixed(1)}% capacity (${formatBytes(database.sizeBytes)} / ${formatBytes(database.sizeLimitBytes)}).`;
+  if (fraction > thresholds.databaseSizeCriticalFraction) {
+    return [{ severity: 'critical', section: 'database', message }];
+  }
+  if (fraction > thresholds.databaseSizeWarningFraction) {
+    return [{ severity: 'warning', section: 'database', message }];
+  }
+  return [];
+}
+
+function walSizeRule({ database, thresholds }: RuleContext): Recommendation[] {
+  if (database.walSizeBytes === null || database.walSizeBytes <= thresholds.walSizeWarningBytes) {
+    return [];
+  }
+  return [
+    {
+      severity: 'warning',
+      section: 'database',
+      message: `WAL file is ${formatBytes(database.walSizeBytes)}, which may indicate stalled checkpointing.`,
+    },
+  ];
+}
+
+function fragmentationRule({ database, thresholds }: RuleContext): Recommendation[] {
+  if (database.fragmentationPercent <= thresholds.fragmentationVacuumPercent) return [];
+  return [
+    {
+      severity: 'warning',
+      section: 'database',
+      message: `Database fragmentation is ${database.fragmentationPercent.toFixed(1)}%. Running VACUUM is recommended.`,
+    },
+  ];
+}
+
+function longRunningWorkflowRule({ workflows, thresholds }: RuleContext): Recommendation[] {
+  const longest = workflows.longestRunning;
+  if (!longest || longest.elapsedMilliseconds <= thresholds.longRunningWorkflowMilliseconds) {
+    return [];
+  }
+  return [
+    {
+      severity: 'warning',
+      section: 'workflows',
+      message: `Workflow "${longest.id}" has been running for ${formatDuration(longest.elapsedMilliseconds)}. Consider setting an executionTimeout to prevent runaway workflows.`,
+    },
+  ];
+}
+
+function largeCheckpointRule({ workflows, thresholds }: RuleContext): Recommendation[] {
+  const largest = workflows.largestCheckpoint;
+  if (!largest || largest.sizeBytes <= thresholds.largeCheckpointBytes) return [];
+  return [
+    {
+      severity: 'warning',
+      section: 'workflows',
+      message: `Workflow "${largest.workflowId}" has a ${formatBytes(largest.sizeBytes)} checkpoint. Consider reducing state size to improve serialization performance.`,
+    },
+  ];
+}
+
+function idleQueueRule({ queues }: RuleContext): Recommendation[] {
+  const out: Recommendation[] = [];
+  for (const queue of queues) {
+    if (queue.pendingCount > 0 && queue.inflightCount === 0) {
+      out.push({
+        severity: 'warning',
+        section: 'activities',
+        message: `Queue "${queue.name}" has ${queue.pendingCount} pending operation(s) but nothing in-flight. Workers may be stopped or disconnected.`,
+      });
+    }
+  }
+  return out;
+}
+
+// Rule order defines the order recommendations appear in the report. Do not
+// reorder without updating tests that assert sequencing.
+const RECOMMENDATION_RULES: readonly Rule[] = [
+  integrityFailureRule,
+  databaseSizeRule,
+  walSizeRule,
+  fragmentationRule,
+  longRunningWorkflowRule,
+  largeCheckpointRule,
+  idleQueueRule,
+];
+
 /**
  * Generate recommendations based on diagnostic data.
  *
@@ -35,7 +146,6 @@ import { THRESHOLDS } from './types.ts';
  * console.log(recs.length); // 0 for a healthy instance
  * ```
  */
-// oxlint-disable-next-line complexity -- ID:diagnostics-recommendations-generate-recommendations-complexity
 export function generateRecommendations(
   report: {
     database: DatabaseHealth;
@@ -44,92 +154,13 @@ export function generateRecommendations(
   },
   thresholds?: Partial<{ [K in keyof typeof THRESHOLDS]: number }>,
 ): Recommendation[] {
-  const merged = { ...THRESHOLDS, ...thresholds };
-  const recommendations: Recommendation[] = [];
-
-  const { database, workflows, queues } = report;
-
-  // 1. Integrity failure
-  if (!database.integrityOk) {
-    recommendations.push({
-      severity: 'critical',
-      section: 'database',
-      message: `Database integrity check failed: ${database.integrityError}`,
-    });
-  }
-
-  // 2 & 3. Database size (critical > 95%, warning > 80%, but not both)
-  if (database.sizeLimitBytes > 0) {
-    const fraction = database.sizeBytes / database.sizeLimitBytes;
-    if (fraction > merged.databaseSizeCriticalFraction) {
-      recommendations.push({
-        severity: 'critical',
-        section: 'database',
-        message: `Database is at ${(fraction * 100).toFixed(1)}% capacity (${formatBytes(database.sizeBytes)} / ${formatBytes(database.sizeLimitBytes)}).`,
-      });
-    } else if (fraction > merged.databaseSizeWarningFraction) {
-      recommendations.push({
-        severity: 'warning',
-        section: 'database',
-        message: `Database is at ${(fraction * 100).toFixed(1)}% capacity (${formatBytes(database.sizeBytes)} / ${formatBytes(database.sizeLimitBytes)}).`,
-      });
-    }
-  }
-
-  // 4. WAL size
-  if (database.walSizeBytes !== null && database.walSizeBytes > merged.walSizeWarningBytes) {
-    recommendations.push({
-      severity: 'warning',
-      section: 'database',
-      message: `WAL file is ${formatBytes(database.walSizeBytes)}, which may indicate stalled checkpointing.`,
-    });
-  }
-
-  // 5. Fragmentation
-  if (database.fragmentationPercent > merged.fragmentationVacuumPercent) {
-    recommendations.push({
-      severity: 'warning',
-      section: 'database',
-      message: `Database fragmentation is ${database.fragmentationPercent.toFixed(1)}%. Running VACUUM is recommended.`,
-    });
-  }
-
-  // 6. Long-running workflow
-  if (
-    workflows.longestRunning &&
-    workflows.longestRunning.elapsedMilliseconds > merged.longRunningWorkflowMilliseconds
-  ) {
-    recommendations.push({
-      severity: 'warning',
-      section: 'workflows',
-      message: `Workflow "${workflows.longestRunning.id}" has been running for ${formatDuration(workflows.longestRunning.elapsedMilliseconds)}. Consider setting an executionTimeout to prevent runaway workflows.`,
-    });
-  }
-
-  // 7. Large checkpoint
-  if (
-    workflows.largestCheckpoint &&
-    workflows.largestCheckpoint.sizeBytes > merged.largeCheckpointBytes
-  ) {
-    recommendations.push({
-      severity: 'warning',
-      section: 'workflows',
-      message: `Workflow "${workflows.largestCheckpoint.workflowId}" has a ${formatBytes(workflows.largestCheckpoint.sizeBytes)} checkpoint. Consider reducing state size to improve serialization performance.`,
-    });
-  }
-
-  // 8. Queues with pending work but nothing in-flight
-  for (const queue of queues) {
-    if (queue.pendingCount > 0 && queue.inflightCount === 0) {
-      recommendations.push({
-        severity: 'warning',
-        section: 'activities',
-        message: `Queue "${queue.name}" has ${queue.pendingCount} pending operation(s) but nothing in-flight. Workers may be stopped or disconnected.`,
-      });
-    }
-  }
-
-  return recommendations;
+  const context: RuleContext = {
+    database: report.database,
+    workflows: report.workflows,
+    queues: report.queues,
+    thresholds: { ...THRESHOLDS, ...thresholds },
+  };
+  return RECOMMENDATION_RULES.flatMap((rule) => rule(context));
 }
 
 // ---------------------------------------------------------------------------

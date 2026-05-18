@@ -44,6 +44,32 @@ function getProcess(): typeof globalThis.process | undefined {
   return globalThis.process;
 }
 
+function isNodeRuntime(): boolean {
+  return typeof getProcess()?.versions?.node === 'string';
+}
+
+function isBrowserRuntime(): boolean {
+  const windowValue =
+    portableRuntimeTestOverrides && 'window' in portableRuntimeTestOverrides
+      ? portableRuntimeTestOverrides.window
+      : globalThis.window;
+  const documentValue =
+    portableRuntimeTestOverrides && 'document' in portableRuntimeTestOverrides
+      ? portableRuntimeTestOverrides.document
+      : globalThis.document;
+  return typeof windowValue !== 'undefined' || typeof documentValue !== 'undefined';
+}
+
+type RuntimeDetector = { readonly kind: RuntimeKind; readonly matches: () => boolean };
+
+// Precedence: bun → node → browser → edge. A Bun process running under a Node
+// shim still reports 'bun' because `isBunRuntime` runs first.
+const RUNTIME_DETECTORS: readonly RuntimeDetector[] = [
+  { kind: 'bun', matches: isBunRuntime },
+  { kind: 'node', matches: isNodeRuntime },
+  { kind: 'browser', matches: isBrowserRuntime },
+];
+
 /**
  * Detect the current JavaScript runtime.
  * Detection precedence is bun → node → browser → edge: a Bun process running
@@ -59,20 +85,10 @@ function getProcess(): typeof globalThis.process | undefined {
  * console.log(runtime); // e.g. 'bun' when running under Bun
  * ```
  */
-// oxlint-disable-next-line complexity -- ID:runtime-portable-detect-runtime-complexity
 export function detectRuntime(): RuntimeKind {
-  if (isBunRuntime()) return 'bun';
-  const process = getProcess();
-  if (process?.versions?.node) return 'node';
-  const windowValue =
-    portableRuntimeTestOverrides && 'window' in portableRuntimeTestOverrides
-      ? portableRuntimeTestOverrides.window
-      : globalThis.window;
-  const documentValue =
-    portableRuntimeTestOverrides && 'document' in portableRuntimeTestOverrides
-      ? portableRuntimeTestOverrides.document
-      : globalThis.document;
-  if (typeof windowValue !== 'undefined' || typeof documentValue !== 'undefined') return 'browser';
+  for (const detector of RUNTIME_DETECTORS) {
+    if (detector.matches()) return detector.kind;
+  }
   return 'edge';
 }
 

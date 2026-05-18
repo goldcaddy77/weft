@@ -390,3 +390,124 @@ describe('Prometheus exporter', () => {
     expect(text).toContain('weft_dpmo 0');
   });
 });
+
+// Byte-identity fixtures captured against the original
+// serializeMetricsSnapshotForPrometheus implementation. Any refactor of the
+// serializer must preserve the exact output — every line, in order, with the
+// trailing newline.
+const PROMETHEUS_EMPTY_GOLDEN = `# HELP weft_workflow_duration Duration of workflow execution in milliseconds
+# TYPE weft_workflow_duration histogram
+weft_workflow_duration_count 0
+weft_workflow_duration_sum 0
+# HELP weft_activity_duration Duration of activity execution in milliseconds
+# TYPE weft_activity_duration histogram
+weft_activity_duration_count 0
+weft_activity_duration_sum 0
+# HELP weft_activity_attempts Total activity execution attempts
+# TYPE weft_activity_attempts counter
+weft_activity_attempts_total 0
+# HELP weft_workflow_active Number of currently active workflows
+# TYPE weft_workflow_active gauge
+weft_workflow_active 0
+# HELP weft_workflow_started Total workflows started
+# TYPE weft_workflow_started counter
+weft_workflow_started_total 0
+# HELP weft_workflow_completed Total workflows completed
+# TYPE weft_workflow_completed counter
+weft_workflow_completed_total 0
+# HELP weft_workflow_failed Total workflows failed
+# TYPE weft_workflow_failed counter
+weft_workflow_failed_total 0
+# HELP weft_prompt_cache_hits Total prompt prefix cache hits
+# TYPE weft_prompt_cache_hits counter
+weft_prompt_cache_hits_total 0
+# HELP weft_prompt_cache_misses Total prompt prefix cache misses
+# TYPE weft_prompt_cache_misses counter
+weft_prompt_cache_misses_total 0
+# HELP weft_dpmo_defects Total failed workflows (DPMO numerator)
+# TYPE weft_dpmo_defects counter
+weft_dpmo_defects_total 0
+# HELP weft_dpmo_operations Total started workflows (DPMO denominator)
+# TYPE weft_dpmo_operations counter
+weft_dpmo_operations_total 0
+# HELP weft_task_backlog Number of queued tasks waiting for workers
+# TYPE weft_task_backlog gauge
+weft_task_backlog 0
+# HELP weft_task_queue_latency Time tasks spend queued before dispatch in milliseconds
+# TYPE weft_task_queue_latency histogram
+weft_task_queue_latency_count 0
+weft_task_queue_latency_sum 0
+# HELP weft_task_execution_latency Time tasks spend executing after worker start in milliseconds
+# TYPE weft_task_execution_latency histogram
+weft_task_execution_latency_count 0
+weft_task_execution_latency_sum 0
+# HELP weft_task_retries Total task retry attempts after the first dispatch attempt
+# TYPE weft_task_retries counter
+weft_task_retries_total 0
+# HELP weft_task_requeues Total visibility-timeout or disconnect task requeues
+# TYPE weft_task_requeues counter
+weft_task_requeues_total 0
+# HELP weft_task_stale_heartbeats Number of in-flight tasks whose heartbeat age exceeds the diagnostic threshold
+# TYPE weft_task_stale_heartbeats gauge
+weft_task_stale_heartbeats 0
+# HELP weft_worker_capacity_saturation Ratio of in-flight worker slots to total worker concurrency
+# TYPE weft_worker_capacity_saturation gauge
+weft_worker_capacity_saturation 0
+# HELP weft_dpmo Defects per million operations (failed workflows / started workflows * 1e6)
+# TYPE weft_dpmo gauge
+weft_dpmo 0
+`;
+
+function replaceLines(input: string, replacements: Record<string, string>): string {
+  const lines = input.split('\n');
+  const updated = lines.map((line) => {
+    for (const [prefix, value] of Object.entries(replacements)) {
+      if (line.startsWith(prefix + ' ')) return prefix + ' ' + value;
+    }
+    return line;
+  });
+  return updated.join('\n');
+}
+
+describe('Prometheus byte-identity fixtures', () => {
+  it('produces the exact golden output for an empty snapshot', () => {
+    const output = serializeMetricsSnapshotForPrometheus({});
+    expect(output).toBe(PROMETHEUS_EMPTY_GOLDEN);
+  });
+
+  it('produces a byte-identical mixed-metric output', () => {
+    const output = serializeMetricsSnapshotForPrometheus({
+      'weft.workflow.duration': {
+        type: 'histogram',
+        count: 5,
+        sum: 150,
+        p50: 30,
+        p99: 40,
+        min: 20,
+        max: 40,
+      },
+      'weft.workflow.started': { type: 'counter', value: 7 },
+      'weft.workflow.active': { type: 'gauge', value: 3 },
+    });
+    const expected = replaceLines(PROMETHEUS_EMPTY_GOLDEN, {
+      weft_workflow_duration_count: '5',
+      weft_workflow_duration_sum: '150',
+      weft_workflow_active: '3',
+      weft_workflow_started_total: '7',
+    });
+    expect(output).toBe(expected);
+  });
+
+  it('produces a byte-identical DPMO snapshot', () => {
+    const output = serializeMetricsSnapshotForPrometheus({
+      'weft.dpmo.defects': { type: 'counter', value: 2 },
+      'weft.dpmo.operations': { type: 'counter', value: 100 },
+    });
+    const expected = replaceLines(PROMETHEUS_EMPTY_GOLDEN, {
+      weft_dpmo_defects_total: '2',
+      weft_dpmo_operations_total: '100',
+      weft_dpmo: '20000',
+    });
+    expect(output).toBe(expected);
+  });
+});
