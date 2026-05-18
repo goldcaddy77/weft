@@ -150,6 +150,8 @@ weft version:check --database ./weft.db --workflows ./src/workflows.ts --json
 | `--json`      | `-j`  | `false`     | Output as JSON instead of human-readable text   |
 | `--help`      | `-h`  |             | Show help message                               |
 
+The `--workflows` path is a TypeScript module resolved by Bun at runtime. Point it at source—for example `./src/workflows.ts`—not at compiled output in `dist/`, or version checks reflect stale code.
+
 The workflows module must default-export a `Record<string, WorkflowRegistration>`:
 
 ```typescript partial
