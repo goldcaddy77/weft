@@ -196,13 +196,6 @@ naming the alternative that was rejected.
 - **Symbol**: `startWorkflow`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
-## `dashboard-build-workflow-list-filter`
-
-- **File**: `src/dashboard/utilities/workflow-list-data.ts`
-- **Rule**: `complexity`
-- **Symbol**: `buildWorkflowListFilter`
-- **Reason**: Mirrors `buildWorkflowFilterSearchParams` on the application side — one branch per `WorkflowListFilters` field deciding whether to round-trip it. Splitting would not reduce branch count, just move it elsewhere.
-
 ## `diagnostics-doctor-collect-database-health-complexity`
 
 - **File**: `src/diagnostics/doctor.ts`

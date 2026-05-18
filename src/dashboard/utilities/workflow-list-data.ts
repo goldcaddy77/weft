@@ -37,7 +37,6 @@ export interface WorkflowListData {
  * Only round-trips fields that are actually set, mirroring the legacy
  * behavior so empty / whitespace inputs don't surface to the server.
  */
-// oxlint-disable-next-line complexity -- ID:dashboard-build-workflow-list-filter
 export function buildWorkflowListFilter(
   filters: WorkflowListFilters,
   pageSize: number,
@@ -50,27 +49,33 @@ export function buildWorkflowListFilter(
   if (filters.status !== 'all') listFilter.status = filters.status;
   if (filters.type.length > 0) listFilter.type = filters.type;
   if (filters.tags.length > 0) listFilter.tags = filters.tags;
-  if (filters.idPrefix !== undefined && filters.idPrefix.length > 0) {
-    listFilter.idPrefix = filters.idPrefix;
-  }
-  if (filters.createdAt !== undefined && hasTimeRangeBound(filters.createdAt)) {
-    listFilter.createdAt = filters.createdAt;
-  }
-  if (filters.updatedAt !== undefined && hasTimeRangeBound(filters.updatedAt)) {
-    listFilter.updatedAt = filters.updatedAt;
-  }
-  if (filters.executionDeadline !== undefined && hasTimeRangeBound(filters.executionDeadline)) {
-    listFilter.executionDeadline = filters.executionDeadline;
-  }
-  if (filters.tenantId !== undefined && filters.tenantId.length > 0) {
-    listFilter.tenantId = filters.tenantId.length === 1 ? filters.tenantId[0]! : filters.tenantId;
-  }
-  if (filters.failureCategory !== undefined && filters.failureCategory.length > 0) {
-    listFilter.failureCategory =
-      filters.failureCategory.length === 1 ? filters.failureCategory[0]! : filters.failureCategory;
-  }
+  assignTimeRange(listFilter, 'createdAt', filters.createdAt);
+  assignTimeRange(listFilter, 'updatedAt', filters.updatedAt);
+  assignTimeRange(listFilter, 'executionDeadline', filters.executionDeadline);
+
+  const idPrefix = filters.idPrefix;
+  if (idPrefix !== undefined && idPrefix.length > 0) listFilter.idPrefix = idPrefix;
+
+  const tenantId = singleOrArray(filters.tenantId);
+  if (tenantId !== undefined) listFilter.tenantId = tenantId;
+
+  const failureCategory = singleOrArray(filters.failureCategory);
+  if (failureCategory !== undefined) listFilter.failureCategory = failureCategory;
 
   return listFilter;
+}
+
+function assignTimeRange(
+  target: ListFilter,
+  key: 'createdAt' | 'updatedAt' | 'executionDeadline',
+  value: TimeRange | undefined,
+): void {
+  if (value !== undefined && hasTimeRangeBound(value)) target[key] = value;
+}
+
+function singleOrArray<T>(values: T[] | undefined): T | T[] | undefined {
+  if (values === undefined || values.length === 0) return undefined;
+  return values.length === 1 ? values[0]! : values;
 }
 
 function hasTimeRangeBound(range: TimeRange): boolean {
