@@ -253,171 +253,33 @@ naming the alternative that was rejected.
 - **Symbol**: `handleEvent`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
-## `server-index-classify-connection-complexity`
-
-- **File**: `src/server/runtime/websocket-upgrade.ts`
-- **Rule**: `complexity`
-- **Symbol**: `classifyConnection`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `server-index-dispatch-task-impl-complexity`
-
-- **File**: `src/server/runtime/task-dispatch.ts`
-- **Rule**: `complexity`
-- **Symbol**: `dispatchTaskImpl`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-- **File**: `src/server/index.ts`
-- **Rule**: `max-lines`
-- **Symbol**: `(whole file)`
-- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
-
-## `server-index-handle-task-result-request-complexity`
-
-- **File**: `src/server/runtime/task-polling.ts`
-- **Rule**: `complexity`
-- **Symbol**: `handleTaskResultRequest`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `server-index-handle-worker-web-socket-message-complexity`
-
-- **File**: `src/server/runtime/websocket-worker.ts`
-- **Rule**: `complexity`
-- **Symbol**: `handleWorkerWebSocketMessage`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `server-index-serve-complexity`
-
-- **File**: `src/server/index.ts`
-- **Rule**: `complexity`
-- **Symbol**: `serve`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `server-operations-bulk-filter-helpers-parse-bulk-list-filter-from-body-complexity`
-
-- **File**: `src/server/operations/bulk-filter-helpers.ts`
-- **Rule**: `complexity`
-- **Symbol**: `parseBulkListFilterFromBody`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `server-operations-create-schedule-invoke-complexity`
-
-- **File**: `src/server/operations/create-schedule.ts`
-- **Rule**: `complexity`
-- **Symbol**: `invoke`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `server-operations-fork-workflow-invoke-complexity`
-
-- **File**: `src/server/operations/fork-workflow.ts`
-- **Rule**: `complexity`
-- **Symbol**: `invoke`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `server-operations-list-schedules-validation-complexity`
-
-- **File**: `src/server/operations/list-schedules.ts`
-- **Rule**: `complexity` (via `eslint(complexity)`)
-- **Symbol**: `(list-schedules invoke boundary)`
-- **Reason**: Pre-existing complexity violation; preserves the legacy query-validation order at one transport-neutral invoke boundary.
-
-## `server-operations-start-workflow-invoke-complexity`
-
-- **File**: `src/server/operations/start-workflow.ts`
-- **Rule**: `complexity`
-- **Symbol**: `invoke`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `server-operations-submit-review-decision-invoke-complexity`
-
-- **File**: `src/server/operations/submit-review-decision.ts`
-- **Rule**: `complexity`
-- **Symbol**: `invoke`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `server-workflow-event-feed-drain-live-complexity`
-
-- **File**: `src/server/workflow-event-feed.ts`
-- **Rule**: `complexity`
-- **Symbol**: `drainLive`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `storage-indexeddb-delete-prefix-complexity`
-
-- **File**: `src/storage/indexeddb.ts`
-- **Rule**: `complexity`
-- **Symbol**: `deletePrefix`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `storage-lmdb-delete-prefix-complexity`
-
-- **File**: `src/storage/lmdb.ts`
-- **Rule**: `complexity`
-- **Symbol**: `deletePrefix`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `testing-test-engine-run-n-complexity`
-
-- **File**: `src/testing/test-engine.ts`
-- **Rule**: `complexity`
-- **Symbol**: `runN`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
 ## `worker-protocol-contract-file-length`
 
 - **File**: `src/worker/protocol.ts`
 - **Rule**: `max-lines`
 - **Symbol**: `(whole file)`
-- **Reason**: Canonical RemoteWorker protocol module owns the public v1 constants, message unions, deterministic JSON Schema exports, and parser guards that must stay together for SDK authors importing `weft/worker-protocol`. Splitting the contract would make schema drift harder to audit.
+- **Reason**: Canonical RemoteWorker protocol module owns the public v1 constants, message unions, deterministic JSON Schema exports, and parser guards that must stay together for SDK authors importing `weft/worker-protocol`. The schema declarations and the field-by-field parsers reference one another by structural shape, and keeping them adjacent is what lets a reviewer verify that an accepted message matches the documented contract without crossing files. Rejected alternative: splitting the schemas, exports, and parsers across sibling modules (`protocol-schemas.ts`, `protocol-parsers.ts`, `protocol-exports.ts`); rejected because the schema/parser cross-references would be cut by the file boundary, harming SDK auditability and making schema drift harder to spot in review.
 
 ## `worker-protocol-parse-register-message-complexity`
 
 - **File**: `src/worker/protocol.ts`
 - **Rule**: `complexity`
 - **Symbol**: `parseRegisterMessage`
-- **Reason**: Registration parsing is the protocol trust boundary for version, worker identity, activity list, concurrency, and queue validation. Keeping the checks linear makes the rejection reason deterministic and mirrors the schema fields.
+- **Reason**: Registration parsing is the protocol trust boundary for version, worker identity, activity list, concurrency, and queue validation. Keeping the checks linear makes the rejection reason deterministic and mirrors the exported register-message schema field-by-field; a reviewer auditing trust-boundary behavior reads the parser top-to-bottom and matches each guard against the corresponding schema field. Rejected alternative: extracting per-field helpers (`validateRegisterIdentity`, `validateRegisterCapability`, `validateRegisterRuntime`) into `protocol-parsers.ts`; rejected because it scatters trust-boundary validation order across helpers, hides field-precedence in helper call order rather than source order, and obscures the parser's one-to-one correspondence with the schema.
 
 ## `worker-protocol-parse-task-message-complexity`
 
 - **File**: `src/worker/protocol.ts`
 - **Rule**: `complexity`
 - **Symbol**: `parseTaskMessage`
-- **Reason**: Task parsing validates every server-to-worker field before a worker SDK acts on it. The field checks intentionally mirror the exported task schema rather than hiding validation in smaller helpers.
+- **Reason**: Task parsing validates every server-to-worker field before a worker SDK acts on it. The field checks intentionally mirror the exported task schema rather than hiding validation in smaller helpers, so a reviewer can confirm one-pass that each schema field has a corresponding guard. Rejected alternative: extracting per-field helpers into `protocol-parsers.ts`; rejected because it would scatter the trust-boundary validation order across helpers and break the linear schema-to-guard correspondence that makes drift visible at review time.
 
 ## `worker-protocol-parse-task-result-message-complexity`
 
 - **File**: `src/worker/protocol.ts`
 - **Rule**: `complexity`
 - **Symbol**: `parseTaskResultMessage`
-- **Reason**: `taskResult` is a discriminated union with completed, failed, and cancelled variants. Keeping the variant checks together makes malformed result handling deterministic at the server trust boundary.
-
-## `worker-registry-find-worker-complexity`
-
-- **File**: `src/worker/registry.ts`
-- **Rule**: `complexity`
-- **Symbol**: `findWorker`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `worker-registry-tracks-routing-drain-and-summary-state`
-
-- **File**: `src/worker/registry.ts`
-- **Rule**: `max-lines`
-- **Symbol**: `(whole file)`
-- **Reason**: WorkerRegistry owns the shared in-memory routing surface for registration identity, capacity, in-flight visibility bookkeeping, fair-share counters, drain state, and operator summaries. Splitting the drain state into a separate coordinator would add cross-object synchronization around every assignment and completion path, so the current file remains the smallest auditable owner of those invariants.
-
-## `worker-registry-pick-fair-share-complexity`
-
-- **File**: `src/worker/registry.ts`
-- **Rule**: `complexity`
-- **Symbol**: `pickFairShare`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `server-task-queue-includes-snapshot-projection`
-
-- **File**: `src/server/task-queue.ts`
-- **Rule**: `max-lines`
-- **Symbol**: entire module
-- **Reason**: `TaskQueue` carries its data structures plus a stable snapshot projection (`getQueueSummaries`) used by the public `weft.task.queues.list` operation. Keeping the projection beside the state it reads is more honest than exposing private fields through a sibling module.
+- **Reason**: `taskResult` is a discriminated union with completed, failed, and cancelled variants. Keeping the variant checks together makes malformed result handling deterministic at the server trust boundary, and the linear shape lets a reviewer audit the full set of accepted-vs-rejected shapes from a single source location. Rejected alternative: extracting per-variant helpers (`parseCompletedResult`, `parseFailedResult`, `parseCancelledResult`); rejected because it scatters the discriminator-to-variant dispatch across files and makes it harder to verify that a malformed variant is rejected before its body is read.
 
 ## `dashboard-api-client-max-lines`
 

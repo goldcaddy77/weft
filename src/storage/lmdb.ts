@@ -90,10 +90,9 @@ export class LMDBStorage implements Storage {
     return keys.length;
   }
 
-  // oxlint-disable-next-line complexity -- ID:storage-lmdb-delete-prefix-complexity
   async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
     this.#assertOpen();
-    const { limit, reverse, gt, lt, gte, lte } = options;
+    const { limit, reverse } = options;
 
     const prefixEnd = resolvePrefixRangeEnd(prefix);
 
@@ -119,11 +118,8 @@ export class LMDBStorage implements Storage {
         break;
       }
       enteredPrefix = true;
-      if (gt !== undefined && key <= gt) continue;
-      if (gte !== undefined && key < gte) continue;
-      if (lt !== undefined && key >= lt) continue;
-      if (lte !== undefined && key > lte) continue;
 
+      if (!matchesScanOptions(key, options)) continue;
       if (limit !== undefined && count >= limit) break;
 
       yield [key, new Uint8Array(value)];
