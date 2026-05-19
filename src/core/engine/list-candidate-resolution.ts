@@ -24,7 +24,112 @@ import {
   queryWorkflowTypeIndex,
 } from './workflow-visibility-queries.ts';
 
-// oxlint-disable-next-line complexity -- ID:core-engine-resolve-list-candidate-ids
+/**
+ * Discriminant over every `ListFilter` dimension that the visibility
+ * indexes can narrow before the post-filter pass. `idPrefix` is here
+ * because the primary-key scan is always available even when the
+ * visibility watermark is stale — see {@link resolveListCandidateIds}.
+ */
+type ListFilterDimension =
+  | 'status'
+  | 'type'
+  | 'tenantId'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'executionDeadline'
+  | 'idPrefix';
+
+type VisibilityQueryHelper<TDimension extends ListFilterDimension> = (
+  internals: EngineInternals,
+  value: NonNullable<ListFilter[TDimension]>,
+) => Promise<Set<string>>;
+
+function queryStatusDimension(
+  internals: EngineInternals,
+  value: NonNullable<ListFilter['status']>,
+): Promise<Set<string>> {
+  const statuses = Array.isArray(value) ? value : [value];
+  return queryWorkflowStatusIndex(internals.storage, statuses);
+}
+
+function queryTypeDimension(
+  internals: EngineInternals,
+  value: NonNullable<ListFilter['type']>,
+): Promise<Set<string>> {
+  return queryWorkflowTypeIndex(internals.storage, value);
+}
+
+function queryTenantDimension(
+  internals: EngineInternals,
+  value: NonNullable<ListFilter['tenantId']>,
+): Promise<Set<string>> {
+  return queryWorkflowTenantIndex(internals.storage, value);
+}
+
+function queryCreatedAtDimension(
+  internals: EngineInternals,
+  value: NonNullable<ListFilter['createdAt']>,
+): Promise<Set<string>> {
+  return queryWorkflowTimeRangeIndex(internals.storage, 'created', value);
+}
+
+function queryUpdatedAtDimension(
+  internals: EngineInternals,
+  value: NonNullable<ListFilter['updatedAt']>,
+): Promise<Set<string>> {
+  return queryWorkflowTimeRangeIndex(internals.storage, 'updated', value);
+}
+
+function queryExecutionDeadlineDimension(
+  internals: EngineInternals,
+  value: NonNullable<ListFilter['executionDeadline']>,
+): Promise<Set<string>> {
+  return queryWorkflowTimeRangeIndex(internals.storage, 'deadline', value);
+}
+
+function queryIdPrefixDimension(
+  internals: EngineInternals,
+  value: NonNullable<ListFilter['idPrefix']>,
+): Promise<Set<string>> {
+  return queryWorkflowIdPrefixCandidates(internals.storage, value);
+}
+
+/**
+ * Exhaustive table from each visibility-index-backed `ListFilter`
+ * dimension to its query helper. `satisfies` keeps the mapping pinned to
+ * the {@link ListFilterDimension} union — adding a new indexed dimension
+ * forces a matching table entry at compile time.
+ */
+const LIST_FILTER_DIMENSION_QUERIES = {
+  status: queryStatusDimension,
+  type: queryTypeDimension,
+  tenantId: queryTenantDimension,
+  createdAt: queryCreatedAtDimension,
+  updatedAt: queryUpdatedAtDimension,
+  executionDeadline: queryExecutionDeadlineDimension,
+  idPrefix: queryIdPrefixDimension,
+} satisfies { [K in ListFilterDimension]: VisibilityQueryHelper<K> };
+
+function collectVisibilityQueries(
+  internals: EngineInternals,
+  filter: ListFilter,
+  dimensions: readonly ListFilterDimension[],
+): Array<Promise<Set<string>>> {
+  const queries: Array<Promise<Set<string>>> = [];
+  for (const dimension of dimensions) {
+    const value = filter[dimension];
+    if (value === undefined) continue;
+    // The `satisfies` clause on LIST_FILTER_DIMENSION_QUERIES guarantees
+    // the helper at `dimension` accepts `NonNullable<ListFilter[dimension]>`.
+    const query = LIST_FILTER_DIMENSION_QUERIES[dimension] as (
+      internals: EngineInternals,
+      value: unknown,
+    ) => Promise<Set<string>>;
+    queries.push(query(internals, value));
+  }
+  return queries;
+}
+
 export async function resolveListCandidateIds(
   internals: EngineInternals,
   filter: ListFilter | undefined,
@@ -36,45 +141,30 @@ export async function resolveListCandidateIds(
   ]);
 
   const watermark = await getWorkflowVisibilityWatermark(internals.storage);
+
   if (watermark === 'stale') {
     // idPrefix is independent of the watermark — primary-key scan is always available.
-    if (filter?.idPrefix !== undefined) {
-      const candidates = await queryWorkflowIdPrefixCandidates(internals.storage, filter.idPrefix);
-      return combineCandidateSets([baseConstrainedIds, failureCategoryCandidateIds, candidates]);
-    }
-    return combineCandidateSets([baseConstrainedIds, failureCategoryCandidateIds]);
+    const queries =
+      filter === undefined ? [] : collectVisibilityQueries(internals, filter, ['idPrefix']);
+    const visibilitySets = await Promise.all(queries);
+    return combineCandidateSets([
+      baseConstrainedIds,
+      failureCategoryCandidateIds,
+      ...visibilitySets,
+    ]);
   }
 
-  const visibilityQueries: Array<Promise<Set<string>>> = [];
-
-  if (filter?.status !== undefined) {
-    const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
-    visibilityQueries.push(queryWorkflowStatusIndex(internals.storage, statuses));
-  }
-  if (filter?.type !== undefined) {
-    visibilityQueries.push(queryWorkflowTypeIndex(internals.storage, filter.type));
-  }
-  if (filter?.tenantId !== undefined) {
-    visibilityQueries.push(queryWorkflowTenantIndex(internals.storage, filter.tenantId));
-  }
-  if (filter?.createdAt !== undefined) {
-    visibilityQueries.push(
-      queryWorkflowTimeRangeIndex(internals.storage, 'created', filter.createdAt),
-    );
-  }
-  if (filter?.updatedAt !== undefined) {
-    visibilityQueries.push(
-      queryWorkflowTimeRangeIndex(internals.storage, 'updated', filter.updatedAt),
-    );
-  }
-  if (filter?.executionDeadline !== undefined) {
-    visibilityQueries.push(
-      queryWorkflowTimeRangeIndex(internals.storage, 'deadline', filter.executionDeadline),
-    );
-  }
-  if (filter?.idPrefix !== undefined) {
-    visibilityQueries.push(queryWorkflowIdPrefixCandidates(internals.storage, filter.idPrefix));
-  }
+  const indexedDimensions: readonly ListFilterDimension[] = [
+    'status',
+    'type',
+    'tenantId',
+    'createdAt',
+    'updatedAt',
+    'executionDeadline',
+    'idPrefix',
+  ];
+  const visibilityQueries =
+    filter === undefined ? [] : collectVisibilityQueries(internals, filter, indexedDimensions);
 
   if (visibilityQueries.length === 0) {
     return combineCandidateSets([baseConstrainedIds, failureCategoryCandidateIds]);

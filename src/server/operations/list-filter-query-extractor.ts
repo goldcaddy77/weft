@@ -7,74 +7,135 @@
  * @module server/operations/list-filter-query-extractor
  */
 
-import type { FailureCategory, ListFilter, TimeRange, WorkflowStatus } from '../../core/types.ts';
+import type {
+  AttributeFilter,
+  FailureCategory,
+  ListFilter,
+  TimeRange,
+  WorkflowStatus,
+} from '../../core/types.ts';
 import { parseAttributeFilters } from '../attribute-filters.ts';
+
+/**
+ * Discriminant over every `ListFilter` dimension that the REST surface
+ * parses out of the query string. `limit`/`offset` live on pagination
+ * helpers, not on the filter parser, so they are intentionally absent.
+ */
+type ListFilterDimension =
+  | 'status'
+  | 'type'
+  | 'tags'
+  | 'attributes'
+  | 'idPrefix'
+  | 'tenantId'
+  | 'failureCategory'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'executionDeadline';
+
+/** Parser for one `ListFilter` dimension. `undefined` means "not present in the query". */
+type ListFilterQueryParser<TDimension extends ListFilterDimension> = (
+  params: URLSearchParams,
+) => ListFilter[TDimension] | undefined;
+
+function parseStatus(params: URLSearchParams): ListFilter['status'] | undefined {
+  const statuses = params.getAll('status') as WorkflowStatus[];
+  if (statuses.length === 0) return undefined;
+  if (statuses.length === 1) return statuses[0]!;
+  return statuses;
+}
+
+function parseType(params: URLSearchParams): ListFilter['type'] | undefined {
+  const type = params.get('type');
+  return type === null ? undefined : type;
+}
+
+function parseTags(params: URLSearchParams): ListFilter['tags'] | undefined {
+  const tags = params.getAll('tag');
+  return tags.length > 0 ? tags : undefined;
+}
+
+function parseAttributes(params: URLSearchParams): ListFilter['attributes'] | undefined {
+  const attributeFilters = parseAttributeFilters(params);
+  if (attributeFilters.length === 0) return undefined;
+  return attributeFilters.map((attribute) => ({
+    key: attribute.key,
+    ...(attribute.value === undefined ? {} : { value: attribute.value }),
+    ...(attribute.gt === undefined ? {} : { gt: attribute.gt }),
+    ...(attribute.lt === undefined ? {} : { lt: attribute.lt }),
+    ...(attribute.gte === undefined ? {} : { gte: attribute.gte }),
+    ...(attribute.lte === undefined ? {} : { lte: attribute.lte }),
+  })) as readonly AttributeFilter[];
+}
+
+function parseIdPrefix(params: URLSearchParams): ListFilter['idPrefix'] | undefined {
+  const idPrefix = params.get('id_prefix');
+  return idPrefix === null ? undefined : idPrefix;
+}
+
+function parseTenantId(params: URLSearchParams): ListFilter['tenantId'] | undefined {
+  const tenantIds = params.getAll('tenant_id');
+  if (tenantIds.length === 0) return undefined;
+  if (tenantIds.length === 1) return tenantIds[0]!;
+  return tenantIds;
+}
+
+function parseFailureCategory(params: URLSearchParams): ListFilter['failureCategory'] | undefined {
+  const categories = params.getAll('failure_category') as FailureCategory[];
+  if (categories.length === 0) return undefined;
+  if (categories.length === 1) return categories[0]!;
+  return categories;
+}
+
+function parseCreatedAt(params: URLSearchParams): TimeRange | undefined {
+  return extractTimeRangeFromQuery(params, 'created_at');
+}
+
+function parseUpdatedAt(params: URLSearchParams): TimeRange | undefined {
+  return extractTimeRangeFromQuery(params, 'updated_at');
+}
+
+function parseExecutionDeadline(params: URLSearchParams): TimeRange | undefined {
+  return extractTimeRangeFromQuery(params, 'execution_deadline');
+}
+
+/**
+ * Exhaustive table from `ListFilter` dimension to its query-string parser.
+ * The `satisfies` clause keeps the mapping in lock-step with the
+ * {@link ListFilterDimension} union — adding a new dimension forces a
+ * matching parser entry at compile time.
+ */
+const LIST_FILTER_QUERY_PARSERS = {
+  status: parseStatus,
+  type: parseType,
+  tags: parseTags,
+  attributes: parseAttributes,
+  idPrefix: parseIdPrefix,
+  tenantId: parseTenantId,
+  failureCategory: parseFailureCategory,
+  createdAt: parseCreatedAt,
+  updatedAt: parseUpdatedAt,
+  executionDeadline: parseExecutionDeadline,
+} satisfies { [K in ListFilterDimension]: ListFilterQueryParser<K> };
 
 /**
  * Extract every supported `ListFilter` dimension from a request URL's
  * query string. `limit` and `offset` are NOT extracted — callers that
  * support pagination layer them on top.
  */
-// oxlint-disable-next-line complexity -- ID:server-operations-extract-list-filter-from-query
 export function extractListFilterFromQuery(url: URL): ListFilter {
-  const filter: ListFilter = {};
   const params = url.searchParams;
-
-  const statuses = params.getAll('status') as WorkflowStatus[];
-  if (statuses.length === 1) {
-    filter.status = statuses[0]!;
-  } else if (statuses.length > 1) {
-    filter.status = statuses;
+  const filter: ListFilter = {};
+  for (const [dimension, parse] of Object.entries(LIST_FILTER_QUERY_PARSERS) as Array<
+    [ListFilterDimension, (params: URLSearchParams) => unknown]
+  >) {
+    const value = parse(params);
+    if (value === undefined) continue;
+    // Each parser is keyed by its own dimension, so the assignment is
+    // type-safe by construction. The `as never` keeps the assignment
+    // index-signature-safe without weakening the per-parser return type.
+    (filter[dimension] as unknown) = value;
   }
-
-  const type = params.get('type');
-  if (type !== null) {
-    filter.type = type;
-  }
-
-  const tags = params.getAll('tag');
-  if (tags.length > 0) {
-    filter.tags = tags;
-  }
-
-  const attributeFilters = parseAttributeFilters(params);
-  if (attributeFilters.length > 0) {
-    filter.attributes = attributeFilters.map((attribute) => ({
-      key: attribute.key,
-      ...(attribute.value === undefined ? {} : { value: attribute.value }),
-      ...(attribute.gt === undefined ? {} : { gt: attribute.gt }),
-      ...(attribute.lt === undefined ? {} : { lt: attribute.lt }),
-      ...(attribute.gte === undefined ? {} : { gte: attribute.gte }),
-      ...(attribute.lte === undefined ? {} : { lte: attribute.lte }),
-    }));
-  }
-
-  const idPrefix = params.get('id_prefix');
-  if (idPrefix !== null) {
-    filter.idPrefix = idPrefix;
-  }
-
-  const tenantIds = params.getAll('tenant_id');
-  if (tenantIds.length === 1) {
-    filter.tenantId = tenantIds[0]!;
-  } else if (tenantIds.length > 1) {
-    filter.tenantId = tenantIds;
-  }
-
-  const failureCategories = params.getAll('failure_category') as FailureCategory[];
-  if (failureCategories.length === 1) {
-    filter.failureCategory = failureCategories[0]!;
-  } else if (failureCategories.length > 1) {
-    filter.failureCategory = failureCategories;
-  }
-
-  const createdAt = extractTimeRangeFromQuery(params, 'created_at');
-  if (createdAt !== undefined) filter.createdAt = createdAt;
-  const updatedAt = extractTimeRangeFromQuery(params, 'updated_at');
-  if (updatedAt !== undefined) filter.updatedAt = updatedAt;
-  const executionDeadline = extractTimeRangeFromQuery(params, 'execution_deadline');
-  if (executionDeadline !== undefined) filter.executionDeadline = executionDeadline;
-
   return filter;
 }
 

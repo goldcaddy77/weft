@@ -27,7 +27,6 @@ import {
 export const BULK_OPERATION_BATCH_SIZE = 1000;
 
 /** List workflow summaries that match a filter, using indexes when available. */
-// oxlint-disable-next-line complexity -- ID:core-engine-list-complexity
 export async function list(
   internals: EngineInternals,
   filter?: ListFilter,
@@ -44,36 +43,72 @@ export async function list(
     normalizedTagFilters,
   );
 
-  const items: WorkflowSummary[] = [];
+  const items =
+    constrainedIds !== null
+      ? await collectSummariesFromConstrainedIds(
+          internals,
+          constrainedIds,
+          normalizedFilter,
+          normalizedTagFilters,
+          options,
+        )
+      : await collectSummariesFromFullScan(
+          internals,
+          normalizedFilter,
+          normalizedTagFilters,
+          options,
+        );
 
-  if (constrainedIds !== null) {
-    const orderedIds = [...constrainedIds];
-    if (orderedIds.length > MAX_LIST_SCAN_ROWS) {
-      throw new WorkflowListScanCapExceededError(MAX_LIST_SCAN_ROWS);
-    }
-    // Bounded concurrency so a large constrained set does not fan out
-    // millions of parallel `storage.get` calls or hold every state's bytes
-    // in memory at once. Stays within the existing scan cap; the chunk
-    // size matches `workflow-state-stream`'s attribute fan-out.
-    const chunkSize = 64;
-    for (let start = 0; start < orderedIds.length; start += chunkSize) {
-      const chunkIds = orderedIds.slice(start, start + chunkSize);
-      const chunkBytes = await Promise.all(
-        chunkIds.map((workflowId) => internals.storage.get(KEYS.workflow(workflowId))),
-      );
-      const matchingStates: WorkflowState[] = [];
-      for (const stateBytes of chunkBytes) {
-        if (!stateBytes) continue;
-        const state = decodeWorkflowState(stateBytes);
-        if (!matchesListFilter(state, normalizedFilter, constrainedIds, normalizedTagFilters))
-          continue;
-        matchingStates.push(state);
-      }
-      items.push(...(await summariesFromStates(internals, matchingStates, options)));
-    }
-    return paginateWorkflowSummaries(sortSummariesByCreatedAtDescending(items), normalizedFilter);
+  return paginateWorkflowSummaries(sortSummariesByCreatedAtDescending(items), normalizedFilter);
+}
+
+const CONSTRAINED_ID_CHUNK_SIZE = 64;
+
+/**
+ * Phase — drain a constrained candidate-id set into summaries. Bounded
+ * concurrency keeps the indexed path from fanning out millions of parallel
+ * `storage.get` calls or holding every state's bytes in memory at once.
+ */
+async function collectSummariesFromConstrainedIds(
+  internals: EngineInternals,
+  constrainedIds: Set<string>,
+  normalizedFilter: ListFilter | undefined,
+  normalizedTagFilters: readonly string[] | undefined,
+  options: ListOptions | undefined,
+): Promise<WorkflowSummary[]> {
+  const orderedIds = [...constrainedIds];
+  if (orderedIds.length > MAX_LIST_SCAN_ROWS) {
+    throw new WorkflowListScanCapExceededError(MAX_LIST_SCAN_ROWS);
   }
 
+  const items: WorkflowSummary[] = [];
+  for (let start = 0; start < orderedIds.length; start += CONSTRAINED_ID_CHUNK_SIZE) {
+    const chunkIds = orderedIds.slice(start, start + CONSTRAINED_ID_CHUNK_SIZE);
+    const chunkBytes = await Promise.all(
+      chunkIds.map((workflowId) => internals.storage.get(KEYS.workflow(workflowId))),
+    );
+    const matchingStates: WorkflowState[] = [];
+    for (const stateBytes of chunkBytes) {
+      if (!stateBytes) continue;
+      const state = decodeWorkflowState(stateBytes);
+      if (!matchesListFilter(state, normalizedFilter, constrainedIds, normalizedTagFilters)) {
+        continue;
+      }
+      matchingStates.push(state);
+    }
+    items.push(...(await summariesFromStates(internals, matchingStates, options)));
+  }
+  return items;
+}
+
+/** Phase — full `wf:` prefix scan with scan-cap enforcement and lazy attribute reads. */
+async function collectSummariesFromFullScan(
+  internals: EngineInternals,
+  normalizedFilter: ListFilter | undefined,
+  normalizedTagFilters: readonly string[] | undefined,
+  options: ListOptions | undefined,
+): Promise<WorkflowSummary[]> {
+  const items: WorkflowSummary[] = [];
   let scanned = 0;
   for await (const [key, value] of internals.storage.scan('wf:')) {
     if (!isTopLevelWorkflowStateKey(key)) continue;
@@ -84,15 +119,14 @@ export async function list(
     }
 
     const state = decodeWorkflowState(value);
-    if (!matchesListFilter(state, normalizedFilter, constrainedIds, normalizedTagFilters)) continue;
+    if (!matchesListFilter(state, normalizedFilter, null, normalizedTagFilters)) continue;
 
     const attributeBytes = shouldReadFailureCategoryAttribute(state, options)
       ? await internals.storage.get(KEYS.attribute(state.id))
       : null;
     items.push(summaryFromState(state, failureCategoryFromAttributeBytes(attributeBytes)));
   }
-
-  return paginateWorkflowSummaries(sortSummariesByCreatedAtDescending(items), normalizedFilter);
+  return items;
 }
 
 async function summariesFromStates(

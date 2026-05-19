@@ -125,86 +125,119 @@ function validateAttributeDimension(internals: EngineInternals, attributeName: s
   }
 }
 
+type AggregateValidatedInput = {
+  normalizedFilter: ListFilter;
+  groupBy: AggregateGroupBy;
+  requestedLimit: number;
+  distinctKeyCap: number;
+};
+
 /**
- * Aggregate workflows by a single dimension. The filter shape matches
- * `engine.list()`; `limit` and `offset` on the filter are ignored
- * (aggregation always considers every candidate that passes the rest of
- * the filter). The aggregate `limit` bounds the returned groups instead.
+ * Phase 1 — re-validate the filter and options so in-process callers
+ * receive the same diagnostics as REST/JSON-RPC clients, and so unknown
+ * search-attribute dimensions fail fast before any storage access.
  */
-// oxlint-disable-next-line complexity -- ID:core-engine-aggregate-complexity
-export async function aggregate(
+function validateAggregateInputs(
   internals: EngineInternals,
   filter: ListFilter | undefined,
   options: AggregateOptions,
-  executionOptions: AggregateExecutionOptions = {},
-): Promise<AggregateResult> {
-  // Re-validate so in-process callers receive the same diagnostics as the
-  // server operation, even when they construct the input by hand.
+  executionOptions: AggregateExecutionOptions,
+): AggregateValidatedInput {
   const normalizedFilter = normalizeListFilter({ ...filter, limit: undefined, offset: undefined });
   const normalizedOptions = normalizeAggregateOptions(options);
   const { groupBy } = normalizedOptions;
-  const requestedLimit = normalizedOptions.limit ?? AGGREGATE_DEFAULT_LIMIT;
-  const distinctKeyCap = executionOptions.distinctKeyCap ?? MAX_AGGREGATE_DISTINCT_KEYS;
-
   if (typeof groupBy === 'object') {
     validateAttributeDimension(internals, groupBy.attribute);
   }
-
-  const normalizedTagFilters = normalizeWorkflowTags(normalizedFilter.tags);
-  // The aggregate path resolves candidates exactly like `list()`. Reuse the
-  // shared helper so the watermark gate, idPrefix scan, and new visibility
-  // indexes apply consistently across both surfaces.
-  const constrainedIds = await resolveListCandidateIds(
-    internals,
+  return {
     normalizedFilter,
-    normalizedTagFilters,
-  );
-
-  const counts = new Map<string | null, number>();
-  let total = 0;
-
-  const accumulate = async (state: WorkflowState): Promise<void> => {
-    const key = await resolveDimensionKey(internals, state, groupBy);
-    const current = counts.get(key);
-    if (current === undefined) {
-      if (counts.size >= distinctKeyCap) {
-        throw new AggregateDistinctKeyCapExceededError(distinctKeyCap);
-      }
-      counts.set(key, 1);
-    } else {
-      counts.set(key, current + 1);
-    }
-    total += 1;
+    groupBy,
+    requestedLimit: normalizedOptions.limit ?? AGGREGATE_DEFAULT_LIMIT,
+    distinctKeyCap: executionOptions.distinctKeyCap ?? MAX_AGGREGATE_DISTINCT_KEYS,
   };
+}
 
-  if (constrainedIds !== null) {
-    if (constrainedIds.size > MAX_LIST_SCAN_ROWS) {
+type AggregateAccumulator = {
+  counts: Map<string | null, number>;
+  total: number;
+};
+
+/**
+ * Phase — record one workflow under its dimension key, enforcing the
+ * distinct-key cap before allocating a new bucket.
+ */
+async function accumulateAggregateState(
+  internals: EngineInternals,
+  state: WorkflowState,
+  groupBy: AggregateGroupBy,
+  distinctKeyCap: number,
+  accumulator: AggregateAccumulator,
+): Promise<void> {
+  const key = await resolveDimensionKey(internals, state, groupBy);
+  const current = accumulator.counts.get(key);
+  if (current === undefined) {
+    if (accumulator.counts.size >= distinctKeyCap) {
+      throw new AggregateDistinctKeyCapExceededError(distinctKeyCap);
+    }
+    accumulator.counts.set(key, 1);
+  } else {
+    accumulator.counts.set(key, current + 1);
+  }
+  accumulator.total += 1;
+}
+
+/** Phase — drain a constrained candidate-id set through the accumulator. */
+async function accumulateFromConstrainedIds(
+  internals: EngineInternals,
+  constrainedIds: Set<string>,
+  normalizedFilter: ListFilter,
+  normalizedTagFilters: readonly string[] | undefined,
+  groupBy: AggregateGroupBy,
+  distinctKeyCap: number,
+  accumulator: AggregateAccumulator,
+): Promise<void> {
+  if (constrainedIds.size > MAX_LIST_SCAN_ROWS) {
+    throw new WorkflowListScanCapExceededError(MAX_LIST_SCAN_ROWS);
+  }
+  for (const workflowId of constrainedIds) {
+    const stateBytes = await internals.storage.get(KEYS.workflow(workflowId));
+    if (!stateBytes) continue;
+    const state = decodeWorkflowState(stateBytes);
+    if (!matchesListFilter(state, normalizedFilter, constrainedIds, normalizedTagFilters)) {
+      continue;
+    }
+    await accumulateAggregateState(internals, state, groupBy, distinctKeyCap, accumulator);
+  }
+}
+
+/** Phase — full `wf:` prefix scan with scan-cap enforcement. */
+async function accumulateFromFullScan(
+  internals: EngineInternals,
+  normalizedFilter: ListFilter,
+  normalizedTagFilters: readonly string[] | undefined,
+  groupBy: AggregateGroupBy,
+  distinctKeyCap: number,
+  accumulator: AggregateAccumulator,
+): Promise<void> {
+  let scanned = 0;
+  for await (const [storageKey, value] of internals.storage.scan('wf:')) {
+    if (!isTopLevelWorkflowStateKey(storageKey)) continue;
+    scanned += 1;
+    if (scanned > MAX_LIST_SCAN_ROWS) {
       throw new WorkflowListScanCapExceededError(MAX_LIST_SCAN_ROWS);
     }
-    for (const workflowId of constrainedIds) {
-      const stateBytes = await internals.storage.get(KEYS.workflow(workflowId));
-      if (!stateBytes) continue;
-      const state = decodeWorkflowState(stateBytes);
-      if (!matchesListFilter(state, normalizedFilter, constrainedIds, normalizedTagFilters)) {
-        continue;
-      }
-      await accumulate(state);
-    }
-  } else {
-    let scanned = 0;
-    for await (const [key, value] of internals.storage.scan('wf:')) {
-      if (!isTopLevelWorkflowStateKey(key)) continue;
-      scanned += 1;
-      if (scanned > MAX_LIST_SCAN_ROWS) {
-        throw new WorkflowListScanCapExceededError(MAX_LIST_SCAN_ROWS);
-      }
-      const state = decodeWorkflowState(value);
-      if (!matchesListFilter(state, normalizedFilter, null, normalizedTagFilters)) continue;
-      await accumulate(state);
-    }
+    const state = decodeWorkflowState(value);
+    if (!matchesListFilter(state, normalizedFilter, null, normalizedTagFilters)) continue;
+    await accumulateAggregateState(internals, state, groupBy, distinctKeyCap, accumulator);
   }
+}
 
-  const sortedGroups: AggregateGroup[] = [...counts.entries()]
+/** Phase — sort the bucket map, truncate to the requested limit, and finalize the result. */
+function finalizeAggregateResult(
+  accumulator: AggregateAccumulator,
+  requestedLimit: number,
+): AggregateResult {
+  const sortedGroups: AggregateGroup[] = [...accumulator.counts.entries()]
     .map(([groupKey, count]) => ({ key: groupKey, count }))
     .toSorted((left, right) => {
       if (left.count !== right.count) return right.count - left.count;
@@ -217,7 +250,62 @@ export async function aggregate(
 
   const truncated = sortedGroups.length > requestedLimit;
   const groups = truncated ? sortedGroups.slice(0, requestedLimit) : sortedGroups;
-  return { total, groups, truncated };
+  return { total: accumulator.total, groups, truncated };
+}
+
+/**
+ * Aggregate workflows by a single dimension. The filter shape matches
+ * `engine.list()`; `limit` and `offset` on the filter are ignored
+ * (aggregation always considers every candidate that passes the rest of
+ * the filter). The aggregate `limit` bounds the returned groups instead.
+ */
+export async function aggregate(
+  internals: EngineInternals,
+  filter: ListFilter | undefined,
+  options: AggregateOptions,
+  executionOptions: AggregateExecutionOptions = {},
+): Promise<AggregateResult> {
+  const { normalizedFilter, groupBy, requestedLimit, distinctKeyCap } = validateAggregateInputs(
+    internals,
+    filter,
+    options,
+    executionOptions,
+  );
+
+  const normalizedTagFilters = normalizeWorkflowTags(normalizedFilter.tags);
+  // The aggregate path resolves candidates exactly like `list()`. Reuse the
+  // shared helper so the watermark gate, idPrefix scan, and new visibility
+  // indexes apply consistently across both surfaces.
+  const constrainedIds = await resolveListCandidateIds(
+    internals,
+    normalizedFilter,
+    normalizedTagFilters,
+  );
+
+  const accumulator: AggregateAccumulator = { counts: new Map(), total: 0 };
+
+  if (constrainedIds !== null) {
+    await accumulateFromConstrainedIds(
+      internals,
+      constrainedIds,
+      normalizedFilter,
+      normalizedTagFilters,
+      groupBy,
+      distinctKeyCap,
+      accumulator,
+    );
+  } else {
+    await accumulateFromFullScan(
+      internals,
+      normalizedFilter,
+      normalizedTagFilters,
+      groupBy,
+      distinctKeyCap,
+      accumulator,
+    );
+  }
+
+  return finalizeAggregateResult(accumulator, requestedLimit);
 }
 
 // Re-exports for callers that only need to discriminate result shape.
