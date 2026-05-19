@@ -14,13 +14,6 @@ The oxlint-strict initiative is complete when this file lists **at most 5
 permanent suppressions**, each with a one-paragraph rationale and a comment
 naming the alternative that was rejected.
 
-## `benchmarks-memory-per-workflow-runner-measure-memory-per-workflow-complexity`
-
-- **File**: `src/benchmarks/memory-per-workflow-runner.ts`
-- **Rule**: `complexity`
-- **Symbol**: `measureMemoryPerWorkflow`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
 ## `core-engine-bulk-operations-file-length`
 
 - **File**: `src/core/engine/bulk-operations.ts`
