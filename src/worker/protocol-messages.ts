@@ -1,0 +1,283 @@
+/**
+ * TypeScript wire-shape declarations for the RemoteWorker WebSocket protocol.
+ *
+ * These types mirror the JSON Schema documents in `./protocol-schemas.ts`
+ * field-for-field. The runtime parser guards in `./protocol.ts` enforce the
+ * shapes described here at the trust boundary. They are re-exported from
+ * `weft/worker-protocol` (via `./protocol.ts`) so the public surface remains
+ * a single import path.
+ *
+ * @module worker/protocol-messages
+ */
+
+import type { RemoteWorkerProtocolVersion } from './protocol-version.ts';
+
+/**
+ * JSON value carried over the worker protocol.
+ *
+ * @example
+ * ```ts
+ * import type { RemoteWorkerJsonValue } from 'weft/worker-protocol';
+ *
+ * const payload: RemoteWorkerJsonValue = { amount: 42, memo: null };
+ * ```
+ */
+export type RemoteWorkerJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | RemoteWorkerJsonValue[]
+  | { [key: string]: RemoteWorkerJsonValue };
+
+/**
+ * Optional capabilities advertised by a RemoteWorker at registration time.
+ *
+ * @example
+ * ```ts
+ * import type { RemoteWorkerCapabilities } from 'weft/worker-protocol';
+ *
+ * const capabilities: RemoteWorkerCapabilities = { region: 'us-west', gpu: false };
+ * ```
+ */
+export type RemoteWorkerCapabilities = Readonly<Record<string, RemoteWorkerJsonValue>>;
+
+/**
+ * Worker registration message sent immediately after opening a worker stream.
+ *
+ * @example
+ * ```ts
+ * import type { RegisterMessage } from 'weft/worker-protocol';
+ *
+ * const message: RegisterMessage = {
+ *   type: 'register',
+ *   protocolVersion: 1,
+ *   workerId: 'worker-1',
+ *   activities: ['sendEmail'],
+ * };
+ * ```
+ */
+export type RegisterMessage = {
+  readonly type: 'register';
+  readonly protocolVersion: RemoteWorkerProtocolVersion;
+  readonly workerId: string;
+  readonly activities: readonly string[];
+  readonly concurrency?: number;
+  readonly queue?: string;
+  readonly deploymentName?: string;
+  readonly buildId?: string;
+  readonly runtimeVersion?: string;
+  readonly gitSha?: string;
+  readonly startedAt?: number;
+  readonly capabilities?: RemoteWorkerCapabilities;
+};
+
+/**
+ * Worker heartbeat message.
+ *
+ * @example
+ * ```ts
+ * import type { HeartbeatMessage } from 'weft/worker-protocol';
+ *
+ * const message: HeartbeatMessage = { type: 'heartbeat', workerId: 'worker-1' };
+ * ```
+ */
+export type HeartbeatMessage = {
+  readonly type: 'heartbeat';
+  readonly workerId: string;
+};
+
+/**
+ * Successful activity result message.
+ *
+ * @example
+ * ```ts
+ * import type { CompletedTaskResultMessage } from 'weft/worker-protocol';
+ *
+ * const message: CompletedTaskResultMessage = {
+ *   type: 'taskResult',
+ *   operationId: 'op-1',
+ *   status: 'completed',
+ *   value: null,
+ * };
+ * ```
+ */
+export type CompletedTaskResultMessage = {
+  readonly type: 'taskResult';
+  readonly operationId: string;
+  readonly status: 'completed';
+  readonly value: RemoteWorkerJsonValue;
+};
+
+/**
+ * Failed activity result message.
+ *
+ * @example
+ * ```ts
+ * import type { FailedTaskResultMessage } from 'weft/worker-protocol';
+ *
+ * const message: FailedTaskResultMessage = {
+ *   type: 'taskResult',
+ *   operationId: 'op-1',
+ *   status: 'failed',
+ *   error: 'SMTP rejected the message',
+ * };
+ * ```
+ */
+export type FailedTaskResultMessage = {
+  readonly type: 'taskResult';
+  readonly operationId: string;
+  readonly status: 'failed';
+  readonly error: string;
+};
+
+/**
+ * Cancelled activity result message.
+ *
+ * @example
+ * ```ts
+ * import type { CancelledTaskResultMessage } from 'weft/worker-protocol';
+ *
+ * const message: CancelledTaskResultMessage = {
+ *   type: 'taskResult',
+ *   operationId: 'op-1',
+ *   status: 'cancelled',
+ *   error: 'Task cancelled',
+ *   cancelled: true,
+ * };
+ * ```
+ */
+export type CancelledTaskResultMessage = {
+  readonly type: 'taskResult';
+  readonly operationId: string;
+  readonly status: 'cancelled';
+  readonly error: string;
+  readonly cancelled?: true;
+};
+
+/**
+ * Registration acknowledgement sent after a worker is accepted.
+ *
+ * @example
+ * ```ts
+ * import type { RegisterAckMessage } from 'weft/worker-protocol';
+ *
+ * const message: RegisterAckMessage = {
+ *   type: 'registerAck',
+ *   protocolVersion: 1,
+ *   workerId: 'worker-1',
+ *   queue: 'default',
+ *   activities: ['sendEmail'],
+ *   concurrency: 10,
+ * };
+ * ```
+ */
+export type RegisterAckMessage = {
+  readonly type: 'registerAck';
+  readonly protocolVersion: RemoteWorkerProtocolVersion;
+  readonly workerId: string;
+  readonly queue: string;
+  readonly activities: readonly string[];
+  readonly concurrency: number;
+};
+
+/**
+ * Registration rejection sent before closing an unsupported worker stream.
+ *
+ * @example
+ * ```ts
+ * import type { RegisterErrorMessage } from 'weft/worker-protocol';
+ *
+ * const message: RegisterErrorMessage = {
+ *   type: 'registerError',
+ *   code: 'unsupported_protocol_version',
+ *   message: 'Unsupported RemoteWorker protocol version: 2',
+ *   supportedProtocolVersions: [1],
+ *   requestedProtocolVersion: 2,
+ * };
+ * ```
+ */
+export type RegisterErrorMessage = {
+  readonly type: 'registerError';
+  readonly code: 'invalid_registration' | 'unsupported_protocol_version';
+  readonly message: string;
+  readonly supportedProtocolVersions: readonly RemoteWorkerProtocolVersion[];
+  readonly requestedProtocolVersion?: number;
+};
+
+/**
+ * Protocol-level error sent before closing a malformed worker stream.
+ *
+ * @example
+ * ```ts
+ * import type { ProtocolErrorMessage } from 'weft/worker-protocol';
+ *
+ * const message: ProtocolErrorMessage = {
+ *   type: 'protocolError',
+ *   code: 'invalid_message',
+ *   message: 'taskResult.operationId must be a non-empty string',
+ * };
+ * ```
+ */
+export type ProtocolErrorMessage = {
+  readonly type: 'protocolError';
+  readonly code:
+    | 'invalid_json'
+    | 'invalid_message'
+    | 'unknown_message_type'
+    | 'registration_required';
+  readonly message: string;
+};
+
+/**
+ * Activity task dispatched by the server.
+ *
+ * @example
+ * ```ts
+ * import type { TaskMessage } from 'weft/worker-protocol';
+ *
+ * const message: TaskMessage = {
+ *   type: 'task',
+ *   operationId: 'op-1',
+ *   activityName: 'sendEmail',
+ *   input: { to: 'user@example.com' },
+ * };
+ * ```
+ */
+export type TaskMessage = {
+  readonly type: 'task';
+  readonly operationId: string;
+  readonly activityName: string;
+  readonly input: RemoteWorkerJsonValue;
+  readonly attempt?: number;
+  readonly headers?: Readonly<Record<string, string>>;
+};
+
+/**
+ * Activity cancellation request sent by the server.
+ *
+ * @example
+ * ```ts
+ * import type { CancelMessage } from 'weft/worker-protocol';
+ *
+ * const message: CancelMessage = { type: 'cancel', operationId: 'op-1' };
+ * ```
+ */
+export type CancelMessage = {
+  readonly type: 'cancel';
+  readonly operationId: string;
+};
+
+/**
+ * Graceful worker shutdown request sent by the server.
+ *
+ * @example
+ * ```ts
+ * import type { ShutdownMessage } from 'weft/worker-protocol';
+ *
+ * const message: ShutdownMessage = { type: 'shutdown' };
+ * ```
+ */
+export type ShutdownMessage = {
+  readonly type: 'shutdown';
+};

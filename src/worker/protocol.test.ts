@@ -231,6 +231,97 @@ describe('RemoteWorker protocol contract', () => {
     });
   });
 
+  it('rejects every optional register identity field when present but malformed', () => {
+    // Pins the rejection message for each optional identity field on register.
+    // Without this regression, a refactor of the field-validation table could
+    // silently drop one of these guards.
+    const base = {
+      type: 'register',
+      protocolVersion: 1,
+      workerId: 'worker-1',
+      activities: ['charge'],
+    } as const;
+
+    const cases: ReadonlyArray<readonly [string, unknown, string]> = [
+      ['buildId', '', 'register.buildId must be a non-empty string when present'],
+      ['runtimeVersion', '', 'register.runtimeVersion must be a non-empty string when present'],
+      ['gitSha', '', 'register.gitSha must be a non-empty string when present'],
+      ['deploymentName', 42, 'register.deploymentName must be a non-empty string when present'],
+    ];
+
+    for (const [field, badValue, expectedMessage] of cases) {
+      expect(parseWorkerToServerMessage({ ...base, [field]: badValue })).toMatchObject({
+        ok: false,
+        error: { message: expectedMessage },
+      });
+    }
+  });
+
+  it('round-trips every documented optional field through register, task, and taskResult', () => {
+    // Trust-boundary regression: each documented optional field on the three
+    // parsed message kinds must survive an unknown -> typed round trip without
+    // mutation, and the parser must not introduce or drop properties.
+    const registerInput = {
+      type: 'register',
+      protocolVersion: 1,
+      workerId: 'worker-1',
+      activities: ['charge', 'refund'],
+      concurrency: 8,
+      queue: 'billing',
+      deploymentName: 'production-2026-05',
+      buildId: 'build-2026-05-12',
+      runtimeVersion: 'bun-1.3.13',
+      gitSha: '0123456789abcdef',
+      startedAt: 1_700_000_000,
+      capabilities: { region: 'us-west', gpu: false },
+    } as const;
+    const registerResult = parseWorkerToServerMessage(registerInput);
+    expect(registerResult).toMatchObject({ ok: true, message: registerInput });
+
+    const taskInput = {
+      type: 'task',
+      operationId: 'op-1',
+      activityName: 'charge',
+      input: { amount: 42, memo: null },
+      attempt: 3,
+      headers: { 'x-correlation-id': 'corr-1' },
+    } as const;
+    const taskResult = parseServerToWorkerMessage(taskInput);
+    expect(taskResult).toMatchObject({ ok: true, message: taskInput });
+
+    const cancelledInput = {
+      type: 'taskResult',
+      operationId: 'op-2',
+      status: 'cancelled',
+      error: 'Task cancelled by client',
+      cancelled: true,
+    } as const;
+    const cancelledResult = parseWorkerToServerMessage(cancelledInput);
+    expect(cancelledResult).toMatchObject({ ok: true, message: cancelledInput });
+
+    const completedInput = {
+      type: 'taskResult',
+      operationId: 'op-3',
+      status: 'completed',
+      value: { ok: true, attempts: 1 },
+    } as const;
+    expect(parseWorkerToServerMessage(completedInput)).toMatchObject({
+      ok: true,
+      message: completedInput,
+    });
+
+    const failedInput = {
+      type: 'taskResult',
+      operationId: 'op-4',
+      status: 'failed',
+      error: 'upstream timeout',
+    } as const;
+    expect(parseWorkerToServerMessage(failedInput)).toMatchObject({
+      ok: true,
+      message: failedInput,
+    });
+  });
+
   it('rejects malformed task results and unknown worker message types', () => {
     expect(
       parseWorkerToServerMessage({
