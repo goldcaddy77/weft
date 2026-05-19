@@ -2175,11 +2175,18 @@ describe('createObservabilityInterceptors', () => {
 
       const successSnapshot = successCollector.snapshot();
       const successAttempts = successSnapshot['weft.activity.attempts'];
-      expect(successAttempts?.type).toBe('counter');
-      expect(successAttempts?.type === 'counter' && successAttempts.value).toBe(1);
+      expect(successAttempts).toBeDefined();
+      if (!successAttempts || successAttempts.type !== 'counter') {
+        throw new Error('expected counter metric weft.activity.attempts');
+      }
+      expect(successAttempts.value).toBe(1);
+
       const successDuration = successSnapshot['weft.activity.duration'];
-      expect(successDuration?.type).toBe('histogram');
-      expect(successDuration?.type === 'histogram' && successDuration.count).toBe(1);
+      expect(successDuration).toBeDefined();
+      if (!successDuration || successDuration.type !== 'histogram') {
+        throw new Error('expected histogram metric weft.activity.duration');
+      }
+      expect(successDuration.count).toBe(1);
 
       // Failure path: metrics must NOT be recorded.
       const failureCollector = new MetricsCollector();
@@ -2208,6 +2215,60 @@ describe('createObservabilityInterceptors', () => {
       const failureSnapshot = failureCollector.snapshot();
       expect(failureSnapshot['weft.activity.attempts']).toBeUndefined();
       expect(failureSnapshot['weft.activity.duration']).toBeUndefined();
+    });
+
+    it('ends sync signalReceived span exactly once on success', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { interceptor } = createObservabilityInterceptors({
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
+      });
+
+      interceptor.signalReceived!(
+        {
+          workflowId: 'wf-sync-ok',
+          signalName: 'ping',
+          payload: undefined,
+          headers: new Map(),
+        },
+        () => {},
+      );
+
+      const span = spans.find((s) => s.name === 'signal:received:ping');
+      expect(span).toBeDefined();
+      expect(span!.endCount).toBe(1);
+      expect(span!.status?.code).toBe(1);
+    });
+
+    it('ends sync signalReceived span exactly once on failure and rethrows original error', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { interceptor } = createObservabilityInterceptors({
+        openTelemetryApi: createMockOpenTelemetryApi(tracer),
+      });
+
+      const originalError = new Error('boom-sync');
+      let thrown: unknown;
+      try {
+        interceptor.signalReceived!(
+          {
+            workflowId: 'wf-sync-err',
+            signalName: 'ping',
+            payload: undefined,
+            headers: new Map(),
+          },
+          () => {
+            throw originalError;
+          },
+        );
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBe(originalError);
+      const span = spans.find((s) => s.name === 'signal:received:ping');
+      expect(span).toBeDefined();
+      expect(span!.endCount).toBe(1);
+      expect(span!.status?.code).toBe(2);
+      expect(span!.exceptions).toHaveLength(1);
     });
   });
 });
