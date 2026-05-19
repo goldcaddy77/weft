@@ -41,7 +41,7 @@ import { sleepForTesting } from '../../testing/fake-timers.ts';
 import { BunSQLiteStorage } from '../bun-sql.ts';
 import { KEYS as STORAGE_KEYS } from '../interface.ts';
 
-import { FixtureScope } from './adapter-spec.ts';
+import { FixtureScope } from './adapter-spec.test-support.ts';
 
 async function flush(): Promise<void> {
   await sleepForTesting(10);
@@ -106,10 +106,8 @@ describe('on-disk crash recovery — BunSQLiteStorage', () => {
       // Engine2 is constructed.
       const workflowKey = STORAGE_KEYS.workflow('wf-signal');
       expect(await storage1.get(workflowKey)).not.toBeNull();
-      // Strict disposal on the happy path so a real lifecycle bug
-      // surfaces. `safeDispose*` is reserved for the `finally` cleanup
-      // path where we may be cleaning up after a prior assertion error
-      // and must not mask it.
+      // Strict disposal on the happy path; `safeDispose*` is reserved for
+      // `finally` cleanup so it does not mask a prior assertion error.
       engine1[Symbol.dispose]();
       engine1 = undefined;
       storage1[Symbol.dispose]();
@@ -161,10 +159,8 @@ describe('on-disk crash recovery — BunSQLiteStorage', () => {
       await flush();
 
       expect(await storage1.get(STORAGE_KEYS.workflow('wf-done'))).not.toBeNull();
-      // Strict disposal on the happy path so a real lifecycle bug
-      // surfaces. `safeDispose*` is reserved for the `finally` cleanup
-      // path where we may be cleaning up after a prior assertion error
-      // and must not mask it.
+      // Strict disposal on the happy path; `safeDispose*` is reserved for
+      // `finally` cleanup so it does not mask a prior assertion error.
       engine1[Symbol.dispose]();
       engine1 = undefined;
       storage1[Symbol.dispose]();
@@ -221,10 +217,8 @@ describe('on-disk crash recovery — BunSQLiteStorage', () => {
         eventCount++;
       }
       expect(eventCount).toBeGreaterThan(0);
-      // Strict disposal on the happy path so a real lifecycle bug
-      // surfaces. `safeDispose*` is reserved for the `finally` cleanup
-      // path where we may be cleaning up after a prior assertion error
-      // and must not mask it.
+      // Strict disposal on the happy path; `safeDispose*` is reserved for
+      // `finally` cleanup so it does not mask a prior assertion error.
       engine1[Symbol.dispose]();
       engine1 = undefined;
       storage1[Symbol.dispose]();
@@ -279,10 +273,8 @@ describe('on-disk crash recovery — BunSQLiteStorage', () => {
       expect(await storage1.get(STORAGE_KEYS.workflow('aaa'))).not.toBeNull();
       expect(await storage1.get(STORAGE_KEYS.workflow('bbb'))).not.toBeNull();
       expect(await storage1.get(STORAGE_KEYS.workflow('ccc'))).not.toBeNull();
-      // Strict disposal on the happy path so a real lifecycle bug
-      // surfaces. `safeDispose*` is reserved for the `finally` cleanup
-      // path where we may be cleaning up after a prior assertion error
-      // and must not mask it.
+      // Strict disposal on the happy path; `safeDispose*` is reserved for
+      // `finally` cleanup so it does not mask a prior assertion error.
       engine1[Symbol.dispose]();
       engine1 = undefined;
       storage1[Symbol.dispose]();

@@ -42,7 +42,7 @@ import {
   type AdapterSpec,
   type BunOrNodeAdapterSpec,
   type OpenedAdapter,
-} from './adapter-spec.ts';
+} from './adapter-spec.test-support.ts';
 
 function realSleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => {
@@ -82,23 +82,40 @@ function expectReadableStream(
 }
 
 /**
- * Drain a stream fully to a string. Called only on the error path AFTER
- * the subprocess has exited, so reading to EOF cannot block — there is no
- * more producer. A previous version of this helper raced each read against
- * a 200ms inactivity timer, which truncated bursty stderr output and hid
- * the most useful part of the diagnostic.
+ * Drain a stream to a string with a bounded deadline.
+ *
+ * Called only on the error path after the subprocess has exited, so in
+ * practice EOF arrives promptly. The deadline is a hang guard: kernel
+ * pipe semantics can have edge cases where the read side does not see
+ * EOF immediately even though the producer is gone, and we never want a
+ * test to deadlock waiting for diagnostic output. If the deadline fires
+ * before EOF, we cancel the reader and return what we've collected so
+ * far — partial diagnostic output is more useful than a hung suite.
  */
-async function drainStream(stream: ReadableStream<Uint8Array>): Promise<string> {
+async function drainStream(stream: ReadableStream<Uint8Array>, deadlineMs = 1000): Promise<string> {
   const decoder = new TextDecoder();
   let text = '';
   const reader = stream.getReader();
+  const deadline = Date.now() + deadlineMs;
   try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (value !== undefined) text += decoder.decode(value, { stream: true });
+    while (Date.now() < deadline) {
+      const remaining = Math.max(0, deadline - Date.now());
+      const result = await Promise.race([
+        reader.read().then((readResult) => ({ kind: 'read' as const, readResult })),
+        realSleep(remaining).then(() => ({ kind: 'timeout' as const })),
+      ]);
+      if (result.kind === 'timeout') break;
+      if (result.readResult.done) break;
+      if (result.readResult.value !== undefined) {
+        text += decoder.decode(result.readResult.value, { stream: true });
+      }
     }
   } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // best-effort
+    }
     try {
       reader.releaseLock();
     } catch {
@@ -109,9 +126,15 @@ async function drainStream(stream: ReadableStream<Uint8Array>): Promise<string> 
 }
 
 /**
- * Wait for the marker on stdout or for the subprocess to exit. If the
- * subprocess exits before the marker arrives, throw a diagnostic error that
- * includes the exit code, signal, captured stdout, and remaining stderr.
+ * Wait for the marker on stdout or for the subprocess to exit.
+ *
+ * If the subprocess exits before the marker has been read from the
+ * stdout buffer, we drain the remaining stdout first — a fast child can
+ * print the marker, exit, and have `child.exited` win the race before
+ * the buffered stdout read has resolved. Only after draining do we
+ * decide whether the marker was actually missing. If it was, we throw a
+ * diagnostic that includes exit code, signal, full stdout, and any
+ * captured stderr.
  */
 async function readUntilMarkerOrExit(
   child: RunningChild,
@@ -129,6 +152,7 @@ async function readUntilMarkerOrExit(
     | { kind: 'read'; readResult: ReadResult }
     | { kind: 'exited' }
     | { kind: 'timeout' };
+  let readerLockHeld = true;
   try {
     while (Date.now() < deadline) {
       const remaining = Math.max(0, deadline - Date.now());
@@ -152,13 +176,21 @@ async function readUntilMarkerOrExit(
       }
     }
   } finally {
-    try {
-      reader.releaseLock();
-    } catch {
-      // best-effort
+    if (readerLockHeld) {
+      try {
+        reader.releaseLock();
+        readerLockHeld = false;
+      } catch {
+        // best-effort
+      }
     }
   }
   if (earlyExit) {
+    // Drain any stdout that landed in the buffer right before / after the
+    // exit event won the race. The marker may still be in there.
+    const remainingStdout = await drainStream(stdoutStream);
+    buffer += remainingStdout;
+    if (buffer.includes(marker)) return buffer;
     const stderr = await drainStream(expectReadableStream(child.stderr, 'stderr'));
     throw new Error(
       `Subprocess exited before marker ${JSON.stringify(marker)} appeared.\n` +

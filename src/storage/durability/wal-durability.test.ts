@@ -31,7 +31,7 @@ import {
   closeIfOpen,
   FixtureScope,
   type OpenedAdapter,
-} from './adapter-spec.ts';
+} from './adapter-spec.test-support.ts';
 
 function bytesEqual(actual: Uint8Array | null, expected: Uint8Array): void {
   expect(actual).not.toBeNull();

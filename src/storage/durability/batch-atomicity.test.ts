@@ -17,7 +17,7 @@ import {
   closeIfOpen,
   FixtureScope,
   type OpenedAdapter,
-} from './adapter-spec.ts';
+} from './adapter-spec.test-support.ts';
 
 for (const spec of availableAdapterSpecs()) {
   describe(`batch atomicity — ${spec.name}`, () => {
