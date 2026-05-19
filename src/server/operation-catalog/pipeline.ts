@@ -38,7 +38,7 @@ export async function executeOperation<Output>(
   }
   tracePipeline(context.pipelineTrace, 'invoked');
 
-  const outputResult = validateOutputAgainstSchema(operation.outputSchema, output);
+  const outputResult = validateOutputAgainstSchema<Output>(operation.outputSchema, output);
   if (outputResult.ok) tracePipeline(context.pipelineTrace, 'output-validated');
-  return outputResult as DispatchResult<Output>;
+  return outputResult;
 }

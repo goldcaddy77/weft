@@ -77,11 +77,19 @@ export async function prepareAuthorizedInput(
  * failed parse to `{ code: 'EngineFailure', message: 'internal error', data: {} }`.
  * On success returns the parsed data so Zod transforms, defaults, and
  * refinements are honored.
+ *
+ * The `Output` generic is the caller's declared output type for the
+ * operation. The schema is erased to `z.ZodType` on `ErasedOperation`,
+ * so we cast `parseResult.data` to `Output` at the validated boundary —
+ * the same single-level cast the previous private helpers performed
+ * (`validateAndReturnOutput` and `validateOutput`). The cast is safe
+ * because the success branch is only reachable after `schema.safeParse`
+ * succeeded.
  */
-export function validateOutputAgainstSchema<Schema extends z.ZodTypeAny>(
-  schema: Schema,
+export function validateOutputAgainstSchema<Output>(
+  schema: z.ZodType,
   value: unknown,
-): DispatchResult<z.output<Schema>> {
+): DispatchResult<Output> {
   let parseResult: ReturnType<typeof schema.safeParse>;
   try {
     parseResult = schema.safeParse(value);
@@ -91,7 +99,7 @@ export function validateOutputAgainstSchema<Schema extends z.ZodTypeAny>(
   if (!parseResult.success) {
     return dispatchFailure({ code: 'EngineFailure', message: 'internal error', data: {} });
   }
-  return { ok: true, value: parseResult.data };
+  return { ok: true, value: parseResult.data as Output };
 }
 
 /** Wrap an `OperationFault` in the standard `DispatchResult` failure shape. */

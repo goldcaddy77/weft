@@ -105,14 +105,17 @@ export async function executeSubscription<Element, Envelope>(
     return dispatchFailure({ code: 'EngineFailure', message: 'internal error', data: {} });
   }
 
-  const envelope = validateOutputAgainstSchema(operation.outputSchema, invocation.envelope);
+  const envelope = validateOutputAgainstSchema<Envelope>(
+    operation.outputSchema,
+    invocation.envelope,
+  );
   if (!envelope.ok) return envelope;
   tracePipeline(context.pipelineTrace, 'output-validated');
 
   return {
     ok: true,
     value: {
-      envelope: envelope.value as Envelope,
+      envelope: envelope.value,
       iterable: validateElements<Element>(invocation.iterable, eventSchema),
       close: invocation.close,
     },
