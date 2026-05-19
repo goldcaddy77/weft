@@ -128,11 +128,15 @@ export async function runAsyncWithSpan<T>(
 /**
  * Yield* a generator body inside a span's lifecycle.
  *
- * Same semantics as {@link runWithSpan}. The helper uses `yield* body()`,
- * which forwards `.throw()` and `.return()` from the outer caller into the
- * inner generator per the ECMAScript generator-delegation contract, so
- * external aborts surface as exceptions caught by this helper and recorded
- * on the span before the span ends.
+ * Same span lifecycle as {@link runWithSpan}. The helper uses `yield* body()`,
+ * which forwards `.throw()` and `.return()` from the outer caller to the inner
+ * generator per the ECMAScript generator-delegation contract:
+ *
+ * - `.throw(error)` surfaces as an exception inside `yield*`, is caught by
+ *   this helper, and is recorded on the span as an error before the span ends.
+ * - `.return(value)` propagates as a normal completion: the helper's `finally`
+ *   ends the span, but the body is treated as cancelled — `onSuccess` does
+ *   not run and the span status is whatever was last set (typically unset).
  */
 export function* runGeneratorWithSpan<TYield, TReturn, TNext>(
   state: SpanLifecycleState,
