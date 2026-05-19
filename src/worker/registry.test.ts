@@ -838,6 +838,54 @@ describe('WorkerRegistry', () => {
   // isAssigned — check whether an operation is already in-flight
   // -------------------------------------------------------------------------
 
+  describe('isAssignedToWorker', () => {
+    it('returns true when an operation is assigned to the named worker', () => {
+      const registry = new WorkerRegistry();
+      registry.register({ id: 'w1', queue: 'default', activities: ['doWork'], concurrency: 5 });
+      registry.assignTask('w1', 'op-1', 30_000);
+      expect(registry.isAssignedToWorker('op-1', 'w1')).toBe(true);
+    });
+
+    it('returns false when the assignment is to a different worker', () => {
+      const registry = new WorkerRegistry();
+      registry.register({ id: 'w1', queue: 'default', activities: ['doWork'], concurrency: 5 });
+      registry.register({ id: 'w2', queue: 'default', activities: ['doWork'], concurrency: 5 });
+      registry.assignTask('w1', 'op-1', 30_000);
+      expect(registry.isAssignedToWorker('op-1', 'w2')).toBe(false);
+    });
+
+    it('returns false for an unknown operationId', () => {
+      const registry = new WorkerRegistry();
+      registry.register({ id: 'w1', queue: 'default', activities: ['doWork'], concurrency: 5 });
+      expect(registry.isAssignedToWorker('nonexistent', 'w1')).toBe(false);
+    });
+  });
+
+  describe('register preserves in-flight count on reconnect', () => {
+    // Regression: a worker reconnect during the reconnect grace period must
+    // not zero `inFlight` while tasks the close handler preserved are still
+    // tracked — otherwise the dispatcher can exceed the worker's declared
+    // concurrency.
+    it('re-derives inFlight from the in-flight task map when called again for the same workerId', () => {
+      const registry = new WorkerRegistry();
+      registry.register({ id: 'w1', queue: 'default', activities: ['doWork'], concurrency: 5 });
+      registry.assignTask('w1', 'op-1', 30_000);
+      registry.assignTask('w1', 'op-2', 30_000);
+      expect(registry.getWorker('w1')?.inFlight).toBe(2);
+
+      // Reconnect: register is called again without an intervening unregister.
+      registry.register({ id: 'w1', queue: 'default', activities: ['doWork'], concurrency: 5 });
+
+      expect(registry.getWorker('w1')?.inFlight).toBe(2);
+    });
+
+    it('starts inFlight at 0 when a fresh worker registers with no pre-existing tasks', () => {
+      const registry = new WorkerRegistry();
+      registry.register({ id: 'w1', queue: 'default', activities: ['doWork'], concurrency: 5 });
+      expect(registry.getWorker('w1')?.inFlight).toBe(0);
+    });
+  });
+
   describe('isAssigned', () => {
     it('returns false for an unknown operationId', () => {
       const registry = new WorkerRegistry();

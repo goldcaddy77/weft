@@ -14,7 +14,9 @@ import {
   type WorkerToServerMessage,
 } from '../worker/protocol.ts';
 import {
+  computeHandshakeAccept,
   concatChunks,
+  generateHandshakeKey,
   OPCODE_BINARY,
   OPCODE_CLOSE,
   OPCODE_CONTINUATION,
@@ -22,13 +24,12 @@ import {
   OPCODE_PONG,
   OPCODE_TEXT,
   tryParseFrame,
+  validateHandshakeHeaders,
   writeCloseFrame,
   writePongFrame,
   writeTextFrame,
   type ParsedFrame,
 } from './worker-fault-injection-frames.ts';
-
-const HANDSHAKE_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
 /** Handler for inbound server → worker protocol messages. */
 export type ServerToWorkerHandler = (m: ServerToWorkerMessage) => void;
@@ -74,6 +75,8 @@ type ClientState = {
   partitioned: boolean;
   messageHandlers: Set<ServerToWorkerHandler>;
   anyInboundHandler: ServerToWorkerHandler | undefined;
+  /** Messages buffered for waiters not yet installed; drained by `nextServerMessage` before its handler attaches. */
+  inboundBuffer: ServerToWorkerMessage[];
   closeResolvers: Array<(info: CloseInfo) => void>;
   pendingError: unknown;
 };
@@ -174,6 +177,7 @@ function createClientState(anyInbound: ServerToWorkerHandler | undefined): Clien
     partitioned: false,
     messageHandlers: new Set(),
     anyInboundHandler: anyInbound,
+    inboundBuffer: [],
     closeResolvers: [],
     pendingError: null,
   };
@@ -186,17 +190,18 @@ function sendHandshakeRequest(
   port: number,
   handshakeKey: string,
 ): void {
-  const requestLines = [
-    `GET ${pathWithQuery} HTTP/1.1`,
-    `Host: ${hostname}:${port}`,
-    'Upgrade: websocket',
-    'Connection: Upgrade',
-    `Sec-WebSocket-Key: ${handshakeKey}`,
-    'Sec-WebSocket-Version: 13',
-    '',
-    '',
-  ];
-  socket.write(requestLines.join('\r\n'));
+  socket.write(
+    [
+      `GET ${pathWithQuery} HTTP/1.1`,
+      `Host: ${hostname}:${port}`,
+      'Upgrade: websocket',
+      'Connection: Upgrade',
+      `Sec-WebSocket-Key: ${handshakeKey}`,
+      'Sec-WebSocket-Version: 13',
+      '',
+      '',
+    ].join('\r\n'),
+  );
 }
 
 function endSocketSafely(socket: Socket | null): void {
@@ -260,11 +265,25 @@ function waitForServerMessage(
   predicate: ServerMessagePredicate,
   timeoutMs: number,
 ): Promise<ServerToWorkerMessage> {
+  // Drain the buffer first so a message that arrived between two awaits is
+  // not lost. The buffer is consumed left-to-right; non-matching entries
+  // ahead of the match remain in the buffer for later waiters.
+  for (let index = 0; index < state.inboundBuffer.length; index += 1) {
+    const candidate = state.inboundBuffer[index]!;
+    if (predicate(candidate)) {
+      state.inboundBuffer.splice(index, 1);
+      return Promise.resolve(candidate);
+    }
+  }
   return new Promise<ServerToWorkerMessage>((resolve, reject) => {
     const listener: ServerToWorkerHandler = (m) => {
       if (!predicate(m)) return;
       clearTimeout(timer);
       state.messageHandlers.delete(listener);
+      // Remove the matched message from the buffer so a later waiter does
+      // not also try to consume it.
+      const bufferIndex = state.inboundBuffer.indexOf(m);
+      if (bufferIndex !== -1) state.inboundBuffer.splice(bufferIndex, 1);
       resolve(m);
     };
     const timer = setTimeout(() => {
@@ -281,6 +300,15 @@ function waitForNoServerMessage(
   timeoutMs: number,
   closed: Promise<CloseInfo>,
 ): Promise<void> {
+  // If a matching message is already buffered from before the waiter was
+  // installed, that counts as "received" — the negative assertion fails.
+  for (const candidate of state.inboundBuffer) {
+    if (predicate(candidate)) {
+      return Promise.reject(
+        new Error('expectNoServerMessage received a matching message (buffered before wait)'),
+      );
+    }
+  }
   return new Promise<void>((resolve, reject) => {
     const cleanup = (): void => {
       clearTimeout(timer);
@@ -307,24 +335,6 @@ function waitForNoServerMessage(
       () => undefined,
     );
   });
-}
-
-function generateHandshakeKey(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return base64Encode(bytes);
-}
-
-async function computeHandshakeAccept(key: string): Promise<string> {
-  const inputBytes = new TextEncoder().encode(key + HANDSHAKE_GUID);
-  const digest = await crypto.subtle.digest('SHA-1', inputBytes);
-  return base64Encode(new Uint8Array(digest));
-}
-
-function base64Encode(bytes: Uint8Array): string {
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
 }
 
 function handleHandshakeChunk(
@@ -356,30 +366,6 @@ function handleHandshakeChunk(
   if (state.frameBuffer.length > 0) {
     drainFrameBuffer(state);
   }
-}
-
-function validateHandshakeHeaders(headerSection: string, expectedAccept: string): Error | null {
-  const lines = headerSection.split('\r\n');
-  const statusLine = lines[0] ?? '';
-  if (!statusLine.startsWith('HTTP/1.1 101 ')) {
-    return new Error(`WebSocket handshake failed: ${statusLine}`);
-  }
-  const headers = new Map<string, string>();
-  for (let index = 1; index < lines.length; index += 1) {
-    const line = lines[index]!;
-    const colon = line.indexOf(':');
-    if (colon === -1) continue;
-    const name = line.slice(0, colon).trim().toLowerCase();
-    const value = line.slice(colon + 1).trim();
-    headers.set(name, value);
-  }
-  if ((headers.get('upgrade') ?? '').toLowerCase() !== 'websocket') {
-    return new Error('WebSocket handshake missing or invalid Upgrade header');
-  }
-  if (headers.get('sec-websocket-accept') !== expectedAccept) {
-    return new Error('WebSocket handshake Sec-WebSocket-Accept mismatch');
-  }
-  return null;
 }
 
 function handleFrameChunk(state: ClientState, chunk: Uint8Array): void {
@@ -452,6 +438,11 @@ function onTextFrame(state: ClientState, payload: Uint8Array): void {
     return;
   }
   state.anyInboundHandler?.(parsed.message);
+  // Buffer every parsed message so callers that install a
+  // `nextServerMessage` waiter after the frame already arrived can still
+  // see it. `nextServerMessage` drains the buffer of matching entries
+  // before installing its handler.
+  state.inboundBuffer.push(parsed.message);
   for (const handler of Array.from(state.messageHandlers)) {
     handler(parsed.message);
   }

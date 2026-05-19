@@ -14,6 +14,55 @@ export const OPCODE_CLOSE = 0x8;
 export const OPCODE_PING = 0x9;
 export const OPCODE_PONG = 0xa;
 
+const HANDSHAKE_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+
+/** Base64-encode bytes for the WebSocket handshake key. */
+export function base64Encode(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+/** Generate a random 16-byte WebSocket handshake key, base64-encoded per RFC 6455. */
+export function generateHandshakeKey(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return base64Encode(bytes);
+}
+
+/** Compute the expected `Sec-WebSocket-Accept` SHA-1+base64 value for a handshake key. */
+export async function computeHandshakeAccept(key: string): Promise<string> {
+  const inputBytes = new TextEncoder().encode(key + HANDSHAKE_GUID);
+  const digest = await crypto.subtle.digest('SHA-1', inputBytes);
+  return base64Encode(new Uint8Array(digest));
+}
+
+/** Validate the server's HTTP/1.1 101 Switching Protocols response. Returns an Error on failure, null on success. */
+export function validateHandshakeHeaders(
+  headerSection: string,
+  expectedAccept: string,
+): Error | null {
+  const lines = headerSection.split('\r\n');
+  const statusLine = lines[0] ?? '';
+  if (!statusLine.startsWith('HTTP/1.1 101 ')) {
+    return new Error(`WebSocket handshake failed: ${statusLine}`);
+  }
+  const headers = new Map<string, string>();
+  for (let index = 1; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    const colon = line.indexOf(':');
+    if (colon === -1) continue;
+    headers.set(line.slice(0, colon).trim().toLowerCase(), line.slice(colon + 1).trim());
+  }
+  if ((headers.get('upgrade') ?? '').toLowerCase() !== 'websocket') {
+    return new Error('WebSocket handshake missing or invalid Upgrade header');
+  }
+  if (headers.get('sec-websocket-accept') !== expectedAccept) {
+    return new Error('WebSocket handshake Sec-WebSocket-Accept mismatch');
+  }
+  return null;
+}
+
 /**
  * Parsed application or control frame returned by {@link tryParseFrame}.
  *

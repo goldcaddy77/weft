@@ -83,7 +83,10 @@ export class WorkerRegistry {
   /** Register a worker. */
   register(info: WorkerRegistrationInfo): void {
     const now = Date.now();
-
+    // Reconnect during grace preserves in-flight tasks under the same workerId;
+    // derive `inFlight` rather than resetting to 0 so concurrency limits hold.
+    let inFlight = 0;
+    for (const task of this.#inFlightTasks.values()) if (task.workerId === info.id) inFlight += 1;
     this.#workers.set(info.id, {
       id: info.id,
       queue: info.queue,
@@ -95,17 +98,13 @@ export class WorkerRegistry {
       ...(info.gitSha !== undefined ? { gitSha: info.gitSha } : {}),
       startedAt: info.startedAt ?? now,
       capabilities: { ...info.capabilities },
-      inFlight: 0,
+      inFlight,
       connectedAt: now,
       lastHeartbeat: now,
     });
   }
 
-  /**
-   * Unregister a worker and return its info. Purges fair-share counters and
-   * in-flight task entries for this worker to avoid stale registry state after
-   * crash recovery or forced removal.
-   */
+  /** Unregister a worker. Purges fair-share counters and in-flight task entries for this worker. */
   unregister(workerId: string): WorkerInfo | undefined {
     const info = this.#workers.get(workerId);
     if (info === undefined) return undefined;
