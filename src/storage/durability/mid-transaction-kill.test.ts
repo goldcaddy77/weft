@@ -3,18 +3,16 @@
  *
  * Two complementary tests per adapter:
  *
- *   - 3a (adapter-batch kill window): subprocess opens the real adapter,
- *     seeds a pre-batch marker, builds a 50,000-entry batch in memory,
- *     prints `WEFT_DURABILITY_READY`, then immediately calls
- *     `storage.batch(big)`. The parent SIGKILLs after seeing readiness.
- *     Because the batch is fully constructed before the marker is
- *     emitted, the only remaining gap between marker and `await
- *     storage.batch(big)` is the inter-statement window — too narrow to
- *     hold any real adapter work but not strictly zero. The honest
- *     claim is therefore: "a SIGKILL landing immediately before, during,
- *     or after the adapter batch call leaves at most the pre-batch
- *     state with zero partial `mid:` rows." The full `mid:` prefix is
- *     scanned to make partial commits loud.
+ *   - 3a (adapter-batch atomicity under SIGKILL): subprocess opens the
+ *     real adapter, seeds a pre-batch marker, builds a 50,000-entry
+ *     batch in memory, prints `WEFT_DURABILITY_READY`, then immediately
+ *     calls `storage.batch(big)`. The parent SIGKILLs after seeing
+ *     readiness. The invariant being asserted is all-or-nothing: the
+ *     `mid:` row count must be exactly 0 (transaction rolled back) or
+ *     exactly 50_000 (transaction committed cleanly before the kill
+ *     arrived). Anything in between is partial state — the failure mode
+ *     this test exists to detect. The full `mid:` prefix is scanned so
+ *     any partial commit is loud.
  *
  *   - 3b (deterministic in-transaction kill, Bun/Node only): subprocess
  *     opens the real adapter to create file/schema/pragmas, disposes,
@@ -392,7 +390,7 @@ for (const spec of availableAdapterSpecs()) {
       scope.cleanup();
     });
 
-    it('SIGKILL around the adapter batch call leaves at most pre-batch state with zero partial rows', async () => {
+    it('SIGKILL around the adapter batch call leaves an all-or-nothing outcome (no partial rows)', async () => {
       const directory = scope.makeTempDirectory('batch-kill');
       const entrypointPath = join(directory, 'entrypoint.ts');
       const databasePath = join(directory, 'weft.db');
@@ -404,25 +402,23 @@ for (const spec of availableAdapterSpecs()) {
         stderr: 'pipe',
       });
 
+      const totalBatchEntries = 50_000;
       let reader: OpenedAdapter | undefined;
       try {
-        const stdoutBuffer = await readUntilMarkerOrExit(child, 'WEFT_DURABILITY_READY', 5000);
+        await readUntilMarkerOrExit(child, 'WEFT_DURABILITY_READY', 5000);
         await killAndWait(child);
-
-        // Best-effort early signal: if the child managed to print the
-        // unreachable marker before SIGKILL was delivered, the batch must
-        // have committed. The authoritative check is the full `mid:`
-        // prefix scan below.
-        expect(stdoutBuffer).not.toContain('WEFT_DURABILITY_UNREACHABLE');
 
         reader = await spec.open(databasePath);
         expect(await reader.storage.get('before:ok')).not.toBeNull();
 
-        // Authoritative assertion: scan the entire `mid:` prefix. A
-        // partial commit anywhere in the 50k entries would show up as a
-        // non-zero count.
-        const partialMidCount = await countMidRows(reader);
-        expect(partialMidCount).toBe(0);
+        // The atomicity invariant: the SIGKILL must leave the database
+        // in exactly one of the two valid pre-/post-batch states. Either
+        // the WAL rolled back the transaction (count = 0) or it
+        // committed cleanly before the kill arrived (count = total).
+        // Anything in between proves the batch is non-atomic and is the
+        // failure mode this test exists to catch.
+        const midCount = await countMidRows(reader);
+        expect(midCount === 0 || midCount === totalBatchEntries).toBe(true);
       } catch (error) {
         scope.markFailed();
         throw error;

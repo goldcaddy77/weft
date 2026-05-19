@@ -114,12 +114,17 @@ function makeNullValueFailingBatch(failAtIndex: number, totalEntries: number): B
 /**
  * Issue `PRAGMA wal_checkpoint(TRUNCATE)` against the given database file.
  *
- * Called only after the adapter has been disposed, so the sibling
- * connection has exclusive access. The adapter's own `query()` passthrough
- * rejects parenthesized PRAGMA statements, so we open a short-lived
- * sibling here and finalize it before returning. Each adapter's
- * `checkpoint()` is responsible for ensuring the primary connection is
- * closed before delegating here.
+ * Opens a short-lived sibling `bun:sqlite` connection on the same file
+ * because the adapter's own `query()` passthrough rejects parenthesized
+ * PRAGMA statements (see `read-only-query.ts`). The sibling is finalized
+ * before returning. The primary adapter connection MAY still be open at
+ * this point — bun:sqlite with WAL mode supports multiple writers on the
+ * same file. TRUNCATE will report `busy !== 0` if the primary is
+ * holding a transaction snapshot at the moment of the call, and
+ * {@link isFullyCheckpointed} will return false in that case so the
+ * caller can detect the partial checkpoint. The WAL durability test
+ * runs `checkpoint()` immediately after open and before any other work
+ * on the checkpointer handle, so no read snapshot is held in practice.
  */
 function bunSqliteCheckpoint(databasePath: string): CheckpointResult {
   const database = new Database(databasePath);
