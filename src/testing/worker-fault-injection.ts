@@ -298,7 +298,6 @@ function waitForNoServerMessage(
     state.messageHandlers.add(listener);
     void closed.then(
       (info) => {
-        if (state.closedState !== 'closed') return undefined;
         cleanup();
         reject(
           new Error(`expectNoServerMessage saw socket close (${String(info.code)}) during wait`),

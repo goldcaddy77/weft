@@ -117,6 +117,13 @@ async function selectAndReserveWorker(
   const worker = context.registry.findWorker(task.activityName, routingOptions);
   if (!worker) return false;
 
+  // Skip workers in the reconnect grace window. Their socket is still in
+  // `workerSockets` but the peer has closed; sending to it would lose the
+  // task frame even though the inflight record commits. The worker will
+  // either re-register (and pick up new dispatches normally) or its grace
+  // timer will fire and the existing in-flight tasks will be requeued.
+  if (context.pendingWorkerRequeues.has(worker.id)) return false;
+
   const ws = context.workerSockets.get(worker.id);
   if (!ws) return false;
 

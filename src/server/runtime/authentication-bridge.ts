@@ -8,6 +8,7 @@ import { KEYS } from '../../storage/interface.ts';
 import type { AuthConfig, AuthContext } from '../authentication.ts';
 import type { HandlerOptions } from '../handler.ts';
 import { authContextToPrincipal, handleRequest } from '../handler.ts';
+import type { ServeOptions } from '../index.ts';
 import { handleJsonRpcHttpRequestSafely } from '../json-rpc-transport-helpers.ts';
 import {
   closeJsonRpcWebSocketSession,
@@ -317,10 +318,10 @@ export function createServerWebSocketHandlers(
  * reconnect.
  */
 function runWorkerDisconnectRequeue(
-  context: import('./context.ts').ServerContext,
-  options: import('../index.ts').ServeOptions,
+  context: ServerContext,
+  options: ServeOptions,
   workerId: string,
-  ws: ServerWebSocket<WebSocketData>,
+  _ws: ServerWebSocket<WebSocketData>,
   cleanupWorkflowIndex: (operationId: string) => void,
 ): void {
   // Capture in-flight tasks from the in-memory registry (source of truth)
@@ -387,7 +388,4 @@ function runWorkerDisconnectRequeue(
       }
     })();
   }
-  // Mark ws unused except for signature contract — kept for parity with the
-  // close-handler call sites and to allow future per-socket cleanup hooks.
-  void ws;
 }

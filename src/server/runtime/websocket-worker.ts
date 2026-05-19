@@ -171,13 +171,21 @@ function onTaskResultMessage(
   const workerId = ws.data.workerId;
   // Ownership guard. The registry's in-flight entry records the worker that
   // currently owns the task. A stale completion from a worker that has been
-  // displaced by visibility-timeout reassignment (the original worker
-  // partitions, scanner reassigns to a peer) no longer matches and is
-  // rejected here instead of mutating engine state. (operationId, workerId)
-  // is sufficient because takeover overwrites the in-flight entry's
-  // workerId; a future change that allows the same workerId to be
-  // re-assigned the same operationId across attempts would need to tighten
-  // this guard to include `attempt` or a server-issued task token.
+  // displaced by visibility-timeout reassignment — original worker
+  // partitions, scanner reassigns to a peer — no longer matches and is
+  // rejected here instead of mutating engine state.
+  //
+  // Limitation, documented and accepted in this PR: (operationId, workerId)
+  // is sufficient ONLY when takeover moves the task to a different
+  // workerId. If the scheduler re-selects the same workerId on a later
+  // attempt (e.g., a single-worker deployment where the only available
+  // worker is the one that just timed out), a stale completion from the
+  // earlier attempt can pass this guard. Production deployments that need
+  // to defend against this case must use multiple workers and a routing
+  // policy that avoids reselecting the displaced worker, or wait for a
+  // future protocol revision that adds an attempt token to the wire format.
+  // Adding an attempt token here would require a protocol-version bump and
+  // is explicitly out of scope.
   if (workerId === undefined || !context.registry.isAssignedToWorker(operationId, workerId)) {
     sendWorkerProtocolMessage(ws, {
       type: 'protocolError',

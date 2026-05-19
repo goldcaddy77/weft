@@ -291,12 +291,12 @@ export class WorkerRegistry {
     return tasks;
   }
 
-  /** Check whether an operation is currently assigned to a worker. */
   /** True when `operationId` is in flight on `workerId` — used at the trust boundary to reject stale completions after takeover. */
   isAssignedToWorker(operationId: string, workerId: string): boolean {
     return this.#inFlightTasks.get(operationId)?.workerId === workerId;
   }
 
+  /** Check whether an operation is currently assigned to a worker. */
   isAssigned(operationId: string): boolean {
     return this.#inFlightTasks.has(operationId);
   }

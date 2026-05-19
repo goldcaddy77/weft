@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { Engine } from '../core/engine.ts';
-import { serve, type WeftServer } from '../server/index.ts';
+import { serve, type ServeOptions, type WeftServer } from '../server/index.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { sleepForTesting } from '../testing/fake-timers.ts';
@@ -61,13 +61,7 @@ afterEach(async () => {
   }
 });
 
-function createSetup(
-  overrides: Parameters<typeof serve>[0] extends infer T
-    ? T extends object
-      ? Partial<Omit<T, 'engine'>>
-      : never
-    : never = {},
-): Setup {
+function createSetup(overrides: Partial<Omit<ServeOptions, 'engine'>> = {}): Setup {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
   const server = serve({
@@ -285,7 +279,12 @@ describe('RemoteWorker durability — idempotent duplicate completion', () => {
 
 describe('RemoteWorker durability — transient reconnect continuity', () => {
   it('honors a reconnect within the grace period and suppresses requeue', async () => {
-    const setup = createSetup({ workerReconnectGracePeriodMs: 200 });
+    // Grace period 1000ms (well above CI handshake jitter) and a 1200ms
+    // expectNoServerMessage window: enough margin that hardClose + connect +
+    // register reliably completes inside the grace window, and the grace
+    // timer reliably fires inside our wait so we are testing
+    // cancel-on-reregister rather than result-arrived-before-timer-fired.
+    const setup = createSetup({ workerReconnectGracePeriodMs: 1_000 });
     const workerA = await connectAndRegisterWorker(setup, 'worker-a');
 
     const operationId = 'scenario-3-op';
@@ -306,7 +305,7 @@ describe('RemoteWorker durability — transient reconnect continuity', () => {
 
     // Wait past the grace period: prove that no `task` frame arrived during
     // the deferred-requeue window — only `registerAck` shows up.
-    await workerAPrime.expectNoServerMessage(isTask, { timeoutMs: 250 });
+    await workerAPrime.expectNoServerMessage(isTask, { timeoutMs: 1_200 });
 
     workerAPrime.send({
       type: 'taskResult',
