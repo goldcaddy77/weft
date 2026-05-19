@@ -37,7 +37,6 @@ import {
 import {
   assertOperationRejectsInsufficientScope,
   assertOperationRejectsUnauthenticated,
-  assertOperationRequiresFactoryRegistry,
   createOperationTestEngine,
   systemReadAuthContext,
 } from './operation-registry-test-helpers.test-support.ts';
@@ -226,11 +225,20 @@ describe('weft.task.queues.list — operation behavior', () => {
   it('throws EngineFailure when invoked from a discovery-only registry', async () => {
     const engine = createOperationTestEngine();
     try {
-      await assertOperationRequiresFactoryRegistry({
-        operationName: 'weft.task.queues.list',
-        rawOperation: listTaskQueuesOperation,
-        engine,
-      });
+      const result = await executeOperation(
+        'weft.task.queues.list',
+        {},
+        {
+          principal: principalFromApiKey({ subject: 'test', scopes: ['system:read'] }),
+          engine,
+          transport: 'jsonRpcStdio',
+          registry: createOperationRegistry([listTaskQueuesOperation]),
+        },
+      );
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('expected rejection');
+      expect(result.fault.code).toBe('EngineFailure');
     } finally {
       engine[Symbol.dispose]();
     }

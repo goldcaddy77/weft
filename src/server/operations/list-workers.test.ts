@@ -30,7 +30,6 @@ import {
 import {
   assertOperationRejectsInsufficientScope,
   assertOperationRejectsUnauthenticated,
-  assertOperationRequiresFactoryRegistry,
   createOperationTestEngine,
   systemReadAuthContext,
 } from './operation-registry-test-helpers.test-support.ts';
@@ -525,11 +524,20 @@ describe('weft.workers.list — operation behavior', () => {
   it('throws when invoked from a discovery-only registry (no WorkerRegistry wired in)', async () => {
     const engine = createOperationTestEngine();
     try {
-      await assertOperationRequiresFactoryRegistry({
-        operationName: 'weft.workers.list',
-        rawOperation: listWorkersOperation,
-        engine,
-      });
+      const result = await executeOperation(
+        'weft.workers.list',
+        {},
+        {
+          principal: principalFromApiKey({ subject: 'test', scopes: ['system:read'] }),
+          engine,
+          transport: 'jsonRpcStdio',
+          registry: createOperationRegistry([listWorkersOperation]),
+        },
+      );
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('expected rejection');
+      expect(result.fault.code).toBe('EngineFailure');
     } finally {
       engine[Symbol.dispose]();
     }
