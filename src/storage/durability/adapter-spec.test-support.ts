@@ -264,9 +264,6 @@ export function availableBunNodeAdapterSpecs(): readonly BunOrNodeAdapterSpec[] 
   return specs;
 }
 
-/** Static list of all conceivable adapter specs (for diagnostic use only). */
-export const adapterSpecs: readonly AdapterSpec[] = [bunSqliteSpec, nodeSqliteSpec, tursoSpec];
-
 /**
  * Best-effort close of an {@link OpenedAdapter}, suppressing any error so a
  * duplicate close in a `finally` block does not mask the primary assertion

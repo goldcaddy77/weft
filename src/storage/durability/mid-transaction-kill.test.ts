@@ -187,19 +187,32 @@ async function readUntilMarkerOrExit(
   const deadline = Date.now() + deadlineMs;
   let earlyExit = false;
   type ReadResult = Awaited<ReturnType<typeof reader.read>>;
-  type RaceResult =
-    | { kind: 'read'; readResult: ReadResult }
-    | { kind: 'read-cancelled' }
-    | { kind: 'exited' }
-    | { kind: 'timeout' };
+  type WrappedRead = { kind: 'read'; readResult: ReadResult } | { kind: 'read-cancelled' };
+  type RaceResult = WrappedRead | { kind: 'exited' } | { kind: 'timeout' };
+
+  // Hoist the pending `reader.read()` outside the race so that when the
+  // `exited` branch wins, we don't orphan an in-flight read. Per the
+  // Streams spec, reads against a locked reader are FIFO: an orphaned
+  // pending read would consume the next chunk and discard it (because
+  // the race had already settled), and the drain that follows would
+  // start from the chunk AFTER that — losing the marker if it landed
+  // in the lost chunk (e.g., marker and exit in the same pipe-buffer
+  // flush). Cursor Bugbot caught this on PR #267.
+  let pendingRead: Promise<WrappedRead> | undefined;
+  const enqueueRead = (): Promise<WrappedRead> => {
+    if (pendingRead !== undefined) return pendingRead;
+    pendingRead = reader.read().then(
+      (readResult): WrappedRead => ({ kind: 'read', readResult }),
+      (): WrappedRead => ({ kind: 'read-cancelled' }),
+    );
+    return pendingRead;
+  };
+
   try {
     while (Date.now() < deadline) {
       const remaining = Math.max(0, deadline - Date.now());
-      const result: RaceResult = await Promise.race([
-        reader.read().then(
-          (readResult): RaceResult => ({ kind: 'read', readResult }),
-          (): RaceResult => ({ kind: 'read-cancelled' }),
-        ),
+      const result: RaceResult = await Promise.race<RaceResult>([
+        enqueueRead(),
         child.exited.then((): RaceResult => ({ kind: 'exited' })),
         realSleep(remaining).then((): RaceResult => ({ kind: 'timeout' })),
       ]);
@@ -208,6 +221,10 @@ async function readUntilMarkerOrExit(
         break;
       }
       if (result.kind === 'timeout') break;
+      // A read settled. Clear the slot so the next loop iteration (or
+      // the early-exit branch below) starts a fresh read instead of
+      // re-awaiting an already-resolved promise.
+      pendingRead = undefined;
       if (result.kind === 'read-cancelled') break;
       if (result.readResult.done) {
         earlyExit = true;
@@ -223,6 +240,21 @@ async function readUntilMarkerOrExit(
     }
 
     if (earlyExit) {
+      // If there is still a pending read in flight, drain it FIRST so
+      // its chunk is captured rather than orphaned. New reads issued by
+      // `drainReader` would otherwise FIFO-queue behind it and miss
+      // whatever it consumed.
+      if (pendingRead !== undefined) {
+        const orphan = await pendingRead;
+        pendingRead = undefined;
+        if (orphan.kind === 'read' && !orphan.readResult.done && orphan.readResult.value) {
+          buffer += decoder.decode(orphan.readResult.value, { stream: true });
+          if (buffer.includes(marker)) {
+            await safeCancelReader(reader);
+            return buffer;
+          }
+        }
+      }
       // Drain remaining stdout using the SAME reader so the lock stays
       // ours throughout — releasing while a `reader.read()` is still
       // pending can throw and leave the stream locked, breaking the
