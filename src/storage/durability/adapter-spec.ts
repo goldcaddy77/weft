@@ -79,6 +79,16 @@ export type AdapterSpec = {
 };
 
 /**
+ * Subset of {@link AdapterSpec} for adapters that expose a raw same-file
+ * SQLite handle (`bun:sqlite` or `better-sqlite3`) outside the adapter's
+ * own API. Excludes Turso because libSQL's local-file client does not
+ * compose with the raw-handle pattern.
+ */
+export type BunOrNodeAdapterSpec = AdapterSpec & {
+  name: 'BunSQLiteStorage' | 'NodeSQLiteStorage';
+};
+
+/**
  * Build a `mid:` batch whose `failAtIndex`-th entry carries a NULL value.
  *
  * The KV schema (`src/storage/sqlite-key-value-queries.ts`) declares
@@ -143,7 +153,7 @@ function isFullyCheckpointed(row: BetterSqliteRow | undefined, databasePath: str
   return statSync(walPath).size === 0;
 }
 
-const bunSqliteSpec: AdapterSpec = {
+const bunSqliteSpec: BunOrNodeAdapterSpec = {
   name: 'BunSQLiteStorage',
   exposesStandardSidecars: true,
   async open(databasePath: string) {
@@ -162,7 +172,7 @@ const bunSqliteSpec: AdapterSpec = {
   },
 };
 
-const nodeSqliteSpec: AdapterSpec = {
+const nodeSqliteSpec: BunOrNodeAdapterSpec = {
   name: 'NodeSQLiteStorage',
   exposesStandardSidecars: true,
   async open(databasePath: string) {
@@ -248,14 +258,28 @@ export function availableAdapterSpecs(): readonly AdapterSpec[] {
 }
 
 /** Bun+Node specs only — used by tests that require a raw client path. */
-export function availableBunNodeAdapterSpecs(): readonly AdapterSpec[] {
-  const specs: AdapterSpec[] = [bunSqliteSpec];
+export function availableBunNodeAdapterSpecs(): readonly BunOrNodeAdapterSpec[] {
+  const specs: BunOrNodeAdapterSpec[] = [bunSqliteSpec];
   if (canLoadNodeSqlite()) specs.push(nodeSqliteSpec);
   return specs;
 }
 
 /** Static list of all conceivable adapter specs (for diagnostic use only). */
 export const adapterSpecs: readonly AdapterSpec[] = [bunSqliteSpec, nodeSqliteSpec, tursoSpec];
+
+/**
+ * Best-effort close of an {@link OpenedAdapter}, suppressing any error so a
+ * duplicate close in a `finally` block does not mask the primary assertion
+ * failure that caused us to reach the finally in the first place.
+ */
+export async function closeIfOpen(handle: OpenedAdapter | undefined): Promise<void> {
+  if (handle === undefined) return;
+  try {
+    await handle.close();
+  } catch {
+    // best-effort — see JSDoc for why we swallow.
+  }
+}
 
 /**
  * Per-test fixture tracker.

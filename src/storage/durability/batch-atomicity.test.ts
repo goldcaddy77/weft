@@ -12,16 +12,12 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
-import { availableAdapterSpecs, FixtureScope, type OpenedAdapter } from './adapter-spec.ts';
-
-async function closeIfOpen(handle: OpenedAdapter | undefined): Promise<void> {
-  if (handle === undefined) return;
-  try {
-    await handle.close();
-  } catch {
-    // best-effort
-  }
-}
+import {
+  availableAdapterSpecs,
+  closeIfOpen,
+  FixtureScope,
+  type OpenedAdapter,
+} from './adapter-spec.ts';
 
 for (const spec of availableAdapterSpecs()) {
   describe(`batch atomicity — ${spec.name}`, () => {

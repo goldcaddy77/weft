@@ -106,9 +106,13 @@ describe('on-disk crash recovery — BunSQLiteStorage', () => {
       // Engine2 is constructed.
       const workflowKey = STORAGE_KEYS.workflow('wf-signal');
       expect(await storage1.get(workflowKey)).not.toBeNull();
-      safeDisposeEngine(engine1);
+      // Strict disposal on the happy path so a real lifecycle bug
+      // surfaces. `safeDispose*` is reserved for the `finally` cleanup
+      // path where we may be cleaning up after a prior assertion error
+      // and must not mask it.
+      engine1[Symbol.dispose]();
       engine1 = undefined;
-      safeDisposeStorage(storage1);
+      storage1[Symbol.dispose]();
       storage1 = undefined;
 
       storage2 = openStorage(databasePath);
@@ -157,9 +161,13 @@ describe('on-disk crash recovery — BunSQLiteStorage', () => {
       await flush();
 
       expect(await storage1.get(STORAGE_KEYS.workflow('wf-done'))).not.toBeNull();
-      safeDisposeEngine(engine1);
+      // Strict disposal on the happy path so a real lifecycle bug
+      // surfaces. `safeDispose*` is reserved for the `finally` cleanup
+      // path where we may be cleaning up after a prior assertion error
+      // and must not mask it.
+      engine1[Symbol.dispose]();
       engine1 = undefined;
-      safeDisposeStorage(storage1);
+      storage1[Symbol.dispose]();
       storage1 = undefined;
 
       storage2 = openStorage(databasePath);
@@ -213,9 +221,13 @@ describe('on-disk crash recovery — BunSQLiteStorage', () => {
         eventCount++;
       }
       expect(eventCount).toBeGreaterThan(0);
-      safeDisposeEngine(engine1);
+      // Strict disposal on the happy path so a real lifecycle bug
+      // surfaces. `safeDispose*` is reserved for the `finally` cleanup
+      // path where we may be cleaning up after a prior assertion error
+      // and must not mask it.
+      engine1[Symbol.dispose]();
       engine1 = undefined;
-      safeDisposeStorage(storage1);
+      storage1[Symbol.dispose]();
       storage1 = undefined;
 
       storage2 = openStorage(databasePath);
@@ -267,9 +279,13 @@ describe('on-disk crash recovery — BunSQLiteStorage', () => {
       expect(await storage1.get(STORAGE_KEYS.workflow('aaa'))).not.toBeNull();
       expect(await storage1.get(STORAGE_KEYS.workflow('bbb'))).not.toBeNull();
       expect(await storage1.get(STORAGE_KEYS.workflow('ccc'))).not.toBeNull();
-      safeDisposeEngine(engine1);
+      // Strict disposal on the happy path so a real lifecycle bug
+      // surfaces. `safeDispose*` is reserved for the `finally` cleanup
+      // path where we may be cleaning up after a prior assertion error
+      // and must not mask it.
+      engine1[Symbol.dispose]();
       engine1 = undefined;
-      safeDisposeStorage(storage1);
+      storage1[Symbol.dispose]();
       storage1 = undefined;
 
       storage2 = openStorage(databasePath);

@@ -37,8 +37,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   availableAdapterSpecs,
   availableBunNodeAdapterSpecs,
+  closeIfOpen,
   FixtureScope,
   type AdapterSpec,
+  type BunOrNodeAdapterSpec,
   type OpenedAdapter,
 } from './adapter-spec.ts';
 
@@ -79,18 +81,22 @@ function expectReadableStream(
   return stream;
 }
 
+/**
+ * Drain a stream fully to a string. Called only on the error path AFTER
+ * the subprocess has exited, so reading to EOF cannot block — there is no
+ * more producer. A previous version of this helper raced each read against
+ * a 200ms inactivity timer, which truncated bursty stderr output and hid
+ * the most useful part of the diagnostic.
+ */
 async function drainStream(stream: ReadableStream<Uint8Array>): Promise<string> {
   const decoder = new TextDecoder();
   let text = '';
   const reader = stream.getReader();
   try {
     for (;;) {
-      const result = await Promise.race([
-        reader.read(),
-        realSleep(200).then(() => ({ value: undefined, done: true as const })),
-      ]);
-      if (result.done) break;
-      if (result.value) text += decoder.decode(result.value, { stream: true });
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value !== undefined) text += decoder.decode(value, { stream: true });
     }
   } finally {
     try {
@@ -195,7 +201,7 @@ process.stdout.write('WEFT_DURABILITY_UNREACHABLE\\n');
 `;
 }
 
-function rawInTransactionEntrypointSource(spec: AdapterSpec): string {
+function rawInTransactionEntrypointSource(spec: BunOrNodeAdapterSpec): string {
   if (spec.name === 'BunSQLiteStorage') {
     return `
 ${importLineFor(spec)}
@@ -237,15 +243,6 @@ insert.run('mid:in-transaction', new Uint8Array([42]));
 process.stdout.write('WEFT_DURABILITY_IN_TRANSACTION\\n');
 await new Promise(() => {});
 `;
-}
-
-async function closeIfOpen(handle: OpenedAdapter | undefined): Promise<void> {
-  if (handle === undefined) return;
-  try {
-    await handle.close();
-  } catch {
-    // best-effort
-  }
 }
 
 async function countMidRows(reader: OpenedAdapter): Promise<number> {

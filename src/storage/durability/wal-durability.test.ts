@@ -26,21 +26,16 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
-import { availableAdapterSpecs, FixtureScope, type OpenedAdapter } from './adapter-spec.ts';
+import {
+  availableAdapterSpecs,
+  closeIfOpen,
+  FixtureScope,
+  type OpenedAdapter,
+} from './adapter-spec.ts';
 
 function bytesEqual(actual: Uint8Array | null, expected: Uint8Array): void {
   expect(actual).not.toBeNull();
   expect(Array.from(actual!)).toEqual(Array.from(expected));
-}
-
-async function closeIfOpen(handle: OpenedAdapter | undefined): Promise<void> {
-  if (handle === undefined) return;
-  try {
-    await handle.close();
-  } catch {
-    // best-effort — duplicate close after a thrown assertion should not mask
-    // the original error.
-  }
 }
 
 for (const spec of availableAdapterSpecs()) {
