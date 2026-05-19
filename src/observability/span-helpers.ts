@@ -59,3 +59,73 @@ export function parentContextForWorkflow(state: ObservabilityState, workflowId: 
     ? state.trace.setSpan(state.api.context.ROOT_CONTEXT, rootEntry.span)
     : state.api.context.ROOT_CONTEXT;
 }
+
+type SpanLifecycleState = Pick<ObservabilityState, 'SpanStatusCode'>;
+
+function recordSpanError(state: SpanLifecycleState, span: OpenTelemetrySpan, error: unknown): void {
+  span.setStatus({
+    code: state.SpanStatusCode.ERROR,
+    message: error instanceof Error ? error.message : String(error),
+  });
+  span.recordException(error instanceof Error ? error : new Error(String(error)));
+}
+
+/** Run a sync body inside a span's lifecycle; rethrows after recording. */
+export function runWithSpan<T>(
+  state: SpanLifecycleState,
+  span: OpenTelemetrySpan,
+  body: () => T,
+  onSuccess?: (result: T) => void,
+): T {
+  try {
+    const result = body();
+    span.setStatus({ code: state.SpanStatusCode.OK });
+    onSuccess?.(result);
+    return result;
+  } catch (error) {
+    recordSpanError(state, span, error);
+    throw error;
+  } finally {
+    span.end();
+  }
+}
+
+/** Await an async body inside a span's lifecycle; rethrows after recording. */
+export async function runAsyncWithSpan<T>(
+  state: SpanLifecycleState,
+  span: OpenTelemetrySpan,
+  body: () => T | Promise<T>,
+  onSuccess?: (result: T) => void,
+): Promise<T> {
+  try {
+    const result = await body();
+    span.setStatus({ code: state.SpanStatusCode.OK });
+    onSuccess?.(result);
+    return result;
+  } catch (error) {
+    recordSpanError(state, span, error);
+    throw error;
+  } finally {
+    span.end();
+  }
+}
+
+/** Yield* a generator body inside a span's lifecycle; rethrows after recording. */
+export function* runGeneratorWithSpan<TYield, TReturn, TNext>(
+  state: SpanLifecycleState,
+  span: OpenTelemetrySpan,
+  body: () => Generator<TYield, TReturn, TNext>,
+  onSuccess?: (result: TReturn) => void,
+): Generator<TYield, TReturn, TNext> {
+  try {
+    const result = yield* body();
+    span.setStatus({ code: state.SpanStatusCode.OK });
+    onSuccess?.(result);
+    return result;
+  } catch (error) {
+    recordSpanError(state, span, error);
+    throw error;
+  } finally {
+    span.end();
+  }
+}
