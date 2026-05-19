@@ -21,20 +21,6 @@ naming the alternative that was rejected.
 - **Symbol**: `(whole file)`
 - **Reason**: Bulk operations and terminal purge share the same workflow-state scan, confirmation, audit, and cleanup helpers. Splitting the file while this surface is still being actively expanded would make the destructive-action review path harder to audit; revisit when retry and recover bulk actions are added.
 
-## `core-engine-cleanup-waiters-complexity`
-
-- **File**: `src/core/engine/index.ts`
-- **Rule**: `complexity`
-- **Symbol**: `cleanupWaiters`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `core-engine-complete-workflow-complexity`
-
-- **File**: `src/core/engine/index.ts`
-- **Rule**: `complexity`
-- **Symbol**: `completeWorkflow`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
 ## `core-engine-decode-schedule-runtime-fields-complexity`
 
 - **File**: `src/core/engine/index.ts`
@@ -61,19 +47,6 @@ naming the alternative that was rejected.
   - Lowering the `max-lines` threshold or raising it just for this file: lint policy is enforced globally; per-file overrides are not the project's pattern (see how `.oxlintrc.json` handles test files only via glob, not per-file allowlists).
 - **Reason**: the class itself is ~960 lines of public method shims and type plumbing; everything separable from it has been extracted. No further extraction is possible without splitting the public class declaration, which the rejected alternatives above show is not viable.
 
-## `core-engine-execute-child-complexity`
-
-- **File**: `src/core/engine/index.ts`
-- **Rule**: `complexity`
-- **Symbol**: `executeChild`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `core-engine-termination-file-length`
-
-- **File**: `src/core/engine/termination.ts`
-- **Rule**: `max-lines`
-- **Symbol**: `(whole file)`
-- **Reason**: Termination extraction is temporarily oversized while engine split PRs continue.
 
 ## `core-engine-validation-file-length`
 

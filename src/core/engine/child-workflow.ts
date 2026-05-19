@@ -57,6 +57,123 @@ export function getWorkflowNestingDepth(internals: EngineInternals, workflowId: 
   return currentContext?.nestingDepth ?? internals.workflowNestingDepths.get(workflowId) ?? 0;
 }
 
+type PendingChildExecutionContext = {
+  pendingNestingDepth: number;
+  pendingParentHeaders: Map<string, string> | undefined;
+  pendingExecutionStateOwnerId: string;
+};
+
+function applyPendingChildExecutionContext(
+  internals: EngineInternals,
+  context: PendingChildExecutionContext,
+): void {
+  internals.pendingNestingDepth = context.pendingNestingDepth;
+  internals.pendingParentHeaders = context.pendingParentHeaders;
+  internals.pendingExecutionStateOwnerId = context.pendingExecutionStateOwnerId;
+}
+
+function clearPendingChildExecutionContext(
+  internals: EngineInternals,
+  context: PendingChildExecutionContext,
+): void {
+  if (internals.pendingNestingDepth === context.pendingNestingDepth) {
+    internals.pendingNestingDepth = undefined;
+  }
+  if (internals.pendingParentHeaders === context.pendingParentHeaders) {
+    internals.pendingParentHeaders = undefined;
+  }
+  if (internals.pendingExecutionStateOwnerId === context.pendingExecutionStateOwnerId) {
+    internals.pendingExecutionStateOwnerId = undefined;
+  }
+}
+
+function tenantIdsMatch(
+  existingTenantId: string | undefined,
+  parentTenantId: string | undefined,
+): boolean {
+  if (existingTenantId === undefined && parentTenantId === undefined) return true;
+  if (existingTenantId === undefined || parentTenantId === undefined) return false;
+  return existingTenantId === parentTenantId;
+}
+
+function existingChildMatchesRequest(
+  existingState: WorkflowState,
+  parentState: WorkflowState | null,
+  operation: ChildWorkflowOperation,
+  executionStateOwnerId: string,
+): boolean {
+  return (
+    existingState.type === operation.workflowType &&
+    encodedValuesEqual(existingState.input, operation.input) &&
+    tenantIdsMatch(existingState.tenant?.id, parentState?.tenant?.id) &&
+    existingState.executionStateOwnerId === executionStateOwnerId
+  );
+}
+
+async function resolveCollisionChildHandle(
+  workflowId: string,
+  childWorkflowId: string,
+  operation: ChildWorkflowOperation,
+  executionStateOwnerId: string,
+  collisionError: WorkflowAlreadyExistsError,
+  callbacks: Pick<ChildWorkflowOperationCallbacks, 'getHandle' | 'loadWorkflowState'>,
+): Promise<WorkflowHandle> {
+  const [existingState, currentParentState] = await Promise.all([
+    callbacks.loadWorkflowState(childWorkflowId),
+    callbacks.loadWorkflowState(workflowId),
+  ]);
+
+  if (!existingState) {
+    throw collisionError;
+  }
+
+  if (
+    !existingChildMatchesRequest(
+      existingState,
+      currentParentState,
+      operation,
+      executionStateOwnerId,
+    )
+  ) {
+    throw new Error(
+      `Child workflow id collision for "${childWorkflowId}" does not match the requested child workflow`,
+      { cause: collisionError },
+    );
+  }
+
+  return callbacks.getHandle(childWorkflowId);
+}
+
+async function dispatchChildWorkflowStart(
+  internals: EngineInternals,
+  workflowId: string,
+  childWorkflowId: string,
+  operation: ChildWorkflowOperation,
+  context: PendingChildExecutionContext,
+  callbacks: Pick<ChildWorkflowOperationCallbacks, 'getHandle' | 'loadWorkflowState' | 'start'>,
+): Promise<WorkflowHandle> {
+  applyPendingChildExecutionContext(internals, context);
+  try {
+    return await callbacks.start(operation.workflowType, operation.input, {
+      id: childWorkflowId,
+    });
+  } catch (error) {
+    if (!(error instanceof WorkflowAlreadyExistsError)) {
+      throw error;
+    }
+    return resolveCollisionChildHandle(
+      workflowId,
+      childWorkflowId,
+      operation,
+      context.pendingExecutionStateOwnerId,
+      error,
+      callbacks,
+    );
+  } finally {
+    clearPendingChildExecutionContext(internals, context);
+  }
+}
+
 export async function executeChildWorkflow(
   internals: EngineInternals,
   workflowId: string,
@@ -72,66 +189,20 @@ export async function executeChildWorkflow(
   const parentHeaders = internals.workflowHeaders.get(workflowId) ?? new Map<string, string>();
   const parentState = await callbacks.loadWorkflowState(workflowId);
   const executionStateOwnerId = parentState?.executionStateOwnerId ?? workflowId;
-  // oxlint-disable-next-line complexity -- ID:core-engine-execute-child-complexity
-  const executeChild = async () => {
-    const pendingNestingDepth = currentDepth + 1;
-    const pendingParentHeaders = internals.workflowHeaders.get(workflowId);
-    internals.pendingNestingDepth = pendingNestingDepth;
-    internals.pendingParentHeaders = pendingParentHeaders;
-    internals.pendingExecutionStateOwnerId = executionStateOwnerId;
-    let childHandle: WorkflowHandle;
-
-    try {
-      childHandle = await callbacks.start(operation.workflowType, operation.input, {
-        id: childWorkflowId,
-      });
-    } catch (error) {
-      if (error instanceof WorkflowAlreadyExistsError) {
-        const [existingState, currentParentState] = await Promise.all([
-          callbacks.loadWorkflowState(childWorkflowId),
-          callbacks.loadWorkflowState(workflowId),
-        ]);
-
-        if (!existingState) {
-          throw error;
-        }
-
-        const existingTenantId = existingState.tenant?.id;
-        const parentTenantId = currentParentState?.tenant?.id;
-        const tenantMatches =
-          (existingTenantId === undefined && parentTenantId === undefined) ||
-          (existingTenantId !== undefined &&
-            parentTenantId !== undefined &&
-            existingTenantId === parentTenantId);
-
-        if (
-          existingState.type !== operation.workflowType ||
-          !encodedValuesEqual(existingState.input, operation.input) ||
-          !tenantMatches ||
-          existingState.executionStateOwnerId !== executionStateOwnerId
-        ) {
-          throw new Error(
-            `Child workflow id collision for "${childWorkflowId}" does not match the requested child workflow`,
-            { cause: error },
-          );
-        }
-
-        childHandle = callbacks.getHandle(childWorkflowId);
-      } else {
-        throw error;
-      }
-    } finally {
-      if (internals.pendingNestingDepth === pendingNestingDepth) {
-        internals.pendingNestingDepth = undefined;
-      }
-      if (internals.pendingParentHeaders === pendingParentHeaders) {
-        internals.pendingParentHeaders = undefined;
-      }
-      if (internals.pendingExecutionStateOwnerId === executionStateOwnerId) {
-        internals.pendingExecutionStateOwnerId = undefined;
-      }
-    }
-
+  const executeChild = async (): Promise<unknown> => {
+    const context: PendingChildExecutionContext = {
+      pendingNestingDepth: currentDepth + 1,
+      pendingParentHeaders: internals.workflowHeaders.get(workflowId),
+      pendingExecutionStateOwnerId: executionStateOwnerId,
+    };
+    const childHandle = await dispatchChildWorkflowStart(
+      internals,
+      workflowId,
+      childWorkflowId,
+      operation,
+      context,
+      callbacks,
+    );
     return childHandle.result();
   };
 

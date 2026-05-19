@@ -318,6 +318,76 @@ describe('termination helpers', () => {
     expect(cleanupReviews).not.toHaveBeenCalled();
   });
 
+  it('completeWorkflow pins the post-commit notify-waiters ordering', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    engine.register('completion-ordering', async function* (ctx: WorkflowContext) {
+      yield* ctx.waitForSignal('finish');
+      return 'done';
+    });
+
+    const handle = await engine.start('completion-ordering', null, {
+      id: 'completion-ordering-id',
+    });
+    await flush();
+
+    const internals = getInternals(engine);
+    const events: string[] = [];
+
+    // Install a resolver so we can witness when resolve fires relative to
+    // dispatch/broadcast/forward/finalize.
+    const resolveSpy = mock((_value: unknown) => {
+      events.push('resolver.resolve');
+    });
+    internals.resultResolvers.set(handle.id, {
+      promise: new Promise(() => {}),
+      resolve: resolveSpy,
+      reject: () => {},
+    });
+
+    const callbacks = createTerminationCallbacks({
+      loadWorkflowState: async (workflowId) => await loadWorkflowState(internals, workflowId),
+      runSerializedWorkflowStateWrite: async (workflowId, writeOperation) =>
+        await runSerializedWorkflowStateWrite(internals, workflowId, writeOperation),
+      commitWorkflowStateOperations: async (state, operations, options) => {
+        events.push('commit');
+        await commitWorkflowStateOperations(internals, state, operations, options);
+      },
+      dispatchEvent: () => events.push('dispatchEvent'),
+      forwardEventToHandle: () => events.push('forwardEventToHandle'),
+      broadcast: () => events.push('broadcast'),
+      handleScheduledWorkflowTerminal: async () => {
+        events.push('handleScheduledWorkflowTerminal');
+      },
+    });
+
+    await completeWorkflow(internals, handle.id, 'done', callbacks);
+    await flush();
+
+    // Required ordering invariants:
+    // - state commit happens first
+    // - dispatchEvent / forwardEventToHandle / broadcast / resolver.resolve fire
+    //   in that order, after the commit and before scheduled-terminal handoff
+    // - scheduled-terminal handoff is best-effort and fires last
+    expect(events[0]).toBe('commit');
+    const dispatchIndex = events.indexOf('dispatchEvent');
+    const forwardIndex = events.indexOf('forwardEventToHandle');
+    const broadcastIndex = events.indexOf('broadcast');
+    const resolveIndex = events.indexOf('resolver.resolve');
+    const finalizeIndex = events.indexOf('handleScheduledWorkflowTerminal');
+
+    expect(dispatchIndex).toBeGreaterThan(0);
+    expect(forwardIndex).toBe(dispatchIndex + 1);
+    expect(broadcastIndex).toBe(forwardIndex + 1);
+    expect(resolveIndex).toBe(broadcastIndex + 1);
+    expect(finalizeIndex).toBeGreaterThan(resolveIndex);
+
+    expect(internals.resultResolvers.has(handle.id)).toBe(false);
+
+    engine[Symbol.dispose]();
+  });
+
   it('flushes durable cleanup deletes in batches', async () => {
     const storage = new MemoryStorage();
     Object.defineProperty(storage, 'deletePrefix', { value: undefined });
