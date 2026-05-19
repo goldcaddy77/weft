@@ -268,8 +268,12 @@ export function createServerWebSocketHandlers(
 
       const workerId = ws.data.workerId;
       if (workerId) {
-        // Fix 2: If the worker already reconnected with a new socket, this close
-        // event is for the stale connection — skip cleanup entirely.
+        // Stale-socket guard: if the worker already reconnected with a fresh
+        // socket, this close event is for the displaced connection — skip
+        // cleanup entirely. Object identity is sufficient because
+        // `workerSockets[workerId]` is only ever populated on successful
+        // register and Bun's `ServerWebSocket` instances are unique per
+        // upgrade.
         if (context.workerSockets.get(workerId) !== ws) {
           console.warn(
             `[weft] Ignoring stale socket close for worker "${workerId}" — already reconnected`,
@@ -277,71 +281,113 @@ export function createServerWebSocketHandlers(
           return;
         }
 
-        // Capture in-flight tasks from the in-memory registry (source of truth)
-        // before cleanup so they can be reassigned even if storage hasn't committed yet.
-        const inFlightTasks = context.registry.getWorkerTasks(workerId);
-
-        // Remove in-flight tracking synchronously to allow re-dispatch.
-        for (const task of inFlightTasks) {
-          context.registry.completeTask(task.operationId);
-          context.deadlineTracker.remove(task.operationId);
+        // Reconnect grace period: defer the requeue so a same-`workerId`
+        // re-register inside the window keeps its in-flight work. `0`
+        // disables the grace period and runs the requeue inline.
+        if (context.workerReconnectGracePeriodMs <= 0) {
+          runWorkerDisconnectRequeue(context, options, workerId, ws, cleanupWorkflowIndex);
+          return;
         }
 
-        context.registry.unregister(workerId);
-        context.workerSockets.delete(workerId);
+        // Cancel any previously-scheduled requeue for this worker before
+        // scheduling a new one (defensive — close should only fire once per
+        // socket, but a future change could break that invariant silently).
+        const existing = context.pendingWorkerRequeues.get(workerId);
+        if (existing !== undefined) clearTimeout(existing);
 
-        // Clean up affinity entries that pointed at this worker.
-        for (const [workflowId, affinityWorkerId] of context.workerAffinity) {
-          if (affinityWorkerId === workerId) {
-            context.workerAffinity.delete(workflowId);
-          }
-        }
-
-        // Clean up workflow→operations reverse index for tasks owned by this worker.
-        for (const task of inFlightTasks) {
-          cleanupWorkflowIndex(task.operationId);
-        }
-
-        // Requeue each in-flight task with incremented attempt, respecting retry policy.
-        // The in-memory registry is the source of truth for *which* tasks to reassign.
-        // Full task metadata (activityName, input, etc.) is read from storage.
-        for (const task of inFlightTasks) {
-          void (async () => {
-            try {
-              const inflightKey = KEYS.operationInflight(task.operationId);
-              const existing = await options.engine.storage.get(inflightKey);
-
-              if (existing) {
-                const record = decode(existing);
-                if (!isInflightRecord(record)) {
-                  console.error(
-                    `[weft] Corrupt inflight record for task "${task.operationId}" — skipping reassignment`,
-                  );
-                  return;
-                }
-                await reassignOrExpireTask(
-                  context,
-                  options,
-                  task.operationId,
-                  record,
-                  'worker-disconnect',
-                );
-              } else {
-                // Storage write hadn't committed — clean up the key just in case.
-                console.warn(
-                  `[weft] No inflight record found in storage for task "${task.operationId}" — skipping reassignment`,
-                );
-                await options.engine.storage.delete(inflightKey);
-              }
-            } catch (error) {
-              console.error(
-                `[weft] Failed to reassign task "${task.operationId}" from worker "${workerId}":`,
-                error,
-              );
-            }
-          })();
-        }
+        const timer = setTimeout(() => {
+          context.pendingWorkerRequeues.delete(workerId);
+          // Re-verify: another register may have completed during the grace
+          // period. If so, the fresh socket replaces `workerSockets[workerId]`
+          // and the timer becomes a no-op.
+          if (context.workerSockets.get(workerId) !== ws) return;
+          runWorkerDisconnectRequeue(context, options, workerId, ws, cleanupWorkflowIndex);
+        }, context.workerReconnectGracePeriodMs);
+        context.pendingWorkerRequeues.set(workerId, timer);
       }
     },
   };
+}
+
+/**
+ * Run the worker-disconnect requeue path for `workerId`: remove its in-flight
+ * tracking, unregister it, drop affinity, and reassign each in-flight task.
+ * Called either inline from the close handler (when the grace period is 0) or
+ * from the deferred-requeue timer after the grace period elapses without a
+ * reconnect.
+ */
+function runWorkerDisconnectRequeue(
+  context: import('./context.ts').ServerContext,
+  options: import('../index.ts').ServeOptions,
+  workerId: string,
+  ws: ServerWebSocket<WebSocketData>,
+  cleanupWorkflowIndex: (operationId: string) => void,
+): void {
+  // Capture in-flight tasks from the in-memory registry (source of truth)
+  // before cleanup so they can be reassigned even if storage hasn't committed yet.
+  const inFlightTasks = context.registry.getWorkerTasks(workerId);
+
+  // Remove in-flight tracking synchronously to allow re-dispatch.
+  for (const task of inFlightTasks) {
+    context.registry.completeTask(task.operationId);
+    context.deadlineTracker.remove(task.operationId);
+  }
+
+  context.registry.unregister(workerId);
+  context.workerSockets.delete(workerId);
+
+  // Clean up affinity entries that pointed at this worker.
+  for (const [workflowId, affinityWorkerId] of context.workerAffinity) {
+    if (affinityWorkerId === workerId) {
+      context.workerAffinity.delete(workflowId);
+    }
+  }
+
+  // Clean up workflow→operations reverse index for tasks owned by this worker.
+  for (const task of inFlightTasks) {
+    cleanupWorkflowIndex(task.operationId);
+  }
+
+  // Requeue each in-flight task with incremented attempt, respecting retry policy.
+  // The in-memory registry is the source of truth for *which* tasks to reassign.
+  // Full task metadata (activityName, input, etc.) is read from storage.
+  for (const task of inFlightTasks) {
+    void (async () => {
+      try {
+        const inflightKey = KEYS.operationInflight(task.operationId);
+        const existing = await options.engine.storage.get(inflightKey);
+
+        if (existing) {
+          const record = decode(existing);
+          if (!isInflightRecord(record)) {
+            console.error(
+              `[weft] Corrupt inflight record for task "${task.operationId}" — skipping reassignment`,
+            );
+            return;
+          }
+          await reassignOrExpireTask(
+            context,
+            options,
+            task.operationId,
+            record,
+            'worker-disconnect',
+          );
+        } else {
+          // Storage write hadn't committed — clean up the key just in case.
+          console.warn(
+            `[weft] No inflight record found in storage for task "${task.operationId}" — skipping reassignment`,
+          );
+          await options.engine.storage.delete(inflightKey);
+        }
+      } catch (error) {
+        console.error(
+          `[weft] Failed to reassign task "${task.operationId}" from worker "${workerId}":`,
+          error,
+        );
+      }
+    })();
+  }
+  // Mark ws unused except for signature contract — kept for parity with the
+  // close-handler call sites and to allow future per-socket cleanup hooks.
+  void ws;
 }

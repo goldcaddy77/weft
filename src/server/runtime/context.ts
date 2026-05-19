@@ -46,6 +46,17 @@ export interface ServerContext {
   readonly authenticatorPromise: Promise<Authenticator> | null;
   /** Visibility poll interval in milliseconds. */
   readonly visibilityPollMs: number;
+  /**
+   * Grace period (in ms) before the close handler requeues a disconnected
+   * worker's in-flight tasks. A re-register from the same worker id within
+   * this window cancels the pending requeue. `0` means inline requeue.
+   */
+  readonly workerReconnectGracePeriodMs: number;
+  /**
+   * Pending requeue timers keyed by `workerId`. A successful re-register clears
+   * the timer for that worker, suppressing the deferred requeue.
+   */
+  readonly pendingWorkerRequeues: Map<string, ReturnType<typeof setTimeout>>;
   /** Mutex: prevents concurrent visibility scans from running simultaneously. */
   scanRunning: boolean;
   /** Fine-grained mutex for in-flight operation IDs being processed by expiry paths. */

@@ -970,7 +970,9 @@ describe('worker WebSocket protocol', () => {
 
   it('unregisters a worker on WebSocket close', async () => {
     engine = createEngine();
-    server = serve({ engine, port: 0 });
+    // Disable the reconnect grace period so the close handler unregisters
+    // the worker synchronously, as this test asserts.
+    server = serve({ engine, port: 0, workerReconnectGracePeriodMs: 0 });
 
     const ws = await connectWorker(server);
     await registerWorker(ws, { workerId: 'w2', activities: ['charge'] });
@@ -1753,7 +1755,9 @@ describe('worker WebSocket protocol', () => {
 
   it('integrates with RemoteWorker end-to-end', async () => {
     engine = createEngine();
-    server = serve({ engine, port: 0 });
+    // Disable the reconnect grace period so the disconnect at the end of the
+    // test unregisters the worker synchronously.
+    server = serve({ engine, port: 0, workerReconnectGracePeriodMs: 0 });
 
     const { RemoteWorker } = await import('../worker/index.ts');
 
@@ -3544,7 +3548,11 @@ describe('task assignment deduplication', () => {
 
   it('ignores stale socket close events after a worker reconnects', async () => {
     engine = createEngine();
-    server = serve({ engine, port: 0 });
+    // Disable the reconnect grace period so the stale-socket guard is the
+    // only path that could ignore the close event (the assertion this test
+    // pins). With a non-zero grace period, the timer might fire after the
+    // 100ms test wait and produce a different observable.
+    server = serve({ engine, port: 0, workerReconnectGracePeriodMs: 0 });
     const warningSpy = spyOn(console, 'warn').mockImplementation(() => {});
 
     try {
@@ -4364,7 +4372,9 @@ describe('worker disconnection triggers task reassignment', () => {
 
   it('does nothing when a worker with no in-flight tasks disconnects', async () => {
     ({ engine, storage } = createEngineWithStorage());
-    server = serve({ engine, port: 0 });
+    // Disable the reconnect grace period so the close handler unregisters
+    // the worker synchronously, as this test asserts.
+    server = serve({ engine, port: 0, workerReconnectGracePeriodMs: 0 });
 
     const ws = await connectWorker(server);
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });

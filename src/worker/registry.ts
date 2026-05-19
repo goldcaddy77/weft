@@ -42,29 +42,18 @@ type DrainRecord = {
 
 /**
  * Server-side registry of connected remote workers with pluggable routing
- * policies.
- *
- * Tracks which workers are connected, which activities they support, and how
- * many tasks they have in flight.  The `findWorker` method selects the best
- * worker for a given activity according to the configured {@link RoutingPolicy}
- * (`'least-loaded'` by default).  Used internally by `serve()` — most
- * applications access it through {@link WeftServer.registry}.
+ * policies. Tracks which workers are connected, which activities they support,
+ * and how many tasks they have in flight. `findWorker` selects the best worker
+ * for a given activity per the configured {@link RoutingPolicy} (default
+ * `'least-loaded'`). Used internally by `serve()`; most applications access it
+ * through {@link WeftServer.registry}.
  *
  * @example
  * ```ts
  * import { WorkerRegistry } from 'weft';
- *
  * const registry = new WorkerRegistry({ policy: 'least-loaded' });
- *
- * registry.register({
- *   id: 'worker-1',
- *   queue: 'default',
- *   activities: ['sendEmail'],
- *   concurrency: 10,
- * });
- *
+ * registry.register({ id: 'worker-1', queue: 'default', activities: ['sendEmail'], concurrency: 10 });
  * const best = registry.findWorker('sendEmail', { queue: 'default' });
- * console.log(best?.id); // 'worker-1'
  * ```
  */
 export class WorkerRegistry {
@@ -303,6 +292,11 @@ export class WorkerRegistry {
   }
 
   /** Check whether an operation is currently assigned to a worker. */
+  /** True when `operationId` is in flight on `workerId` — used at the trust boundary to reject stale completions after takeover. */
+  isAssignedToWorker(operationId: string, workerId: string): boolean {
+    return this.#inFlightTasks.get(operationId)?.workerId === workerId;
+  }
+
   isAssigned(operationId: string): boolean {
     return this.#inFlightTasks.has(operationId);
   }

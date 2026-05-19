@@ -38,6 +38,22 @@ import { createWorkflowEventFeed } from './workflow-event-feed.ts';
 /** Reconciliation full-scan runs at this multiple of the visibility poll interval (~60s at default). */
 const RECONCILIATION_MULTIPLIER = 12;
 
+const DEFAULT_WORKER_RECONNECT_GRACE_PERIOD_MS = 100;
+const MAX_WORKER_RECONNECT_GRACE_PERIOD_MS = 5_000;
+
+/**
+ * Clamp a user-supplied `workerReconnectGracePeriodMs` into `[0, 5_000]`.
+ * Returns the default when undefined or non-finite.
+ */
+export function clampWorkerReconnectGracePeriod(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return DEFAULT_WORKER_RECONNECT_GRACE_PERIOD_MS;
+  }
+  if (value < 0) return 0;
+  if (value > MAX_WORKER_RECONNECT_GRACE_PERIOD_MS) return MAX_WORKER_RECONNECT_GRACE_PERIOD_MS;
+  return Math.floor(value);
+}
+
 /**
  * A mutable holder for the Bun server instance. The `fetch` handler needs to
  * call back into the server (for WebSocket upgrades) but the server isn't
@@ -130,6 +146,10 @@ export function buildServerContext(
     // promise is created eagerly and resolved before the first request completes.
     authenticatorPromise: options.auth ? createAuthenticator(options.auth) : null,
     visibilityPollMs: options.visibilityPollIntervalMs ?? 5_000,
+    workerReconnectGracePeriodMs: clampWorkerReconnectGracePeriod(
+      options.workerReconnectGracePeriodMs,
+    ),
+    pendingWorkerRequeues: new Map(),
     scanRunning: false,
     processingOperations: new Set(),
     reconciliationRunning: false,
@@ -251,6 +271,12 @@ export function registerStackDisposers(
       clearTimeout(timer);
     }
     context.pendingTimers.clear();
+    // Clear any pending worker-reconnect grace timers so they cannot fire
+    // against a torn-down registry/storage.
+    for (const timer of context.pendingWorkerRequeues.values()) {
+      clearTimeout(timer);
+    }
+    context.pendingWorkerRequeues.clear();
   });
 }
 

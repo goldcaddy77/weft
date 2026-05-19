@@ -119,6 +119,16 @@ function registerWorker(
   );
   const queue = ws.data.queue ?? 'default';
 
+  // Cancel any pending deferred-requeue for this workerId. The previous socket
+  // closed and scheduled a requeue inside the grace period; the worker is
+  // reconnecting before that fires, so we hold its in-flight tasks instead of
+  // reassigning them.
+  const pendingRequeue = context.pendingWorkerRequeues.get(message.workerId);
+  if (pendingRequeue !== undefined) {
+    clearTimeout(pendingRequeue);
+    context.pendingWorkerRequeues.delete(message.workerId);
+  }
+
   ws.data.workerId = message.workerId;
   ws.data.workerRegistered = true;
   ws.data.workerProtocolVersion = message.protocolVersion;
@@ -153,10 +163,30 @@ function resolveTaskResultStatus(message: TaskResultMessage): 'completed' | 'fai
 function onTaskResultMessage(
   context: ServerContext,
   options: ServeOptions,
+  ws: ServerWebSocket<WebSocketData>,
   message: TaskResultMessage,
   cleanupWorkflowIndex: (operationId: string) => void,
 ): void {
   const operationId = message.operationId;
+  const workerId = ws.data.workerId;
+  // Ownership guard. The registry's in-flight entry records the worker that
+  // currently owns the task. A stale completion from a worker that has been
+  // displaced by visibility-timeout reassignment (the original worker
+  // partitions, scanner reassigns to a peer) no longer matches and is
+  // rejected here instead of mutating engine state. (operationId, workerId)
+  // is sufficient because takeover overwrites the in-flight entry's
+  // workerId; a future change that allows the same workerId to be
+  // re-assigned the same operationId across attempts would need to tighten
+  // this guard to include `attempt` or a server-issued task token.
+  if (workerId === undefined || !context.registry.isAssignedToWorker(operationId, workerId)) {
+    sendWorkerProtocolMessage(ws, {
+      type: 'protocolError',
+      code: 'invalid_message',
+      message: `taskResult for operation "${operationId}" rejected — task not assigned to worker "${workerId ?? ''}"`,
+    });
+    return;
+  }
+
   context.registry.completeTask(operationId);
   context.deadlineTracker.remove(operationId);
   cleanupWorkflowIndex(operationId);
@@ -307,7 +337,7 @@ export function handleWorkerWebSocketMessage(
       break;
     }
     case 'taskResult': {
-      onTaskResultMessage(context, options, message, cleanupWorkflowIndex);
+      onTaskResultMessage(context, options, ws, message, cleanupWorkflowIndex);
       break;
     }
     case 'heartbeat': {
