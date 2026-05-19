@@ -7,12 +7,14 @@
  *     seeds a pre-batch marker, builds a 50,000-entry batch in memory,
  *     prints `WEFT_DURABILITY_READY`, then immediately calls
  *     `storage.batch(big)`. The parent SIGKILLs after seeing readiness.
- *     Because the batch is fully constructed and the very next statement
- *     is `await storage.batch(big)`, the kill must land at or after the
- *     batch is scheduled. The narrow claim is: "a SIGKILL during or
- *     after the adapter batch leaves at most the pre-batch state with
- *     zero partial `mid:` rows." The full `mid:` prefix is scanned to
- *     make partial commits loud.
+ *     Because the batch is fully constructed before the marker is
+ *     emitted, the only remaining gap between marker and `await
+ *     storage.batch(big)` is the inter-statement window — too narrow to
+ *     hold any real adapter work but not strictly zero. The honest
+ *     claim is therefore: "a SIGKILL landing immediately before, during,
+ *     or after the adapter batch call leaves at most the pre-batch
+ *     state with zero partial `mid:` rows." The full `mid:` prefix is
+ *     scanned to make partial commits loud.
  *
  *   - 3b (deterministic in-transaction kill, Bun/Node only): subprocess
  *     opens the real adapter to create file/schema/pragmas, disposes,
@@ -81,58 +83,75 @@ function expectReadableStream(
   return stream;
 }
 
+type DrainResult = { text: string; complete: boolean };
+
 /**
- * Drain a stream to a string with a bounded deadline.
+ * Drain a stream reader to a string with a bounded deadline.
  *
- * Called only on the error path after the subprocess has exited, so in
- * practice EOF arrives promptly. The deadline is a hang guard: kernel
- * pipe semantics can have edge cases where the read side does not see
- * EOF immediately even though the producer is gone, and we never want a
- * test to deadlock waiting for diagnostic output. The returned
- * `complete` flag reports whether the drain hit EOF (true) or was cut
- * off by the deadline (false), so callers that depend on a complete
- * read can decide what to do with truncated output.
+ * The caller owns the reader (passes it in, owns release/cancel). This
+ * shape lets `readUntilMarkerOrExit` keep its existing reader through
+ * the early-exit drain instead of releasing-and-reacquiring — releasing
+ * while a `reader.read()` is still pending can throw and leave the
+ * stream locked, breaking the very drain that follows.
  *
- * The pending `reader.read()` promise is wrapped to swallow the
- * rejection that `cancel()` produces in the finally — without that
- * wrapping, a deadline timeout would leak an unhandled promise
- * rejection after Promise.race resolved.
+ * The deadline is a hang guard: kernel pipe semantics can have edge
+ * cases where the read side does not see EOF immediately even though
+ * the producer is gone. The returned `complete` flag reports whether
+ * the drain hit EOF (true) or was cut off by the deadline / a cancelled
+ * read (false), so callers that depend on a full drain can decide what
+ * to do with truncated output.
+ *
+ * The pending `reader.read()` rejection (which `cancel()` produces on
+ * the in-flight read) is mapped to a `cancelled` race outcome via the
+ * second handler in `.then`, so a deadline timeout cannot leak an
+ * unhandled promise rejection after `Promise.race` resolves.
+ */
+async function drainReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  deadlineMs = 1000,
+): Promise<DrainResult> {
+  const decoder = new TextDecoder();
+  let text = '';
+  let complete = false;
+  const deadline = Date.now() + deadlineMs;
+  while (Date.now() < deadline) {
+    const remaining = Math.max(0, deadline - Date.now());
+    const result = await Promise.race([
+      reader.read().then(
+        (readResult) => ({ kind: 'read' as const, readResult }),
+        () => ({ kind: 'cancelled' as const }),
+      ),
+      realSleep(remaining).then(() => ({ kind: 'timeout' as const })),
+    ]);
+    if (result.kind === 'timeout') break;
+    if (result.kind === 'cancelled') break;
+    if (result.readResult.done) {
+      complete = true;
+      break;
+    }
+    if (result.readResult.value !== undefined) {
+      text += decoder.decode(result.readResult.value, { stream: true });
+    }
+  }
+  // Flush any partial UTF-8 sequence buffered by the decoder.
+  text += decoder.decode();
+  return { text, complete };
+}
+
+/**
+ * Drain a stream that the caller does not already hold a reader for.
+ *
+ * Acquires a reader, drains, then cancels (which releases the lock per
+ * the Streams spec). Use this for streams whose lock has never been
+ * touched — e.g., stderr that was piped but never read.
  */
 async function drainStream(
   stream: ReadableStream<Uint8Array>,
   deadlineMs = 1000,
-): Promise<{ text: string; complete: boolean }> {
-  const decoder = new TextDecoder();
-  let text = '';
-  let complete = false;
+): Promise<DrainResult> {
   const reader = stream.getReader();
-  const deadline = Date.now() + deadlineMs;
   try {
-    while (Date.now() < deadline) {
-      const remaining = Math.max(0, deadline - Date.now());
-      const result = await Promise.race([
-        reader
-          .read()
-          // Swallow the rejection that `reader.cancel()` will trigger on
-          // the pending read; we treat it as a no-op.
-          .then(
-            (readResult) => ({ kind: 'read' as const, readResult }),
-            () => ({ kind: 'cancelled' as const }),
-          ),
-        realSleep(remaining).then(() => ({ kind: 'timeout' as const })),
-      ]);
-      if (result.kind === 'timeout') break;
-      if (result.kind === 'cancelled') break;
-      if (result.readResult.done) {
-        complete = true;
-        break;
-      }
-      if (result.readResult.value !== undefined) {
-        text += decoder.decode(result.readResult.value, { stream: true });
-      }
-    }
-    // Flush any partial UTF-8 sequence buffered by the decoder.
-    text += decoder.decode();
+    return await drainReader(reader, deadlineMs);
   } finally {
     try {
       await reader.cancel();
@@ -140,7 +159,6 @@ async function drainStream(
       // best-effort — cancel after a closed/errored stream may throw.
     }
   }
-  return { text, complete };
 }
 
 /**
@@ -149,10 +167,13 @@ async function drainStream(
  * If the subprocess exits before the marker has been read from the
  * stdout buffer, we drain the remaining stdout first — a fast child can
  * print the marker, exit, and have `child.exited` win the race before
- * the buffered stdout read has resolved. Only after draining do we
- * decide whether the marker was actually missing. If it was, we throw a
- * diagnostic that includes exit code, signal, full stdout, and any
- * captured stderr.
+ * the buffered stdout read has resolved. The drain reuses the same
+ * stdout reader (no release/reacquire) so a pending `reader.read()`
+ * cannot leave the stream locked under our feet. Only after the drain
+ * do we decide whether the marker was actually missing. If it was, we
+ * throw a diagnostic that includes exit code, signal, full stdout, and
+ * any captured stderr — plus an explicit warning if either drain hit
+ * its deadline.
  */
 async function readUntilMarkerOrExit(
   child: RunningChild,
@@ -168,14 +189,17 @@ async function readUntilMarkerOrExit(
   type ReadResult = Awaited<ReturnType<typeof reader.read>>;
   type RaceResult =
     | { kind: 'read'; readResult: ReadResult }
+    | { kind: 'read-cancelled' }
     | { kind: 'exited' }
     | { kind: 'timeout' };
-  let readerLockHeld = true;
   try {
     while (Date.now() < deadline) {
       const remaining = Math.max(0, deadline - Date.now());
       const result: RaceResult = await Promise.race([
-        reader.read().then((readResult): RaceResult => ({ kind: 'read', readResult })),
+        reader.read().then(
+          (readResult): RaceResult => ({ kind: 'read', readResult }),
+          (): RaceResult => ({ kind: 'read-cancelled' }),
+        ),
         child.exited.then((): RaceResult => ({ kind: 'exited' })),
         realSleep(remaining).then((): RaceResult => ({ kind: 'timeout' })),
       ]);
@@ -184,43 +208,55 @@ async function readUntilMarkerOrExit(
         break;
       }
       if (result.kind === 'timeout') break;
+      if (result.kind === 'read-cancelled') break;
       if (result.readResult.done) {
         earlyExit = true;
         break;
       }
       if (result.readResult.value) {
         buffer += decoder.decode(result.readResult.value, { stream: true });
-        if (buffer.includes(marker)) return buffer;
+        if (buffer.includes(marker)) {
+          await safeCancelReader(reader);
+          return buffer;
+        }
       }
     }
-  } finally {
-    if (readerLockHeld) {
-      try {
-        reader.releaseLock();
-        readerLockHeld = false;
-      } catch {
-        // best-effort
-      }
+
+    if (earlyExit) {
+      // Drain remaining stdout using the SAME reader so the lock stays
+      // ours throughout — releasing while a `reader.read()` is still
+      // pending can throw and leave the stream locked, breaking the
+      // marker re-check below.
+      const stdoutDrain = await drainReader(reader);
+      buffer += stdoutDrain.text;
+      await safeCancelReader(reader);
+      if (buffer.includes(marker)) return buffer;
+      const stderrDrain = await drainStream(expectReadableStream(child.stderr, 'stderr'));
+      const drainStatus =
+        stdoutDrain.complete && stderrDrain.complete
+          ? ''
+          : `\nWARNING: drain incomplete (stdout=${stdoutDrain.complete}, stderr=${stderrDrain.complete}) — output may be truncated.`;
+      throw new Error(
+        `Subprocess exited before marker ${JSON.stringify(marker)} appeared.\n` +
+          `exitCode=${String(child.exitCode)} signalCode=${String(child.signalCode)}${drainStatus}\n` +
+          `stdout:\n${buffer}\nstderr:\n${stderrDrain.text}`,
+      );
     }
+
+    await safeCancelReader(reader);
+    throw new Error(`Timed out waiting for marker ${JSON.stringify(marker)}.\nstdout:\n${buffer}`);
+  } catch (error) {
+    await safeCancelReader(reader);
+    throw error;
   }
-  if (earlyExit) {
-    // Drain any stdout that landed in the buffer right before / after
-    // the exit event won the race. The marker may still be in there.
-    const stdoutDrain = await drainStream(stdoutStream);
-    buffer += stdoutDrain.text;
-    if (buffer.includes(marker)) return buffer;
-    const stderrDrain = await drainStream(expectReadableStream(child.stderr, 'stderr'));
-    const drainStatus =
-      stdoutDrain.complete && stderrDrain.complete
-        ? ''
-        : `\nWARNING: drain incomplete (stdout=${stdoutDrain.complete}, stderr=${stderrDrain.complete}) — output may be truncated.`;
-    throw new Error(
-      `Subprocess exited before marker ${JSON.stringify(marker)} appeared.\n` +
-        `exitCode=${String(child.exitCode)} signalCode=${String(child.signalCode)}${drainStatus}\n` +
-        `stdout:\n${buffer}\nstderr:\n${stderrDrain.text}`,
-    );
+}
+
+async function safeCancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+  try {
+    await reader.cancel();
+  } catch {
+    // best-effort — cancel after a closed/errored stream may throw.
   }
-  throw new Error(`Timed out waiting for marker ${JSON.stringify(marker)}.\nstdout:\n${buffer}`);
 }
 
 function importLineFor(spec: AdapterSpec): string {
@@ -324,7 +360,7 @@ for (const spec of availableAdapterSpecs()) {
       scope.cleanup();
     });
 
-    it('SIGKILL during the adapter batch leaves at most pre-batch state with zero partial rows', async () => {
+    it('SIGKILL around the adapter batch call leaves at most pre-batch state with zero partial rows', async () => {
       const directory = scope.makeTempDirectory('batch-kill');
       const entrypointPath = join(directory, 'entrypoint.ts');
       const databasePath = join(directory, 'weft.db');
