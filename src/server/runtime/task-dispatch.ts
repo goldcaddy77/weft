@@ -80,6 +80,14 @@ function buildRoutingOptions(
   if (task.fairShareKey !== undefined) {
     routingOptions.fairShareKey = task.fairShareKey;
   }
+  // Skip workers currently in the reconnect grace window. Their socket is
+  // still in `workerSockets` but the peer has closed; if `findWorker`
+  // returned one of them we would either fail the dispatch (returning false
+  // and falling back to long-poll while peers were ready) or — without this
+  // exclusion — send the frame on a dead socket.
+  if (context.pendingWorkerRequeues.size > 0) {
+    routingOptions.excludeWorkerIds = new Set(context.pendingWorkerRequeues.keys());
+  }
   return routingOptions;
 }
 
@@ -122,20 +130,13 @@ async function selectAndReserveWorker(
 
   const now = Date.now();
   const existingQueuedRecord = await readQueuedRecord(options.engine.storage, task.operationId);
-  ws.send(
-    JSON.stringify({
-      type: 'task',
-      operationId: task.operationId,
-      activityName: task.activityName,
-      input: task.input === undefined ? null : task.input,
-      attempt: task.attempt ?? 1,
-      ...(task.headers ? { headers: task.headers } : {}),
-    }),
-  );
   context.registry.assignTask(worker.id, task.operationId, visibilityTimeout, task.fairShareKey);
 
-  // Persist in-flight record to storage so it survives server restart.
-  // Uses a batch to atomically remove any stale queued record and write the inflight record.
+  // Persist the in-flight record BEFORE sending the task frame on the wire.
+  // If the worker is fast enough to ack-and-complete before this write
+  // committed, `transitionInflightToResolved` could delete-then-have-its
+  // delete-overwritten by this put, producing an orphaned inflight record
+  // that the scanner re-dispatches forever.
   const deadline = now + visibilityTimeout;
   context.deadlineTracker.add({ operationId: task.operationId, deadline });
   const inflightRecord: InflightRecord = {
@@ -159,6 +160,18 @@ async function selectAndReserveWorker(
       now,
     },
   );
+
+  ws.send(
+    JSON.stringify({
+      type: 'task',
+      operationId: task.operationId,
+      activityName: task.activityName,
+      input: task.input === undefined ? null : task.input,
+      attempt: task.attempt ?? 1,
+      ...(task.headers ? { headers: task.headers } : {}),
+    }),
+  );
+
   recordTaskQueueLatencyMetric(context.metricsCollector, normalizedInflightRecord);
   recordWorkerCapacitySaturationMetric(context.metricsCollector, context.registry);
 

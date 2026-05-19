@@ -42,29 +42,18 @@ type DrainRecord = {
 
 /**
  * Server-side registry of connected remote workers with pluggable routing
- * policies.
- *
- * Tracks which workers are connected, which activities they support, and how
- * many tasks they have in flight.  The `findWorker` method selects the best
- * worker for a given activity according to the configured {@link RoutingPolicy}
- * (`'least-loaded'` by default).  Used internally by `serve()` — most
- * applications access it through {@link WeftServer.registry}.
+ * policies. Tracks which workers are connected, which activities they support,
+ * and how many tasks they have in flight. `findWorker` selects the best worker
+ * for a given activity per the configured {@link RoutingPolicy} (default
+ * `'least-loaded'`). Used internally by `serve()`; most applications access it
+ * through {@link WeftServer.registry}.
  *
  * @example
  * ```ts
  * import { WorkerRegistry } from 'weft';
- *
  * const registry = new WorkerRegistry({ policy: 'least-loaded' });
- *
- * registry.register({
- *   id: 'worker-1',
- *   queue: 'default',
- *   activities: ['sendEmail'],
- *   concurrency: 10,
- * });
- *
+ * registry.register({ id: 'worker-1', queue: 'default', activities: ['sendEmail'], concurrency: 10 });
  * const best = registry.findWorker('sendEmail', { queue: 'default' });
- * console.log(best?.id); // 'worker-1'
  * ```
  */
 export class WorkerRegistry {
@@ -94,7 +83,10 @@ export class WorkerRegistry {
   /** Register a worker. */
   register(info: WorkerRegistrationInfo): void {
     const now = Date.now();
-
+    // Reconnect during grace preserves in-flight tasks under the same workerId;
+    // derive `inFlight` rather than resetting to 0 so concurrency limits hold.
+    let inFlight = 0;
+    for (const task of this.#inFlightTasks.values()) if (task.workerId === info.id) inFlight += 1;
     this.#workers.set(info.id, {
       id: info.id,
       queue: info.queue,
@@ -106,17 +98,13 @@ export class WorkerRegistry {
       ...(info.gitSha !== undefined ? { gitSha: info.gitSha } : {}),
       startedAt: info.startedAt ?? now,
       capabilities: { ...info.capabilities },
-      inFlight: 0,
+      inFlight,
       connectedAt: now,
       lastHeartbeat: now,
     });
   }
 
-  /**
-   * Unregister a worker and return its info. Purges fair-share counters and
-   * in-flight task entries for this worker to avoid stale registry state after
-   * crash recovery or forced removal.
-   */
+  /** Unregister a worker. Purges fair-share counters and in-flight task entries for this worker. */
   unregister(workerId: string): WorkerInfo | undefined {
     const info = this.#workers.get(workerId);
     if (info === undefined) return undefined;
@@ -168,21 +156,29 @@ export class WorkerRegistry {
    * 4. A `sticky` worker that also satisfies the above wins regardless of policy.
    */
   findWorker(activityName: string, options: RoutingOptions = {}): WorkerInfo | undefined {
-    const { queue, sticky: stickyId, fairShareKey } = options;
-
+    const { queue, sticky: stickyId, fairShareKey, excludeWorkerIds } = options;
     const eligible: WorkerInfo[] = [];
     let stickyCandidate: WorkerInfo | undefined;
-
     for (const worker of this.#workers.values()) {
-      if (!matchesWorkerCapabilities(worker, activityName, queue)) continue;
-      if (this.#isWorkerDraining(worker)) continue;
+      if (!this.#workerIsEligible(worker, activityName, queue, excludeWorkerIds)) continue;
       if (stickyId !== undefined && worker.id === stickyId) stickyCandidate = worker;
       eligible.push(worker);
     }
-
     if (stickyCandidate !== undefined) return stickyCandidate;
     if (eligible.length === 0) return undefined;
     return this.#selectByPolicy(eligible, queue, activityName, fairShareKey);
+  }
+
+  #workerIsEligible(
+    worker: WorkerInfo,
+    activityName: string,
+    queue: string | undefined,
+    excludeWorkerIds: ReadonlySet<string> | undefined,
+  ): boolean {
+    if (excludeWorkerIds?.has(worker.id)) return false;
+    if (!matchesWorkerCapabilities(worker, activityName, queue)) return false;
+    if (this.#isWorkerDraining(worker)) return false;
+    return true;
   }
 
   /** Dispatch to the configured routing policy. Called only when `eligible` is non-empty. */
@@ -300,6 +296,11 @@ export class WorkerRegistry {
       }
     }
     return tasks;
+  }
+
+  /** True when `operationId` is in flight on `workerId` — used at the trust boundary to reject stale completions after takeover. */
+  isAssignedToWorker(operationId: string, workerId: string): boolean {
+    return this.#inFlightTasks.get(operationId)?.workerId === workerId;
   }
 
   /** Check whether an operation is currently assigned to a worker. */

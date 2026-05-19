@@ -76,6 +76,15 @@ export interface ServeOptions {
   /** How often (in ms) the server scans `op:inflight:*` for expired visibility deadlines. Defaults to 5 000. */
   visibilityPollIntervalMs?: number;
   /**
+   * Grace period (in ms) between a worker WebSocket close and the requeue of
+   * its in-flight tasks. A re-`register` from the same `workerId` within this
+   * window cancels the pending requeue so the reconnect keeps the work it
+   * already started. Defaults to 100 ms. Set to `0` to disable the grace
+   * period entirely — close handler runs requeue inline as in earlier versions
+   * of the server. Values are clamped to `[0, 5_000]`.
+   */
+  workerReconnectGracePeriodMs?: number;
+  /**
    * Routing policy used by the {@link WorkerRegistry} when dispatching tasks.
    * Defaults to `'least-loaded'`. Set to `'round-robin'` for deterministic
    * rotation across workers.

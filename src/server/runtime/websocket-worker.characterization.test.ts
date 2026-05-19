@@ -73,6 +73,8 @@ function createMinimalContext(): ServerContext {
     mcpSessionManager: null as never,
     authenticatorPromise: null,
     visibilityPollMs: 5000,
+    workerReconnectGracePeriodMs: 0,
+    pendingWorkerRequeues: new Map(),
     scanRunning: false,
     processingOperations: new Set(),
     reconciliationRunning: false,

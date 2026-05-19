@@ -116,6 +116,12 @@ export interface RoutingOptions {
    * degrades gracefully to `'least-loaded'`.
    */
   fairShareKey?: string;
+  /**
+   * Worker IDs to exclude from eligibility — used by `serve()` to skip
+   * workers currently in the reconnect grace window so dispatches do not
+   * land on a dead socket while peers are available.
+   */
+  excludeWorkerIds?: ReadonlySet<string>;
 }
 
 export interface InFlightTask {
