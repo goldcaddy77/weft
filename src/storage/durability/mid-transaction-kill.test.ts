@@ -4,15 +4,15 @@
  * Two complementary tests per adapter:
  *
  *   - 3a (adapter-batch kill window): subprocess opens the real adapter,
- *     seeds a pre-batch marker, prints `WEFT_DURABILITY_READY`, then calls
- *     a large `batch()`. The parent SIGKILLs after seeing readiness. The
- *     readiness marker is emitted BEFORE `batch()` starts, so the kill may
- *     land before, during, or after the SQL transaction — the test does
- *     not (and cannot) claim the kill is mid-transaction. The narrow
- *     claim is: "a SIGKILL anywhere from the moment the batch is
- *     scheduled through commit leaves at most the pre-batch state, and
- *     no partial `mid:` rows are visible." The full `mid:` prefix is
- *     scanned to make partial commits loud.
+ *     seeds a pre-batch marker, builds a 50,000-entry batch in memory,
+ *     prints `WEFT_DURABILITY_READY`, then immediately calls
+ *     `storage.batch(big)`. The parent SIGKILLs after seeing readiness.
+ *     Because the batch is fully constructed and the very next statement
+ *     is `await storage.batch(big)`, the kill must land at or after the
+ *     batch is scheduled. The narrow claim is: "a SIGKILL during or
+ *     after the adapter batch leaves at most the pre-batch state with
+ *     zero partial `mid:` rows." The full `mid:` prefix is scanned to
+ *     make partial commits loud.
  *
  *   - 3b (deterministic in-transaction kill, Bun/Node only): subprocess
  *     opens the real adapter to create file/schema/pragmas, disposes,
@@ -88,41 +88,59 @@ function expectReadableStream(
  * practice EOF arrives promptly. The deadline is a hang guard: kernel
  * pipe semantics can have edge cases where the read side does not see
  * EOF immediately even though the producer is gone, and we never want a
- * test to deadlock waiting for diagnostic output. If the deadline fires
- * before EOF, we cancel the reader and return what we've collected so
- * far — partial diagnostic output is more useful than a hung suite.
+ * test to deadlock waiting for diagnostic output. The returned
+ * `complete` flag reports whether the drain hit EOF (true) or was cut
+ * off by the deadline (false), so callers that depend on a complete
+ * read can decide what to do with truncated output.
+ *
+ * The pending `reader.read()` promise is wrapped to swallow the
+ * rejection that `cancel()` produces in the finally — without that
+ * wrapping, a deadline timeout would leak an unhandled promise
+ * rejection after Promise.race resolved.
  */
-async function drainStream(stream: ReadableStream<Uint8Array>, deadlineMs = 1000): Promise<string> {
+async function drainStream(
+  stream: ReadableStream<Uint8Array>,
+  deadlineMs = 1000,
+): Promise<{ text: string; complete: boolean }> {
   const decoder = new TextDecoder();
   let text = '';
+  let complete = false;
   const reader = stream.getReader();
   const deadline = Date.now() + deadlineMs;
   try {
     while (Date.now() < deadline) {
       const remaining = Math.max(0, deadline - Date.now());
       const result = await Promise.race([
-        reader.read().then((readResult) => ({ kind: 'read' as const, readResult })),
+        reader
+          .read()
+          // Swallow the rejection that `reader.cancel()` will trigger on
+          // the pending read; we treat it as a no-op.
+          .then(
+            (readResult) => ({ kind: 'read' as const, readResult }),
+            () => ({ kind: 'cancelled' as const }),
+          ),
         realSleep(remaining).then(() => ({ kind: 'timeout' as const })),
       ]);
       if (result.kind === 'timeout') break;
-      if (result.readResult.done) break;
+      if (result.kind === 'cancelled') break;
+      if (result.readResult.done) {
+        complete = true;
+        break;
+      }
       if (result.readResult.value !== undefined) {
         text += decoder.decode(result.readResult.value, { stream: true });
       }
     }
+    // Flush any partial UTF-8 sequence buffered by the decoder.
+    text += decoder.decode();
   } finally {
     try {
       await reader.cancel();
     } catch {
-      // best-effort
-    }
-    try {
-      reader.releaseLock();
-    } catch {
-      // best-effort
+      // best-effort — cancel after a closed/errored stream may throw.
     }
   }
-  return text;
+  return { text, complete };
 }
 
 /**
@@ -186,16 +204,20 @@ async function readUntilMarkerOrExit(
     }
   }
   if (earlyExit) {
-    // Drain any stdout that landed in the buffer right before / after the
-    // exit event won the race. The marker may still be in there.
-    const remainingStdout = await drainStream(stdoutStream);
-    buffer += remainingStdout;
+    // Drain any stdout that landed in the buffer right before / after
+    // the exit event won the race. The marker may still be in there.
+    const stdoutDrain = await drainStream(stdoutStream);
+    buffer += stdoutDrain.text;
     if (buffer.includes(marker)) return buffer;
-    const stderr = await drainStream(expectReadableStream(child.stderr, 'stderr'));
+    const stderrDrain = await drainStream(expectReadableStream(child.stderr, 'stderr'));
+    const drainStatus =
+      stdoutDrain.complete && stderrDrain.complete
+        ? ''
+        : `\nWARNING: drain incomplete (stdout=${stdoutDrain.complete}, stderr=${stderrDrain.complete}) — output may be truncated.`;
     throw new Error(
       `Subprocess exited before marker ${JSON.stringify(marker)} appeared.\n` +
-        `exitCode=${String(child.exitCode)} signalCode=${String(child.signalCode)}\n` +
-        `stdout:\n${buffer}\nstderr:\n${stderr}`,
+        `exitCode=${String(child.exitCode)} signalCode=${String(child.signalCode)}${drainStatus}\n` +
+        `stdout:\n${buffer}\nstderr:\n${stderrDrain.text}`,
     );
   }
   throw new Error(`Timed out waiting for marker ${JSON.stringify(marker)}.\nstdout:\n${buffer}`);
@@ -213,13 +235,17 @@ function importLineFor(spec: AdapterSpec): string {
 }
 
 function adapterBatchEntrypointSource(spec: AdapterSpec): string {
+  // Construct the 50,000-entry batch BEFORE emitting the readiness marker
+  // so the kill cannot land during plain JS array construction — only
+  // after the adapter's `batch()` has been scheduled. The parent reads
+  // `WEFT_DURABILITY_READY` exactly when the next line is `await
+  // storage.batch(big)`.
   return `
 ${importLineFor(spec)}
 
 const databasePath = process.argv[2];
 const storage = openAdapter(databasePath);
 await storage.batch([{ type: 'put', key: 'before:ok', value: new Uint8Array([1]) }]);
-process.stdout.write('WEFT_DURABILITY_READY\\n');
 const big = [];
 for (let index = 0; index < 50000; index++) {
   big.push({
@@ -228,6 +254,7 @@ for (let index = 0; index < 50000; index++) {
     value: new Uint8Array([index & 0xff]),
   });
 }
+process.stdout.write('WEFT_DURABILITY_READY\\n');
 await storage.batch(big);
 process.stdout.write('WEFT_DURABILITY_UNREACHABLE\\n');
 `;
