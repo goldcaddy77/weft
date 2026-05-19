@@ -6,12 +6,14 @@ import { sleepForTesting, waitForRealTimersForTesting } from '../../testing/fake
 import { encode } from '../codec.ts';
 import type { WorkflowState } from '../types.ts';
 import {
+  createStreamOperationCallbacks,
+  createTimeOperationCallbacks,
+} from './callback-creators-bundles.ts';
+import { createSubmitReviewCallbacks } from './callback-creators-schedule.ts';
+import {
   createInlineParkingCallbacks,
   createLifecycleCallbacks,
   createRegistrationCallbacks,
-  createStreamOperationCallbacks,
-  createSubmitReviewCallbacks,
-  createTimeOperationCallbacks,
   createUpdateCallbacks,
 } from './callback-creators.ts';
 import { Engine } from './index.ts';

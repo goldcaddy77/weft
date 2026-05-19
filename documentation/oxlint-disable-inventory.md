@@ -14,13 +14,6 @@ The oxlint-strict initiative is complete when this file lists **at most 5
 permanent suppressions**, each with a one-paragraph rationale and a comment
 naming the alternative that was rejected.
 
-## `core-engine-bulk-operations-file-length`
-
-- **File**: `src/core/engine/bulk-operations.ts`
-- **Rule**: `max-lines`
-- **Symbol**: `(whole file)`
-- **Reason**: Bulk operations and terminal purge share the same workflow-state scan, confirmation, audit, and cleanup helpers. Splitting the file while this surface is still being actively expanded would make the destructive-action review path harder to audit; revisit when retry and recover bulk actions are added.
-
 ## `core-engine-decode-schedule-runtime-fields-complexity`
 
 - **File**: `src/core/engine/index.ts`
@@ -28,24 +21,18 @@ naming the alternative that was rejected.
 - **Symbol**: `decodeScheduleRuntimeFields`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
-## `core-engine-callback-creators-file-length`
-
-- **File**: `src/core/engine/callback-creators.ts`
-- **Rule**: `max-lines`
-- **Symbol**: `(whole file)`
-- **Reason**: Callback-bundle factory hub created in PR 32b. Splitting further has diminishing returns; keeping all factories in one place keeps the Engine class shim definitions easy to follow.
-
 ## `core-engine-index-file-length`
 
 - **File**: `src/core/engine/index.ts`
 - **Rule**: `max-lines`
 - **Symbol**: `(whole file)`
-- **Current size**: ~1464 lines after this pass extracted construction helpers and local types to `src/core/engine/construction.ts` (~197 lines). The remaining bulk is the `Engine` class itself (~960 lines).
+- **Current size**: ~1281 lines after extracting `EngineCreateOptions` and the internal type helpers to `src/core/engine/engine-create-types.ts`, the test-only leak-warning state to `src/core/engine/engine-leak-warnings.ts`, and the per-engine runtime callback factories (`createQueuedInlineWorkflowStartHandler`, `createCleanupIntervalTick`, `disposeEngineCleanupInterval`, `isActivityDefinition`) to `src/core/engine/engine-runtime-helpers.ts`. The remaining bulk is the `Engine` class itself (~960 lines of method shims, constructor wiring, and disposable lifecycle plumbing).
+- **Generic-chain protection**: see `src/core/engine/builder-chain.test-d.ts` for compile-time assertions that `Engine.create({ workflows, activities })`, `engine.register(definition)`, and `engine.start(name, input)` continue to thread `TWorkflows`/`TActivities` generics through their overloads. Any future extraction that breaks the chained-builder inference will fail `bun run typecheck:tests` on that file.
 - **Rejected alternatives**:
-  - Splitting the `Engine` class via `interface` declaration merging: loses generic preservation across `withWorkflow`/`withActivity` builders, breaks the chained-builder type inference that is the whole point of the typed registry.
-  - Splitting the `Engine` class via prototype assignment in sibling modules: alters generated `.d.ts` output and JSDoc attachment for the public class, downgrades inference on static `Engine.create` overloads, and creates a runtime ordering hazard.
-  - Lowering the `max-lines` threshold or raising it just for this file: lint policy is enforced globally; per-file overrides are not the project's pattern (see how `.oxlintrc.json` handles test files only via glob, not per-file allowlists).
-- **Reason**: the class itself is ~960 lines of public method shims and type plumbing; everything separable from it has been extracted. No further extraction is possible without splitting the public class declaration, which the rejected alternatives above show is not viable.
+  - Splitting the `Engine` class via `interface` declaration merging plus `Object.assign(Engine.prototype, mixin)` in sibling modules: alters generated `.d.ts` output and JSDoc attachment for the public class, downgrades inference on static `Engine.create` overloads, and creates a runtime ordering hazard (callers can construct an engine before the mixin module has executed).
+  - Splitting the `Engine` class by relocating only the non-generic methods to a sibling: same downsides as above; the runtime-ordering risk is the load-bearing objection because integrators can import `Engine` directly without transitively importing every sibling that owns a method.
+  - Lowering the `max-lines` threshold or adding a per-file override in `.oxlintrc.json`: the project enforces lint policy globally; per-file overrides are not the convention (see how `.oxlintrc.json` only relaxes test files via glob, not per-file allowlists).
+- **Reason**: the class itself is ~960 lines of public method shims, constructor wiring, and type plumbing for the chained-builder inference; everything separable from it has been extracted. No further extraction is possible without splitting the public class declaration, which the rejected alternatives above show is not viable.
 
 
 ## `core-engine-validation-file-length`

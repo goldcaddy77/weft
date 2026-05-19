@@ -1,0 +1,77 @@
+import { createExpiredResponseCleanupTick } from '../engine-helpers.ts';
+import type { AnyActivityDefinition } from '../types.ts';
+import { createLifecycleCallbacks, createTerminationCallbacks } from './callback-creators-core.ts';
+import {
+  engineCleanupIntervalFinalizer,
+  type EngineCleanupIntervalDisposalTracker,
+} from './engine-leak-warnings.ts';
+import type { Engine } from './index.ts';
+import { flushQueuedInlineWorkflowStarts } from './inline-launch-queue.ts';
+import { getInternals, type EngineInternals } from './internals.ts';
+import { swallowPromiseRejection } from './strategy-helpers.ts';
+
+export function isActivityDefinition(value: unknown): value is AnyActivityDefinition {
+  return (
+    typeof value === 'function' &&
+    typeof value.name === 'string' &&
+    'execute' in value &&
+    typeof (value as { execute?: unknown }).execute === 'function'
+  );
+}
+
+export function createQueuedInlineWorkflowStartHandler<
+  TWorkflows extends object,
+  TActivities extends object,
+>(weakEngine: WeakRef<Engine<TWorkflows, TActivities>>, channel: MessageChannel): () => void {
+  return function handleQueuedInlineWorkflowStart() {
+    const engine = weakEngine.deref();
+    if (engine === undefined) {
+      channel.port1.close();
+      channel.port2.close();
+      return;
+    }
+
+    getInternals(engine).queuedInlineWorkflowStartFlushScheduled = false;
+    void swallowPromiseRejection(
+      flushQueuedInlineWorkflowStarts(getInternals(engine), {
+        processPendingUpdatesAfterInlineAdvance: (workflowId) =>
+          createLifecycleCallbacks(engine).processPendingUpdatesAfterInlineAdvance(workflowId),
+        swallowPromiseRejection: (promise) => swallowPromiseRejection(promise),
+      }),
+    );
+  };
+}
+
+export function createCleanupIntervalTick<TWorkflows extends object, TActivities extends object>(
+  weakEngine: WeakRef<Engine<TWorkflows, TActivities>>,
+  tracker: EngineCleanupIntervalDisposalTracker,
+): () => void {
+  return function cleanupExpiredResponsesForLiveEngine() {
+    const engine = weakEngine.deref();
+    if (engine === undefined) {
+      if (tracker.cleanupInterval !== null) {
+        clearInterval(tracker.cleanupInterval);
+        tracker.cleanupInterval = null;
+      }
+      return;
+    }
+
+    const internals = getInternals(engine);
+    createExpiredResponseCleanupTick(internals.updateCoordinator, (source, error) =>
+      createTerminationCallbacks(engine).handleCleanupError(source, error),
+    )();
+  };
+}
+
+export function disposeEngineCleanupInterval(internals: EngineInternals): void {
+  if (internals.cleanupInterval !== null) {
+    clearInterval(internals.cleanupInterval ?? undefined);
+    internals.cleanupInterval = null;
+  }
+  if (internals.cleanupIntervalDisposalTracker !== null) {
+    internals.cleanupIntervalDisposalTracker.disposed = true;
+    internals.cleanupIntervalDisposalTracker.cleanupInterval = null;
+    engineCleanupIntervalFinalizer.unregister(internals.cleanupIntervalDisposalTracker);
+    internals.cleanupIntervalDisposalTracker = null;
+  }
+}
