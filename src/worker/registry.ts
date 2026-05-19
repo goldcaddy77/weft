@@ -157,21 +157,29 @@ export class WorkerRegistry {
    * 4. A `sticky` worker that also satisfies the above wins regardless of policy.
    */
   findWorker(activityName: string, options: RoutingOptions = {}): WorkerInfo | undefined {
-    const { queue, sticky: stickyId, fairShareKey } = options;
-
+    const { queue, sticky: stickyId, fairShareKey, excludeWorkerIds } = options;
     const eligible: WorkerInfo[] = [];
     let stickyCandidate: WorkerInfo | undefined;
-
     for (const worker of this.#workers.values()) {
-      if (!matchesWorkerCapabilities(worker, activityName, queue)) continue;
-      if (this.#isWorkerDraining(worker)) continue;
+      if (!this.#workerIsEligible(worker, activityName, queue, excludeWorkerIds)) continue;
       if (stickyId !== undefined && worker.id === stickyId) stickyCandidate = worker;
       eligible.push(worker);
     }
-
     if (stickyCandidate !== undefined) return stickyCandidate;
     if (eligible.length === 0) return undefined;
     return this.#selectByPolicy(eligible, queue, activityName, fairShareKey);
+  }
+
+  #workerIsEligible(
+    worker: WorkerInfo,
+    activityName: string,
+    queue: string | undefined,
+    excludeWorkerIds: ReadonlySet<string> | undefined,
+  ): boolean {
+    if (excludeWorkerIds?.has(worker.id)) return false;
+    if (!matchesWorkerCapabilities(worker, activityName, queue)) return false;
+    if (this.#isWorkerDraining(worker)) return false;
+    return true;
   }
 
   /** Dispatch to the configured routing policy. Called only when `eligible` is non-empty. */

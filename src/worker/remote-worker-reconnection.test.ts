@@ -2,8 +2,11 @@
  * RemoteWorker WebSocket protocol durability tests.
  *
  * Four scenarios cover: visibility-timeout takeover (scanner path),
- * idempotent rejection of stale completions, transient reconnect continuity,
- * and server-restart-while-leased recovery. The fault-injecting helper at
+ * idempotent rejection of stale completions from displaced workers (covered
+ * for the different-`workerId` takeover case only; same-`workerId`
+ * reselection on a later attempt is documented as out-of-scope in
+ * `onTaskResultMessage`'s ownership-guard comment), transient reconnect
+ * continuity, and server-restart-while-leased recovery. The fault-injecting helper at
  * `../testing/worker-fault-injection.ts` gives tests byte-level control of the
  * WebSocket so partition and abrupt-close behaviors are reproducible.
  */
@@ -192,7 +195,16 @@ describe('RemoteWorker durability — scanner-driven takeover', () => {
   });
 });
 
-describe('RemoteWorker durability — idempotent duplicate completion', () => {
+describe('RemoteWorker durability — idempotent duplicate completion (different-worker takeover)', () => {
+  // Scope note: this scenario covers the case where takeover moves the task
+  // to a different `workerId`. The `(operationId, workerId)` ownership guard
+  // is sufficient there because the registry's current assignee no longer
+  // matches the stale worker's id. It does NOT defend against
+  // same-`workerId` reselection (a single-worker deployment whose only
+  // worker times out and is then re-selected for the next attempt). That
+  // case requires a protocol-level attempt or lease token and is out of
+  // scope for this task. See the comment in `onTaskResultMessage` for the
+  // production mitigation.
   it('rejects a stale completion from a displaced worker before and after final resolution', async () => {
     const setup = createSetup();
     const workerA = await connectAndRegisterWorker(setup, 'worker-a');
