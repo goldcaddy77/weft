@@ -13,10 +13,7 @@ import type { WorkflowEvent, WorkflowState, WorkflowTimelineEntry } from '../../
 import { MemoryStorage } from '../../src/storage/memory.ts';
 import { waitForCondition } from '../../src/testing/fake-timers.ts';
 import {
-  registerRecoveryAfterCrash,
   registerScenarioHandlers,
-  registerSignalAndWait,
-  registerSleepAndResume,
   scenarioNames,
 } from '../../src/testing/replay-scenarios.test-support.ts';
 import { TestEngine } from '../../src/testing/test-engine.ts';
@@ -152,7 +149,7 @@ async function runFixtureWorkflow(fixture: TraceFixture): Promise<ScenarioRun> {
 
 async function runSignalAndWaitFixture(fixture: TraceFixture): Promise<ScenarioRun> {
   const engine = new TestEngine({ startTime: 0 });
-  registerSignalAndWait(engine);
+  registerScenarioHandlers(engine, 'signal-and-wait');
 
   const workflowId = fixture.finalState.id;
   const handle = await engine.start(fixture.scenario, fixture.finalState.input, { id: workflowId });
@@ -165,7 +162,7 @@ async function runSignalAndWaitFixture(fixture: TraceFixture): Promise<ScenarioR
 
 async function runSleepAndResumeFixture(fixture: TraceFixture): Promise<ScenarioRun> {
   const engine = new TestEngine({ startTime: 0 });
-  registerSleepAndResume(engine);
+  registerScenarioHandlers(engine, 'sleep-and-resume');
 
   const workflowId = fixture.finalState.id;
   const handle = await engine.start(fixture.scenario, fixture.finalState.input, { id: workflowId });
@@ -177,7 +174,7 @@ async function runSleepAndResumeFixture(fixture: TraceFixture): Promise<Scenario
 
 async function runRecoveryAfterCrashFixture(fixture: TraceFixture): Promise<ScenarioRun> {
   const engine = new TestEngine({ startTime: 0 });
-  registerRecoveryAfterCrash(engine);
+  registerScenarioHandlers(engine, 'recovery-after-crash');
 
   const workflowId = fixture.finalState.id;
   await engine.start(fixture.scenario, fixture.finalState.input, { id: workflowId });
@@ -185,7 +182,7 @@ async function runRecoveryAfterCrashFixture(fixture: TraceFixture): Promise<Scen
 
   const recovered = engine.recover();
   engine[Symbol.dispose]();
-  registerRecoveryAfterCrash(recovered);
+  registerScenarioHandlers(recovered, 'recovery-after-crash');
 
   const recoveredHandles = await recovered.recoverAll();
   for (const recoveredHandle of recoveredHandles) {
@@ -235,14 +232,7 @@ async function expectReplayToMatchFixture(fixtureFile: string): Promise<void> {
   }
 }
 
-describe('storage format compatibility', () => {
-  let engine: Engine | undefined;
-
-  afterEach(() => {
-    engine?.[Symbol.dispose]();
-    engine = undefined;
-  });
-
+describe('fixture inventory', () => {
   it('has the expected fixture count', () => {
     expect(fixtureFiles).toHaveLength(expectedFixtureCount);
   });
@@ -255,6 +245,15 @@ describe('storage format compatibility', () => {
     }
     const registered = new Set(scenarioNames);
     expect([...onDisk].toSorted()).toEqual([...registered].toSorted());
+  });
+});
+
+describe('storage format compatibility', () => {
+  let engine: Engine | undefined;
+
+  afterEach(() => {
+    engine?.[Symbol.dispose]();
+    engine = undefined;
   });
 
   for (const fixtureFile of fixtureFiles) {

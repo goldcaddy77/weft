@@ -89,14 +89,16 @@ async function loadJsonFixture(scenario: string): Promise<TraceFixture> {
 }
 
 describe('checkpoint fixture scenario coverage', () => {
-  it('every checkpoint fixture has a registered scenario handler', async () => {
-    const registered = new Set(scenarioNames);
+  it('keeps checkpoint fixtures and registered scenario handlers in sync', async () => {
+    const onDisk = new Set<string>();
     for (const fixtureFile of fixtureFiles) {
       const scenario = fixtureFile.replace(/\.bin$/, '');
       const fixture = await loadJsonFixture(scenario);
       expect(fixture.scenario).toBe(scenario);
-      expect(registered.has(fixture.scenario)).toBe(true);
+      onDisk.add(fixture.scenario);
     }
+    const registered = new Set(scenarioNames);
+    expect([...onDisk].toSorted()).toEqual([...registered].toSorted());
   });
 });
 

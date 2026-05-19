@@ -28,14 +28,14 @@ async function pipeStageThree(_ctx: StepWorkflowContext, input: unknown): Promis
   return `s3:${String(input)}`;
 }
 
-export function registerSimpleSequential(engine: Engine): void {
+function registerSimpleSequential(engine: Engine): void {
   engine.register('simple-sequential', async function* (ctx: WorkflowContext, input: unknown) {
     const result = yield* ctx.run(async (value: unknown) => `processed:${String(value)}`, input);
     return result;
   });
 }
 
-export function registerTwoParallel(engine: Engine): void {
+function registerTwoParallel(engine: Engine): void {
   engine.register('two-parallel', async function* (ctx: WorkflowContext, input: unknown) {
     const context = ctx;
     const [left, right] = yield* context.all([
@@ -47,7 +47,7 @@ export function registerTwoParallel(engine: Engine): void {
   });
 }
 
-export function registerRaceTakesFirst(engine: Engine): void {
+function registerRaceTakesFirst(engine: Engine): void {
   engine.register('race-takes-first', async function* (ctx: WorkflowContext) {
     const context = ctx;
     const result = yield* context.race([
@@ -62,21 +62,21 @@ export function registerRaceTakesFirst(engine: Engine): void {
   });
 }
 
-export function registerSignalAndWait(engine: Engine): void {
+function registerSignalAndWait(engine: Engine): void {
   engine.register('signal-and-wait', async function* (ctx: WorkflowContext) {
     const payload = yield* ctx.waitForSignal('go');
     return { received: payload };
   });
 }
 
-export function registerSleepAndResume(engine: Engine): void {
+function registerSleepAndResume(engine: Engine): void {
   engine.register('sleep-and-resume', async function* (ctx: WorkflowContext) {
     yield* ctx.sleep(100);
     return 'awake';
   });
 }
 
-export function registerChildWorkflow(engine: Engine): void {
+function registerChildWorkflow(engine: Engine): void {
   engine.register(
     'child-workflow-child',
     async function childWorkflowChild(_ctx: StepWorkflowContext, input: unknown) {
@@ -90,7 +90,7 @@ export function registerChildWorkflow(engine: Engine): void {
   });
 }
 
-export function registerSagaWithCompensation(engine: Engine): void {
+function registerSagaWithCompensation(engine: Engine): void {
   const compensated: string[] = [];
 
   engine.register('saga-with-compensation', async function* (ctx: WorkflowContext) {
@@ -120,7 +120,7 @@ export function registerSagaWithCompensation(engine: Engine): void {
   });
 }
 
-export function registerPipeThreeStages(engine: Engine): void {
+function registerPipeThreeStages(engine: Engine): void {
   engine.register('pipe-three-stages', async function* (ctx: WorkflowContext, input: unknown) {
     return yield* ctx.pipe([pipeStageOne, pipeStageTwo, pipeStageThree], input);
   });
@@ -129,7 +129,7 @@ export function registerPipeThreeStages(engine: Engine): void {
   engine.register('stage3', pipeStageThree);
 }
 
-export function registerForkFromCheckpoint(engine: Engine): void {
+function registerForkFromCheckpoint(engine: Engine): void {
   engine.register('fork-from-checkpoint', async function* (ctx: WorkflowContext) {
     const context = ctx;
     const phaseOne = yield* context.run(async () => 'phase-one');
@@ -138,7 +138,7 @@ export function registerForkFromCheckpoint(engine: Engine): void {
   });
 }
 
-export function registerRecoveryAfterCrash(engine: Engine): void {
+function registerRecoveryAfterCrash(engine: Engine): void {
   engine.register('recovery-after-crash', async function* (ctx: WorkflowContext) {
     const context = ctx;
     const stepOne = yield* context.run(async () => 'checkpoint-me');
