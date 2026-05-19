@@ -35,13 +35,6 @@ naming the alternative that was rejected.
 - **Symbol**: `completeWorkflow`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
-## `core-engine-create-initial-workflow-state-complexity`
-
-- **File**: `src/core/engine/index.ts`
-- **Rule**: `complexity`
-- **Symbol**: `createInitialWorkflowState`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
 ## `core-engine-decode-schedule-runtime-fields-complexity`
 
 - **File**: `src/core/engine/index.ts`
@@ -74,13 +67,6 @@ naming the alternative that was rejected.
 - **Rule**: `complexity`
 - **Symbol**: `executeChild`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `core-engine-lifecycle-file-length`
-
-- **File**: `src/core/engine/lifecycle.ts`
-- **Rule**: `max-lines`
-- **Symbol**: `(whole file)`
-- **Reason**: Lifecycle extraction is temporarily oversized while engine split PRs continue.
 
 ## `core-engine-termination-file-length`
 
@@ -117,13 +103,6 @@ naming the alternative that was rejected.
 - **Symbol**: `isWorkflowTimelineEntry`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
-## `core-engine-line-5082-complexity`
-
-- **File**: `src/core/engine/index.ts`
-- **Rule**: `complexity`
-- **Symbol**: `line-5082`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
 ## `core-engine-matches-list-filter-complexity`
 
 - **File**: `src/core/engine/state-utilities.ts`
@@ -143,20 +122,6 @@ naming the alternative that was rejected.
 - **File**: `src/core/engine/index.ts`
 - **Rule**: `complexity`
 - **Symbol**: `normalizeScheduleFilter`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `core-engine-register-complexity`
-
-- **File**: `src/core/engine/index.ts`
-- **Rule**: `complexity`
-- **Symbol**: `register`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
-
-## `core-engine-start-workflow-complexity`
-
-- **File**: `src/core/engine/index.ts`
-- **Rule**: `complexity`
-- **Symbol**: `startWorkflow`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
 - **File**: `src/observability/index.ts`
