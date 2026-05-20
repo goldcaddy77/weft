@@ -209,7 +209,7 @@ Key operations:
 - `extendVisibility(operationId, extension)` --- extend a task's deadline (heartbeat-driven)
 - `isAssignedToWorker(operationId, workerId)` --- trust-boundary ownership check for task results
 
-The `checkExpiredTasks()` method returns tasks that have exceeded their visibility timeout, enabling the server to reassign them to other workers. When a task has been reassigned to a different worker, a late `taskResult` from the displaced worker is rejected with `protocolError` and ignored.
+The `checkExpiredTasks()` method returns tasks that have exceeded their visibility timeout, enabling the server to reassign them to other workers. When a task has been reassigned to a different worker, a late `taskResult` from the displaced worker is rejected with `protocolError` and ignored. In v1 this guard is keyed by `(operationId, workerId)`, so a stale completion from the same `workerId` on a later attempt still requires a future protocol revision with an attempt token on the wire.
 
 ## Long-poll fallback
 
