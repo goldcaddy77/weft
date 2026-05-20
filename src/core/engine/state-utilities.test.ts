@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'bun:test';
 
+import type { ContextOperationRequest } from '../context.ts';
 import type { ScheduleState, WorkflowState } from '../types.ts';
 import {
   createTerminalCleanupTimerId,
   encodedValuesEqual,
+  getTimelineBasicInputSummary,
+  getTimelineInputSummary,
+  getTimelineOperationLabel,
   getTimelineReviewArtifactType,
   intersectIdentifierSets,
   matchesListFilter,
@@ -147,11 +151,15 @@ describe('engine state utilities', () => {
     expect(matchesListFilter(base, { createdAt: { gt: 100 } }, null, undefined)).toBe(false);
     expect(matchesListFilter(base, { createdAt: { lt: 100 } }, null, undefined)).toBe(false);
 
-    // updatedAt range
+    // updatedAt range (all four operators)
     expect(matchesListFilter(base, { updatedAt: { gt: 200 } }, null, undefined)).toBe(false);
+    expect(matchesListFilter(base, { updatedAt: { lt: 200 } }, null, undefined)).toBe(false);
 
-    // executionDeadline range
+    // executionDeadline range (all four operators)
     expect(matchesListFilter(base, { executionDeadline: { gt: 300 } }, null, undefined)).toBe(
+      false,
+    );
+    expect(matchesListFilter(base, { executionDeadline: { lt: 300 } }, null, undefined)).toBe(
       false,
     );
     // missing executionDeadline on state rejects executionDeadline filter
@@ -159,10 +167,19 @@ describe('engine state utilities', () => {
       matchesListFilter(createWorkflowState(), { executionDeadline: { gte: 0 } }, null, undefined),
     ).toBe(false);
 
-    // failureCategory (single + array)
+    // failureCategory (single + array + null on state)
     expect(matchesListFilter(base, { failureCategory: 'system' }, null, undefined)).toBe(false);
     expect(
       matchesListFilter(base, { failureCategory: ['system', 'timeout'] }, null, undefined),
+    ).toBe(false);
+    // state with null failureCategory rejects a failureCategory filter
+    expect(
+      matchesListFilter(
+        createWorkflowState({ failureCategory: null }),
+        { failureCategory: 'application' },
+        null,
+        undefined,
+      ),
     ).toBe(false);
 
     // tag filter (normalized tag filters argument)
@@ -217,6 +234,138 @@ describe('engine state utilities', () => {
       }),
     ).toBe(true);
     expect(matchesScheduleFilter(publicSchedule, { status: 'active' })).toBe(true);
+  });
+
+  it('getTimelineOperationLabel returns the correct label for every ContextOperationRequest kind', () => {
+    // Per CLAUDE.md test-file conventions, cast minimal fixtures with the
+    // double-cast: we only exercise the field each function reads.
+    const op = (value: Record<string, unknown>): ContextOperationRequest =>
+      value as unknown as ContextOperationRequest;
+
+    const cases: Array<[ContextOperationRequest, string]> = [
+      [op({ type: 'activity', activityName: 'my-activity' }), 'my-activity'],
+      [op({ type: 'sleep', duration: 1000 }), 'sleep'],
+      [op({ type: 'wait-signal', signalName: 'release' }), 'release'],
+      [op({ type: 'wait-update', updateName: 'patch' }), 'patch'],
+      [op({ type: 'parallel', operations: [] }), 'parallel'],
+      [op({ type: 'race', operations: [] }), 'race'],
+      [op({ type: 'memo', key: 'memo-key' }), 'memo-key'],
+      [op({ type: 'child-workflow', workflowType: 'child-wf', input: null }), 'child-wf'],
+      [op({ type: 'offload', key: 'offload-key' }), 'offload-key'],
+      [op({ type: 'load', reference: { key: 'load-key' } }), 'load-key'],
+      [op({ type: 'archive', key: 'archive-key', data: null }), 'archive-key'],
+      [op({ type: 'state-read', key: 'state-key', scope: 'workflow' }), 'state-key'],
+      [
+        op({ type: 'state-commit', key: 'commit-key', scope: 'workflow', mode: 'set' }),
+        'commit-key',
+      ],
+      [op({ type: 'run-all', branches: {} }), 'run-all'],
+      [op({ type: 'speculate', operations: [] }), 'speculate'],
+      [op({ type: 'stream', key: 'stream-key' }), 'stream-key'],
+      [op({ type: 'wait-review', reviewOptions: { reviewers: [] } }), 'wait-review'],
+    ];
+
+    for (const [operation, expected] of cases) {
+      expect(getTimelineOperationLabel(operation)).toBe(expected);
+    }
+  });
+
+  it('getTimelineBasicInputSummary returns a summary for every ContextOperationRequest kind', () => {
+    // All these should return a non-empty string (not throw).
+    const operations: ContextOperationRequest[] = [
+      { type: 'activity', activityName: 'a', fn: () => {} } as unknown as ContextOperationRequest,
+      { type: 'sleep', duration: 500 } as unknown as ContextOperationRequest,
+      { type: 'wait-signal', signalName: 's' } as unknown as ContextOperationRequest,
+      { type: 'wait-update', updateName: 'u' } as unknown as ContextOperationRequest,
+      { type: 'parallel', operations: [] } as unknown as ContextOperationRequest,
+      { type: 'race', operations: [] } as unknown as ContextOperationRequest,
+      { type: 'memo', key: 'k', fn: () => {} } as unknown as ContextOperationRequest,
+      {
+        type: 'child-workflow',
+        workflowType: 'cw',
+        input: null,
+      } as unknown as ContextOperationRequest,
+      { type: 'offload', key: 'ok', fn: () => {} } as unknown as ContextOperationRequest,
+      { type: 'load', reference: { key: 'lk' } } as unknown as ContextOperationRequest,
+      { type: 'archive', key: 'ak', data: { x: 1 } } as unknown as ContextOperationRequest,
+      { type: 'state-read', key: 'sk', scope: 'workflow' } as unknown as ContextOperationRequest,
+      {
+        type: 'state-commit',
+        key: 'ck',
+        scope: 'workflow',
+        mode: 'set',
+      } as unknown as ContextOperationRequest,
+      { type: 'run-all', branches: {} } as unknown as ContextOperationRequest,
+      { type: 'speculate', operations: [] } as unknown as ContextOperationRequest,
+      { type: 'stream', key: 'stk' } as unknown as ContextOperationRequest,
+      {
+        type: 'wait-review',
+        reviewOptions: { reviewers: [] },
+      } as unknown as ContextOperationRequest,
+    ];
+
+    for (const op of operations) {
+      expect(() => getTimelineBasicInputSummary(op)).not.toThrow();
+      expect(typeof getTimelineBasicInputSummary(op)).toBe('string');
+    }
+
+    // Spot-check specific return values
+    expect(
+      getTimelineBasicInputSummary({
+        type: 'sleep',
+        duration: 42,
+      } as unknown as ContextOperationRequest),
+    ).toContain('42');
+    expect(
+      getTimelineBasicInputSummary({
+        type: 'wait-signal',
+        signalName: 'x',
+      } as unknown as ContextOperationRequest),
+    ).toContain('x');
+    expect(
+      getTimelineBasicInputSummary({
+        type: 'memo',
+        key: 'my-key',
+        fn: () => {},
+      } as unknown as ContextOperationRequest),
+    ).toContain('my-key');
+  });
+
+  it('getTimelineInputSummary handles the four direct-handling cases and delegates the rest', () => {
+    // activity — includes input
+    const activityOp = {
+      type: 'activity',
+      activityName: 'a',
+      fn: () => {},
+      input: { payload: 1 },
+    } as unknown as ContextOperationRequest;
+    expect(getTimelineInputSummary(activityOp)).toContain('payload');
+
+    // child-workflow — includes workflowType and input
+    const childOp = {
+      type: 'child-workflow',
+      workflowType: 'cw',
+      input: 42,
+    } as unknown as ContextOperationRequest;
+    expect(getTimelineInputSummary(childOp)).toContain('cw');
+
+    // run-all — includes branch count
+    const runAllOp = {
+      type: 'run-all',
+      branches: { a: [() => {}], b: [() => {}] },
+    } as unknown as ContextOperationRequest;
+    expect(getTimelineInputSummary(runAllOp)).toContain('a');
+
+    // wait-review — includes reviewers
+    const reviewOp = {
+      type: 'wait-review',
+      reviewOptions: { reviewers: ['alice'] },
+    } as unknown as ContextOperationRequest;
+    expect(getTimelineInputSummary(reviewOp)).toContain('alice');
+
+    // default path — delegates to getTimelineBasicInputSummary (e.g. sleep)
+    const sleepOp = { type: 'sleep', duration: 999 } as unknown as ContextOperationRequest;
+    expect(getTimelineInputSummary(sleepOp)).toContain('999');
   });
 
   it('parses terminal cleanup timer identifiers', () => {

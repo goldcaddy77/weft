@@ -39,7 +39,7 @@ bun run format:check     # Check formatting without changes
 
 ### Lint suppression policy
 
-The repository allows **at most 5** `oxlint-disable` directives across `src/`. The included extensions are `*.{ts,tsx,mts,cts}`; the excluded patterns are `*.test.{ts,tsx,mts,cts}`, `*.spec.{ts,tsx,mts,cts}`, `/test/`, and `/__tests__/`. The exact scope is defined in `scripts/check-lint-disables.ts` by the exported constants `SOURCE_FILE_GLOB` (inclusion) and `TEST_FILE_EXCLUSION_GLOBS` (exclusion); update both this paragraph and those constants together if the scope ever changes.
+The repository allows **at most 5** `oxlint-disable` directives in production source code under `src/` (not `scripts/`, `tests/`, or any other top-level directory). The included extensions are `*.{ts,tsx,mts,cts}`; the excluded patterns are `*.test.{ts,tsx,mts,cts}`, `*.spec.{ts,tsx,mts,cts}`, `/test/`, and `/__tests__/`. The exact scope is defined in `scripts/check-lint-disables.ts` by the exported constants `SOURCE_FILE_GLOB` (inclusion) and `TEST_FILE_EXCLUSION_GLOBS` (exclusion); update both this paragraph and those constants together if the scope ever changes.
 
 Every directive must carry an inline rationale after `--`, at least 40 characters long. The conventional format is `-- <one-sentence reason why this rule cannot apply>; rejected: <alternative that was considered>`. This is enforced in PR review, not by the script — but the 40-character floor exists so the script catches drive-by suppressions.
 

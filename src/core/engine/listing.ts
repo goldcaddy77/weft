@@ -290,7 +290,9 @@ export async function getAttributes(
 ): Promise<Record<string, SearchAttributeValue> | null> {
   const bytes = await internals.storage.get(KEYS.attribute(workflowId));
   if (!bytes) return null;
-  return decode(bytes) as Record<string, SearchAttributeValue>;
+  const decoded = decode(bytes);
+  if (!isRecord(decoded)) return null;
+  return decoded as Record<string, SearchAttributeValue>;
 }
 
 /** Merge search attributes into a workflow's existing attributes, updating the index. */

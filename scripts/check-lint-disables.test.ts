@@ -107,6 +107,28 @@ describe('check-lint-disables ceiling mode', () => {
     expect(result.stdout).toContain('OK: 1/5');
   });
 
+  it('counts and validates an oxlint-disable-line (inline suffix) directive', async () => {
+    await writeFixtureFile(
+      root,
+      'src/inline.ts',
+      `export const value = 1; // oxlint-disable-line complexity -- ${RATIONALE_PASS}\n`,
+    );
+    const result = run(['--root', root, '--max', '5']);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('OK: 1/5');
+  });
+
+  it('fails an oxlint-disable-line directive whose rationale is too short', async () => {
+    await writeFixtureFile(
+      root,
+      'src/inline-short.ts',
+      `export const value = 1; // oxlint-disable-line complexity -- ${RATIONALE_SHORT}\n`,
+    );
+    const result = run(['--root', root, '--max', '5']);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('src/inline-short.ts:1');
+  });
+
   it('fails a block-comment directive whose rationale is too short', async () => {
     await writeFixtureFile(
       root,
