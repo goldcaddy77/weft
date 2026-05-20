@@ -1234,6 +1234,9 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_OVERRIDES = new Map<string, CoverageAllowa
     'src/workers/workflow-runner.ts',
     { functions: 3, lines: new Set([82, 83, 84, 85, 86, 87, 90, 91, 97, 98, 99, 100, 101]) },
   ],
+]);
+
+const CURRENT_MAIN_COVERAGE_ALLOWANCE_REFRESH = new Map<string, CoverageAllowance>([
   // Current main after the oxlint cleanup split several runtime modules and
   // surfaced example and test-support helpers that Bun still instruments even
   // though the repository does not execute them directly in the coverage run.
@@ -1508,6 +1511,7 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
   ...BASE_COVERAGE_ALLOWANCES,
   ...COVERAGE_ALLOWANCE_OVERRIDES,
   ...CURRENT_MAIN_COVERAGE_ALLOWANCE_OVERRIDES,
+  ...CURRENT_MAIN_COVERAGE_ALLOWANCE_REFRESH,
 ]);
 
 /**
