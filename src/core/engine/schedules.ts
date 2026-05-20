@@ -29,7 +29,7 @@ import {
   normalizeScheduleAccessOptions,
   normalizeScheduleFilter,
   normalizeScheduleOptions,
-} from './validation.ts';
+} from './validation/schedule.ts';
 
 export { handleScheduleTimer } from './schedule-timer.ts';
 

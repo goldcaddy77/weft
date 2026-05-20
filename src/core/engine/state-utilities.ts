@@ -54,8 +54,19 @@ export function summarizeTimelineValue(value: unknown): string {
   return safeDebugStringify(value);
 }
 
-// oxlint-disable-next-line complexity -- ID:core-engine-get-timeline-operation-label-complexity
+const KEY_LABELED_OPERATIONS = new Set<ContextOperationRequest['type']>([
+  'memo',
+  'offload',
+  'archive',
+  'stream',
+  'state-read',
+  'state-commit',
+]);
+
 export function getTimelineOperationLabel(operation: ContextOperationRequest): string {
+  if (KEY_LABELED_OPERATIONS.has(operation.type)) {
+    return (operation as Extract<ContextOperationRequest, { key: string }>).key;
+  }
   switch (operation.type) {
     case 'activity':
       return operation.activityName;
@@ -65,13 +76,6 @@ export function getTimelineOperationLabel(operation: ContextOperationRequest): s
       return operation.updateName;
     case 'child-workflow':
       return operation.workflowType;
-    case 'memo':
-    case 'offload':
-    case 'archive':
-    case 'stream':
-    case 'state-read':
-    case 'state-commit':
-      return operation.key;
     case 'load':
       return operation.reference.key;
     default:
@@ -87,22 +91,19 @@ export function getTimelineReviewArtifactType(artifact: unknown): unknown {
   return (artifact as Record<string, unknown>)['type'];
 }
 
-// oxlint-disable-next-line complexity -- ID:core-engine-get-timeline-basic-input-summary-complexity
-export function getTimelineBasicInputSummary(operation: ContextOperationRequest): string {
+const KEY_ONLY_INPUT_OPERATIONS = new Set<ContextOperationRequest['type']>([
+  'memo',
+  'offload',
+  'stream',
+]);
+
+function summarizeStorageOperationInput(operation: ContextOperationRequest): string | undefined {
+  if (KEY_ONLY_INPUT_OPERATIONS.has(operation.type)) {
+    return summarizeTimelineValue({
+      key: (operation as Extract<ContextOperationRequest, { key: string }>).key,
+    });
+  }
   switch (operation.type) {
-    case 'sleep':
-      return summarizeTimelineValue({ duration: operation.duration });
-    case 'wait-signal':
-      return summarizeTimelineValue({ signalName: operation.signalName });
-    case 'wait-update':
-      return summarizeTimelineValue({ updateName: operation.updateName });
-    case 'parallel':
-    case 'race':
-      return summarizeTimelineValue({ operationCount: operation.operations.length });
-    case 'memo':
-      return summarizeTimelineValue({ key: operation.key });
-    case 'offload':
-      return summarizeTimelineValue({ key: operation.key });
     case 'load':
       return summarizeTimelineValue({ key: operation.reference.key });
     case 'archive':
@@ -115,10 +116,28 @@ export function getTimelineBasicInputSummary(operation: ContextOperationRequest)
         mode: operation.mode,
         scope: operation.scope,
       });
+    default:
+      return undefined;
+  }
+}
+
+export function getTimelineBasicInputSummary(operation: ContextOperationRequest): string {
+  const storageSummary = summarizeStorageOperationInput(operation);
+  if (storageSummary !== undefined) {
+    return storageSummary;
+  }
+  switch (operation.type) {
+    case 'sleep':
+      return summarizeTimelineValue({ duration: operation.duration });
+    case 'wait-signal':
+      return summarizeTimelineValue({ signalName: operation.signalName });
+    case 'wait-update':
+      return summarizeTimelineValue({ updateName: operation.updateName });
+    case 'parallel':
+    case 'race':
+      return summarizeTimelineValue({ operationCount: operation.operations.length });
     case 'speculate':
       return summarizeTimelineValue({ branch: 'speculative' });
-    case 'stream':
-      return summarizeTimelineValue({ key: operation.key });
     default:
       return summarizeTimelineValue(undefined);
   }
@@ -252,73 +271,65 @@ export function intersectIdentifierSets(idSets: Set<string>[]): Set<string> | nu
   return intersected;
 }
 
-// oxlint-disable-next-line complexity -- ID:core-engine-matches-list-filter-complexity
+function matchesListFilterStatus(state: WorkflowState, filter: ListFilter): boolean {
+  if (filter.status === undefined) return true;
+  const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
+  return statuses.includes(state.status);
+}
+
+function matchesListFilterTenant(state: WorkflowState, filter: ListFilter): boolean {
+  if (filter.tenantId === undefined) return true;
+  const tenantIds = Array.isArray(filter.tenantId) ? filter.tenantId : [filter.tenantId];
+  return state.tenant !== undefined && tenantIds.includes(state.tenant.id);
+}
+
+function matchesListFilterIdentity(state: WorkflowState, filter: ListFilter): boolean {
+  return (
+    matchesListFilterStatus(state, filter) &&
+    (filter.type === undefined || state.type === filter.type) &&
+    (filter.idPrefix === undefined || state.id.startsWith(filter.idPrefix)) &&
+    matchesListFilterTenant(state, filter)
+  );
+}
+
+function matchesListFilterTimeRanges(state: WorkflowState, filter: ListFilter): boolean {
+  if (filter.createdAt !== undefined && !timestampInRange(state.createdAt, filter.createdAt)) {
+    return false;
+  }
+  if (filter.updatedAt !== undefined && !timestampInRange(state.updatedAt, filter.updatedAt)) {
+    return false;
+  }
+  if (filter.executionDeadline === undefined) return true;
+  return (
+    state.executionDeadline !== undefined &&
+    timestampInRange(state.executionDeadline, filter.executionDeadline)
+  );
+}
+
+function matchesListFilterFailureCategory(state: WorkflowState, filter: ListFilter): boolean {
+  if (filter.failureCategory === undefined) return true;
+  const categories = Array.isArray(filter.failureCategory)
+    ? filter.failureCategory
+    : [filter.failureCategory];
+  return (
+    state.failureCategory !== undefined &&
+    state.failureCategory !== null &&
+    categories.includes(state.failureCategory)
+  );
+}
+
 export function matchesListFilter(
   state: WorkflowState,
   filter: ListFilter | undefined,
   constrainedIds: Set<string> | null,
   normalizedTagFilters: readonly string[] | undefined,
 ): boolean {
-  if (constrainedIds !== null && !constrainedIds.has(state.id)) {
-    return false;
-  }
-
-  if (filter?.status !== undefined) {
-    const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
-    if (!statuses.includes(state.status)) {
-      return false;
-    }
-  }
-
-  if (!matchesWorkflowTagFilter(state.tags, normalizedTagFilters)) {
-    return false;
-  }
-
-  if (filter?.type !== undefined && state.type !== filter.type) {
-    return false;
-  }
-
-  if (filter?.idPrefix !== undefined && !state.id.startsWith(filter.idPrefix)) {
-    return false;
-  }
-
-  if (filter?.tenantId !== undefined) {
-    const tenantIds = Array.isArray(filter.tenantId) ? filter.tenantId : [filter.tenantId];
-    if (state.tenant === undefined || !tenantIds.includes(state.tenant.id)) {
-      return false;
-    }
-  }
-
-  if (filter?.createdAt !== undefined && !timestampInRange(state.createdAt, filter.createdAt)) {
-    return false;
-  }
-
-  if (filter?.updatedAt !== undefined && !timestampInRange(state.updatedAt, filter.updatedAt)) {
-    return false;
-  }
-
-  if (filter?.executionDeadline !== undefined) {
-    if (
-      state.executionDeadline === undefined ||
-      !timestampInRange(state.executionDeadline, filter.executionDeadline)
-    ) {
-      return false;
-    }
-  }
-
-  if (filter?.failureCategory !== undefined) {
-    const categories = Array.isArray(filter.failureCategory)
-      ? filter.failureCategory
-      : [filter.failureCategory];
-    if (
-      state.failureCategory === undefined ||
-      state.failureCategory === null ||
-      !categories.includes(state.failureCategory)
-    ) {
-      return false;
-    }
-  }
-
+  if (constrainedIds !== null && !constrainedIds.has(state.id)) return false;
+  if (!matchesWorkflowTagFilter(state.tags, normalizedTagFilters)) return false;
+  if (filter === undefined) return true;
+  if (!matchesListFilterIdentity(state, filter)) return false;
+  if (!matchesListFilterTimeRanges(state, filter)) return false;
+  if (!matchesListFilterFailureCategory(state, filter)) return false;
   return true;
 }
 
@@ -396,29 +407,22 @@ export function encodedValuesEqual(left: unknown, right: unknown): boolean {
   return true;
 }
 
-// oxlint-disable-next-line complexity -- ID:core-engine-matches-schedule-filter-complexity
+function matchesScheduleTenant(state: ScheduleState, filter: ScheduleFilter | undefined): boolean {
+  if (state.tenant?.id !== undefined) {
+    return filter?.tenantId !== undefined && state.tenant.id === filter.tenantId;
+  }
+  return filter?.tenantId === undefined;
+}
+
 export function matchesScheduleFilter(
   state: ScheduleState,
   filter: ScheduleFilter | undefined,
 ): boolean {
-  if (state.tenant?.id !== undefined) {
-    if (filter?.tenantId === undefined) {
-      return false;
-    }
-    if (state.tenant.id !== filter.tenantId) {
-      return false;
-    }
-  } else if (filter?.tenantId !== undefined) {
-    return false;
-  }
-
+  if (!matchesScheduleTenant(state, filter)) return false;
   if (filter?.status !== undefined) {
     const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
-    if (!statuses.includes(state.status)) {
-      return false;
-    }
+    if (!statuses.includes(state.status)) return false;
   }
-
   return filter?.workflowType === undefined || state.workflowType === filter.workflowType;
 }
 

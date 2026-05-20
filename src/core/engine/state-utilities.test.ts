@@ -111,6 +111,114 @@ describe('engine state utilities', () => {
     ).toBe(true);
   });
 
+  it('rejects every indexed list-filter dimension independently', () => {
+    const base = createWorkflowState({
+      tenant: { id: 'tenant-a' },
+      createdAt: 100,
+      updatedAt: 200,
+      executionDeadline: 300,
+      failureCategory: 'application',
+      tags: ['critical'],
+    });
+
+    // status (single + array variants)
+    expect(matchesListFilter(base, { status: 'completed' }, null, undefined)).toBe(false);
+    expect(matchesListFilter(base, { status: ['completed', 'failed'] }, null, undefined)).toBe(
+      false,
+    );
+
+    // type
+    expect(matchesListFilter(base, { type: 'other-workflow' }, null, undefined)).toBe(false);
+
+    // tenantId (single + array)
+    expect(matchesListFilter(base, { tenantId: 'tenant-b' }, null, undefined)).toBe(false);
+    expect(matchesListFilter(base, { tenantId: ['tenant-b', 'tenant-c'] }, null, undefined)).toBe(
+      false,
+    );
+    // missing tenant on state rejects tenantId filter
+    expect(
+      matchesListFilter(createWorkflowState(), { tenantId: 'tenant-a' }, null, undefined),
+    ).toBe(false);
+
+    // idPrefix
+    expect(matchesListFilter(base, { idPrefix: 'zzz' }, null, undefined)).toBe(false);
+
+    // createdAt range
+    expect(matchesListFilter(base, { createdAt: { gt: 100 } }, null, undefined)).toBe(false);
+    expect(matchesListFilter(base, { createdAt: { lt: 100 } }, null, undefined)).toBe(false);
+
+    // updatedAt range
+    expect(matchesListFilter(base, { updatedAt: { gt: 200 } }, null, undefined)).toBe(false);
+
+    // executionDeadline range
+    expect(matchesListFilter(base, { executionDeadline: { gt: 300 } }, null, undefined)).toBe(
+      false,
+    );
+    // missing executionDeadline on state rejects executionDeadline filter
+    expect(
+      matchesListFilter(createWorkflowState(), { executionDeadline: { gte: 0 } }, null, undefined),
+    ).toBe(false);
+
+    // failureCategory (single + array)
+    expect(matchesListFilter(base, { failureCategory: 'system' }, null, undefined)).toBe(false);
+    expect(
+      matchesListFilter(base, { failureCategory: ['system', 'timeout'] }, null, undefined),
+    ).toBe(false);
+
+    // tag filter (normalized tag filters argument)
+    expect(matchesListFilter(base, undefined, null, ['missing'])).toBe(false);
+
+    // constrained id set
+    expect(matchesListFilter(base, undefined, new Set(['other-id']), undefined)).toBe(false);
+
+    // passes when every dimension matches
+    expect(
+      matchesListFilter(
+        base,
+        {
+          status: ['running'],
+          type: 'workflow',
+          tenantId: ['tenant-a'],
+          idPrefix: 'workflow',
+          createdAt: { gte: 100, lte: 100 },
+          updatedAt: { gte: 200, lte: 200 },
+          executionDeadline: { gte: 300, lte: 300 },
+          failureCategory: 'application',
+        },
+        new Set([base.id]),
+        ['critical'],
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects every indexed schedule-filter dimension independently', () => {
+    const tenantSchedule = createScheduleState({ tenant: { id: 'tenant-a' } });
+    const publicSchedule = createScheduleState();
+
+    // tenantId mismatch
+    expect(matchesScheduleFilter(tenantSchedule, undefined)).toBe(false);
+    expect(matchesScheduleFilter(tenantSchedule, { tenantId: 'tenant-b' })).toBe(false);
+    // tenant-less schedule rejects when a tenantId filter is provided
+    expect(matchesScheduleFilter(publicSchedule, { tenantId: 'tenant-a' })).toBe(false);
+
+    // status (single + array)
+    expect(matchesScheduleFilter(publicSchedule, { status: 'paused' })).toBe(false);
+    expect(matchesScheduleFilter(publicSchedule, { status: ['paused', 'cancelled'] })).toBe(false);
+
+    // workflowType
+    expect(matchesScheduleFilter(publicSchedule, { workflowType: 'other' })).toBe(false);
+
+    // passes when every dimension matches
+    expect(
+      matchesScheduleFilter(tenantSchedule, {
+        tenantId: 'tenant-a',
+        status: ['active'],
+        workflowType: 'workflow',
+      }),
+    ).toBe(true);
+    expect(matchesScheduleFilter(publicSchedule, { status: 'active' })).toBe(true);
+  });
+
   it('parses terminal cleanup timer identifiers', () => {
     const fullTimerId = createTerminalCleanupTimerId(true, 'token-1');
     const preserveTimerId = createTerminalCleanupTimerId(false, 'token-2');

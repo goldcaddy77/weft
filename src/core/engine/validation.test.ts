@@ -3,19 +3,21 @@ import { describe, expect, it, mock } from 'bun:test';
 import { encode } from '../codec.ts';
 import type { ScheduleState, WorkflowState } from '../types.ts';
 import {
-  decodeScheduleIdentityFields,
-  decodeScheduleRuntimeFields,
   decodeWorkflowState,
   isSanitizedSearchAttributeValue,
   isValidDecodedTenant,
-  isValidScheduleIdentifier,
   isWorkflowTimelineEntry,
   isWorkflowVersionTuple,
   normalizeBulkFilterNumber,
+} from './validation.ts';
+import {
+  decodeScheduleIdentityFields,
+  decodeScheduleRuntimeFields,
+  isValidScheduleIdentifier,
   normalizeScheduleAccessOptions,
   normalizeScheduleFilter,
   normalizeScheduleOptions,
-} from './validation.ts';
+} from './validation/schedule.ts';
 
 function createWorkflowState(overrides: Partial<WorkflowState> = {}): WorkflowState {
   return {

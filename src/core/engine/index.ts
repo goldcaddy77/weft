@@ -211,7 +211,7 @@ import {
   update as updateFromInternals,
   type UpdateCallbacks,
 } from './updates.ts';
-import { coerceScheduleId, normalizeScheduleAccessOptions } from './validation.ts';
+import { coerceScheduleId, normalizeScheduleAccessOptions } from './validation/schedule.ts';
 import {
   replayWorkflowFeed,
   snapshotWorkflowFeedTail,
