@@ -28,11 +28,15 @@ interface ServeOptions {
   development?: boolean; // enable Bun's development mode (HMR, source maps)
   dashboard?: unknown; // dashboard HTML/module import served at /ui
   auth?: AuthConfig; // API key or JWT authentication configuration
+  visibilityPollIntervalMs?: number; // task visibility scanner interval; default: 5000
+  workerReconnectGracePeriodMs?: number; // reconnect grace before requeue; default: 100
   routingPolicy?: RoutingPolicy; // task dispatch policy for remote workers; default: 'least-loaded'
   schedulingPolicy?: SchedulingPolicy; // workflow scheduling policy
   prometheusExporter?: PrometheusExporter; // Prometheus metrics exporter
 }
 ```
+
+`workerReconnectGracePeriodMs` is clamped to `0..5000`. The default `100` ms gives a worker that drops and reconnects with the same `workerId` a short window to keep its in-flight task assignments; set it to `0` when tests or embedded servers need close handling to requeue immediately.
 
 ## Dashboard
 

@@ -282,7 +282,8 @@ class WorkerRegistry {
 
   assignTask(workerId: string, operationId: string, visibilityTimeout: number): void;
   checkExpiredTasks(now: number): InFlightTask[];
-  extendVisibility(operationId: string, extension: number): void;
+  extendVisibility(operationId: string, extension: number): number | undefined;
+  isAssignedToWorker(operationId: string, workerId: string): boolean;
 
   getAll(): WorkerInfo[];
   getWorkerSummaries(now: number): WorkerSummary[];
@@ -335,7 +336,9 @@ interface RoutingOptions {
 
 `findWorker()` applies the configured `RoutingPolicy` (least-loaded by default; supports `'round-robin'` and `'fair-share'`). It filters workers that can handle the activity and have capacity. For `'least-loaded'`, it returns the worker with the lowest `inFlight` count. If `sticky` is set and that worker has capacity, it is preferred.
 
-Draining workers are excluded from `findWorker()` so no new tasks are assigned to them. In-flight tasks remain tracked and finish normally, expire through the existing visibility timeout path, or requeue through the existing disconnection/shutdown path.
+Draining workers are excluded from `findWorker()` so no new tasks are assigned to them. `serve()` also excludes workers currently inside the reconnect grace window before routing new work. In-flight tasks remain tracked and finish normally, expire through the existing visibility timeout path, or requeue through the existing disconnection/shutdown path.
+
+`isAssignedToWorker(operationId, workerId)` returns whether an in-flight task is currently owned by a specific worker. The server checks it before accepting `taskResult` frames so stale completions from a displaced worker are rejected instead of mutating engine state.
 
 #### `WorkerDrainOptions`
 

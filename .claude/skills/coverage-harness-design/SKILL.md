@@ -12,6 +12,7 @@ description: >-
 
 - Restoring verified 100 percent coverage from `coverage/lcov.info` or `scripts/check-coverage.ts`.
 - Covering protocol parsing, OpenAPI or AsyncAPI schema branches, conformance harness output, shutdown, or observability helpers.
+- Covering subprocess durability, WAL checkpoint behavior, native transaction atomicity, RemoteWorker reconnect/takeover paths, or byte-level WebSocket fault injection.
 - Covering codegen declaration output, doctest extraction, skip-count parsing, or generated fixture typechecking.
 - Covering workflow visibility indexes, aggregate distinct-key caps, failure-category query aliases, backfill watermarks, or Bun SQLite smoke paths.
 - Deciding whether a coverage allowance is justified.
@@ -29,9 +30,11 @@ description: >-
 2. Decide whether the branch is reachable, dead, generated, or race-only before editing source.
 3. Prefer focused regression tests that prove a real invariant, such as component-name collision suffixing or conformance error formatting.
 4. For codegen and doctest work, pin both successful output and failure behavior: byte-stable `.d.ts` fixtures, strict typecheck consumers, invalid snapshot diagnostics, and malformed skip-count files.
-5. For workflow visibility coverage, prove both indexed and fallback paths when relevant; include conflict/drop behavior for backfills and cap failures for aggregates instead of only testing happy-path lists.
-6. Use structural test doubles when normal builders enforce invariants that prevent exercising the target branch.
-7. Keep allowlist entries narrow, documented, and removable; remove stale allowances when coverage becomes real.
+5. For durability suites, assert all-or-nothing storage outcomes instead of assuming a kill lands before commit; validate close/reopen persistence before constructing the second engine.
+6. For worker fault-injection clients, buffer frames that arrive between awaits and drain subprocess output on early exit so marker-based diagnostics do not lie under CI timing.
+7. For workflow visibility coverage, prove both indexed and fallback paths when relevant; include conflict/drop behavior for backfills and cap failures for aggregates instead of only testing happy-path lists.
+8. Use structural test doubles when normal builders enforce invariants that prevent exercising the target branch.
+9. Keep allowlist entries narrow, documented, and removable; remove stale allowances when coverage becomes real.
 
 ## Verification
 

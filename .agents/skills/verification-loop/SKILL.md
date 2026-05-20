@@ -48,6 +48,14 @@ bun run lint
 
 Catches: style violations, potential bugs, unused imports, promise handling mistakes. Uses Oxlint with type-aware rules and TypeScript/promise/unicorn/import plugins.
 
+When a change adds, removes, or edits `oxlint-disable` directives, also run:
+
+```bash
+bun scripts/check-lint-disables.ts
+```
+
+The checker enforces the production-source suppression ceiling and the mechanical rationale length floor that `bun run lint` and the pre-commit hook rely on. Full rationale quality still belongs in pull request review.
+
 ### Phase 4: Test
 
 ```bash

@@ -173,10 +173,13 @@ The registry supports three routing policies, configured via `serve({ routingPol
 interface RoutingOptions {
   sticky?: string; // preferred worker ID for cache locality
   queue?: string;
+  fairShareKey?: string; // partition key for fair-share routing
 }
 ```
 
 If a `sticky` preference is provided (useful for cache locality), the registry checks that worker first. If it has capacity, it gets the task. Otherwise, least-loaded routing kicks in.
+
+Workers inside the server's reconnect grace window are temporarily excluded from routing by `serve()` so new tasks prefer eligible peers instead of landing on a socket that just closed. The grace window is configured with `serve({ workerReconnectGracePeriodMs })`; it defaults to `100` ms, is clamped to `0..5000`, and `0` disables the grace path for immediate requeue behavior.
 
 ## The WorkerRegistry
 
@@ -204,8 +207,9 @@ Key operations:
 - `assignTask(workerId, operationId, visibilityTimeout)` --- track task with deadline
 - `checkExpiredTasks(now)` --- find tasks whose visibility timeout has expired
 - `extendVisibility(operationId, extension)` --- extend a task's deadline (heartbeat-driven)
+- `isAssignedToWorker(operationId, workerId)` --- trust-boundary ownership check for task results
 
-The `checkExpiredTasks()` method returns tasks that have exceeded their visibility timeout, enabling the server to reassign them to other workers.
+The `checkExpiredTasks()` method returns tasks that have exceeded their visibility timeout, enabling the server to reassign them to other workers. When a task has been reassigned to a different worker, a late `taskResult` from the displaced worker is rejected with `protocolError` and ignored. In v1 this guard is keyed by `(operationId, workerId)`, so a stale completion from the same `workerId` on a later attempt still requires a future protocol revision with an attempt token on the wire.
 
 ## Long-poll fallback
 

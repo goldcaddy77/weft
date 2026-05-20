@@ -35,6 +35,7 @@ bun run lint:fix         # Auto-fix linting errors
 bun run typecheck        # TypeScript type checking
 bun run format           # Format all files with Prettier
 bun run format:check     # Check formatting without changes
+bun scripts/check-lint-disables.ts
 ```
 
 ### Lint suppression policy
@@ -78,7 +79,7 @@ Use `weft conformance` when a change touches the `RemoteWorker` protocol or work
 
 Hooks live as Bun TypeScript files under `scripts/husky/` and are invoked by tiny sh wrappers in `.husky/`:
 
-- `pre-commit`: runs lint-staged and basic dependency checks
+- `pre-commit`: runs lint-staged, the lint-disable ceiling check, and basic dependency checks
 - `post-checkout`: installs deps when `package.json`+`bun.lock` change; surfaces config changes
 - `post-merge`: installs/cleans when dependencies or config changed; shows merge stats
 

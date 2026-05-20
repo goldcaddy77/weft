@@ -29,8 +29,14 @@ description: >-
 4. Prefer virtual time, explicit signals, and observable conditions over fixed `Bun.sleep()` delays.
 5. Cap polling and retry loops, then surface the final state when the cap is reached.
 
+### RemoteWorker reconnect work
+
+- Model close, deferred requeue, same-`workerId` re-register, peer takeover, heartbeat visibility extension, and stale `taskResult` arrival as separate transitions.
+- Persist task ownership before sending work across a socket; otherwise a fast worker can complete before the in-flight record exists and leave an orphan that the scanner redelivers.
+
 ## Verification
 
 - Add race regression tests for before-ack disposal, socket close, cancellation, and shutdown paths touched by the change.
+- For reconnect behavior, cover grace-window cancellation, visibility-timeout takeover, stale completion rejection, and server-restart redelivery.
 - Prove no test depends on unbounded waits or real-time sleeps.
 - Run the focused lifecycle or worker tests plus `bun run verify:no-test-sleeps` when relevant.
