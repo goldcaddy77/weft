@@ -36,26 +36,30 @@ interface ServeOptions {
   dashboard?: unknown;
   auth?: AuthConfig;
   visibilityPollIntervalMs?: number;
+  workerReconnectGracePeriodMs?: number;
   routingPolicy?: RoutingPolicy;
   schedulingPolicy?: SchedulingPolicy;
   prometheusExporter?: PrometheusExporter;
 }
 ```
 
-| Field                      | Type                 | Default          | Description                                                |
-| -------------------------- | -------------------- | ---------------- | ---------------------------------------------------------- |
-| `engine`                   | `Engine`             | (required)       | The engine instance to expose over HTTP                    |
-| `port`                     | `number`             | `7233`           | TCP port to listen on                                      |
-| `hostname`                 | `string`             | `'0.0.0.0'`      | Hostname/IP to bind to                                     |
-| `development`              | `boolean`            | `false`          | Enable development mode with verbose error responses       |
-| `dashboard`                | `unknown`            | `undefined`      | Dashboard HTML/module import served at `/ui` when supplied |
-| `auth`                     | `AuthConfig`         | `undefined`      | Authentication configuration (JWT, mTLS, or custom)        |
-| `visibilityPollIntervalMs` | `number`             | `5000`           | Polling interval for task visibility timeout checks        |
-| `routingPolicy`            | `RoutingPolicy`      | `'least-loaded'` | Worker routing policy                                      |
-| `schedulingPolicy`         | `SchedulingPolicy`   | `'priority'`     | Scheduling policy for task dispatch                        |
-| `prometheusExporter`       | `PrometheusExporter` | `undefined`      | Exporter that produces the response body for `/v1/metrics` |
+| Field                          | Type                 | Default          | Description                                                              |
+| ------------------------------ | -------------------- | ---------------- | ------------------------------------------------------------------------ |
+| `engine`                       | `Engine`             | (required)       | The engine instance to expose over HTTP                                  |
+| `port`                         | `number`             | `7233`           | TCP port to listen on                                                    |
+| `hostname`                     | `string`             | `'0.0.0.0'`      | Hostname/IP to bind to                                                   |
+| `development`                  | `boolean`            | `false`          | Enable development mode with verbose error responses                     |
+| `dashboard`                    | `unknown`            | `undefined`      | Dashboard HTML/module import served at `/ui` when supplied               |
+| `auth`                         | `AuthConfig`         | `undefined`      | Authentication configuration (JWT, mTLS, or custom)                      |
+| `visibilityPollIntervalMs`     | `number`             | `5000`           | Polling interval for task visibility timeout checks                      |
+| `workerReconnectGracePeriodMs` | `number`             | `100`            | Milliseconds before a disconnected worker's in-flight tasks are requeued |
+| `routingPolicy`                | `RoutingPolicy`      | `'least-loaded'` | Worker routing policy                                                    |
+| `schedulingPolicy`             | `SchedulingPolicy`   | `'priority'`     | Scheduling policy for task dispatch                                      |
+| `prometheusExporter`           | `PrometheusExporter` | `undefined`      | Exporter that produces the response body for `/v1/metrics`               |
 
 See [configuration.md](./configuration.md) for `AuthConfig`, `RoutingPolicy`, and `SchedulingPolicy` details.
+
+`workerReconnectGracePeriodMs` is clamped to `0..5000`. A same-`workerId` reconnect inside the window cancels the pending requeue and keeps the worker's in-flight assignments. `0` disables the grace period and requeues synchronously from the close handler.
 
 ---
 

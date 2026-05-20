@@ -98,7 +98,7 @@ Worker                              Server
   |   <-------- close 1002 --------   |
 ```
 
-The server tracks the worker by `workerId` in an in-memory registry. If a registered worker disconnects with tasks in flight, the server reassigns those tasks to another available worker on the same queue or moves them through the fallback queue path according to the dispatch machinery.
+The server tracks the worker by `workerId` in an in-memory registry. If a registered worker disconnects with tasks in flight, the server waits for the configured `ServeOptions.workerReconnectGracePeriodMs` before requeueing those tasks. A same-`workerId` `register` inside that grace window cancels the pending requeue and preserves the worker's in-flight assignments. If the window expires, the server reassigns the tasks to another available worker on the same queue or moves them through the fallback queue path according to the dispatch machinery.
 
 ## Message catalog
 
@@ -214,6 +214,8 @@ Sent when an in-flight task completes, fails, or is cancelled.
 | `cancelled`   | `true`                                   | No                          | Optional marker for cancelled results. If present, it must be `true`. |
 
 The server stores `completed` as a completed task and treats `failed` and `cancelled` as failed terminal resolutions. Missing `operationId`, missing `value` on completed results, unknown statuses, and non-string errors on failed or cancelled results are malformed messages. The server sends `protocolError` and closes the socket with `1002`.
+
+For a well-formed result, the server also verifies that the WebSocket connection still owns the `operationId`. A stale completion from a displaced worker receives `protocolError` and is ignored instead of mutating engine state. In v1 this guard is keyed by `(operationId, workerId)`, so it protects different-worker takeovers; defending same-`workerId` stale completions requires a future protocol revision with an attempt token on the wire.
 
 ### Server -> Worker
 
