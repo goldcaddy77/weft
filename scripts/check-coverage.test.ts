@@ -29,12 +29,13 @@ describe('parseLcov', () => {
       'weft-schedule-lmdb-workflows-example.ts',
       'weft-schedule-lmdb-input-example.ts',
       'weft-cli-edge-workflows-example.ts',
+      'weft-validate-TA9zHl/conflict.ts',
     ];
 
     for (const generatedFile of generatedFiles) {
       const coverage = parseLcov(
         [
-          `SF:../../../../../../private/var/folders/x_/tmp/${generatedFile}`,
+          `SF:../../../../../../var/folders/x_/tmp/${generatedFile}`,
           'FNF:1',
           'FNH:0',
           'DA:1,0',
