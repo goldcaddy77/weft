@@ -1,4 +1,4 @@
-/* oxlint-disable max-lines -- ID:core-engine-index-file-length */
+/* oxlint-disable max-lines -- Engine class (~960 lines) cannot be split without breaking chained-builder generic inference on Engine.create/withWorkflow/withActivity overloads; rejected alternative: interface declaration merging plus Object.assign(Engine.prototype, mixin) in sibling modules, which alters generated .d.ts output, drops JSDoc attachment, and creates a runtime-ordering hazard (callers can import Engine before mixin modules evaluate). Everything separable has been extracted; see ~5 sibling modules under src/core/engine/. */
 import { KEYS, type Storage as WeftStorage } from '../../storage/interface.ts';
 import { ActivityRegistry, type ActivityMetadata } from '../activity-registry.ts';
 import { AtomicState, type AtomicStateOptions } from '../atomic-state.ts';

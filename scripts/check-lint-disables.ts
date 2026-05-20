@@ -2,19 +2,18 @@
 /**
  * Enforce the oxlint suppression policy for `src/`.
  *
- * Two modes:
+ * Scans every `oxlint-disable*` directive in source files matched by
+ * {@link SOURCE_FILE_GLOB} (excluding {@link TEST_FILE_EXCLUSION_GLOBS}) and
+ * enforces two invariants:
  *
- * - **Inventory-matching mode** (default during the oxlint-strict capstone
- *   transition): verify every `oxlint-disable*` directive in `src/` carries an
- *   `ID:<name>` token and that every ID has a matching section in
- *   `documentation/oxlint-disable-inventory.md`. Fails if a directive has no
- *   ID or no inventory entry, or if the inventory has an entry with no
- *   corresponding directive in source.
- * - **Ceiling mode** (`--max <n>`): scan `src/` for `oxlint-disable*`
- *   directives in the supported source-file extensions, exclude tests, and
- *   enforce (1) at most `<n>` directives total and (2) every directive carries
- *   an inline rationale of at least {@link MIN_RATIONALE_LENGTH} characters
- *   after stripping any leading `ID:<token>`.
+ * 1. **Ceiling.** The total number of directives must not exceed the
+ *    effective max (default {@link MAX_DISABLES}; overridable via `--max <n>`
+ *    for capstone-style strict-zero checks).
+ * 2. **Rationale.** Every directive must carry an inline rationale after `--`
+ *    that is at least {@link MIN_RATIONALE_LENGTH} characters long, after
+ *    stripping any leading `ID:<token>`. The structural convention
+ *    `<reason>; rejected: <alternative>` is enforced in PR review, not by
+ *    regex.
  *
  * `--emit-snapshot <path>` writes a tab-separated audit artifact of every
  * directive in enforcement scope. The flag is scan-only: it never enforces a
@@ -22,8 +21,8 @@
  * pre-/post-refactor inventories without blocking the audit on legacy state.
  *
  * `--root <path>` sets the directory the scanner walks. Defaults to the
- * repository root (the script's parent directory). Used by the script's own
- * tests to point at fixture trees instead of the live repo.
+ * repository root. Used by the script's own tests to point at fixture trees
+ * instead of the live repo.
  */
 
 import { Glob, file, write } from 'bun';
@@ -48,7 +47,6 @@ type Directive = {
   line: number;
   rationale: string;
   rawId: string | null;
-  matchedFullId: boolean;
 };
 
 type CliArguments = {
@@ -57,15 +55,10 @@ type CliArguments = {
   emitSnapshot: string | null;
 };
 
-const directiveWithIdRegex =
-  /(?:\/\*|\/\/)\s*(?:eslint|oxlint)-disable(?:-(?:next-)?line)?\s+([a-zA-Z0-9/_(),-]+(?:\s*,\s*[a-zA-Z0-9/_(),-]+)*)?\s*--\s*ID:([a-zA-Z0-9_-]+)/g;
-const directiveWithoutIdRegex =
-  /(?:\/\*|\/\/)\s*(?:eslint|oxlint)-disable(?:-(?:next-)?line)?\s+(?:complexity|max-lines|eslint\(complexity\)|eslint\(max-lines\))\b/g;
-
 /**
  * Matches any `oxlint-disable*` directive (block or line, with or without
- * specific rules). Used by the ceiling-mode scanner to find every directive
- * regardless of rule list, and to extract the rationale text.
+ * specific rules). Used by the scanner to find every directive regardless of
+ * rule list, and to extract the rationale text.
  */
 const oxlintDirectiveRegex =
   /(\/\*|\/\/)\s*oxlint-disable(?:-(?:next-)?line)?\b([^*\n]*?)(?:\*\/|$)/g;
@@ -110,10 +103,12 @@ function printUsage(): void {
     [
       'Usage: bun scripts/check-lint-disables.ts [--root <path>] [--max <n>] [--emit-snapshot <path>]',
       '',
-      'Modes:',
-      '  (default)            inventory-matching mode (back-compat)',
-      '  --max <n>            ceiling mode: enforce at most <n> directives + rationale length',
-      '  --emit-snapshot <p>  write a TSV audit artifact (scan only, no enforcement)',
+      'Default: enforce ceiling (≤ MAX_DISABLES) and inline-rationale length (≥ MIN_RATIONALE_LENGTH).',
+      '',
+      'Flags:',
+      '  --root <path>         scan a directory other than the repo root (used in tests)',
+      '  --max <n>             override the ceiling (default = MAX_DISABLES = 5)',
+      '  --emit-snapshot <p>   write a TSV audit artifact (scan only, no enforcement)',
       '',
       'Defaults:',
       `  MAX_DISABLES         = ${MAX_DISABLES}`,
@@ -172,7 +167,6 @@ async function scanDirectives(root: string): Promise<Directive[]> {
           line: index + 1,
           rationale: normalized.rationale,
           rawId: normalized.rawId,
-          matchedFullId: dashIndex >= 0,
         });
       }
     }
@@ -180,7 +174,9 @@ async function scanDirectives(root: string): Promise<Directive[]> {
   return directives;
 }
 
-async function runCeilingMode(args: CliArguments, max: number): Promise<number> {
+async function runEnforcement(args: CliArguments): Promise<number> {
+  const effectiveMax = args.max ?? MAX_DISABLES;
+  const maxSource = args.max === null ? 'default' : '--max';
   const directives = await scanDirectives(args.root);
   const offendersMissingRationale = directives.filter(
     (directive) => directive.rationale.length < MIN_RATIONALE_LENGTH,
@@ -188,9 +184,9 @@ async function runCeilingMode(args: CliArguments, max: number): Promise<number> 
 
   let failed = false;
 
-  if (directives.length > max) {
+  if (directives.length > effectiveMax) {
     console.error(
-      `Found ${directives.length} oxlint-disable directive(s) in src/, ceiling is ${max}.`,
+      `Found ${directives.length} oxlint-disable directive(s) in src/, ceiling is ${effectiveMax}.`,
     );
     for (const directive of directives) {
       console.error(`  ${directive.file}:${directive.line}`);
@@ -212,102 +208,8 @@ async function runCeilingMode(args: CliArguments, max: number): Promise<number> 
 
   if (failed) return 1;
 
-  const source = args.max === null ? 'default' : '--max';
   console.log(
-    `OK: ${directives.length}/${max} oxlint-disable directive(s) in src/, all with rationales ≥ ${MIN_RATIONALE_LENGTH} chars. (effective max = ${max} from ${source})`,
-  );
-  return 0;
-}
-
-async function runInventoryMode(args: CliArguments): Promise<number> {
-  const inventoryPath = join(args.root, 'documentation/oxlint-disable-inventory.md');
-  const sourceIds = new Map<string, { file: string; line: number }>();
-  const orphanDirectives: { file: string; line: number; text: string }[] = [];
-
-  for await (const relativePath of iterateSourceFiles(args.root)) {
-    const absolutePath = join(args.root, relativePath);
-    const source = await file(absolutePath).text();
-    const lines = source.split('\n');
-    for (const [index, lineText] of lines.entries()) {
-      const lineNumber = index + 1;
-      directiveWithIdRegex.lastIndex = 0;
-      directiveWithoutIdRegex.lastIndex = 0;
-      let matchedAnyId = false;
-      let match: RegExpExecArray | null;
-      while ((match = directiveWithIdRegex.exec(lineText)) !== null) {
-        matchedAnyId = true;
-        const id = match[2];
-        const existing = sourceIds.get(id);
-        if (existing) {
-          console.error(
-            `Duplicate disable ID '${id}': ${existing.file}:${existing.line} and ${relativePath}:${lineNumber}`,
-          );
-          return 1;
-        }
-        sourceIds.set(id, { file: relativePath, line: lineNumber });
-      }
-      if (!matchedAnyId && directiveWithoutIdRegex.test(lineText)) {
-        orphanDirectives.push({
-          file: relativePath,
-          line: lineNumber,
-          text: lineText.trim(),
-        });
-      }
-    }
-  }
-
-  if (orphanDirectives.length > 0) {
-    console.error('Found oxlint-disable directives without an `-- ID:<name>` token:');
-    for (const directive of orphanDirectives) {
-      console.error(`  ${directive.file}:${directive.line}  ${directive.text}`);
-    }
-    console.error(
-      '\nEvery `complexity` or `max-lines` disable in src/ must carry a stable ID and an entry in documentation/oxlint-disable-inventory.md.',
-    );
-    return 1;
-  }
-
-  const inventoryText = await file(inventoryPath).text();
-  const inventoryIds = new Set<string>();
-  const inventoryHeadingRegex = /^##\s+`([a-zA-Z0-9_-]+)`/gm;
-  let headingMatch: RegExpExecArray | null;
-  while ((headingMatch = inventoryHeadingRegex.exec(inventoryText)) !== null) {
-    inventoryIds.add(headingMatch[1]);
-  }
-
-  const missingFromInventory: string[] = [];
-  const missingFromSource: string[] = [];
-  for (const id of sourceIds.keys()) {
-    if (!inventoryIds.has(id)) missingFromInventory.push(id);
-  }
-  for (const id of inventoryIds) {
-    if (!sourceIds.has(id)) missingFromSource.push(id);
-  }
-
-  if (missingFromInventory.length > 0) {
-    console.error('Disable IDs in source with no inventory entry:');
-    for (const id of missingFromInventory.toSorted()) {
-      const where = sourceIds.get(id);
-      if (where) {
-        console.error(`  ${id}  (${where.file}:${where.line})`);
-      } else {
-        console.error(`  ${id}`);
-      }
-    }
-  }
-  if (missingFromSource.length > 0) {
-    console.error('\nInventory IDs with no matching directive in source:');
-    for (const id of missingFromSource.toSorted()) {
-      console.error(`  ${id}`);
-    }
-  }
-
-  if (missingFromInventory.length > 0 || missingFromSource.length > 0) {
-    return 1;
-  }
-
-  console.log(
-    `OK: ${sourceIds.size} disable directive(s) tracked, all matched to inventory entries.`,
+    `OK: ${directives.length}/${effectiveMax} oxlint-disable directive(s) in src/, all with rationales ≥ ${MIN_RATIONALE_LENGTH} chars. (effective max = ${effectiveMax} from ${maxSource})`,
   );
   return 0;
 }
@@ -330,11 +232,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     return 0;
   }
 
-  if (args.max !== null) {
-    return await runCeilingMode(args, args.max);
-  }
-
-  return await runInventoryMode(args);
+  return await runEnforcement(args);
 }
 
 if (import.meta.main) {

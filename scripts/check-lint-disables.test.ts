@@ -193,6 +193,22 @@ describe('check-lint-disables ceiling mode', () => {
     expect(result.stderr).toContain('Found 1 oxlint-disable directive(s)');
     expect(result.stderr).toContain('ceiling is 0');
   });
+
+  it('applies MAX_DISABLES as the default ceiling when --max is omitted', async () => {
+    for (let i = 0; i < MAX_DISABLES; i += 1) {
+      await makeDirective(root, `src/file-${i}.ts`, RATIONALE_PASS);
+    }
+    const okResult = run(['--root', root]);
+    expect(okResult.exitCode).toBe(0);
+    expect(okResult.stdout).toContain(`OK: ${MAX_DISABLES}/${MAX_DISABLES}`);
+    expect(okResult.stdout).toContain('effective max = 5 from default');
+
+    await makeDirective(root, `src/file-${MAX_DISABLES}.ts`, RATIONALE_PASS);
+    const failResult = run(['--root', root]);
+    expect(failResult.exitCode).toBe(1);
+    expect(failResult.stderr).toContain(`Found ${MAX_DISABLES + 1} oxlint-disable directive(s)`);
+    expect(failResult.stderr).toContain(`ceiling is ${MAX_DISABLES}`);
+  });
 });
 
 describe('check-lint-disables --emit-snapshot', () => {
