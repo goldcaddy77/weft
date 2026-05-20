@@ -174,13 +174,12 @@ interface RoutingOptions {
   sticky?: string; // preferred worker ID for cache locality
   queue?: string;
   fairShareKey?: string; // partition key for fair-share routing
-  excludeWorkerIds?: ReadonlySet<string>; // internal reconnect-grace exclusion
 }
 ```
 
 If a `sticky` preference is provided (useful for cache locality), the registry checks that worker first. If it has capacity, it gets the task. Otherwise, least-loaded routing kicks in.
 
-Workers inside the server's reconnect grace window are temporarily excluded from routing so new tasks prefer eligible peers instead of landing on a socket that just closed. The grace window is configured with `serve({ workerReconnectGracePeriodMs })`; it defaults to `100` ms, is clamped to `0..5000`, and `0` disables the grace path for immediate requeue behavior.
+Workers inside the server's reconnect grace window are temporarily excluded from routing by `serve()` so new tasks prefer eligible peers instead of landing on a socket that just closed. The grace window is configured with `serve({ workerReconnectGracePeriodMs })`; it defaults to `100` ms, is clamped to `0..5000`, and `0` disables the grace path for immediate requeue behavior.
 
 ## The WorkerRegistry
 

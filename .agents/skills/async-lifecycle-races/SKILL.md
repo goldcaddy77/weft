@@ -26,10 +26,13 @@ description: >-
 1. List each pending operation and the event that resolves or rejects it.
 2. For every owner transition, define what happens on success, error, abort, close, disposal, and shutdown.
 3. Reject or settle pending promises when the owner goes away; never leave callers waiting for an event that can no longer arrive.
-4. For RemoteWorker reconnect work, model close, deferred requeue, same-`workerId` re-register, peer takeover, heartbeat visibility extension, and stale `taskResult` arrival as separate transitions.
-5. Persist task ownership before sending work across a socket; otherwise a fast worker can complete before the in-flight record exists and leave an orphan that the scanner redelivers.
-6. Prefer virtual time, explicit signals, and observable conditions over fixed `Bun.sleep()` delays.
-7. Cap polling and retry loops, then surface the final state when the cap is reached.
+4. Prefer virtual time, explicit signals, and observable conditions over fixed `Bun.sleep()` delays.
+5. Cap polling and retry loops, then surface the final state when the cap is reached.
+
+### RemoteWorker reconnect work
+
+- Model close, deferred requeue, same-`workerId` re-register, peer takeover, heartbeat visibility extension, and stale `taskResult` arrival as separate transitions.
+- Persist task ownership before sending work across a socket; otherwise a fast worker can complete before the in-flight record exists and leave an orphan that the scanner redelivers.
 
 ## Verification
 

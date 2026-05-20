@@ -54,7 +54,7 @@ When a change adds, removes, or edits `oxlint-disable` directives, also run:
 bun scripts/check-lint-disables.ts
 ```
 
-The checker enforces the production-source suppression ceiling and inline-rationale floor that `bun run lint` and the pre-commit hook rely on.
+The checker enforces the production-source suppression ceiling and the mechanical rationale length floor that `bun run lint` and the pre-commit hook rely on. Full rationale quality still belongs in pull request review.
 
 ### Phase 4: Test
 
