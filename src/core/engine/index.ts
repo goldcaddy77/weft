@@ -1,9 +1,9 @@
-/* oxlint-disable max-lines -- ID:core-engine-index-file-length */
+/* oxlint-disable max-lines -- Engine class (~960 lines) cannot be split without breaking chained-builder generic inference on Engine.create/withWorkflow/withActivity overloads; rejected alternative: interface declaration merging plus Object.assign(Engine.prototype, mixin) in sibling modules, which alters generated .d.ts output, drops JSDoc attachment, and creates a runtime-ordering hazard (callers can import Engine before mixin modules evaluate). Everything separable has been extracted; see ~5 sibling modules under src/core/engine/. */
 import { KEYS, type Storage as WeftStorage } from '../../storage/interface.ts';
 import { ActivityRegistry, type ActivityMetadata } from '../activity-registry.ts';
 import { AtomicState, type AtomicStateOptions } from '../atomic-state.ts';
 import type { StoredStreamChunk } from '../context.ts';
-import { createExpiredResponseCleanupTick, createHandleCacheFinalizer } from '../engine-helpers.ts';
+import { createHandleCacheFinalizer } from '../engine-helpers.ts';
 import type { Interceptor } from '../interceptor.ts';
 import { ReviewCoordinator, type ReviewRequest } from '../review/index.ts';
 import { Scheduler } from '../scheduler.ts';
@@ -32,7 +32,6 @@ import {
   type InferActivityEntry,
   type InferWorkflowEntries,
   type InferWorkflowEntry,
-  type IsDefaultWorkflowRegistry,
   type ListFilter,
   type ListOptions,
   type MessageName,
@@ -68,7 +67,6 @@ import {
   type WorkflowTimelineEntry,
 } from '../types.ts';
 import type { TimerEntry } from '../types/checkpoint.ts';
-import type { UnknownNameWhenRegistryHasNoKnownNames } from '../types/registry-type-helpers.ts';
 import { UpdateCoordinator } from '../updates.ts';
 import {
   aggregate as aggregateWorkflows,
@@ -84,13 +82,13 @@ import {
   tagAll as tagAllWorkflows,
   untagAll as untagAllWorkflows,
 } from './bulk-operations.ts';
+import { createTimeOperationCallbacks as createTimeOperationCallbacksForEngine } from './callback-creators-bundles.ts';
 import {
   createBroadcastCallbacks as createBroadcastCallbacksForEngine,
   createInlineParkingCallbacks as createInlineParkingCallbacksForEngine,
   createLifecycleCallbacks as createLifecycleCallbacksForEngine,
   createRegistrationCallbacks as createRegistrationCallbacksForEngine,
   createTerminationCallbacks as createTerminationCallbacksForEngine,
-  createTimeOperationCallbacks as createTimeOperationCallbacksForEngine,
   createUpdateCallbacks as createUpdateCallbacksForEngine,
 } from './callback-creators.ts';
 import {
@@ -115,7 +113,24 @@ import {
   type EngineCreateRuntimeOptions,
   type KnownWorkflowNames,
 } from './construction.ts';
+import {
+  type ActivityDefinitionName,
+  type EngineCreateOptions,
+  type RegisteredActivityDefinitionExecute,
+  type UnknownWorkflowNameWhenDefaultRegistryIsEmpty,
+} from './engine-create-types.ts';
 import type { EngineConstructorOptions } from './engine-internal-types.ts';
+import {
+  consumeNextEngineLeakWarningTokenForTesting,
+  engineCleanupIntervalFinalizer,
+  type EngineCleanupIntervalDisposalTracker,
+} from './engine-leak-warnings.ts';
+import {
+  createCleanupIntervalTick,
+  createQueuedInlineWorkflowStartHandler,
+  disposeEngineCleanupInterval,
+  isActivityDefinition,
+} from './engine-runtime-helpers.ts';
 import { EngineCreateNameMismatchError } from './errors.ts';
 import {
   createWorkflowHandleWithResultPromise as createWorkflowHandleWithResultPromiseFromInternals,
@@ -124,7 +139,6 @@ import {
 import { HANDLE_RESULT_PROMISE, ScheduleHandle, WorkflowHandle } from './handles.ts';
 import {
   disposeQueuedInlineWorkflowStarts,
-  flushQueuedInlineWorkflowStarts,
   hasQueuedInlineWorkflowStart,
 } from './inline-launch-queue.ts';
 import {
@@ -132,7 +146,7 @@ import {
   resumeParkedInlineWorkflow as resumeParkedInlineWorkflowFromInternals,
   type InlineParkingCallbacks,
 } from './inline-parking.ts';
-import { getInternals, initializeInternals, type EngineInternals } from './internals.ts';
+import { getInternals, initializeInternals } from './internals.ts';
 import {
   fork as forkFromLifecycle,
   recoverAll as recoverAllFromLifecycle,
@@ -197,7 +211,7 @@ import {
   update as updateFromInternals,
   type UpdateCallbacks,
 } from './updates.ts';
-import { coerceScheduleId, normalizeScheduleAccessOptions } from './validation.ts';
+import { coerceScheduleId, normalizeScheduleAccessOptions } from './validation/schedule.ts';
 import {
   replayWorkflowFeed,
   snapshotWorkflowFeedTail,
@@ -261,214 +275,18 @@ export interface EngineStateNamespace {
   tenant<T>(tenantId: string, key: string, options?: AtomicStateOptions<T>): AtomicState<T>;
 }
 
-/**
- * Options accepted by {@link Engine.create}. Definition maps are used for
- * type inference, then each map key is checked against the definition's
- * runtime `name` before registration.
- *
- * @example
- * ```ts
- * import { activity, Engine, workflow, type EngineCreateOptions } from 'weft';
- *
- * const greet = activity({ name: 'greet', execute: async (name: string) => `Hello, ${name}` });
- * const welcome = workflow({
- *   name: 'welcome',
- *   handler: async function* (ctx, input: string) {
- *     return yield* ctx.run(greet, input);
- *   },
- * });
- *
- * const options = {
- *   workflows: { welcome },
- *   activities: { greet },
- * } satisfies EngineCreateOptions<{ welcome: typeof welcome }, { greet: typeof greet }>;
- * const engine = await Engine.create(options);
- * void engine;
- * ```
- */
-export type EngineCreateOptions<
-  TWorkflowDefinitions extends Record<string, AnyWorkflowDefinition> = {},
-  TActivityDefinitions extends Record<string, AnyActivityDefinition> = {},
-> = EngineConstructorOptions & {
-  /** Workflow definitions to register before recovery. */
-  workflows?: TWorkflowDefinitions;
-  /** Activity definitions to register before workflows. */
-  activities?: TActivityDefinitions;
-} & (
-    | {
-        /** Recover stored running workflows after registration. */
-        recover: true;
-        /**
-         * Forwarded to {@link Engine.recoverAll}. Only use this during rolling
-         * deploys, explicit storage migrations, or intentional tenant partitioning.
-         */
-        acknowledgeUnknownWorkflowTypes?: boolean;
-      }
-    | {
-        /** Whether to recover stored running workflows after registration. Defaults to `false`. */
-        recover?: false | undefined;
-        /** Only valid when `recover: true` is also set. */
-        acknowledgeUnknownWorkflowTypes?: never;
-      }
-  );
-
-type UnknownWorkflowNameWhenDefaultRegistryIsEmpty<
-  TWorkflows extends object,
-  TName extends string,
-> =
-  IsDefaultWorkflowRegistry<TWorkflows> extends true
-    ? UnknownNameWhenRegistryHasNoKnownNames<TName, KnownWorkflowNames<TWorkflows>>
-    : never;
-
-type ActivityDefinitionName<TDefinition extends AnyActivityDefinition> = TDefinition extends {
-  readonly name: infer TName extends string;
-}
-  ? TName
-  : string;
-
-type RegisteredActivityDefinitionExecute<
-  TActivities extends object,
-  TName extends Extract<keyof TActivities, string>,
-> = TActivities[TName] extends (...arguments_: infer TArguments) => infer TResult
-  ? (...arguments_: TArguments) => Awaited<TResult> | Promise<Awaited<TResult>>
-  : never;
-
-type EngineCleanupIntervalDisposalTracker = {
-  disposed: boolean;
-  cleanupInterval: ReturnType<typeof setInterval> | null;
-  testToken: symbol | undefined;
-};
-
-let engineLeakWarningOverrideForTesting: boolean | undefined;
-let engineLeakCollectionCountForTesting = 0;
-let nextEngineLeakWarningTokenForTesting: symbol | undefined;
-const engineLeakWarningTokensForTesting = new Set<symbol>();
-
-const engineCleanupIntervalFinalizer =
-  new FinalizationRegistry<EngineCleanupIntervalDisposalTracker>((tracker) => {
-    engineLeakCollectionCountForTesting++;
-
-    if (tracker.cleanupInterval !== null) {
-      clearInterval(tracker.cleanupInterval);
-      tracker.cleanupInterval = null;
-    }
-
-    if (!tracker.disposed && shouldEmitEngineLeakWarning()) {
-      if (tracker.testToken !== undefined) {
-        engineLeakWarningTokensForTesting.add(tracker.testToken);
-      }
-
-      process.emitWarning(
-        'WeftEngineLeakWarning: A Weft Engine was garbage-collected without calling [Symbol.dispose](). Use `using`, `await using`, or call engine[Symbol.dispose]() to clear background timers and release runtime resources.',
-      );
-    }
-  });
-
-function shouldEmitEngineLeakWarning(): boolean {
-  if (engineLeakWarningOverrideForTesting !== undefined) {
-    return engineLeakWarningOverrideForTesting;
-  }
-
-  return Bun.env['WEFT_DEV_WARNINGS'] === '1' || Bun.env['NODE_ENV'] === 'development';
-}
-
-/** Test-only override for the engine leak-warning environment gate. */
-export function setEngineLeakWarningOverrideForTesting(value: boolean | undefined): void {
-  engineLeakWarningOverrideForTesting = value;
-}
-
-/** Test-only marker applied to the next constructed engine leak tracker. */
-export function setNextEngineLeakWarningTokenForTesting(value: symbol | undefined): void {
-  nextEngineLeakWarningTokenForTesting = value;
-}
-
-/** Test-only count of engine cleanup finalizer observations. */
-export function getEngineLeakCollectionCountForTesting(): number {
-  return engineLeakCollectionCountForTesting;
-}
-
-/** Test-only visibility into whether a tagged engine leak emitted a warning. */
-export function hasEngineLeakWarningTokenForTesting(token: symbol): boolean {
-  return engineLeakWarningTokensForTesting.has(token);
-}
-
-/** Test-only cleanup for tagged leak warning observations. */
-export function clearEngineLeakWarningTokenForTesting(token: symbol): void {
-  engineLeakWarningTokensForTesting.delete(token);
-}
-
-/** Test-only visibility into the engine leak-warning environment gate. */
-export function shouldEmitEngineLeakWarningForTesting(): boolean {
-  return shouldEmitEngineLeakWarning();
-}
-
-function isActivityDefinition(value: unknown): value is AnyActivityDefinition {
-  return (
-    typeof value === 'function' &&
-    typeof value.name === 'string' &&
-    'execute' in value &&
-    typeof (value as { execute?: unknown }).execute === 'function'
-  );
-}
-
-function createQueuedInlineWorkflowStartHandler<
-  TWorkflows extends object,
-  TActivities extends object,
->(weakEngine: WeakRef<Engine<TWorkflows, TActivities>>, channel: MessageChannel): () => void {
-  return function handleQueuedInlineWorkflowStart() {
-    const engine = weakEngine.deref();
-    if (engine === undefined) {
-      channel.port1.close();
-      channel.port2.close();
-      return;
-    }
-
-    getInternals(engine).queuedInlineWorkflowStartFlushScheduled = false;
-    void swallowPromiseRejection(
-      flushQueuedInlineWorkflowStarts(getInternals(engine), {
-        processPendingUpdatesAfterInlineAdvance: (workflowId) =>
-          createLifecycleCallbacksForEngine(engine).processPendingUpdatesAfterInlineAdvance(
-            workflowId,
-          ),
-        swallowPromiseRejection: (promise) => swallowPromiseRejection(promise),
-      }),
-    );
-  };
-}
-
-function createCleanupIntervalTick<TWorkflows extends object, TActivities extends object>(
-  weakEngine: WeakRef<Engine<TWorkflows, TActivities>>,
-  tracker: EngineCleanupIntervalDisposalTracker,
-): () => void {
-  return function cleanupExpiredResponsesForLiveEngine() {
-    const engine = weakEngine.deref();
-    if (engine === undefined) {
-      if (tracker.cleanupInterval !== null) {
-        clearInterval(tracker.cleanupInterval);
-        tracker.cleanupInterval = null;
-      }
-      return;
-    }
-
-    const internals = getInternals(engine);
-    createExpiredResponseCleanupTick(internals.updateCoordinator, (source, error) =>
-      createTerminationCallbacksForEngine(engine).handleCleanupError(source, error),
-    )();
-  };
-}
-
-function disposeEngineCleanupInterval(internals: EngineInternals): void {
-  if (internals.cleanupInterval !== null) {
-    clearInterval(internals.cleanupInterval ?? undefined);
-    internals.cleanupInterval = null;
-  }
-  if (internals.cleanupIntervalDisposalTracker !== null) {
-    internals.cleanupIntervalDisposalTracker.disposed = true;
-    internals.cleanupIntervalDisposalTracker.cleanupInterval = null;
-    engineCleanupIntervalFinalizer.unregister(internals.cleanupIntervalDisposalTracker);
-    internals.cleanupIntervalDisposalTracker = null;
-  }
-}
+// Public type definitions and runtime helpers used by the Engine class were
+// extracted to sibling modules to keep this file under the lint threshold.
+// They are re-exported here to preserve the public API surface.
+export type { EngineCreateOptions } from './engine-create-types.ts';
+export {
+  clearEngineLeakWarningTokenForTesting,
+  getEngineLeakCollectionCountForTesting,
+  hasEngineLeakWarningTokenForTesting,
+  setEngineLeakWarningOverrideForTesting,
+  setNextEngineLeakWarningTokenForTesting,
+  shouldEmitEngineLeakWarningForTesting,
+} from './engine-leak-warnings.ts';
 
 export const ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING = Symbol(
   'engineParkedWorkflowCountForTesting',
@@ -706,9 +524,8 @@ export class Engine<
     const cleanupIntervalDisposalTracker: EngineCleanupIntervalDisposalTracker = {
       disposed: false,
       cleanupInterval: null,
-      testToken: nextEngineLeakWarningTokenForTesting,
+      testToken: consumeNextEngineLeakWarningTokenForTesting(),
     };
-    nextEngineLeakWarningTokenForTesting = undefined;
     const cleanupInterval = setInterval(
       createCleanupIntervalTick(weakEngine, cleanupIntervalDisposalTracker),
       60_000,

@@ -1223,4 +1223,80 @@ describe('engine lifecycle coverage helpers', () => {
     );
     expect(dispatchEvent).toHaveBeenCalledTimes(1);
   });
+
+  it('startWorkflow fires interceptor, persistence, handle creation, and start event in order', async () => {
+    const engine = new Engine();
+    engine.register('callback-order-workflow', async function* () {
+      return 'done';
+    });
+
+    const events: string[] = [];
+    const internals = getInternals(engine);
+
+    const composedInterceptor = {
+      workflowStart: (
+        ctx: WorkflowStartInterception,
+        next: (value: WorkflowStartInterception) => void,
+      ) => {
+        events.push('interceptor:workflowStart');
+        next(ctx);
+      },
+      activityCall: (_ctx: unknown, next: (value: unknown) => unknown) => next(_ctx),
+      workflowComplete: (_ctx: unknown, next: (value: unknown) => unknown) => next(_ctx),
+      childWorkflowCall: (_ctx: unknown, next: (value: unknown) => unknown) => next(_ctx),
+      signalEmit: (_ctx: unknown, next: (value: unknown) => unknown) => next(_ctx),
+      updateCall: (_ctx: unknown, next: (value: unknown) => unknown) => next(_ctx),
+    } as never;
+    const baseCallbacks = createEngineLifecycleCallbacks(engine);
+    const callbacks = {
+      ...baseCallbacks,
+      getComposedWorkflowInterceptor: () => composedInterceptor,
+      createWorkflowHandleWithResultPromise: (workflowId: string) => {
+        events.push('createHandle');
+        return baseCallbacks.createWorkflowHandleWithResultPromise(workflowId);
+      },
+    };
+
+    const originalBatch = internals.storage.batch.bind(internals.storage);
+    internals.storage.batch = async (operations) => {
+      events.push('storage:batch');
+      return originalBatch(operations);
+    };
+
+    engine.addEventListener('workflow:started', () => {
+      events.push('dispatch:workflow:started');
+    });
+
+    const handle = await startWorkflow(
+      internals,
+      'callback-order-workflow',
+      { value: 1 },
+      undefined,
+      undefined,
+      undefined,
+      callbacks,
+    );
+
+    await handle.result();
+
+    // Critical firing order during startWorkflow:
+    //  1. interceptor runs before persistence so it can mutate headers
+    //  2. storage batch occurs before the handle is created
+    //  3. handle is created before the WorkflowStartedEvent dispatches
+    const startedIndexes = events
+      .map((event, index) => (event === 'dispatch:workflow:started' ? index : -1))
+      .filter((index) => index >= 0);
+    const startIndex = events.indexOf('interceptor:workflowStart');
+    const batchIndex = events.indexOf('storage:batch');
+    const handleIndex = events.indexOf('createHandle');
+
+    expect(startIndex).toBeGreaterThanOrEqual(0);
+    expect(batchIndex).toBeGreaterThan(startIndex);
+    expect(handleIndex).toBeGreaterThan(batchIndex);
+    // WorkflowStartedEvent should fire at least once after the handle exists.
+    expect(startedIndexes.length).toBeGreaterThan(0);
+    expect(Math.min(...startedIndexes)).toBeGreaterThan(handleIndex);
+
+    engine[Symbol.dispose]();
+  });
 });

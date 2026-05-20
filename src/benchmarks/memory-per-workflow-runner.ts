@@ -72,7 +72,158 @@ function classifyStorageKey(
   return 'workflowStateBytesTotal';
 }
 
-// oxlint-disable-next-line complexity -- ID:benchmarks-memory-per-workflow-runner-measure-memory-per-workflow-complexity
+type StorageScanTotals = {
+  footprints: Map<string, WorkflowFootprint>;
+  checkpointBytesTotal: number;
+  durableBytesTotal: number;
+  workflowStateBytesTotal: number;
+  checkpointHistoryBytesTotal: number;
+  timelineBytesTotal: number;
+  eventBytesTotal: number;
+  otherBytesTotal: number;
+};
+
+/**
+ * Warmup phase: start `totalWorkflows` idle workflows and wait until every one
+ * is parked on the wake signal. Returns once the workflow population is stable.
+ */
+async function warmupParkedWorkflows(
+  engine: RuntimeWorkflowEngine,
+  totalWorkflows: number,
+): Promise<void> {
+  engine.register('idle', async function* (ctx: WorkflowContext) {
+    yield* ctx.waitForSignal('wake');
+    return 'done';
+  });
+
+  for (let index = 0; index < totalWorkflows; index += 1) {
+    await engine.start('idle', null, { id: `${WORKFLOW_ID_PREFIX}${index}` });
+  }
+
+  await waitForParkedWorkflows(engine, totalWorkflows);
+}
+
+/**
+ * Sample phase: scan storage entries belonging to benchmark workflows and
+ * accumulate per-category byte totals plus per-workflow footprints.
+ */
+async function sampleStorageTotals(storage: BunSQLiteStorage): Promise<StorageScanTotals> {
+  const totals: StorageScanTotals = {
+    footprints: new Map<string, WorkflowFootprint>(),
+    checkpointBytesTotal: 0,
+    durableBytesTotal: 0,
+    workflowStateBytesTotal: 0,
+    checkpointHistoryBytesTotal: 0,
+    timelineBytesTotal: 0,
+    eventBytesTotal: 0,
+    otherBytesTotal: 0,
+  };
+
+  for await (const [storageKey, value] of storage.scan('')) {
+    const workflowId = extractBenchmarkWorkflowId(storageKey);
+    if (workflowId === null) {
+      continue;
+    }
+    accumulateStorageEntry(totals, storageKey, workflowId, value.byteLength);
+  }
+
+  return totals;
+}
+
+function accumulateStorageEntry(
+  totals: StorageScanTotals,
+  storageKey: string,
+  workflowId: string,
+  bytes: number,
+): void {
+  totals.durableBytesTotal += bytes;
+
+  const footprint = totals.footprints.get(workflowId) ?? {
+    checkpointBytes: 0,
+    durableBytes: 0,
+  };
+  footprint.durableBytes += bytes;
+  totals.footprints.set(workflowId, footprint);
+
+  const isLatestCheckpoint =
+    storageKey.startsWith(`wf:${workflowId}:ckpt`) && !storageKey.includes(':ckpt:');
+  if (isLatestCheckpoint) {
+    totals.checkpointBytesTotal += bytes;
+    footprint.checkpointBytes += bytes;
+  }
+
+  const category = classifyStorageKey(storageKey);
+  if (category === 'workflowStateBytesTotal') {
+    if (!isLatestCheckpoint) {
+      totals.workflowStateBytesTotal += bytes;
+    }
+    return;
+  }
+  if (category === 'checkpointHistoryBytesTotal') {
+    totals.checkpointHistoryBytesTotal += bytes;
+    return;
+  }
+  if (category === 'timelineBytesTotal') {
+    totals.timelineBytesTotal += bytes;
+    return;
+  }
+  if (category === 'eventBytesTotal') {
+    totals.eventBytesTotal += bytes;
+    return;
+  }
+  totals.otherBytesTotal += bytes;
+}
+
+/**
+ * Summarize phase: derive per-workflow maxima and average byte counts from the
+ * sampled totals and assemble the final measurement record.
+ */
+function summarizeTotals(
+  totals: StorageScanTotals,
+  totalWorkflows: number,
+): MemoryPerWorkflowMeasurement {
+  let maxCheckpointBytesPerWorkflow = 0;
+  let maxDurableBytesPerWorkflow = 0;
+  for (const footprint of totals.footprints.values()) {
+    maxCheckpointBytesPerWorkflow = Math.max(
+      maxCheckpointBytesPerWorkflow,
+      footprint.checkpointBytes,
+    );
+    maxDurableBytesPerWorkflow = Math.max(maxDurableBytesPerWorkflow, footprint.durableBytes);
+  }
+
+  const countedWorkflows = totals.footprints.size;
+
+  return {
+    totalWorkflows,
+    countedWorkflows,
+    checkpointBytesTotal: totals.checkpointBytesTotal,
+    averageCheckpointBytesPerWorkflow: roundBytesPerWorkflow(
+      totals.checkpointBytesTotal,
+      countedWorkflows,
+    ),
+    maxCheckpointBytesPerWorkflow,
+    durableBytesTotal: totals.durableBytesTotal,
+    averageDurableBytesPerWorkflow: roundBytesPerWorkflow(
+      totals.durableBytesTotal,
+      countedWorkflows,
+    ),
+    maxDurableBytesPerWorkflow,
+    workflowStateBytesTotal: totals.workflowStateBytesTotal,
+    checkpointHistoryBytesTotal: totals.checkpointHistoryBytesTotal,
+    timelineBytesTotal: totals.timelineBytesTotal,
+    eventBytesTotal: totals.eventBytesTotal,
+    otherBytesTotal: totals.otherBytesTotal,
+  };
+}
+
+/**
+ * Measure the durable storage footprint of `totalWorkflows` idle workflows.
+ *
+ * Runs three phases: warm up by starting and parking the workflow population,
+ * sample by scanning durable storage, and summarize by computing maxima and
+ * averages from the sampled totals.
+ */
 export async function measureMemoryPerWorkflow(
   totalWorkflows: number,
 ): Promise<MemoryPerWorkflowMeasurement> {
@@ -80,101 +231,9 @@ export async function measureMemoryPerWorkflow(
   const engine = runtimeWorkflowEngine(new Engine({ storage }));
 
   try {
-    engine.register('idle', async function* (ctx: WorkflowContext) {
-      yield* ctx.waitForSignal('wake');
-      return 'done';
-    });
-
-    for (let index = 0; index < totalWorkflows; index += 1) {
-      await engine.start('idle', null, { id: `${WORKFLOW_ID_PREFIX}${index}` });
-    }
-
-    await waitForParkedWorkflows(engine, totalWorkflows);
-
-    const footprints = new Map<string, WorkflowFootprint>();
-    let checkpointBytesTotal = 0;
-    let durableBytesTotal = 0;
-    let workflowStateBytesTotal = 0;
-    let checkpointHistoryBytesTotal = 0;
-    let timelineBytesTotal = 0;
-    let eventBytesTotal = 0;
-    let otherBytesTotal = 0;
-
-    for await (const [storageKey, value] of storage.scan('')) {
-      const workflowId = extractBenchmarkWorkflowId(storageKey);
-      if (workflowId === null) {
-        continue;
-      }
-
-      const bytes = value.byteLength;
-      durableBytesTotal += bytes;
-
-      const footprint = footprints.get(workflowId) ?? { checkpointBytes: 0, durableBytes: 0 };
-      footprint.durableBytes += bytes;
-      footprints.set(workflowId, footprint);
-
-      if (storageKey.startsWith(`wf:${workflowId}:ckpt`) && !storageKey.includes(':ckpt:')) {
-        checkpointBytesTotal += bytes;
-        footprint.checkpointBytes += bytes;
-      }
-
-      const category = classifyStorageKey(storageKey);
-      if (category === 'workflowStateBytesTotal') {
-        if (storageKey.startsWith(`wf:${workflowId}:ckpt`) && !storageKey.includes(':ckpt:')) {
-          continue;
-        }
-        workflowStateBytesTotal += bytes;
-        continue;
-      }
-
-      if (category === 'checkpointHistoryBytesTotal') {
-        checkpointHistoryBytesTotal += bytes;
-        continue;
-      }
-
-      if (category === 'timelineBytesTotal') {
-        timelineBytesTotal += bytes;
-        continue;
-      }
-
-      if (category === 'eventBytesTotal') {
-        eventBytesTotal += bytes;
-        continue;
-      }
-
-      otherBytesTotal += bytes;
-    }
-
-    let maxCheckpointBytesPerWorkflow = 0;
-    let maxDurableBytesPerWorkflow = 0;
-    for (const footprint of footprints.values()) {
-      maxCheckpointBytesPerWorkflow = Math.max(
-        maxCheckpointBytesPerWorkflow,
-        footprint.checkpointBytes,
-      );
-      maxDurableBytesPerWorkflow = Math.max(maxDurableBytesPerWorkflow, footprint.durableBytes);
-    }
-
-    const countedWorkflows = footprints.size;
-
-    return {
-      totalWorkflows,
-      countedWorkflows,
-      checkpointBytesTotal,
-      averageCheckpointBytesPerWorkflow: roundBytesPerWorkflow(
-        checkpointBytesTotal,
-        countedWorkflows,
-      ),
-      maxCheckpointBytesPerWorkflow,
-      durableBytesTotal,
-      averageDurableBytesPerWorkflow: roundBytesPerWorkflow(durableBytesTotal, countedWorkflows),
-      maxDurableBytesPerWorkflow,
-      workflowStateBytesTotal,
-      checkpointHistoryBytesTotal,
-      timelineBytesTotal,
-      eventBytesTotal,
-      otherBytesTotal,
-    };
+    await warmupParkedWorkflows(engine, totalWorkflows);
+    const totals = await sampleStorageTotals(storage);
+    return summarizeTotals(totals, totalWorkflows);
   } finally {
     engine[Symbol.dispose]();
     storage[Symbol.dispose]();

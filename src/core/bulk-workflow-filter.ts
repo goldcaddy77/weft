@@ -7,10 +7,35 @@ const ID_PREFIX_MIN_LENGTH = 3;
 export const BULK_WORKFLOW_FILTER_ERROR_MESSAGE =
   'Field "filter" must include at least one of status, type, tags, attributes, tenantId, idPrefix (≥3 chars), or failureCategory paired with status';
 
+/**
+ * Discriminant for the closed set of `ListFilter` dimensions that, on
+ * their own, narrow a bulk operation to a scoped subset. `failureCategory`
+ * and the three time-range fields are intentionally absent — they require
+ * pairing with one of these scopes.
+ */
+type BulkFilterDimension = 'status' | 'type' | 'tags' | 'attributes' | 'tenantId' | 'idPrefix';
+
+type BulkFilterDimensionCheck = (filter: ListFilter) => boolean;
+
 function hasScopedStatusFilter(filter: ListFilter): boolean {
   if (filter.status === undefined) return false;
   if (Array.isArray(filter.status)) return filter.status.length > 0;
   return filter.status.length > 0;
+}
+
+function hasScopedTypeFilter(filter: ListFilter): boolean {
+  return filter.type !== undefined && filter.type.trim().length > 0;
+}
+
+function hasScopedTagsFilter(filter: ListFilter): boolean {
+  return (normalizeWorkflowTags(filter.tags)?.length ?? 0) > 0;
+}
+
+function hasScopedAttributesFilter(filter: ListFilter): boolean {
+  return (
+    filter.attributes?.some((attribute) => searchAttributeName(attribute.key).trim().length > 0) ??
+    false
+  );
 }
 
 function hasScopedTenantFilter(filter: ListFilter): boolean {
@@ -24,6 +49,28 @@ function hasScopedTenantFilter(filter: ListFilter): boolean {
 function hasScopedIdPrefix(filter: ListFilter): boolean {
   return filter.idPrefix !== undefined && filter.idPrefix.length >= ID_PREFIX_MIN_LENGTH;
 }
+
+/**
+ * Exhaustive lookup of "does this single dimension narrow a bulk
+ * operation to a safe subset?". Keyed by {@link BulkFilterDimension} so
+ * adding a new bulk scope requires extending the union and the table
+ * together — the `satisfies` keeps the mapping exhaustive at compile time.
+ *
+ * `failureCategory` is intentionally not a key here: setting the
+ * attribute on a non-failed workflow is permitted by the engine, so
+ * "delete every workflow whose failureCategory is X" would be a footgun.
+ * Pairing `failureCategory` with `status` is covered by the `status` key.
+ * Time ranges (`createdAt`, `updatedAt`, `executionDeadline`) are also
+ * intentionally absent — they must be combined with one of the keys here.
+ */
+const BULK_FILTER_DIMENSION_CHECKS = {
+  status: hasScopedStatusFilter,
+  type: hasScopedTypeFilter,
+  tags: hasScopedTagsFilter,
+  attributes: hasScopedAttributesFilter,
+  tenantId: hasScopedTenantFilter,
+  idPrefix: hasScopedIdPrefix,
+} satisfies Record<BulkFilterDimension, BulkFilterDimensionCheck>;
 
 /**
  * Returns `true` when the filter narrows destructive bulk operations
@@ -45,25 +92,8 @@ function hasScopedIdPrefix(filter: ListFilter): boolean {
  *   **not** valid scopes on their own — they must combine with another
  *   dimension from the list above.
  */
-// oxlint-disable-next-line complexity -- ID:core-bulk-workflow-filter-has-scoped-complexity
 export function hasScopedBulkWorkflowFilter(filter: ListFilter): boolean {
-  const scopedStatus = hasScopedStatusFilter(filter);
-  const scopedType = filter.type !== undefined && filter.type.trim().length > 0;
-  const scopedTags = (normalizeWorkflowTags(filter.tags)?.length ?? 0) > 0;
-  const scopedAttributes =
-    filter.attributes?.some((attribute) => searchAttributeName(attribute.key).trim().length > 0) ??
-    false;
-  const scopedTenant = hasScopedTenantFilter(filter);
-  const scopedIdPrefix = hasScopedIdPrefix(filter);
-
-  // failureCategory is *not* listed as an independent scope: the attribute
-  // can in theory be set on workflows that are not in a failed status, so
-  // deleting "every workflow whose failureCategory is X" is a footgun.
-  // Combining failureCategory with status is fine — but that case is
-  // already covered by the scopedStatus branch above.
-  return (
-    scopedStatus || scopedType || scopedTags || scopedAttributes || scopedTenant || scopedIdPrefix
-  );
+  return Object.values(BULK_FILTER_DIMENSION_CHECKS).some((check) => check(filter));
 }
 
 export function assertScopedBulkWorkflowFilter(filter: ListFilter): ListFilter {

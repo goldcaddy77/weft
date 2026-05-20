@@ -1,231 +1,95 @@
-/* oxlint-disable max-lines -- ID:worker-protocol-contract-file-length */
-
 /**
  * Canonical RemoteWorker WebSocket protocol contract.
  *
- * This module intentionally publishes plain JSON Schema objects instead of a
- * validator dependency. Non-TypeScript SDKs can vendor or consume the schemas,
- * while Weft's own runtime uses the type guards below at the trust boundary.
+ * This module owns the parser trust boundary: every guard below maps to one
+ * documented schema field. Wire-shape types live in `./protocol-messages.ts`,
+ * JSON Schema documents in `./protocol-schemas.ts`, and internal helpers in
+ * `./protocol-internals.ts`. All are re-exported so the public surface
+ * `weft/worker-protocol` stays a single import path.
  *
  * @module worker/protocol
  */
 
-/**
- * Current RemoteWorker wire protocol version.
- *
- * @example
- * ```ts
- * import { REMOTE_WORKER_PROTOCOL_VERSION } from 'weft/worker-protocol';
- *
- * const registration = { type: 'register', protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION };
- * ```
- */
-export const REMOTE_WORKER_PROTOCOL_VERSION = 1;
+import type {
+  FieldSpec,
+  RemoteWorkerProtocolFailure,
+  RemoteWorkerProtocolParseResult,
+} from './protocol-internals.ts';
+import {
+  collectFields,
+  isFiniteNumber,
+  isNonEmptyString,
+  isRecord,
+  isRemoteWorkerCapabilities,
+  isRemoteWorkerJsonValue,
+  isStringArray,
+  isStringRecord,
+  protocolFailure,
+} from './protocol-internals.ts';
+import type {
+  CancelMessage,
+  CancelledTaskResultMessage,
+  CompletedTaskResultMessage,
+  FailedTaskResultMessage,
+  HeartbeatMessage,
+  ProtocolErrorMessage,
+  RegisterAckMessage,
+  RegisterErrorMessage,
+  RegisterMessage,
+  RemoteWorkerCapabilities,
+  RemoteWorkerJsonValue,
+  ShutdownMessage,
+  TaskMessage,
+} from './protocol-messages.ts';
+import {
+  REMOTE_WORKER_MESSAGE_SCHEMAS,
+  REMOTE_WORKER_PROTOCOL_JSON_SCHEMA,
+} from './protocol-schemas.ts';
+import type { RemoteWorkerProtocolVersion } from './protocol-version.ts';
+import {
+  REMOTE_WORKER_MAX_PROTOCOL_VERSION,
+  REMOTE_WORKER_MIN_PROTOCOL_VERSION,
+  REMOTE_WORKER_PROTOCOL_VERSION,
+  REMOTE_WORKER_SUPPORTED_PROTOCOL_VERSIONS,
+} from './protocol-version.ts';
 
-/**
- * Lowest RemoteWorker protocol version accepted by this package.
- *
- * @example
- * ```ts
- * import { REMOTE_WORKER_MIN_PROTOCOL_VERSION } from 'weft/worker-protocol';
- *
- * const supportsVersionOne = REMOTE_WORKER_MIN_PROTOCOL_VERSION === 1;
- * ```
- */
-export const REMOTE_WORKER_MIN_PROTOCOL_VERSION = 1;
-
-/**
- * Highest RemoteWorker protocol version accepted by this package.
- *
- * @example
- * ```ts
- * import { REMOTE_WORKER_MAX_PROTOCOL_VERSION } from 'weft/worker-protocol';
- *
- * const canUseRequestedVersion = 1 <= REMOTE_WORKER_MAX_PROTOCOL_VERSION;
- * ```
- */
-export const REMOTE_WORKER_MAX_PROTOCOL_VERSION = 1;
-
-/**
- * Explicit supported RemoteWorker protocol versions.
- *
- * @example
- * ```ts
- * import { REMOTE_WORKER_SUPPORTED_PROTOCOL_VERSIONS } from 'weft/worker-protocol';
- *
- * const supported = REMOTE_WORKER_SUPPORTED_PROTOCOL_VERSIONS.includes(1);
- * ```
- */
-export const REMOTE_WORKER_SUPPORTED_PROTOCOL_VERSIONS = [REMOTE_WORKER_PROTOCOL_VERSION] as const;
-
-/**
- * RemoteWorker protocol version accepted by this package.
- *
- * @example
- * ```ts
- * import type { RemoteWorkerProtocolVersion } from 'weft/worker-protocol';
- *
- * const version: RemoteWorkerProtocolVersion = 1;
- * ```
- */
-export type RemoteWorkerProtocolVersion =
-  (typeof REMOTE_WORKER_SUPPORTED_PROTOCOL_VERSIONS)[number];
-
-/**
- * JSON value carried over the worker protocol.
- *
- * @example
- * ```ts
- * import type { RemoteWorkerJsonValue } from 'weft/worker-protocol';
- *
- * const payload: RemoteWorkerJsonValue = { amount: 42, memo: null };
- * ```
- */
-export type RemoteWorkerJsonValue =
-  | null
-  | boolean
-  | number
-  | string
-  | RemoteWorkerJsonValue[]
-  | { [key: string]: RemoteWorkerJsonValue };
-
-/**
- * Optional capabilities advertised by a RemoteWorker at registration time.
- *
- * @example
- * ```ts
- * import type { RemoteWorkerCapabilities } from 'weft/worker-protocol';
- *
- * const capabilities: RemoteWorkerCapabilities = { region: 'us-west', gpu: false };
- * ```
- */
-export type RemoteWorkerCapabilities = Readonly<Record<string, RemoteWorkerJsonValue>>;
-
-/**
- * Worker registration message sent immediately after opening a worker stream.
- *
- * @example
- * ```ts
- * import type { RegisterMessage } from 'weft/worker-protocol';
- *
- * const message: RegisterMessage = {
- *   type: 'register',
- *   protocolVersion: 1,
- *   workerId: 'worker-1',
- *   activities: ['sendEmail'],
- * };
- * ```
- */
-export type RegisterMessage = {
-  readonly type: 'register';
-  readonly protocolVersion: RemoteWorkerProtocolVersion;
-  readonly workerId: string;
-  readonly activities: readonly string[];
-  readonly concurrency?: number;
-  readonly queue?: string;
-  readonly deploymentName?: string;
-  readonly buildId?: string;
-  readonly runtimeVersion?: string;
-  readonly gitSha?: string;
-  readonly startedAt?: number;
-  readonly capabilities?: RemoteWorkerCapabilities;
+export {
+  REMOTE_WORKER_MAX_PROTOCOL_VERSION,
+  REMOTE_WORKER_MESSAGE_SCHEMAS,
+  REMOTE_WORKER_MIN_PROTOCOL_VERSION,
+  REMOTE_WORKER_PROTOCOL_JSON_SCHEMA,
+  REMOTE_WORKER_PROTOCOL_VERSION,
+  REMOTE_WORKER_SUPPORTED_PROTOCOL_VERSIONS,
+  isRemoteWorkerJsonValue,
+};
+export type {
+  CancelMessage,
+  CancelledTaskResultMessage,
+  CompletedTaskResultMessage,
+  FailedTaskResultMessage,
+  HeartbeatMessage,
+  ProtocolErrorMessage,
+  RegisterAckMessage,
+  RegisterErrorMessage,
+  RegisterMessage,
+  RemoteWorkerCapabilities,
+  RemoteWorkerJsonValue,
+  RemoteWorkerProtocolFailure,
+  RemoteWorkerProtocolParseResult,
+  RemoteWorkerProtocolVersion,
+  ShutdownMessage,
+  TaskMessage,
 };
 
 /**
- * Worker heartbeat message.
- *
- * @example
- * ```ts
- * import type { HeartbeatMessage } from 'weft/worker-protocol';
- *
- * const message: HeartbeatMessage = { type: 'heartbeat', workerId: 'worker-1' };
- * ```
- */
-export type HeartbeatMessage = {
-  readonly type: 'heartbeat';
-  readonly workerId: string;
-};
-
-/**
- * Successful activity result message.
- *
- * @example
- * ```ts
- * import type { CompletedTaskResultMessage } from 'weft/worker-protocol';
- *
- * const message: CompletedTaskResultMessage = {
- *   type: 'taskResult',
- *   operationId: 'op-1',
- *   status: 'completed',
- *   value: null,
- * };
- * ```
- */
-export type CompletedTaskResultMessage = {
-  readonly type: 'taskResult';
-  readonly operationId: string;
-  readonly status: 'completed';
-  readonly value: RemoteWorkerJsonValue;
-};
-
-/**
- * Failed activity result message.
- *
- * @example
- * ```ts
- * import type { FailedTaskResultMessage } from 'weft/worker-protocol';
- *
- * const message: FailedTaskResultMessage = {
- *   type: 'taskResult',
- *   operationId: 'op-1',
- *   status: 'failed',
- *   error: 'SMTP rejected the message',
- * };
- * ```
- */
-export type FailedTaskResultMessage = {
-  readonly type: 'taskResult';
-  readonly operationId: string;
-  readonly status: 'failed';
-  readonly error: string;
-};
-
-/**
- * Cancelled activity result message.
- *
- * @example
- * ```ts
- * import type { CancelledTaskResultMessage } from 'weft/worker-protocol';
- *
- * const message: CancelledTaskResultMessage = {
- *   type: 'taskResult',
- *   operationId: 'op-1',
- *   status: 'cancelled',
- *   error: 'Task cancelled',
- *   cancelled: true,
- * };
- * ```
- */
-export type CancelledTaskResultMessage = {
-  readonly type: 'taskResult';
-  readonly operationId: string;
-  readonly status: 'cancelled';
-  readonly error: string;
-  readonly cancelled?: true;
-};
-
-/**
- * Worker-to-server task result message.
+ * Worker-to-server task result message. Discriminated union over `status`.
  *
  * @example
  * ```ts
  * import type { TaskResultMessage } from 'weft/worker-protocol';
  *
  * const message: TaskResultMessage = {
- *   type: 'taskResult',
- *   operationId: 'op-1',
- *   status: 'completed',
- *   value: { ok: true },
+ *   type: 'taskResult', operationId: 'op-1', status: 'completed', value: { ok: true },
  * };
  * ```
  */
@@ -247,133 +111,6 @@ export type TaskResultMessage =
 export type WorkerToServerMessage = RegisterMessage | HeartbeatMessage | TaskResultMessage;
 
 /**
- * Registration acknowledgement sent after a worker is accepted.
- *
- * @example
- * ```ts
- * import type { RegisterAckMessage } from 'weft/worker-protocol';
- *
- * const message: RegisterAckMessage = {
- *   type: 'registerAck',
- *   protocolVersion: 1,
- *   workerId: 'worker-1',
- *   queue: 'default',
- *   activities: ['sendEmail'],
- *   concurrency: 10,
- * };
- * ```
- */
-export type RegisterAckMessage = {
-  readonly type: 'registerAck';
-  readonly protocolVersion: RemoteWorkerProtocolVersion;
-  readonly workerId: string;
-  readonly queue: string;
-  readonly activities: readonly string[];
-  readonly concurrency: number;
-};
-
-/**
- * Registration rejection sent before closing an unsupported worker stream.
- *
- * @example
- * ```ts
- * import type { RegisterErrorMessage } from 'weft/worker-protocol';
- *
- * const message: RegisterErrorMessage = {
- *   type: 'registerError',
- *   code: 'unsupported_protocol_version',
- *   message: 'Unsupported RemoteWorker protocol version: 2',
- *   supportedProtocolVersions: [1],
- *   requestedProtocolVersion: 2,
- * };
- * ```
- */
-export type RegisterErrorMessage = {
-  readonly type: 'registerError';
-  readonly code: 'invalid_registration' | 'unsupported_protocol_version';
-  readonly message: string;
-  readonly supportedProtocolVersions: readonly RemoteWorkerProtocolVersion[];
-  readonly requestedProtocolVersion?: number;
-};
-
-/**
- * Protocol-level error sent before closing a malformed worker stream.
- *
- * @example
- * ```ts
- * import type { ProtocolErrorMessage } from 'weft/worker-protocol';
- *
- * const message: ProtocolErrorMessage = {
- *   type: 'protocolError',
- *   code: 'invalid_message',
- *   message: 'taskResult.operationId must be a non-empty string',
- * };
- * ```
- */
-export type ProtocolErrorMessage = {
-  readonly type: 'protocolError';
-  readonly code:
-    | 'invalid_json'
-    | 'invalid_message'
-    | 'unknown_message_type'
-    | 'registration_required';
-  readonly message: string;
-};
-
-/**
- * Activity task dispatched by the server.
- *
- * @example
- * ```ts
- * import type { TaskMessage } from 'weft/worker-protocol';
- *
- * const message: TaskMessage = {
- *   type: 'task',
- *   operationId: 'op-1',
- *   activityName: 'sendEmail',
- *   input: { to: 'user@example.com' },
- * };
- * ```
- */
-export type TaskMessage = {
-  readonly type: 'task';
-  readonly operationId: string;
-  readonly activityName: string;
-  readonly input: RemoteWorkerJsonValue;
-  readonly attempt?: number;
-  readonly headers?: Readonly<Record<string, string>>;
-};
-
-/**
- * Activity cancellation request sent by the server.
- *
- * @example
- * ```ts
- * import type { CancelMessage } from 'weft/worker-protocol';
- *
- * const message: CancelMessage = { type: 'cancel', operationId: 'op-1' };
- * ```
- */
-export type CancelMessage = {
-  readonly type: 'cancel';
-  readonly operationId: string;
-};
-
-/**
- * Graceful worker shutdown request sent by the server.
- *
- * @example
- * ```ts
- * import type { ShutdownMessage } from 'weft/worker-protocol';
- *
- * const message: ShutdownMessage = { type: 'shutdown' };
- * ```
- */
-export type ShutdownMessage = {
-  readonly type: 'shutdown';
-};
-
-/**
  * Messages the server may send to a worker stream client.
  *
  * @example
@@ -391,255 +128,6 @@ export type ServerToWorkerMessage =
   | CancelMessage
   | ShutdownMessage;
 
-/**
- * Protocol parse failure with a machine-readable code.
- *
- * @example
- * ```ts
- * import type { RemoteWorkerProtocolFailure } from 'weft/worker-protocol';
- *
- * const failure: RemoteWorkerProtocolFailure = {
- *   code: 'invalid_message',
- *   message: 'Protocol message must be an object',
- * };
- * ```
- */
-export type RemoteWorkerProtocolFailure = {
-  readonly code: ProtocolErrorMessage['code'] | RegisterErrorMessage['code'];
-  readonly message: string;
-  readonly requestedProtocolVersion?: number;
-};
-
-/**
- * Result returned by protocol parser helpers.
- *
- * @example
- * ```ts
- * import type { RemoteWorkerProtocolParseResult, RegisterMessage } from 'weft/worker-protocol';
- *
- * const result: RemoteWorkerProtocolParseResult<RegisterMessage> = {
- *   ok: false,
- *   error: { code: 'invalid_registration', message: 'workerId is required' },
- * };
- * ```
- */
-export type RemoteWorkerProtocolParseResult<T> =
-  | { readonly ok: true; readonly message: T }
-  | { readonly ok: false; readonly error: RemoteWorkerProtocolFailure };
-
-type JsonSchemaObject = {
-  readonly [key: string]: unknown;
-};
-
-const jsonValueSchema: JsonSchemaObject = {
-  $ref: '#/$defs/jsonValue',
-};
-
-const jsonObjectSchema: JsonSchemaObject = {
-  type: 'object',
-  additionalProperties: jsonValueSchema,
-};
-
-const stringMapSchema: JsonSchemaObject = {
-  type: 'object',
-  additionalProperties: { type: 'string' },
-};
-
-const protocolVersionSchema: JsonSchemaObject = {
-  const: REMOTE_WORKER_PROTOCOL_VERSION,
-};
-
-/**
- * JSON Schema for every RemoteWorker protocol message, keyed by message type.
- *
- * @example
- * ```ts
- * import { REMOTE_WORKER_MESSAGE_SCHEMAS } from 'weft/worker-protocol';
- *
- * const registerSchema = REMOTE_WORKER_MESSAGE_SCHEMAS.register;
- * ```
- */
-export const REMOTE_WORKER_MESSAGE_SCHEMAS = {
-  register: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['type', 'protocolVersion', 'workerId', 'activities'],
-    properties: {
-      type: { const: 'register' },
-      protocolVersion: protocolVersionSchema,
-      workerId: { type: 'string', minLength: 1 },
-      activities: {
-        type: 'array',
-        items: { type: 'string', minLength: 1 },
-      },
-      concurrency: { type: 'number', minimum: 1, maximum: 1000 },
-      queue: { type: 'string', minLength: 1 },
-      deploymentName: { type: 'string', minLength: 1 },
-      buildId: { type: 'string', minLength: 1 },
-      runtimeVersion: { type: 'string', minLength: 1 },
-      gitSha: { type: 'string', minLength: 1 },
-      startedAt: { type: 'number' },
-      capabilities: jsonObjectSchema,
-    },
-  },
-  heartbeat: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['type', 'workerId'],
-    properties: {
-      type: { const: 'heartbeat' },
-      workerId: { type: 'string', minLength: 1 },
-    },
-  },
-  taskResult: {
-    oneOf: [
-      {
-        type: 'object',
-        additionalProperties: false,
-        required: ['type', 'operationId', 'status', 'value'],
-        properties: {
-          type: { const: 'taskResult' },
-          operationId: { type: 'string', minLength: 1 },
-          status: { const: 'completed' },
-          value: jsonValueSchema,
-        },
-      },
-      {
-        type: 'object',
-        additionalProperties: false,
-        required: ['type', 'operationId', 'status', 'error'],
-        properties: {
-          type: { const: 'taskResult' },
-          operationId: { type: 'string', minLength: 1 },
-          status: { const: 'failed' },
-          error: { type: 'string' },
-        },
-      },
-      {
-        type: 'object',
-        additionalProperties: false,
-        required: ['type', 'operationId', 'status', 'error'],
-        properties: {
-          type: { const: 'taskResult' },
-          operationId: { type: 'string', minLength: 1 },
-          status: { const: 'cancelled' },
-          error: { type: 'string' },
-          cancelled: { const: true },
-        },
-      },
-    ],
-  },
-  task: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['type', 'operationId', 'activityName', 'input'],
-    properties: {
-      type: { const: 'task' },
-      operationId: { type: 'string', minLength: 1 },
-      activityName: { type: 'string', minLength: 1 },
-      input: jsonValueSchema,
-      attempt: { type: 'number', minimum: 1 },
-      headers: stringMapSchema,
-    },
-  },
-  cancel: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['type', 'operationId'],
-    properties: {
-      type: { const: 'cancel' },
-      operationId: { type: 'string', minLength: 1 },
-    },
-  },
-  shutdown: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['type'],
-    properties: {
-      type: { const: 'shutdown' },
-    },
-  },
-  registerAck: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['type', 'protocolVersion', 'workerId', 'queue', 'activities', 'concurrency'],
-    properties: {
-      type: { const: 'registerAck' },
-      protocolVersion: protocolVersionSchema,
-      workerId: { type: 'string', minLength: 1 },
-      queue: { type: 'string', minLength: 1 },
-      activities: {
-        type: 'array',
-        items: { type: 'string', minLength: 1 },
-      },
-      concurrency: { type: 'number', minimum: 1, maximum: 1000 },
-    },
-  },
-  registerError: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['type', 'code', 'message', 'supportedProtocolVersions'],
-    properties: {
-      type: { const: 'registerError' },
-      code: { enum: ['invalid_registration', 'unsupported_protocol_version'] },
-      message: { type: 'string' },
-      supportedProtocolVersions: {
-        type: 'array',
-        items: protocolVersionSchema,
-      },
-      requestedProtocolVersion: { type: 'number' },
-    },
-  },
-  protocolError: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['type', 'code', 'message'],
-    properties: {
-      type: { const: 'protocolError' },
-      code: {
-        enum: ['invalid_json', 'invalid_message', 'unknown_message_type', 'registration_required'],
-      },
-      message: { type: 'string' },
-    },
-  },
-} as const satisfies Record<string, JsonSchemaObject>;
-
-/**
- * Complete RemoteWorker protocol JSON Schema document.
- *
- * @example
- * ```ts
- * import { REMOTE_WORKER_PROTOCOL_JSON_SCHEMA } from 'weft/worker-protocol';
- *
- * const schemaId = REMOTE_WORKER_PROTOCOL_JSON_SCHEMA.$id;
- * ```
- */
-export const REMOTE_WORKER_PROTOCOL_JSON_SCHEMA = {
-  $schema: 'https://json-schema.org/draft/2020-12/schema',
-  $id: 'https://weft.dev/schemas/remote-worker-protocol.v1.json',
-  title: 'Weft RemoteWorker Protocol v1',
-  oneOf: Object.keys(REMOTE_WORKER_MESSAGE_SCHEMAS).map((messageType) => ({
-    $ref: `#/$defs/messages/${messageType}`,
-  })),
-  $defs: {
-    jsonValue: {
-      oneOf: [
-        { type: 'null' },
-        { type: 'boolean' },
-        { type: 'number' },
-        { type: 'string' },
-        { type: 'array', items: { $ref: '#/$defs/jsonValue' } },
-        {
-          type: 'object',
-          additionalProperties: { $ref: '#/$defs/jsonValue' },
-        },
-      ],
-    },
-    jsonObject: jsonObjectSchema,
-    messages: REMOTE_WORKER_MESSAGE_SCHEMAS,
-  },
-} as const satisfies JsonSchemaObject;
-
 const WORKER_TO_SERVER_TYPES = new Set(['register', 'heartbeat', 'taskResult']);
 const SERVER_TO_WORKER_TYPES = new Set([
   'registerAck',
@@ -650,181 +138,58 @@ const SERVER_TO_WORKER_TYPES = new Set([
   'shutdown',
 ]);
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
+// --- parseRegisterMessage ---------------------------------------------------
 
-/**
- * Return true when a value can be represented by JSON on the worker protocol.
- *
- * @example
- * ```ts
- * import { isRemoteWorkerJsonValue } from 'weft/worker-protocol';
- *
- * const canSend = isRemoteWorkerJsonValue({ nested: ['ok'] });
- * ```
- */
-export function isRemoteWorkerJsonValue(value: unknown): value is RemoteWorkerJsonValue {
-  if (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'boolean' ||
-    (typeof value === 'number' && Number.isFinite(value))
-  ) {
-    return true;
+// `protocolVersion` carries `requestedProtocolVersion` on its failure path so
+// it cannot be expressed by the generic FieldSpec helper.
+function validateRegisterProtocolVersion(
+  value: unknown,
+): RemoteWorkerProtocolParseResult<RemoteWorkerProtocolVersion> {
+  if (value === REMOTE_WORKER_PROTOCOL_VERSION) {
+    return { ok: true, message: value as RemoteWorkerProtocolVersion };
   }
-
-  if (Array.isArray(value)) {
-    return value.every(isRemoteWorkerJsonValue);
-  }
-
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  return Object.values(value).every(isRemoteWorkerJsonValue);
+  const requestedProtocolVersion = isFiniteNumber(value) ? value : undefined;
+  return protocolFailure(
+    'unsupported_protocol_version',
+    `Unsupported RemoteWorker protocol version: ${String(value)}`,
+    requestedProtocolVersion,
+  );
 }
 
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
+// Field specs mirror the documented schema fields one-to-one, in schema order.
+// Reviewers can read this table top-to-bottom alongside the register schema.
+// prettier-ignore
+const REGISTER_FIELD_SPECS: readonly FieldSpec[] = [
+  ['workerId',       true,  isNonEmptyString,           'register.workerId must be a non-empty string'],
+  ['activities',     true,  isStringArray,              'register.activities must be an array of non-empty strings'],
+  ['concurrency',    false, isFiniteNumber,             'register.concurrency must be a finite number'],
+  ['queue',          false, isNonEmptyString,           'register.queue must be a non-empty string'],
+  ['deploymentName', false, isNonEmptyString,           'register.deploymentName must be a non-empty string when present'],
+  ['buildId',        false, isNonEmptyString,           'register.buildId must be a non-empty string when present'],
+  ['runtimeVersion', false, isNonEmptyString,           'register.runtimeVersion must be a non-empty string when present'],
+  ['gitSha',         false, isNonEmptyString,           'register.gitSha must be a non-empty string when present'],
+  ['startedAt',      false, isFiniteNumber,             'register.startedAt must be a finite number when present'],
+  ['capabilities',   false, isRemoteWorkerCapabilities, 'register.capabilities must be a JSON object when present'],
+];
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every(isNonEmptyString);
-}
-
-function isStringRecord(value: unknown): value is Record<string, string> {
-  if (!isRecord(value)) return false;
-  return Object.values(value).every((entry) => typeof entry === 'string');
-}
-
-function isRemoteWorkerCapabilities(value: unknown): value is RemoteWorkerCapabilities {
-  if (!isRecord(value)) return false;
-  return Object.values(value).every(isRemoteWorkerJsonValue);
-}
-
-function protocolFailure(
-  code: RemoteWorkerProtocolFailure['code'],
-  message: string,
-  requestedProtocolVersion?: number,
-): RemoteWorkerProtocolParseResult<never> {
-  return {
-    ok: false,
-    error: {
-      code,
-      message,
-      ...(requestedProtocolVersion !== undefined ? { requestedProtocolVersion } : {}),
-    },
-  };
-}
-
-// oxlint-disable-next-line complexity -- ID:worker-protocol-parse-register-message-complexity
 function parseRegisterMessage(
   record: Record<string, unknown>,
 ): RemoteWorkerProtocolParseResult<RegisterMessage> {
-  const protocolVersion = record['protocolVersion'];
-  const requestedProtocolVersion =
-    typeof protocolVersion === 'number' && Number.isFinite(protocolVersion)
-      ? protocolVersion
-      : undefined;
-  if (protocolVersion !== REMOTE_WORKER_PROTOCOL_VERSION) {
-    return protocolFailure(
-      'unsupported_protocol_version',
-      `Unsupported RemoteWorker protocol version: ${String(protocolVersion)}`,
-      requestedProtocolVersion,
-    );
-  }
+  const protocolVersion = validateRegisterProtocolVersion(record['protocolVersion']);
+  if (!protocolVersion.ok) return protocolVersion;
 
-  const workerId = record['workerId'];
-  if (!isNonEmptyString(workerId)) {
-    return protocolFailure('invalid_registration', 'register.workerId must be a non-empty string');
-  }
+  const fields = collectFields('invalid_registration', record, REGISTER_FIELD_SPECS);
+  if (!fields.ok) return fields.error;
 
-  const activities = record['activities'];
-  if (!isStringArray(activities)) {
-    return protocolFailure(
-      'invalid_registration',
-      'register.activities must be an array of non-empty strings',
-    );
-  }
-
-  const concurrency = record['concurrency'];
-  if (
-    concurrency !== undefined &&
-    (typeof concurrency !== 'number' || !Number.isFinite(concurrency))
-  ) {
-    return protocolFailure('invalid_registration', 'register.concurrency must be a finite number');
-  }
-
-  const queue = record['queue'];
-  if (queue !== undefined && !isNonEmptyString(queue)) {
-    return protocolFailure('invalid_registration', 'register.queue must be a non-empty string');
-  }
-
-  const deploymentName = record['deploymentName'];
-  if (deploymentName !== undefined && !isNonEmptyString(deploymentName)) {
-    return protocolFailure(
-      'invalid_registration',
-      'register.deploymentName must be a non-empty string when present',
-    );
-  }
-
-  const buildId = record['buildId'];
-  if (buildId !== undefined && !isNonEmptyString(buildId)) {
-    return protocolFailure(
-      'invalid_registration',
-      'register.buildId must be a non-empty string when present',
-    );
-  }
-
-  const runtimeVersion = record['runtimeVersion'];
-  if (runtimeVersion !== undefined && !isNonEmptyString(runtimeVersion)) {
-    return protocolFailure(
-      'invalid_registration',
-      'register.runtimeVersion must be a non-empty string when present',
-    );
-  }
-
-  const gitSha = record['gitSha'];
-  if (gitSha !== undefined && !isNonEmptyString(gitSha)) {
-    return protocolFailure(
-      'invalid_registration',
-      'register.gitSha must be a non-empty string when present',
-    );
-  }
-
-  const startedAt = record['startedAt'];
-  if (startedAt !== undefined && (typeof startedAt !== 'number' || !Number.isFinite(startedAt))) {
-    return protocolFailure(
-      'invalid_registration',
-      'register.startedAt must be a finite number when present',
-    );
-  }
-
-  const capabilities = record['capabilities'];
-  if (capabilities !== undefined && !isRemoteWorkerCapabilities(capabilities)) {
-    return protocolFailure(
-      'invalid_registration',
-      'register.capabilities must be a JSON object when present',
-    );
-  }
-
+  // Each predicate narrows its value to the matching RegisterMessage field
+  // type before collectFields stores it.
   return {
     ok: true,
     message: {
       type: 'register',
-      protocolVersion,
-      workerId,
-      activities,
-      ...(concurrency !== undefined ? { concurrency } : {}),
-      ...(queue !== undefined ? { queue } : {}),
-      ...(deploymentName !== undefined ? { deploymentName } : {}),
-      ...(buildId !== undefined ? { buildId } : {}),
-      ...(runtimeVersion !== undefined ? { runtimeVersion } : {}),
-      ...(gitSha !== undefined ? { gitSha } : {}),
-      ...(startedAt !== undefined ? { startedAt } : {}),
-      ...(capabilities !== undefined ? { capabilities } : {}),
-    },
+      protocolVersion: protocolVersion.message,
+      ...fields.values,
+    } as RegisterMessage,
   };
 }
 
@@ -839,7 +204,76 @@ function parseHeartbeatMessage(
   return { ok: true, message: { type: 'heartbeat', workerId } };
 }
 
-// oxlint-disable-next-line complexity -- ID:worker-protocol-parse-task-result-message-complexity
+// --- parseTaskResultMessage -------------------------------------------------
+//
+// `taskResult` is a discriminated union over status `completed | failed |
+// cancelled`. Variant dispatch uses a `satisfies Record<TaskResultStatus, …>`
+// lookup so adding a new variant becomes a compile-time error.
+
+type TaskResultStatus = TaskResultMessage['status'];
+
+function parseCompletedTaskResult(
+  operationId: string,
+  record: Record<string, unknown>,
+): RemoteWorkerProtocolParseResult<CompletedTaskResultMessage> {
+  const value = record['value'];
+  if (!isRemoteWorkerJsonValue(value)) {
+    return protocolFailure('invalid_message', 'completed taskResult.value must be valid JSON');
+  }
+  return { ok: true, message: { type: 'taskResult', operationId, status: 'completed', value } };
+}
+
+function parseFailedTaskResult(
+  operationId: string,
+  record: Record<string, unknown>,
+): RemoteWorkerProtocolParseResult<FailedTaskResultMessage> {
+  const error = record['error'];
+  if (typeof error !== 'string') {
+    return protocolFailure('invalid_message', 'failed taskResult.error must be a string');
+  }
+  return { ok: true, message: { type: 'taskResult', operationId, status: 'failed', error } };
+}
+
+function parseCancelledTaskResult(
+  operationId: string,
+  record: Record<string, unknown>,
+): RemoteWorkerProtocolParseResult<CancelledTaskResultMessage> {
+  const error = record['error'];
+  if (typeof error !== 'string') {
+    return protocolFailure('invalid_message', 'cancelled taskResult.error must be a string');
+  }
+  const cancelled = record['cancelled'];
+  if (cancelled !== undefined && cancelled !== true) {
+    return protocolFailure('invalid_message', 'taskResult.cancelled must be true when present');
+  }
+  return {
+    ok: true,
+    message: {
+      type: 'taskResult',
+      operationId,
+      status: 'cancelled',
+      error,
+      ...(cancelled === true ? { cancelled } : {}),
+    },
+  };
+}
+
+const TASK_RESULT_VARIANT_PARSERS = {
+  completed: parseCompletedTaskResult,
+  failed: parseFailedTaskResult,
+  cancelled: parseCancelledTaskResult,
+} as const satisfies Record<
+  TaskResultStatus,
+  (
+    operationId: string,
+    record: Record<string, unknown>,
+  ) => RemoteWorkerProtocolParseResult<TaskResultMessage>
+>;
+
+function isTaskResultStatus(value: unknown): value is TaskResultStatus {
+  return value === 'completed' || value === 'failed' || value === 'cancelled';
+}
+
 function parseTaskResultMessage(
   record: Record<string, unknown>,
 ): RemoteWorkerProtocolParseResult<TaskResultMessage> {
@@ -849,81 +283,35 @@ function parseTaskResultMessage(
   }
 
   const status = record['status'];
-  if (status === 'completed') {
-    const value = record['value'];
-    if (!isRemoteWorkerJsonValue(value)) {
-      return protocolFailure('invalid_message', 'completed taskResult.value must be valid JSON');
-    }
-    return { ok: true, message: { type: 'taskResult', operationId, status, value } };
+  if (!isTaskResultStatus(status)) {
+    return protocolFailure(
+      'invalid_message',
+      'taskResult.status must be completed, failed, or cancelled',
+    );
   }
 
-  if (status === 'failed' || status === 'cancelled') {
-    const error = record['error'];
-    if (typeof error !== 'string') {
-      return protocolFailure('invalid_message', `${status} taskResult.error must be a string`);
-    }
-    if (status === 'cancelled') {
-      const cancelled = record['cancelled'];
-      if (cancelled !== undefined && cancelled !== true) {
-        return protocolFailure('invalid_message', 'taskResult.cancelled must be true when present');
-      }
-      return {
-        ok: true,
-        message: {
-          type: 'taskResult',
-          operationId,
-          status,
-          error,
-          ...(cancelled === true ? { cancelled } : {}),
-        },
-      };
-    }
-    return { ok: true, message: { type: 'taskResult', operationId, status, error } };
-  }
-
-  return protocolFailure(
-    'invalid_message',
-    'taskResult.status must be completed, failed, or cancelled',
-  );
+  return TASK_RESULT_VARIANT_PARSERS[status](operationId, record);
 }
 
-// oxlint-disable-next-line complexity -- ID:worker-protocol-parse-task-message-complexity
+// --- parseTaskMessage -------------------------------------------------------
+
+const TASK_FIELD_SPECS: readonly FieldSpec[] = [
+  ['operationId', true, isNonEmptyString, 'task.operationId must be a non-empty string'],
+  ['activityName', true, isNonEmptyString, 'task.activityName must be a non-empty string'],
+  ['input', true, isRemoteWorkerJsonValue, 'task.input must be valid JSON'],
+  ['attempt', false, isFiniteNumber, 'task.attempt must be a finite number'],
+  ['headers', false, isStringRecord, 'task.headers must be a string map'],
+];
+
 function parseTaskMessage(
   record: Record<string, unknown>,
 ): RemoteWorkerProtocolParseResult<TaskMessage> {
-  const operationId = record['operationId'];
-  const activityName = record['activityName'];
-  const input = record['input'];
-  const attempt = record['attempt'];
-  const headers = record['headers'];
+  const fields = collectFields('invalid_message', record, TASK_FIELD_SPECS);
+  if (!fields.ok) return fields.error;
 
-  if (!isNonEmptyString(operationId)) {
-    return protocolFailure('invalid_message', 'task.operationId must be a non-empty string');
-  }
-  if (!isNonEmptyString(activityName)) {
-    return protocolFailure('invalid_message', 'task.activityName must be a non-empty string');
-  }
-  if (!isRemoteWorkerJsonValue(input)) {
-    return protocolFailure('invalid_message', 'task.input must be valid JSON');
-  }
-  if (attempt !== undefined && (typeof attempt !== 'number' || !Number.isFinite(attempt))) {
-    return protocolFailure('invalid_message', 'task.attempt must be a finite number');
-  }
-  if (headers !== undefined && !isStringRecord(headers)) {
-    return protocolFailure('invalid_message', 'task.headers must be a string map');
-  }
-
-  return {
-    ok: true,
-    message: {
-      type: 'task',
-      operationId,
-      activityName,
-      input,
-      ...(attempt !== undefined ? { attempt } : {}),
-      ...(headers !== undefined ? { headers } : {}),
-    },
-  };
+  // Each predicate narrows its value to the matching TaskMessage field type
+  // before collectFields stores it.
+  return { ok: true, message: { type: 'task', ...fields.values } as TaskMessage };
 }
 
 function parseCancelMessage(
@@ -995,25 +383,17 @@ function parseRegisterErrorMessage(
   ) {
     return protocolFailure('invalid_message', 'registerError.supportedProtocolVersions is invalid');
   }
-  if (
-    requestedProtocolVersion !== undefined &&
-    (typeof requestedProtocolVersion !== 'number' || !Number.isFinite(requestedProtocolVersion))
-  ) {
+  if (requestedProtocolVersion !== undefined && !isFiniteNumber(requestedProtocolVersion)) {
     return protocolFailure(
       'invalid_message',
       'registerError.requestedProtocolVersion must be a finite number',
     );
   }
 
+  const optional = requestedProtocolVersion !== undefined ? { requestedProtocolVersion } : {};
   return {
     ok: true,
-    message: {
-      type: 'registerError',
-      code,
-      message,
-      supportedProtocolVersions,
-      ...(requestedProtocolVersion !== undefined ? { requestedProtocolVersion } : {}),
-    },
+    message: { type: 'registerError', code, message, supportedProtocolVersions, ...optional },
   };
 }
 
@@ -1039,11 +419,9 @@ function parseProtocolErrorMessage(
 
 /**
  * Parse and validate a worker-to-server protocol message.
- *
  * @example
  * ```ts
  * import { parseWorkerToServerMessage } from 'weft/worker-protocol';
- *
  * const result = parseWorkerToServerMessage({ type: 'heartbeat', workerId: 'worker-1' });
  * ```
  */
@@ -1076,11 +454,9 @@ export function parseWorkerToServerMessage(
 
 /**
  * Parse and validate a server-to-worker protocol message.
- *
  * @example
  * ```ts
  * import { parseServerToWorkerMessage } from 'weft/worker-protocol';
- *
  * const result = parseServerToWorkerMessage({ type: 'shutdown' });
  * ```
  */

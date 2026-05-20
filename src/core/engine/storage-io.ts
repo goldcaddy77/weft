@@ -10,7 +10,8 @@ import {
   createScheduleTimerId,
   decodeWorkflowStartHeaders,
 } from './state-utilities.ts';
-import { decodeScheduleState, decodeWorkflowState } from './validation.ts';
+import { decodeWorkflowState } from './validation.ts';
+import { decodeScheduleState } from './validation/schedule.ts';
 
 /** Run a workflow-state write after any earlier write for that workflow has settled. */
 export async function runSerializedWorkflowStateWrite<TResult>(

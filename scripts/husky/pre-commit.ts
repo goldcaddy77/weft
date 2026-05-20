@@ -114,7 +114,19 @@ try {
   ok = false;
 }
 
-// 6) JSDoc manifest audit (only when source/scripts/package.json changed)
+// 6) oxlint-disable ceiling + rationale check (mirrors the gate in `bun run lint`)
+info('Running oxlint-disable check…');
+try {
+  await $`bun scripts/check-lint-disables.ts`;
+  success('oxlint-disable check passed');
+} catch {
+  error(
+    'oxlint-disable check failed — see scripts/check-lint-disables.ts and the Lint suppression policy in CLAUDE.md.',
+  );
+  ok = false;
+}
+
+// 7) JSDoc manifest audit (only when source/scripts/package.json changed)
 const stagedTouchesPublicSurface = staged.some(
   (file) =>
     file.startsWith('src/') ||
@@ -141,7 +153,7 @@ if (stagedTouchesPublicSurface) {
   info('Skipping JSDoc audit (no public surface changes staged)');
 }
 
-// 7) lint-staged (format staged files; always last)
+// 8) lint-staged (format staged files; always last)
 info('Running lint-staged…');
 try {
   await $`bunx lint-staged`;
