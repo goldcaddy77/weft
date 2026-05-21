@@ -7,6 +7,7 @@ import { StartWorkflowValidationError } from '../core/start-workflow-validation.
 import { QuotaExceededError } from '../core/tenant-quotas.ts';
 import { tenantFromInputField } from '../core/tenant.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types.ts';
 import { UpdateCoordinator, WorkflowTerminalError } from '../core/updates.ts';
 import { encodeStorageKeyComponent, KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -61,19 +62,103 @@ async function waitForWorkflowStatus(
   );
 }
 
-async function* waitingWorkflow(ctx: WorkflowContext, input: unknown) {
+// ---------------------------------------------------------------------------
+// Module-scope workflow definitions used across handler tests.
+// ---------------------------------------------------------------------------
+
+const echoWorkflow = workflow({ name: 'echo' })
+  .searchAttributes({ bucket: { type: 'string' } })
+  .execute(async function* (_ctx: WorkflowContext, input: unknown) {
+    return input;
+  });
+
+const waitingWorkflow = workflow({ name: 'waiting' }).execute(async function* (
+  ctx: WorkflowContext,
+  input: unknown,
+) {
   const signal = yield* ctx.waitForSignal<string>('continue');
   return `${String(input)}:${signal}`;
-}
+});
+
+const errorOnStartWorkflow = workflow({ name: 'error-on-start' }).execute(async function* () {
+  throw new Error('some internal error');
+});
+
+const failingWorkflow = workflow({ name: 'failing' }).execute(async function* () {
+  throw new Error('workflow failed');
+});
+
+const failingNoMessageWorkflow = workflow({ name: 'failing-no-msg' }).execute(async function* () {
+  throw new Error('deliberate');
+});
+
+const cancellableWorkflow = workflow({ name: 'cancellable' }).execute(async function* (
+  ctx: WorkflowContext,
+) {
+  yield* ctx.waitForSignal('never');
+  return 'nope';
+});
+
+const longRunningWorkflow = workflow({ name: 'long-running' }).execute(async function* (
+  ctx: WorkflowContext,
+) {
+  yield* ctx.waitForSignal('never-arrives');
+  return 'done';
+});
+
+const longRunningNeverSignalWorkflow = workflow({ name: 'long-running' }).execute(async function* (
+  ctx: WorkflowContext,
+) {
+  yield* ctx.waitForSignal('never');
+  return 'done';
+});
+
+const erroringWorkflow = workflow({ name: 'erroring' }).execute(async function* (
+  ctx: WorkflowContext,
+) {
+  yield* ctx.waitForSignal('never');
+  return 'done';
+});
+
+const queryableWorkflow = workflow({ name: 'queryable' }).execute(async function* (
+  ctx: WorkflowContext,
+) {
+  let counter = 42;
+  ctx.expose({ counter: () => counter });
+  yield* ctx.waitForSignal('done');
+  return counter;
+});
+
+const queryableSimpleWorkflow = workflow({ name: 'queryable' }).execute(async function* (
+  ctx: WorkflowContext,
+) {
+  ctx.expose({ counter: () => 1 });
+  yield* ctx.waitForSignal('done');
+  return 0;
+});
+
+const noopWorkflow = workflow({ name: 'noop' }).execute(async function* () {
+  return null;
+});
+
+const forkableWorkflow = workflow({ name: 'forkable' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: unknown,
+) {
+  return input;
+});
+
+const slowCleanupWorkflow = workflow({
+  name: 'slow-cleanup',
+  retention: { completed: '1h' },
+}).execute(async function* () {
+  return 'done';
+});
 
 function createEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
-
-  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-    return input;
-  });
-
+  engine.register(echoWorkflow);
   return engine;
 }
 
@@ -83,11 +168,7 @@ function createTenantAwareEngine(): Engine {
     storage,
     tenantResolver: tenantFromInputField('tenantId'),
   });
-
-  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-    return input;
-  });
-
+  engine.register(echoWorkflow);
   return engine;
 }
 
@@ -159,17 +240,8 @@ describe('handleRequest', () => {
         completed: '5m',
       },
     });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
-    engine.register('slow-cleanup', {
-      handler: async function* () {
-        return 'done';
-      },
-      retention: {
-        completed: '1h',
-      },
-    });
+    engine.register(echoWorkflow);
+    engine.register(slowCleanupWorkflow);
 
     const response = await handleRequest(request('GET', '/v1/retention'), engine);
 
@@ -749,9 +821,7 @@ describe('handleRequest', () => {
         maxWorkflowCreationRate: { count: 5, window: '1m' },
       },
     });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
 
     await handleRequest(
       request('POST', '/v1/workflows', { type: 'echo', input: { tenantId: 'acme', payload: 'x' } }),
@@ -783,9 +853,7 @@ describe('handleRequest', () => {
       storage: new MemoryStorage(),
       tenantResolver: tenantFromInputField('tenantId'),
     });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
 
     // Blank tenantId validation requires the request to pass auth first.
     expect(
@@ -836,9 +904,7 @@ describe('handleRequest', () => {
       storage: new MemoryStorage(),
       tenantResolver: tenantFromInputField('tenantId'),
     });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
 
     const originalGetQuotaUsage = engine.getQuotaUsage.bind(engine);
     engine.getQuotaUsage = async () => {
@@ -865,9 +931,7 @@ describe('handleRequest', () => {
       storage: new MemoryStorage(),
       tenantResolver: tenantFromInputField('tenantId'),
     });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
 
     const response = await handleRequest(
       request('GET', '/v1/tenants/%20%20/quota'),
@@ -1200,7 +1264,7 @@ describe('handleRequest', () => {
   describe('bulk workflow routes', () => {
     it('POST /v1/workflows/bulk/cancel returns counts and cancels matching workflows', async () => {
       engine = createEngine();
-      engine.register('waiting', waitingWorkflow);
+      engine.register(waitingWorkflow);
 
       await engine.start('waiting', 'one', { id: 'bulk-route-cancel-a', tags: ['bulk-route'] });
       await engine.start('waiting', 'two', { id: 'bulk-route-cancel-b', tags: ['bulk-route'] });
@@ -1254,7 +1318,7 @@ describe('handleRequest', () => {
 
     it('POST /v1/workflows/bulk/signal returns counts and signals matching workflows', async () => {
       engine = createEngine();
-      engine.register('waiting', waitingWorkflow);
+      engine.register(waitingWorkflow);
 
       const firstHandle = await engine.start('waiting', 'first', {
         id: 'bulk-route-signal-a',
@@ -1319,7 +1383,7 @@ describe('handleRequest', () => {
 
     it('DELETE /v1/workflows/bulk returns 422 when running workflows would match', async () => {
       engine = createEngine();
-      engine.register('waiting', waitingWorkflow);
+      engine.register(waitingWorkflow);
 
       const completedHandle = await engine.start('echo', 'done', {
         id: 'bulk-route-delete-completed',
@@ -1975,9 +2039,7 @@ describe('handleRequest', () => {
     engine = createEngine();
 
     // Register a workflow that throws a generic (non-matching) error on start
-    engine.register('error-on-start', async function* () {
-      throw new Error('some internal error');
-    });
+    engine.register(errorOnStartWorkflow);
 
     // The 500 path is for errors that don't match "No workflow registered" or "already exists".
     // We can trigger it by making the engine throw something unexpected.
@@ -2171,13 +2233,9 @@ describe('handleRequest', () => {
     const storage = new MemoryStorage();
     engine = new Engine({ storage });
 
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
 
-    engine.register('failing', async function* () {
-      throw new Error('workflow failed');
-    });
+    engine.register(failingWorkflow);
 
     const handle = await engine.start('failing', null);
     // Wait for the failure to be recorded
@@ -2198,13 +2256,9 @@ describe('handleRequest', () => {
     const storage = new MemoryStorage();
     engine = new Engine({ storage });
 
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
 
-    engine.register('failing-no-msg', async function* () {
-      throw new Error('deliberate');
-    });
+    engine.register(failingNoMessageWorkflow);
 
     const handle = await engine.start('failing-no-msg', null);
     await handle.result().catch(() => {});
@@ -2230,14 +2284,9 @@ describe('handleRequest', () => {
     const storage = new MemoryStorage();
     engine = new Engine({ storage });
 
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
 
-    engine.register('cancellable', async function* (ctx: WorkflowContext) {
-      yield* ctx.waitForSignal('never');
-      return 'nope';
-    });
+    engine.register(cancellableWorkflow);
 
     const handle = await engine.start('cancellable', null);
     const resultPromise = handle.result().catch(() => {});
@@ -2260,13 +2309,7 @@ describe('handleRequest', () => {
   it('GET /v1/workflows/:id/result returns 408 when running workflow times out', async () => {
     engine = createEngine();
 
-    engine.register(
-      'long-running',
-      async function* (ctx: import('../core/types.ts').WorkflowContext) {
-        yield* ctx.waitForSignal('never-arrives');
-        return 'done';
-      },
-    );
+    engine.register(longRunningWorkflow);
 
     const startResponse = await handleRequest(
       request('POST', '/v1/workflows', { type: 'long-running', input: null }),
@@ -2297,10 +2340,7 @@ describe('handleRequest', () => {
   it('GET /v1/workflows/:id/result returns 500 when running workflow result rejects', async () => {
     engine = createEngine();
 
-    engine.register('erroring', async function* (ctx: import('../core/types.ts').WorkflowContext) {
-      yield* ctx.waitForSignal('never');
-      return 'done';
-    });
+    engine.register(erroringWorkflow);
 
     const startResponse = await handleRequest(
       request('POST', '/v1/workflows', { type: 'erroring', input: null }),
@@ -2335,9 +2375,7 @@ describe('handleRequest', () => {
     it('creates update and returns result when response is written quickly', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
       // Start a background poller that watches for new update requests
       // and immediately writes a response for them (simulating workflow processing)
@@ -2378,9 +2416,7 @@ describe('handleRequest', () => {
     it('returns 408 when update times out', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
       // No response is ever written, so the coordinator will time out
       const response = await handleRequest(
@@ -2429,9 +2465,7 @@ describe('handleRequest', () => {
     it('returns 202 pending when update has no response', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
       // Create an update request but no response
       const coordinator = new UpdateCoordinator(storage);
@@ -2447,9 +2481,7 @@ describe('handleRequest', () => {
     it('returns 200 completed when update response exists', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
       const coordinator = new UpdateCoordinator(storage);
       const updateId = await coordinator.createRequest('wf-poll-2', 'setName', { name: 'Bob' });
@@ -2475,9 +2507,7 @@ describe('handleRequest', () => {
     it('returns attributes for a workflow', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
       const attributes = { color: 'blue', count: 42 };
       await storage.put(KEYS.attribute('wf-attr-1'), encode(attributes));
@@ -2513,9 +2543,7 @@ describe('handleRequest', () => {
     it('sets attributes on a workflow', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
       const response = await handleRequest(
         request('PATCH', '/v1/workflows/wf-patch-1/attributes', {
@@ -2539,9 +2567,7 @@ describe('handleRequest', () => {
     it('merges with existing attributes', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
       // Write initial attributes
       await storage.put(KEYS.attribute('wf-merge-1'), encode({ color: 'red', size: 'large' }));
@@ -2681,9 +2707,7 @@ describe('handleRequest', () => {
     it('returns cached result for duplicate idempotency key', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
       const coordinator = new UpdateCoordinator(storage);
 
@@ -2724,9 +2748,7 @@ describe('handleRequest', () => {
     it('passes idempotency key through to coordinator when no cached result exists', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
       const coordinator = new UpdateCoordinator(storage);
       const control = { active: true };
@@ -2768,9 +2790,7 @@ describe('handleRequest', () => {
     it('returns 422 when update response contains an error', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
       const coordinator = new UpdateCoordinator(storage);
       const control = { active: true };
@@ -2809,9 +2829,7 @@ describe('handleRequest', () => {
     it('returns 500 when update throws a non-timeout error', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
       // Override storage.get to throw during waitForResponse polling
       const originalGet = storage.get.bind(storage);
@@ -2868,9 +2886,7 @@ describe('handleRequest', () => {
     it('handles missing attributes field gracefully by using empty object', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
       const response = await handleRequest(
         request('PATCH', '/v1/workflows/wf-no-attr/attributes', {}),
@@ -3056,9 +3072,7 @@ describe('handleRequest', () => {
     it('returns ordered events for an existing workflow', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
       const startResponse = await handleRequest(
         request('POST', '/v1/workflows', { type: 'echo', input: 'hello' }),
@@ -3119,9 +3133,7 @@ describe('handleRequest', () => {
     it('returns reviews that have been stored', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
       // Manually insert a review into storage
       const review = {
@@ -3150,9 +3162,7 @@ describe('handleRequest', () => {
     it('supports completed-status and workflow-id filters', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
       await storage.put(
         KEYS.review('wf-completed-filter', 'rev-completed-filter'),
@@ -3348,9 +3358,7 @@ describe('handleRequest', () => {
     it('resolves an existing review via direct key lookup when workflowId is provided', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
       // Insert a review using the canonical key format
       const review = {
@@ -3395,9 +3403,7 @@ describe('handleRequest', () => {
     it('falls back to scan when workflowId is not provided', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
       const review = {
         reviewId: 'rev-3',
@@ -3435,9 +3441,7 @@ describe('handleRequest', () => {
     it('returns review details when found', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
       const review = {
         reviewId: 'rev-detail',
@@ -3482,15 +3486,7 @@ describe('handleRequest', () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
 
-      engine.register(
-        'queryable',
-        async function* (ctx: import('../core/types.ts').WorkflowContext) {
-          let counter = 42;
-          ctx.expose({ counter: () => counter });
-          yield* ctx.waitForSignal('done');
-          return counter;
-        },
-      );
+      engine.register(queryableWorkflow);
 
       const handle = await engine.start('queryable', null);
       await flush();
@@ -3509,14 +3505,7 @@ describe('handleRequest', () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
 
-      engine.register(
-        'queryable',
-        async function* (ctx: import('../core/types.ts').WorkflowContext) {
-          ctx.expose({ counter: () => 1 });
-          yield* ctx.waitForSignal('done');
-          return 0;
-        },
-      );
+      engine.register(queryableSimpleWorkflow);
 
       const handle = await engine.start('queryable', null);
       await flush();
@@ -3679,17 +3668,9 @@ describe('handleRequest', () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
 
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-        return input;
-      });
+      engine.register(echoWorkflow);
 
-      engine.register(
-        'long-running',
-        async function* (ctx: import('../core/types.ts').WorkflowContext) {
-          yield* ctx.waitForSignal('never');
-          return 'done';
-        },
-      );
+      engine.register(longRunningNeverSignalWorkflow);
 
       const handle = await engine.start('long-running', null);
       const resultPromise = handle.result().catch(() => {});
@@ -4079,9 +4060,7 @@ describe('handleRequest', () => {
   it('GET /v1/workflows/:id/checkpoints returns checkpoint list', async () => {
     const storage = new MemoryStorage();
     engine = new Engine({ storage, checkpointHistory: 10 });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
 
     // Pre-seed checkpoint history entries
     const { serializeCheckpoint } = await import('../core/checkpoint.ts');
@@ -4129,9 +4108,7 @@ describe('handleRequest', () => {
   it('GET /v1/workflows/:id/checkpoints/:step returns checkpoint state', async () => {
     const storage = new MemoryStorage();
     engine = new Engine({ storage, checkpointHistory: 10 });
-    engine.register('noop', async function* () {
-      return null;
-    });
+    engine.register(noopWorkflow);
 
     const { serializeCheckpoint } = await import('../core/checkpoint.ts');
     const { CURRENT_CHECKPOINT_SCHEMA_VERSION } = await import('../core/types.ts');
@@ -4219,19 +4196,20 @@ describe('handleRequest', () => {
       return { cardNumber: '4111111111111111', cartId, orderId: 'ord-42' };
     }
 
-    engine.register('timeline-http', {
+    const timelineHttpWorkflow = workflow({
+      name: 'timeline-http',
       version: '1.2.3',
-      handler: async function* (ctx: WorkflowContext) {
-        const cart = yield* ctx.run(loadCart, {
-          cartId: 'cart-1',
-          token: 'Bearer inbound-secret',
-        });
-        return yield* ctx.run(submitOrder, {
-          cardNumber: '4111 1111 1111 1111',
-          cartId: cart.cartId,
-        });
-      },
+    }).execute(async function* (ctx: WorkflowContext) {
+      const cart = yield* ctx.run(loadCart, {
+        cartId: 'cart-1',
+        token: 'Bearer inbound-secret',
+      });
+      return yield* ctx.run(submitOrder, {
+        cardNumber: '4111 1111 1111 1111',
+        cartId: cart.cartId,
+      });
     });
+    engine.register(timelineHttpWorkflow);
 
     const handle = await engine.start('timeline-http', null, { id: 'wf-http-timeline' });
     await handle.result();
@@ -4272,13 +4250,14 @@ describe('handleRequest', () => {
       return { stage: 'second' as const };
     }
 
-    engine.register('replay-http', {
+    const replayHttpWorkflow = workflow({
+      name: 'replay-http',
       version: '4.0.0',
-      handler: async function* (ctx: WorkflowContext) {
-        yield* ctx.run(firstStage);
-        return yield* ctx.run(secondStage);
-      },
+    }).execute(async function* (ctx: WorkflowContext) {
+      yield* ctx.run(firstStage);
+      return yield* ctx.run(secondStage);
     });
+    engine.register(replayHttpWorkflow);
 
     const handle = await engine.start('replay-http', null, { id: 'wf-http-replay' });
     await handle.result();
@@ -4331,9 +4310,7 @@ describe('handleRequest', () => {
   it('POST /v1/workflows/:id/fork returns 201 with the new workflow id', async () => {
     engine = createEngine();
 
-    engine.register('forkable', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(forkableWorkflow);
 
     const original = await engine.start('forkable', 'hello', { id: 'wf-source' });
     await original.result();
@@ -4391,9 +4368,7 @@ describe('handleRequest', () => {
   it('POST /v1/workflows/:id/fork returns 400 when fromStep does not exist', async () => {
     engine = createEngine();
 
-    engine.register('forkable', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(forkableWorkflow);
 
     const original = await engine.start('forkable', 'hello', { id: 'wf-source' });
     await original.result();

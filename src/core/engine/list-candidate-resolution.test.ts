@@ -6,6 +6,19 @@ import { decode, encode } from '../codec.ts';
 import { Engine } from '../engine.ts';
 import { buildIndexOperations } from '../search-attributes.ts';
 import type { WorkflowState } from '../types.ts';
+import { workflow } from '../types/workflow-function.ts';
+
+const applicationFailureWorkflow = workflow({ name: 'application-failure' }).execute(
+  async function* () {
+    throw new Error('application failed');
+  },
+);
+const resourceFailureWorkflow = workflow({ name: 'resource-failure' }).execute(async function* () {
+  throw resourceFailure();
+});
+const timeoutFailureWorkflow = workflow({ name: 'timeout-failure' }).execute(async function* () {
+  throw timeoutFailure();
+});
 
 class ScanCountingStorage extends MemoryStorage {
   readonly scanCounts = new Map<string, number>();
@@ -37,15 +50,9 @@ function timeoutFailure(): Error {
 }
 
 async function createFailedWorkflows(engine: Engine): Promise<void> {
-  engine.register('application-failure', async function* () {
-    throw new Error('application failed');
-  });
-  engine.register('resource-failure', async function* () {
-    throw resourceFailure();
-  });
-  engine.register('timeout-failure', async function* () {
-    throw timeoutFailure();
-  });
+  engine.register(applicationFailureWorkflow);
+  engine.register(resourceFailureWorkflow);
+  engine.register(timeoutFailureWorkflow);
 
   const applicationHandle = await engine.start('application-failure', null, {
     id: 'application-1',
