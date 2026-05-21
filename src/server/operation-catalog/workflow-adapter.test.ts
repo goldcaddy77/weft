@@ -9,11 +9,25 @@ import {
 import { StartWorkflowValidationError } from '../../core/start-workflow-validation.ts';
 import { QuotaExceededError } from '../../core/tenant-quotas.ts';
 import type { DefinitionSchema, WorkflowContext, WorkflowRegistration } from '../../core/types.ts';
+import { workflow } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { generateOpenRpcDocument } from '../openrpc.ts';
 import { anonymousPrincipal, principalFromApiKey } from '../principal.ts';
 import { createOperationRegistry, executeOperation } from './index.ts';
 import { catalogWorkflow } from './workflow-adapter.ts';
+
+const checkoutWorkflow = workflow({ name: 'checkout' }).execute(async function* (
+  _context: WorkflowContext,
+  input: unknown,
+) {
+  return { completed: true, input };
+});
+const looseWorkflowWorkflow = workflow({ name: 'loose-workflow' }).execute(async function* (
+  _context: WorkflowContext,
+  input: unknown,
+) {
+  return input;
+});
 
 type CheckoutInput = {
   orderId: string;
@@ -57,9 +71,7 @@ function createEngine(): Engine {
 }
 
 function registerCheckoutWorkflow(engine: Engine): void {
-  engine.register('checkout', async function* (_context: WorkflowContext, input: unknown) {
-    return { completed: true, input };
-  });
+  engine.register(checkoutWorkflow);
 }
 
 function checkoutWorkflowRegistration() {
@@ -213,9 +225,7 @@ describe('catalogWorkflow', () => {
 
   it('defaults to a passthrough empty input schema when omitted', async () => {
     const engine = createEngine();
-    engine.register('loose-workflow', async function* (_context: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(looseWorkflowWorkflow);
     const registry = createOperationRegistry([
       catalogWorkflow<Record<string, unknown>>({
         name: 'weft.workflows.loose.start',
@@ -252,7 +262,18 @@ describe('catalogWorkflow', () => {
     const registration: WorkflowRegistration<CheckoutInput, { completed: true }> =
       checkoutWorkflowRegistration();
     const engine = createEngine();
-    engine.register('checkout', registration);
+    engine.register(
+      workflow({
+        name: 'checkout',
+        ...(registration.description === undefined
+          ? {}
+          : { description: registration.description }),
+        ...(registration.tags === undefined ? {} : { tags: registration.tags }),
+        ...(registration.inputSchema === undefined
+          ? {}
+          : { inputSchema: registration.inputSchema }),
+      }).execute(registration.handler),
+    );
     const registry = createOperationRegistry([
       catalogWorkflow<CheckoutInput>({
         name: 'weft.workflows.checkout.start',

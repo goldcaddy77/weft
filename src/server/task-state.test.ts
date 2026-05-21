@@ -4,6 +4,7 @@ import { sleepForTesting, waitForCondition } from '../testing/fake-timers.ts';
 import { decode, encode } from '../core/codec.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import type { WeftServer } from './index.ts';
@@ -18,6 +19,13 @@ import {
   transitionInflightToResolved,
   transitionQueuedToInflight,
 } from './task-state.ts';
+
+const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: unknown,
+) {
+  return input;
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -66,9 +74,7 @@ class GetCountingStorage extends MemoryStorage {
 function createEngine(storage?: MemoryStorage): Engine {
   const s = storage ?? new MemoryStorage();
   const engine = new Engine({ storage: s });
-  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-    return input;
-  });
+  engine.register(echoWorkflow);
   return engine;
 }
 

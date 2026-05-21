@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { Engine } from '../core/engine.ts';
 import { tenantFromInputField } from '../core/tenant.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import type { AuthConfig, JWTConfig, JWTPayload } from './authentication.ts';
 import {
@@ -15,6 +16,13 @@ import {
 } from './authentication.ts';
 import type { WeftServer } from './index.ts';
 import { serve } from './index.ts';
+
+const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: unknown,
+) {
+  return input;
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -30,9 +38,7 @@ function makeRequest(url: string, headers: Record<string, string> = {}): Request
 function createEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
-  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-    return input;
-  });
+  engine.register(echoWorkflow);
   return engine;
 }
 
@@ -845,9 +851,7 @@ describe('serve() with authentication', () => {
         maxWorkflowCreationRate: { count: 5, window: '1m' },
       },
     });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
     server = serve({ engine, port: 0, auth: { jwt: { secret: TEST_SECRET } } });
 
     const token = await signJWT(
@@ -886,9 +890,7 @@ describe('serve() with authentication', () => {
         maxConcurrentWorkflows: 2,
       },
     });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
     server = serve({ engine, port: 0, auth: { jwt: { secret: TEST_SECRET } } });
 
     const startToken = await signJWT(
@@ -928,9 +930,7 @@ describe('serve() with authentication', () => {
         maxConcurrentWorkflows: 2,
       },
     });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
     server = serve({ engine, port: 0, auth: { jwt: { secret: TEST_SECRET } } });
 
     const startToken = await signJWT(

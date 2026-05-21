@@ -4,26 +4,33 @@ import { Engine } from '../../core/engine.ts';
 import { StartWorkflowValidationError } from '../../core/start-workflow-validation.ts';
 import { QuotaExceededError } from '../../core/tenant-quotas.ts';
 import type { WorkflowContext } from '../../core/types.ts';
+import { workflow } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
 import { invalidJsonRequest, jsonRequest } from './operation-test-helpers.test-support.ts';
 import { startWorkflowOperation, startWorkflowRestBinding } from './start-workflow.ts';
 
+const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: unknown,
+) {
+  return input;
+});
+
 function createEngine(): Engine {
   const engine = new Engine({ storage: new MemoryStorage() });
-  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-    return input;
-  });
-  engine.register('with-search-attributes', {
-    handler: async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    },
-    searchAttributes: {
-      createdAt: { type: 'string', format: 'date-time' },
-      attempt: { type: 'number' },
-    },
-  });
+  engine.register(echoWorkflow);
+  engine.register(
+    workflow({ name: 'with-search-attributes' })
+      .searchAttributes({
+        createdAt: { type: 'string', format: 'date-time' },
+        attempt: { type: 'number' },
+      })
+      .execute(async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      }),
+  );
   return engine;
 }
 

@@ -4,9 +4,17 @@ import { Engine } from '../core/engine.ts';
 import { StartWorkflowValidationError } from '../core/start-workflow-validation.ts';
 import { tenantFromInputField } from '../core/tenant.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { handleRequest, type HandlerOptions } from './handler.ts';
 import { principalFromApiKey } from './principal.ts';
+
+const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: unknown,
+) {
+  return input;
+});
 
 function apiKeyAuth(): HandlerOptions {
   return {
@@ -26,9 +34,7 @@ function createEngine(): Engine {
     tenantResolver: tenantFromInputField('tenantId'),
   });
 
-  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-    return input;
-  });
+  engine.register(echoWorkflow);
 
   return engine;
 }

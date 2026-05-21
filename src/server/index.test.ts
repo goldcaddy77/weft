@@ -9,6 +9,7 @@ import {
   WorkflowCompletedEvent,
 } from '../core/events.ts';
 import type { RetryPolicy, WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types.ts';
 import { MCP_PROTOCOL_VERSION } from '../mcp/protocol.ts';
 import { METRICS } from '../observability/metrics.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
@@ -26,6 +27,13 @@ import {
 } from './operations/get-task-diagnostics.ts';
 import { principalFromApiKey } from './principal.ts';
 import type { InflightRecord, QueuedRecord, ResolvedRecord } from './task-state.ts';
+
+const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: unknown,
+) {
+  return input;
+});
 
 class TokenEvent extends Event {
   static readonly type = 'stream:token';
@@ -118,9 +126,7 @@ function createEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
 
-  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-    return input;
-  });
+  engine.register(echoWorkflow);
 
   return engine;
 }
@@ -2716,9 +2722,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     const storage = new MemoryStorage();
 
     engine = new Engine({ storage });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
     server = serve({ engine, port: 0 });
 
     engine.dispatchEvent(new TokenEvent('wf-restart', 'persisted', 'gpt-4'));
@@ -2728,9 +2732,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     engine[Symbol.dispose]();
 
     engine = new Engine({ storage });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
     server = serve({ engine, port: 0 });
 
     const ws = await connectStream(server, 'wf-restart', { resumeFrom: -1 });
@@ -2956,9 +2958,7 @@ describe('long-poll endpoints (GET /v1/tasks/:queue, POST /v1/tasks/:queue/resul
   it('refreshes lastQueuedAt when redispatching an existing queued record to long-poll', async () => {
     const storage = new MemoryStorage();
     engine = new Engine({ storage });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
     server = serve({ engine, port: 0 });
 
     await storage.put(
@@ -3644,9 +3644,7 @@ describe('visibility timeout persistence', () => {
   function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
     const s = new MemoryStorage();
     const e = new Engine({ storage: s });
-    e.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    e.register(echoWorkflow);
     return { engine: e, storage: s };
   }
 
@@ -3957,9 +3955,7 @@ describe('worker disconnection triggers task reassignment', () => {
   function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
     const s = new MemoryStorage();
     const e = new Engine({ storage: s });
-    e.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    e.register(echoWorkflow);
     return { engine: e, storage: s };
   }
 
@@ -4408,9 +4404,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
   function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
     const s = new MemoryStorage();
     const e = new Engine({ storage: s });
-    e.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    e.register(echoWorkflow);
     return { engine: e, storage: s };
   }
 
@@ -4921,9 +4915,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
 
     const delayedStorage = new DelayedStorage();
     const localEngine = new Engine({ storage: delayedStorage });
-    localEngine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    localEngine.register(echoWorkflow);
     const localServer = serve({
       engine: localEngine,
       port: 0,
@@ -5223,9 +5215,7 @@ describe('concurrent scanner deduplication', () => {
   function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
     const s = new MemoryStorage();
     const e = new Engine({ storage: s });
-    e.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    e.register(echoWorkflow);
     return { engine: e, storage: s };
   }
 
@@ -5430,9 +5420,7 @@ describe('concurrent scanner deduplication', () => {
     };
 
     engine = new Engine({ storage: delayedStorage });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
 
     const originalAdd = DeadlineTracker.prototype.add;
     const originalDrainExpired = DeadlineTracker.prototype.drainExpired;
@@ -5527,9 +5515,7 @@ describe('retry policy respected on reassignment', () => {
   function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
     const s = new MemoryStorage();
     const e = new Engine({ storage: s });
-    e.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    e.register(echoWorkflow);
     return { engine: e, storage: s };
   }
 

@@ -7,6 +7,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
+import { workflow } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
@@ -17,14 +18,22 @@ import {
   bulkDeleteWorkflowsRestBinding,
 } from './bulk-delete-workflows.ts';
 
+const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: unknown,
+) {
+  return input;
+});
+const waitingWorkflow = workflow({ name: 'waiting' }).execute(async function* (
+  ctx: WorkflowContext,
+) {
+  return yield* ctx.waitForSignal('release');
+});
+
 function createEngine(): Engine {
   const engine = new Engine({ storage: new MemoryStorage() });
-  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-    return input;
-  });
-  engine.register('waiting', async function* (ctx: WorkflowContext) {
-    return yield* ctx.waitForSignal('release');
-  });
+  engine.register(echoWorkflow);
+  engine.register(waitingWorkflow);
   return engine;
 }
 
