@@ -16,11 +16,11 @@ describe('bundled examples', () => {
   it('runs the hello-world workflow through its activity', async () => {
     const iterator = helloWorldWorkflow.handler(
       {
-        run: async function* (
-          activity: typeof formatGreetingActivity,
-          input: Parameters<typeof formatGreetingActivity.execute>[0],
-        ) {
-          return await activity.execute(input);
+        run: async function* (activityName: string, input: string | undefined) {
+          if (activityName !== 'formatGreeting') {
+            throw new Error(`unexpected activity ${activityName}`);
+          }
+          return await formatGreetingActivity.execute(input);
         },
       } as never,
       '  Jane  ',
@@ -40,11 +40,11 @@ describe('bundled examples', () => {
 
     const iterator = customerProfileWorkflow.handler(
       {
-        run: async function* (
-          activity: typeof loadCustomerProfileActivity,
-          input: Parameters<typeof loadCustomerProfileActivity.execute>[0],
-        ) {
-          return await activity.execute(input);
+        run: async function* (activityName: string, input: { customerId: string }) {
+          if (activityName !== 'loadCustomerProfile') {
+            throw new Error(`unexpected activity ${activityName}`);
+          }
+          return await loadCustomerProfileActivity.execute(input);
         },
       } as never,
       { customerId: '42' },

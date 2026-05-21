@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { sleepForTesting } from './testing/fake-timers.ts';
 
-import type { WorkflowContext } from './core/types';
+import { workflow } from './core/types/workflow-function.ts';
 import { Engine, MemoryStorage, WorkflowCompletedEvent, WorkflowStartedEvent } from './index';
 
 /** Drain microtasks so fire-and-forget work completes. */
@@ -14,16 +14,17 @@ describe('integration: full workflow lifecycle', () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
 
-    const greet = async (...args: unknown[]) => `Hello, ${args[0] as string}!`;
-    const notify = async (...args: unknown[]) => `Notified: ${args[0] as string}`;
-
-    engine.register('welcome', async function* (ctx: WorkflowContext, input: unknown) {
-      const c = ctx;
-      const { name } = input as { name: string };
-      const greeting = yield* c.run(greet, name);
-      yield* c.run(notify, greeting);
-      return { greeting, notified: true };
-    });
+    const welcome = workflow({ name: 'welcome' })
+      .activities({
+        greet: async (name: string) => `Hello, ${name}!`,
+        notify: async (greeting: string) => `Notified: ${greeting}`,
+      })
+      .execute(async function* (ctx, input: { name: string }) {
+        const greeting = yield* ctx.run('greet', input.name);
+        yield* ctx.run('notify', greeting);
+        return { greeting, notified: true };
+      });
+    engine.register(welcome);
 
     const handle = await engine.start('welcome', { name: 'World' });
     const result = await handle.result();
@@ -33,12 +34,14 @@ describe('integration: full workflow lifecycle', () => {
   it('handles signals in a workflow', async () => {
     const engine = new Engine();
 
-    engine.register('approval', async function* (ctx: WorkflowContext, input: unknown) {
-      const c = ctx;
-      const { orderId } = input as { orderId: string };
-      const approval = yield* c.waitForSignal<{ approved: boolean }>('approval');
-      return { orderId, approved: approval.approved };
+    const approval = workflow({ name: 'approval' }).execute(async function* (
+      ctx,
+      input: { orderId: string },
+    ) {
+      const result = yield* ctx.waitForSignal<{ approved: boolean }>('approval');
+      return { orderId: input.orderId, approved: result.approved };
     });
+    engine.register(approval);
 
     const handle = await engine.start('approval', { orderId: 'order-1' });
 
@@ -52,11 +55,11 @@ describe('integration: full workflow lifecycle', () => {
   it('cancels a running workflow', async () => {
     const engine = new Engine();
 
-    engine.register('long-running', async function* (ctx: WorkflowContext) {
-      const c = ctx;
-      yield* c.sleep(999999);
+    const longRunning = workflow({ name: 'long-running' }).execute(async function* (ctx) {
+      yield* ctx.sleep(999999);
       return 'done';
     });
+    engine.register(longRunning);
 
     const handle = await engine.start('long-running', {});
     await handle.cancel();
@@ -71,9 +74,10 @@ describe('integration: full workflow lifecycle', () => {
     engine.addEventListener(WorkflowStartedEvent.type, () => events.push('started'));
     engine.addEventListener(WorkflowCompletedEvent.type, () => events.push('completed'));
 
-    engine.register('simple', async function* (_ctx: WorkflowContext, input: unknown) {
-      return `result: ${input as string}`;
+    const simple = workflow({ name: 'simple' }).execute(async function* (_ctx, input: string) {
+      return `result: ${input}`;
     });
+    engine.register(simple);
 
     const handle = await engine.start('simple', 'test');
     await handle.result();
@@ -85,15 +89,19 @@ describe('integration: full workflow lifecycle', () => {
   it('parallel operations complete', async () => {
     const engine = new Engine();
 
-    const double = async (...args: unknown[]) => (args[0] as number) * 2;
-    const triple = async (...args: unknown[]) => (args[0] as number) * 3;
-
-    engine.register('parallel', async function* (ctx: WorkflowContext, input: unknown) {
-      const c = ctx;
-      const n = input as number;
-      const [doubled, tripled] = yield* c.all([c.run(double, n), c.run(triple, n)]);
-      return { doubled, tripled };
-    });
+    const parallel = workflow({ name: 'parallel' })
+      .activities({
+        double: async (n: number) => n * 2,
+        triple: async (n: number) => n * 3,
+      })
+      .execute(async function* (ctx, input: number) {
+        const [doubled, tripled] = yield* ctx.all([
+          ctx.run('double', input),
+          ctx.run('triple', input),
+        ]);
+        return { doubled, tripled };
+      });
+    engine.register(parallel);
 
     const handle = await engine.start('parallel', 5);
     const result = await handle.result();
@@ -109,12 +117,12 @@ describe('integration: full workflow lifecycle', () => {
       return 42;
     };
 
-    engine.register('memo-test', async function* (ctx: WorkflowContext) {
-      const c = ctx;
-      const a = yield* c.memo('val', expensive);
-      const b = yield* c.memo('val', expensive);
+    const memoTest = workflow({ name: 'memo-test' }).execute(async function* (ctx) {
+      const a = yield* ctx.memo('val', expensive);
+      const b = yield* ctx.memo('val', expensive);
       return { a, b };
     });
+    engine.register(memoTest);
 
     const handle = await engine.start('memo-test', {});
     const result = await handle.result();
@@ -125,15 +133,20 @@ describe('integration: full workflow lifecycle', () => {
   it('search attributes are set and readable', async () => {
     const engine = new Engine();
 
-    engine.register('with-attrs', async function* (ctx: WorkflowContext, input: unknown) {
-      const c = ctx;
-      const { customerId } = input as { customerId: string };
-      c.setAttribute('customerId', customerId);
-      c.setAttribute('status', 'processing');
-      yield* c.run(async () => 'done');
-      c.setAttribute('status', 'shipped');
-      return 'ok';
-    });
+    const withAttrs = workflow({ name: 'with-attrs' })
+      .activities({ noop: async () => 'done' })
+      .searchAttributes({
+        customerId: { type: 'string' },
+        status: { type: 'string' },
+      })
+      .execute(async function* (ctx, input: { customerId: string }) {
+        ctx.setAttribute('customerId', input.customerId);
+        ctx.setAttribute('status', 'processing');
+        yield* ctx.run('noop', undefined);
+        ctx.setAttribute('status', 'shipped');
+        return 'ok';
+      });
+    engine.register(withAttrs);
 
     const handle = await engine.start('with-attrs', { customerId: 'cust-123' });
     await handle.result();
@@ -146,11 +159,11 @@ describe('integration: full workflow lifecycle', () => {
 
     const engine = new TestEngine({ startTime: 0 });
 
-    engine.register('sleeper', async function* (ctx: WorkflowContext) {
-      const c = ctx;
-      yield* c.sleep(5000);
+    const sleeper = workflow({ name: 'sleeper' }).execute(async function* (ctx) {
+      yield* ctx.sleep(5000);
       return 'awake';
     });
+    engine.register(sleeper);
 
     const handle = await engine.start('sleeper', null);
     await flush();
@@ -170,9 +183,13 @@ describe('integration: full workflow lifecycle', () => {
     using storage = new BunSQLiteStorage(':memory:');
     const engine = new Engine({ storage });
 
-    engine.register('sqlite-test', async function* (_ctx: WorkflowContext, input: unknown) {
-      return `stored: ${input as string}`;
+    const sqliteTest = workflow({ name: 'sqlite-test' }).execute(async function* (
+      _ctx,
+      input: string,
+    ) {
+      return `stored: ${input}`;
     });
+    engine.register(sqliteTest);
 
     const handle = await engine.start('sqlite-test', 'data');
     const result = await handle.result();

@@ -1,4 +1,4 @@
-import { activity, type WorkflowRegistration } from '../src/index.ts';
+import { activity, workflow } from '../src/index.ts';
 
 interface CustomerProfileInput {
   customerId: string;
@@ -20,14 +20,11 @@ export const loadCustomerProfileActivity = activity({
   },
 });
 
-export const customerProfileWorkflow: WorkflowRegistration<
-  CustomerProfileInput,
-  CustomerProfileOutput
-> = {
-  handler: async function* (context, input) {
-    return yield* context.run(loadCustomerProfileActivity, input);
-  },
-};
+export const customerProfileWorkflow = workflow({ name: 'customerProfile' })
+  .activities({ loadCustomerProfile: loadCustomerProfileActivity })
+  .execute(async function* (context, input: CustomerProfileInput) {
+    return yield* context.run('loadCustomerProfile', input);
+  });
 
 export default {
   customerProfileWorkflow,

@@ -22,17 +22,19 @@ export const customerIdAttribute = searchAttribute('customerId', 'string');
 export const orderStatusAttribute = searchAttribute('orderStatus', 'string');
 export const totalAmountAttribute = searchAttribute('totalAmount', 'number');
 
-export const orderWorkflow = workflow({
-  name: 'orderProcessingOrder',
-  searchAttributes: {
+export const orderWorkflow = workflow({ name: 'orderProcessingOrder' })
+  .activities({
+    orderProcessingReserveInventory: reserveInventory,
+    orderProcessingReleaseInventory: releaseInventory,
+    orderProcessingChargePayment: chargePayment,
+    orderProcessingRefundPayment: refundPayment,
+  })
+  .searchAttributes({
     customerId: { type: 'string' },
     orderStatus: { type: 'string' },
     totalAmount: { type: 'number' },
-  },
-  handler: async function* orderProcessingOrder(
-    context: WorkflowContext,
-    input: OrderProcessingInput,
-  ): AsyncGenerator<unknown, OrderCompletion, unknown> {
+  })
+  .execute(async function* orderProcessingOrder(context, input: OrderProcessingInput) {
     let items = [...input.items];
     let status: OrderStatusName = 'received';
     let totalAmount = calculateOrderTotal(items);
@@ -135,8 +137,7 @@ export const orderWorkflow = workflow({
         totalAmount,
       };
     }
-  },
-});
+  });
 
 function* compensateCancelledOrder(
   context: WorkflowContext,

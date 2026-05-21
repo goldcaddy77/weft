@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { MemoryStorage } from '../storage/memory.ts';
 import { Engine } from './engine.ts';
-import type { WorkflowContext } from './types.ts';
+import { workflow } from './types/workflow-function.ts';
 
 // ---------------------------------------------------------------------------
 // A6: Zero resource leaks test
@@ -25,9 +25,10 @@ describe('Resource leaks', () => {
       const storage = new MemoryStorage();
       const engine = new Engine({ storage });
 
-      engine.register('trivial', async function* (_ctx: WorkflowContext) {
+      const trivial = workflow({ name: 'trivial' }).execute(async function* () {
         return 'done';
       });
+      engine.register(trivial);
 
       const handle = await engine.start('trivial', i);
       await handle.result();

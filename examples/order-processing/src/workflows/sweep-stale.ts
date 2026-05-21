@@ -1,14 +1,11 @@
-import { workflow, type WorkflowContext } from 'weft';
+import { workflow } from 'weft';
 
 import { cancelStaleOrder } from '../activities/shipping';
-import type { SweepStaleOrdersInput, SweepStaleOrdersResult } from '../model';
+import type { SweepStaleOrdersInput } from '../model';
 
-export const sweepStaleOrdersWorkflow = workflow({
-  name: 'orderProcessingSweepStaleOrders',
-  handler: async function* orderProcessingSweepStaleOrders(
-    context: WorkflowContext,
-    input: SweepStaleOrdersInput,
-  ): AsyncGenerator<unknown, SweepStaleOrdersResult, unknown> {
+export const sweepStaleOrdersWorkflow = workflow({ name: 'orderProcessingSweepStaleOrders' })
+  .activities({ orderProcessingCancelStaleOrder: cancelStaleOrder })
+  .execute(async function* orderProcessingSweepStaleOrders(context, input: SweepStaleOrdersInput) {
     yield* context.memo(`sweep:${input.now}`, () => input.staleOrderIds.length);
     const cancelledOrderIds = yield* context.all(
       input.staleOrderIds.map((orderId) =>
@@ -22,5 +19,4 @@ export const sweepStaleOrdersWorkflow = workflow({
       cancelledOrderIds,
       scannedOrderCount: input.staleOrderIds.length,
     };
-  },
-});
+  });
