@@ -35,6 +35,24 @@ import type { WorkflowFunction } from './workflow-function.ts';
  * `.execute()` being called twice. Throwing a named error class (rather than a
  * bare `Error`) makes the failure greppable and tests can pin behaviour
  * precisely.
+ *
+ * @example
+ * ```ts
+ * import { workflow, WorkflowBuilderError } from 'weft';
+ *
+ * const builder = workflow({ name: 'demo' }).activities({ ping: async () => 'pong' });
+ * try {
+ *   // Re-calling `.activities()` after it's already been set throws at runtime.
+ *   (builder as unknown as { activities: (map: object) => unknown }).activities({
+ *     pong: async () => 'ping',
+ *   });
+ * } catch (error) {
+ *   if (error instanceof WorkflowBuilderError) {
+ *     // duplicate `.activities()` call rejected at runtime.
+ *     void error.message;
+ *   }
+ * }
+ * ```
  */
 export class WorkflowBuilderError extends Error {
   constructor(message: string) {
@@ -49,6 +67,18 @@ export class WorkflowBuilderError extends Error {
  * `inputSchema`, `outputSchema`, `migrate`, `constraints`) are passed through
  * onto the returned {@link BuiltWorkflowDefinition} when `.execute(fn)` runs.
  * Only `name` is required.
+ *
+ * @example
+ * ```ts
+ * import { workflow, type WorkflowBuilderOptions } from 'weft';
+ *
+ * const options: WorkflowBuilderOptions<'welcome'> = {
+ *   name: 'welcome',
+ *   description: 'Greets a new user.',
+ * };
+ * const welcome = workflow(options).execute(async function* () { return 'ok'; });
+ * void welcome;
+ * ```
  */
 export interface WorkflowBuilderOptions<TName extends string = string> {
   name: TName;

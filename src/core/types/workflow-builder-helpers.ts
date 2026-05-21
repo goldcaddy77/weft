@@ -23,6 +23,17 @@ import type { QueryDefinition, SignalDefinition, UpdateDefinition } from './mess
  * other `ActivityDefinition` options (`retry`, `timeout`, `idempotent`,
  * `queue`, `description`, `tags`, schemas, `compensate`, `verify`, etc.) are
  * passed through unchanged.
+ *
+ * @example
+ * ```ts
+ * import type { ActivityObjectInput } from 'weft';
+ *
+ * const entry: ActivityObjectInput<string, string> = {
+ *   execute: async (greeting) => `hello ${greeting}`,
+ *   idempotent: true,
+ * };
+ * void entry;
+ * ```
  */
 export type ActivityObjectInput<TInput = unknown, TOutput = unknown> = Omit<
   ActivityDefinition<TInput, TOutput>,
@@ -52,6 +63,14 @@ type HasExecuteProperty<T> = T extends { execute: unknown } ? true : false;
  * Multi-parameter functions are allowed by the constraint but degrade
  * gracefully to `unknown` input in `NormalizeActivities<T>` — they cannot
  * be reliably called via `ctx.run('name', input)` and that is documented.
+ *
+ * @example
+ * ```ts
+ * import type { ActivityEntryInput } from 'weft';
+ *
+ * const entry: ActivityEntryInput = async (name: string) => `hello ${name}`;
+ * void entry;
+ * ```
  */
 export type ActivityEntryInput =
   | ((...arguments_: never[]) => unknown)
@@ -61,6 +80,16 @@ export type ActivityEntryInput =
  * The map shape `.activities({ ... })` accepts. Each value is an
  * `ActivityEntryInput`; the outer object key becomes the activity's canonical
  * name.
+ *
+ * @example
+ * ```ts
+ * import type { ActivityMapInput } from 'weft';
+ *
+ * const map: ActivityMapInput = {
+ *   greet: async (name: string) => `hello ${name}`,
+ * };
+ * void map;
+ * ```
  */
 export type ActivityMapInput = Record<string, ActivityEntryInput>;
 
@@ -78,6 +107,15 @@ export type ActivityMapInput = Record<string, ActivityEntryInput>;
  * defaults of `unknown`) so the entry remains assignable across input/output
  * variations. Type-safety is preserved via the phantom `input`/`output`
  * marker fields, which `ActivityArgsFor`/`ActivityResultFor` consume.
+ *
+ * @example
+ * ```ts
+ * import type { NormalizedActivityEntry } from 'weft';
+ *
+ * type GreetEntry = NormalizedActivityEntry<{ name: string }, string>;
+ * declare const entry: GreetEntry;
+ * void entry.definition;
+ * ```
  */
 export interface NormalizedActivityEntry<TInput = unknown, TOutput = unknown> {
   /** Phantom marker — never read at runtime; carries the input type for ctx.run typing. */
@@ -92,6 +130,17 @@ export interface NormalizedActivityEntry<TInput = unknown, TOutput = unknown> {
  * is consumed. Each entry exposes the inferred input/output types and the
  * normalised `ActivityDefinition` object that runtime code installs into the
  * per-workflow activity registry.
+ *
+ * @example
+ * ```ts
+ * import { workflow, type ActivityMap } from 'weft';
+ *
+ * const built = workflow({ name: 'demo' })
+ *   .activities({ greet: async (name: string) => `hello ${name}` })
+ *   .execute(async function* () { return 'ok'; });
+ * const activities: ActivityMap = built.activities as unknown as ActivityMap;
+ * void activities;
+ * ```
  */
 export type ActivityMap = Record<string, NormalizedActivityEntry>;
 
@@ -105,10 +154,18 @@ export type ActivityMap = Record<string, NormalizedActivityEntry>;
  *   `input = TInput`, `output = Awaited<TOutput>`.
  * - `ActivityCallable<TInput, TOutput>`: same as the underlying definition.
  * - Object form `{ execute, ...options }`: `execute`'s signature drives inference.
- *
- * Multi-parameter functions fall through to `unknown` inputs, which makes
+ * * Multi-parameter functions fall through to `unknown` inputs, which makes
  * `ctx.run('name', wrongType)` lose type-safety — type tests in Phase 1c pin
  * this rejection so users see a clear error rather than silent `unknown` drift.
+ *
+ * @example
+ * ```ts
+ * import type { NormalizeActivities } from 'weft';
+ *
+ * type Greet = NormalizeActivities<{ greet: (name: string) => Promise<string> }>;
+ * declare const greet: Greet['greet'];
+ * void greet;
+ * ```
  */
 export type NormalizeActivities<T extends ActivityMapInput> = {
   [K in keyof T & string]: NormalizeActivityEntry<T[K]>;
@@ -144,6 +201,21 @@ type NormalizedInputType<T> = [T] extends [never] ? unknown : T;
  * Argument tuple for `ctx.run('name', ...args)`. Collapses to `[]` for `void`
  * inputs; preserves `[] | [input]` for optional inputs so both zero-arg and
  * single-arg call shapes typecheck; otherwise `[input: T]`.
+ *
+ * @example
+ * ```ts
+ * import { workflow, type ActivityArgsFor, type ActivityMap } from 'weft';
+ *
+ * const greet = workflow({ name: 'greet' })
+ *   .activities({ formatGreeting: async (name: string) => `hello ${name}` })
+ *   .execute(async function* () { return 'ok'; });
+ *
+ * type Activities = NonNullable<typeof greet._activities>;
+ * type Args = ActivityArgsFor<Activities['formatGreeting']>;
+ * const args: Args = ['hi'];
+ * void args;
+ * void (null as unknown as ActivityMap);
+ * ```
  */
 export type ActivityArgsFor<TEntry extends NormalizedActivityEntry> =
   TEntry extends NormalizedActivityEntry<infer TInput>
@@ -157,6 +229,20 @@ export type ActivityArgsFor<TEntry extends NormalizedActivityEntry> =
 /**
  * Result type for `ctx.run('name', ...)`. Always `Awaited<TOutput>` so workflow
  * code never sees a bare `Promise`.
+ *
+ * @example
+ * ```ts
+ * import { workflow, type ActivityResultFor } from 'weft';
+ *
+ * const greet = workflow({ name: 'greet' })
+ *   .activities({ formatGreeting: async (name: string) => `hello ${name}` })
+ *   .execute(async function* () { return 'ok'; });
+ *
+ * type Activities = NonNullable<typeof greet._activities>;
+ * type Result = ActivityResultFor<Activities['formatGreeting']>;
+ * const result: Result = 'hello';
+ * void result;
+ * ```
  */
 export type ActivityResultFor<TEntry extends NormalizedActivityEntry> =
   TEntry extends NormalizedActivityEntry<unknown, infer TOutput> ? Awaited<TOutput> : unknown;
@@ -164,6 +250,16 @@ export type ActivityResultFor<TEntry extends NormalizedActivityEntry> =
 /**
  * Lookup type for `ctx.waitForSignal('name')`. Extracts the payload type from a
  * `SignalDefinition` stored on the workflow's signal map.
+ *
+ * @example
+ * ```ts
+ * import { signal, type SignalPayload } from 'weft';
+ *
+ * const approve = signal<{ approverId: string }>('approve');
+ * type ApprovePayload = SignalPayload<typeof approve>;
+ * const payload: ApprovePayload = { approverId: 'user-1' };
+ * void payload;
+ * ```
  */
 export type SignalPayload<TSignal> =
   TSignal extends SignalDefinition<infer TInput> ? TInput : unknown;
@@ -171,6 +267,17 @@ export type SignalPayload<TSignal> =
 /**
  * Lookup type for `ctx.waitForUpdate('name')`. Extracts the payload + response
  * shape from a `UpdateDefinition`.
+ *
+ * @example
+ * ```ts
+ * import { update, type UpdatePayload } from 'weft';
+ *
+ * const checkStatus = update<{ id: string }, { status: string }>('checkStatus');
+ * type CheckPayload = UpdatePayload<typeof checkStatus>;
+ * declare const shape: CheckPayload;
+ * shape.respond({ status: 'pending' });
+ * void shape.payload.id;
+ * ```
  */
 export type UpdatePayload<TUpdate> =
   TUpdate extends UpdateDefinition<infer TInput, infer TOutput>
@@ -181,6 +288,16 @@ export type UpdatePayload<TUpdate> =
  * Lookup type for query handlers registered on a workflow. Returns the
  * `{ input, output }` pair so handler signatures stay symmetrical with the
  * other message kinds.
+ *
+ * @example
+ * ```ts
+ * import { query, type QueryShape } from 'weft';
+ *
+ * const getProgress = query<void, number>('getProgress');
+ * type Shape = QueryShape<typeof getProgress>;
+ * const example: Shape = { input: undefined, output: 0.5 };
+ * void example;
+ * ```
  */
 export type QueryShape<TQuery> =
   TQuery extends QueryDefinition<infer TInput, infer TOutput>
@@ -200,11 +317,43 @@ export type QueryShape<TQuery> =
 // constraint lets each entry preserve its own payload type, which is what
 // `SignalPayload<S>` / `UpdatePayload<U>` / `QueryShape<Q>` then read back out.
 
-/** Map shape stored on the workflow definition after `.signals({...})`. */
+/**
+ * Map shape stored on the workflow definition after `.signals({...})`.
+ *
+ * @example
+ * ```ts
+ * import { signal, type SignalMap } from 'weft';
+ *
+ * const map: SignalMap = { approve: signal<{ approverId: string }>('approve') };
+ * void map;
+ * ```
+ */
 export type SignalMap = Record<string, { readonly name: string }>;
 
-/** Map shape stored on the workflow definition after `.updates({...})`. */
+/**
+ * Map shape stored on the workflow definition after `.updates({...})`.
+ *
+ * @example
+ * ```ts
+ * import { update, type UpdateMap } from 'weft';
+ *
+ * const map: UpdateMap = {
+ *   checkStatus: update<{ id: string }, { status: string }>('checkStatus'),
+ * };
+ * void map;
+ * ```
+ */
 export type UpdateMap = Record<string, { readonly name: string }>;
 
-/** Map shape stored on the workflow definition after `.queries({...})`. */
+/**
+ * Map shape stored on the workflow definition after `.queries({...})`.
+ *
+ * @example
+ * ```ts
+ * import { query, type QueryMap } from 'weft';
+ *
+ * const map: QueryMap = { getProgress: query<void, number>('getProgress') };
+ * void map;
+ * ```
+ */
 export type QueryMap = Record<string, { readonly name: string }>;

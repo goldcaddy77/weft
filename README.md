@@ -38,36 +38,25 @@ Weft is a ground-up rethink: what would durable execution look like if you desig
 The smallest useful Weft program has four moving pieces: a storage backend, a named activity, a named workflow, and a handle that waits for the result.
 
 ```typescript
-import { Engine, activity, workflow, type WorkflowContext } from 'weft';
+import { Engine, workflow } from 'weft';
 import { SQLiteStorage } from 'weft/storage/sqlite';
 
 type WelcomeInput = {
   name: string;
 };
 
-type WelcomeOutput = {
-  greeting: string;
-  onboarded: boolean;
-};
-
-const formatGreeting = activity({
-  name: 'formatGreeting',
-  execute: async ({ name }: WelcomeInput) => `Hello, ${name}!`,
-});
-
-const welcome = workflow({
-  name: 'welcome',
-  handler: async function* welcome(context: WorkflowContext, input: WelcomeInput) {
-    const greeting = yield* context.run(formatGreeting, input);
-    yield* context.sleep('1s');
-    const output: WelcomeOutput = { greeting, onboarded: true };
-    return output;
-  },
-});
+const welcome = workflow({ name: 'welcome' })
+  .activities({
+    formatGreeting: async ({ name }: WelcomeInput) => `Hello, ${name}!`,
+  })
+  .execute(async function* (ctx, input: WelcomeInput) {
+    const greeting = yield* ctx.run('formatGreeting', input);
+    yield* ctx.sleep('1s');
+    return { greeting, onboarded: true };
+  });
 
 const engine = await Engine.create({
   storage: new SQLiteStorage('./weft.db'),
-  activities: { formatGreeting },
   workflows: { welcome },
 });
 
@@ -76,11 +65,14 @@ const result = await handle.result();
 // result is { greeting: "Hello, Steve!", onboarded: true }
 ```
 
-That's the core loop: activities give side effects a durable dispatch name, workflows give the engine a durable type to drive, every `yield*` is a checkpoint boundary, and `handle.result()` waits for the output. Checkpoints are written to `./weft.db`, so running workflows survive process crashes.
+That's the core loop. `workflow({ name })` opens a **chained builder**: `.activities({...})` co-locates the workflow's side-effecting steps with the workflow itself, and `.execute(fn)` seals the builder and returns a `WorkflowDefinition`. Inside the generator, `ctx.run('formatGreeting', input)` autocompletes from the workflow's own activity table, typechecks the input, and infers the output. Every `yield*` is a checkpoint boundary; `handle.result()` waits for the output. Checkpoints are written to `./weft.db`, so running workflows survive process crashes.
 
-`Engine.create()` does the registration dance for you: it constructs the engine and registers everything you passed in, activities first and then workflows. Pass `recover: true` when booting against durable storage so `engine.recoverAll()` runs after registration and any workflows still running from a previous process pick up where they left off.
+`Engine.create()` constructs the engine and registers each workflow in the `workflows` map, including all of the activities each workflow declares. Pass `recover: true` when booting against durable storage so `engine.recoverAll()` runs after registration and any workflows still running from a previous process pick up where they left off.
 
-If you'd rather wire things up by hand — useful for tests, multi-tenant setups, or dynamic registration — `new Engine({ storage })`, `engine.register()`, and `await engine.recoverAll()` are the underlying primitives. Register every activity and workflow first, then recover explicitly.
+If you'd rather wire things up by hand — useful for tests, multi-tenant setups, or hot-registering workflows after the engine boots — `new Engine({ storage })`, `engine.register(workflow)` or `engine.registerWorkflows({ ... })`, and `await engine.recoverAll()` are the underlying primitives. Each `engine.register(workflow)` call returns the engine widened with that workflow's name and input/output types, so `engine.start('welcome', ...)` autocompletes immediately.
+
+> [!NOTE]
+> The chained builder also accepts `.signals({...})`, `.updates({...})`, `.queries({...})`, and `.searchAttributes({...})`. Each can be called at most once before `.execute(fn)`; the type system flips a phantom flag so a duplicate call fails to typecheck, and the runtime mirrors the same invariant. These maps thread their payload types into `ctx.waitForSignal('approve')`, `ctx.waitForUpdate('checkStatus')`, and friends so the surrounding workflow code keeps full IntelliSense. They do not introduce new runtime gating — they are type-safety and introspection metadata that ride on top of the existing dispatch paths.
 
 > [!NOTE]
 > `MemoryStorage` (also exported from `weft`) is fine for tests and ephemeral scripts, but it lives in process memory—a crash takes the checkpoints with it. Use a persistent backend like `SQLiteStorage` whenever durability actually matters.
@@ -113,17 +105,19 @@ Because recovery never re-executes the workflow from the beginning, your workflo
 Generator functions with automatic checkpointing at every `yield*` boundary. Activities, sleeps, signals, queries, updates, parallel execution via `ctx.all()`, race semantics via `ctx.race()`, memoization via `ctx.memo()`, sagas via `ctx.saga()`, child workflows, and forks.
 
 ```typescript
-engine.register('checkout', async function* (ctx, order) {
-  const charge = yield* ctx.run(chargeCard, { payment: order.payment });
-  yield* ctx.run(reserveInventory, { items: order.items });
+const checkout = workflow({ name: 'checkout' })
+  .activities({ chargeCard, reserveInventory, sendConfirmation, scheduleShipping })
+  .execute(async function* (ctx, order: Order) {
+    const charge = yield* ctx.run('chargeCard', { payment: order.payment });
+    yield* ctx.run('reserveInventory', { items: order.items });
 
-  const [confirmation, shipment] = yield* ctx.all([
-    ctx.run(sendConfirmation, { email: order.email, receiptId: charge.receiptId }),
-    ctx.run(scheduleShipping, { address: order.address }),
-  ]);
+    const [confirmation, shipment] = yield* ctx.all([
+      ctx.run('sendConfirmation', { email: order.email, receiptId: charge.receiptId }),
+      ctx.run('scheduleShipping', { address: order.address }),
+    ]);
 
-  return { status: 'completed', charge, confirmation, shipment };
-});
+    return { status: 'completed' as const, charge, confirmation, shipment };
+  });
 ```
 
 If `scheduleShipping` fails, `sendConfirmation`'s result is recorded in the parent operation's cache entry before the error is thrown into the workflow. If the workflow catches and yields again (e.g., to retry shipping or compensate), the next checkpoint persists that entry—a resumed run reuses the confirmation result instead of sending a duplicate email. See the [parallel execution guide](documentation/guides/parallel-execution.md) for the precise failure-semantics contract, including the catch-and-yield requirement.
@@ -135,16 +129,19 @@ Sleeps survive process restarts. Signals pause workflows for seconds, days, or w
 ```typescript
 const approvalSignal = signal<{ approved: boolean }>('approval');
 
-engine.register('approval', async function* (ctx, input: { orderId: string }) {
-  const approval = yield* ctx.waitForSignal(approvalSignal);
-  if (!approval.approved) {
-    return { orderId: input.orderId, status: 'rejected' };
-  }
+const approval = workflow({ name: 'approval' })
+  .activities({ ship })
+  .signals({ approval: approvalSignal })
+  .execute(async function* (ctx, input: { orderId: string }) {
+    const decision = yield* ctx.waitForSignal('approval');
+    if (!decision.approved) {
+      return { orderId: input.orderId, status: 'rejected' as const };
+    }
 
-  yield* ctx.sleep('24 hours');
-  yield* ctx.run(ship, { orderId: input.orderId });
-  return { orderId: input.orderId, status: 'shipped' };
-});
+    yield* ctx.sleep('24 hours');
+    yield* ctx.run('ship', { orderId: input.orderId });
+    return { orderId: input.orderId, status: 'shipped' as const };
+  });
 
 // From an HTTP handler, another workflow, or anywhere with engine access:
 const handle = await engine.start('approval', { orderId: 'order-123' });
@@ -156,12 +153,17 @@ await engine.signal(handle.id, approvalSignal, { approved: true });
 Attach indexed metadata to a workflow at runtime, then list and filter on it.
 
 ```typescript
-engine.register('order', async function* (ctx, input: { customerId: string }) {
-  ctx.setAttribute('customerId', input.customerId);
-  ctx.setAttribute('status', 'processing');
-  // ... work ...
-  ctx.setAttribute('status', 'shipped');
-});
+const order = workflow({ name: 'order' })
+  .searchAttributes({
+    customerId: { type: 'string' },
+    status: { type: 'string' },
+  })
+  .execute(async function* (ctx, input: { customerId: string }) {
+    ctx.setAttribute('customerId', input.customerId);
+    ctx.setAttribute('status', 'processing');
+    // ... work ...
+    ctx.setAttribute('status', 'shipped');
+  });
 
 const orders = await engine.list({
   attributes: [
@@ -178,7 +180,7 @@ Workflow visibility extends the same list surface with operator filters for `idP
 Weft can pause a workflow at any checkpoint and surface a decision payload to a human reviewer. The workflow resumes with the reviewer's decision—no polling, no special infrastructure.
 
 ```typescript
-import { Engine, activity, workflow, type WorkflowContext } from 'weft';
+import { Engine, workflow } from 'weft';
 import { SQLiteStorage } from 'weft/storage/sqlite';
 
 type PaymentRequest = {
@@ -188,17 +190,14 @@ type PaymentRequest = {
   customerId: string;
 };
 
-const chargeCard = activity({
-  name: 'chargeCard',
-  execute: async ({ orderId, amount, currency }: PaymentRequest) => {
-    // Call your payment processor here.
-    return { chargeId: `ch_${orderId}`, amount, currency };
-  },
-});
-
-const paymentWorkflow = workflow({
-  name: 'payment',
-  handler: async function* (ctx: WorkflowContext, request: PaymentRequest) {
+const paymentWorkflow = workflow({ name: 'payment' })
+  .activities({
+    chargeCard: async ({ orderId, amount, currency }: PaymentRequest) => {
+      // Call your payment processor here.
+      return { chargeId: `ch_${orderId}`, amount, currency };
+    },
+  })
+  .execute(async function* (ctx, request: PaymentRequest) {
     // Pause and surface the payment details for human approval.
     const decision = yield* ctx.review({
       artifact: request,
@@ -208,14 +207,13 @@ const paymentWorkflow = workflow({
     });
 
     if (decision.decision !== 'approved') {
-      return { status: 'rejected', orderId: request.orderId };
+      return { status: 'rejected' as const, orderId: request.orderId };
     }
 
     // Only runs after a human approves—checkpoint survives crashes.
-    const charge = yield* ctx.run(chargeCard, request);
-    return { status: 'charged', charge };
-  },
-});
+    const charge = yield* ctx.run('chargeCard', request);
+    return { status: 'charged' as const, charge };
+  });
 ```
 
 If the process crashes between the approval decision arriving and `chargeCard` executing, the engine resumes from the last checkpoint—the charge runs exactly once. The reviewer's decision is persisted as part of the checkpoint; there is no resubmission.
@@ -247,7 +245,7 @@ import { serve } from 'weft/server';
 import { SQLiteStorage } from 'weft/storage/sqlite';
 
 const engine = new Engine({ storage: new SQLiteStorage('./weft.db') });
-engine.register('checkout', checkoutWorkflow);
+engine.register(checkoutWorkflow);
 
 await using server = serve({ engine, port: 7233 });
 // server.url is e.g. "http://0.0.0.0:7233"
@@ -321,7 +319,7 @@ import { expect, test } from 'bun:test';
 
 test('onboarding completes after a day', async () => {
   const engine = new TestEngine();
-  engine.register('onboarding', onboardingWorkflow);
+  engine.register(onboardingWorkflow);
 
   const sendEmail = engine.mock(actualSendEmail, () => ({
     messageId: 'msg_test_1',
@@ -374,13 +372,62 @@ engine.register('welcome', async (ctx, input: { name: string }) => {
 
 Each `ctx.step()` is a checkpoint boundary. The engine compiles step-style workflows to generator form at registration time. When you need durable timers, signals, or parallel execution, switch to the generator API.
 
+## Migrating from the Legacy `workflow({ name, handler })` Form
+
+The pre-builder forms of `workflow()` and `engine.register(...)` are deprecated and will be removed in an upcoming release. New code should use the chained builder.
+
+Before:
+
+```typescript partial
+import { Engine, activity, workflow } from 'weft';
+
+const formatGreeting = activity({
+  name: 'formatGreeting',
+  execute: async (input: { name: string }) => `Hello, ${input.name}!`,
+});
+
+const welcome = workflow({
+  name: 'welcome',
+  handler: async function* (ctx, input: { name: string }) {
+    return yield* ctx.run(formatGreeting, input);
+  },
+});
+
+const engine = new Engine();
+engine.register('welcome', welcome.handler);
+// or: engine.register(formatGreeting);
+```
+
+After:
+
+```typescript partial
+import { Engine, workflow } from 'weft';
+
+const welcome = workflow({ name: 'welcome' })
+  .activities({
+    formatGreeting: async (input: { name: string }) => `Hello, ${input.name}!`,
+  })
+  .execute(async function* (ctx, input: { name: string }) {
+    return yield* ctx.run('formatGreeting', input);
+  });
+
+const engine = new Engine();
+engine.register(welcome);
+```
+
+What changed:
+
+- **Activities are workflow-scoped.** Pass them inline to `.activities({ ... })` and reference them by their map key inside `ctx.run('key', input)`. The engine builds one activity registry per workflow type; there is no global pool to populate.
+- **`engine.register(name, handler)` is gone.** Pass the workflow definition itself: `engine.register(welcome)` or `engine.registerWorkflows({ welcome })`. The return value is the engine widened with the workflow's name and input/output types so `engine.start('welcome', input)` autocompletes.
+- **Standalone `engine.register(activityDefinition)` is gone.** Activities live on the workflow they belong to. If multiple workflows truly share an activity, declare it on each `.activities({ ... })` block — duplicated declarations isolate scope and let the engine route remote workers per workflow.
+
 ## Weft vs. Temporal
 
 | Concept                | Temporal                                      | Weft                                                                       |
 | ---------------------- | --------------------------------------------- | -------------------------------------------------------------------------- |
 | Core mental model      | Replay determinism                            | Generators pause and resume                                                |
 | Workflow language      | Go, Java, TypeScript, Python, .NET, Ruby, PHP | TypeScript only (activities can be any language via `RemoteWorker`)        |
-| Activity invocation    | `proxyActivities()` + type import             | `yield* ctx.run(namedActivity, input)`                                     |
+| Activity invocation    | `proxyActivities()` + type import             | `yield* ctx.run('activityName', input)` (declared in `.activities({...})`) |
 | Timer                  | Deterministic `workflow.sleep()`              | `yield* ctx.sleep("1 hour")`                                               |
 | Signal                 | `setHandler` + `condition`                    | `yield* ctx.waitForSignal(name)`                                           |
 | Versioning             | `patched()` / `deprecatePatch()`              | Deploy new code (migration optional)                                       |
