@@ -58,25 +58,23 @@ export type WorkflowGenerator<
 
 /**
  * Convenience alias for the workflow-scoped `WorkflowContext` projection. The
- * underlying `WorkflowContext` interface stays compatible at the runtime layer
- * — only the type surface is parameterised. The generic version is wired in
- * Phase 1b; until then, this resolves to the legacy `WorkflowContext` so
- * Phase 1a can land without forcing the rest of the codebase to update.
+ * underlying `WorkflowContext` interface accepts the same five generic
+ * parameters (`TActivities`, `TSignals`, `TUpdates`, `TQueries`,
+ * `TSearchAttributes`), and the builder threads its normalised maps through
+ * this alias so `.execute(fn)` sees the right `ctx` shape inside `fn`.
  *
- * The five type parameters carry through to Phase 1b unchanged. When Phase 1b
- * lands, this alias is updated to `WorkflowContext<TActivities, TSignals, ...>`
- * and the upstream surface gains its per-workflow autocompletion.
+ * Legacy bare-`WorkflowContext` callers continue to typecheck because the
+ * interface's generics all default to empty/permissive shapes, so the typed
+ * overloads de-prioritise to `never` and existing string-name/callable
+ * overloads still match.
  */
 export type WorkflowContextOf<
-  // The phase-1a placeholder ignores its type arguments because the underlying
-  // `WorkflowContext` interface has not yet been generalised. Phase 1b widens
-  // this alias to the parameterised form without breaking call sites.
-  _TActivities extends ActivityMap = ActivityMap,
-  _TSignals extends SignalMap = SignalMap,
-  _TUpdates extends UpdateMap = UpdateMap,
-  _TQueries extends QueryMap = QueryMap,
-  _TSearchAttributes extends SearchAttributeSchema = SearchAttributeSchema,
-> = WorkflowContext;
+  TActivities extends ActivityMap = ActivityMap,
+  TSignals extends SignalMap = SignalMap,
+  TUpdates extends UpdateMap = UpdateMap,
+  TQueries extends QueryMap = QueryMap,
+  TSearchAttributes extends SearchAttributeSchema = SearchAttributeSchema,
+> = WorkflowContext<TActivities, TSignals, TUpdates, TQueries, TSearchAttributes>;
 
 // ---------------------------------------------------------------------------
 // Builder state — phantom flag set tracking which chain methods have run

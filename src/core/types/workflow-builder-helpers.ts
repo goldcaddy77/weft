@@ -186,11 +186,20 @@ export type QueryShape<TQuery> =
 // Map containers for the builder's per-method payloads
 // ---------------------------------------------------------------------------
 
+// Each map's value constraint is structural (`{ readonly name: string }`)
+// rather than a fully-typed `SignalDefinition<TInput>`. The structural form
+// dodges contravariance pain on the `_input` / `_output` phantom markers:
+// `SignalDefinition<{ approverId: string }>` is *not* assignable to
+// `SignalDefinition<unknown>` under `exactOptionalPropertyTypes`, because the
+// phantom marker's parameter widens the contravariant position. The structural
+// constraint lets each entry preserve its own payload type, which is what
+// `SignalPayload<S>` / `UpdatePayload<U>` / `QueryShape<Q>` then read back out.
+
 /** Map shape stored on the workflow definition after `.signals({...})`. */
-export type SignalMap = Record<string, SignalDefinition<unknown>>;
+export type SignalMap = Record<string, { readonly name: string }>;
 
 /** Map shape stored on the workflow definition after `.updates({...})`. */
-export type UpdateMap = Record<string, UpdateDefinition>;
+export type UpdateMap = Record<string, { readonly name: string }>;
 
 /** Map shape stored on the workflow definition after `.queries({...})`. */
-export type QueryMap = Record<string, QueryDefinition>;
+export type QueryMap = Record<string, { readonly name: string }>;
