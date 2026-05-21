@@ -12,14 +12,14 @@
 
 import { describe, expect, it } from 'bun:test';
 
-import { MemoryStorage } from '../storage/memory.ts';
-import { ActivityResolutionError, Engine, PersistedDataIncompatibleError } from './engine/index.ts';
-import { getInternals } from './engine/internals.ts';
+import { MemoryStorage } from '../../storage/memory.ts';
 import {
   CURRENT_PERSISTED_DATA_SCHEMA_VERSION,
   PERSISTED_DATA_SCHEMA_VERSION_KEY,
-} from './persisted-data-incompatible-error.ts';
-import { workflow } from './types/workflow-function.ts';
+} from '../persisted-data-incompatible-error.ts';
+import { workflow } from '../types/workflow-function.ts';
+import { ActivityResolutionError, Engine, PersistedDataIncompatibleError } from './index.ts';
+import { getInternals } from './internals.ts';
 
 describe('engine + workflow-builder integration', () => {
   it('register(builderWorkflow) populates the per-workflow ActivityRegistry', () => {
