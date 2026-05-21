@@ -3,6 +3,7 @@ import { Engine } from '../core/engine.ts';
 import { WorkflowCompletedEvent, WorkflowFailedEvent } from '../core/events.ts';
 import { tenantFromInputField } from '../core/tenant.ts';
 import type { ScheduleSummary, WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types/workflow-function.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { sleepForTesting } from '../testing/fake-timers.ts';
 import {
@@ -18,13 +19,19 @@ import { LocalClient } from './local.ts';
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
+const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: unknown,
+) {
   return input;
-}
+});
 
-async function* failingWorkflow(_ctx: WorkflowContext, _input: unknown) {
+const failingWorkflow = workflow({ name: 'failing' }).execute(async function* (
+  _ctx: WorkflowContext,
+  _input: unknown,
+) {
   throw new Error('intentional failure');
-}
+});
 
 function createTestEngine(): Engine {
   const engine = new Engine({
@@ -36,10 +43,10 @@ function createTestEngine(): Engine {
       maxWorkflowCreationRate: { count: 10, window: '1m' },
     },
   });
-  engine.register('echo', echoWorkflow);
-  engine.register('client-contract-echo', clientContractEchoWorkflow);
-  engine.register('client-contract-waiting', clientContractWaitingWorkflow);
-  engine.register('failing', failingWorkflow);
+  engine.register(echoWorkflow);
+  engine.register(clientContractEchoWorkflow);
+  engine.register(clientContractWaitingWorkflow);
+  engine.register(failingWorkflow);
   return engine;
 }
 
@@ -292,13 +299,13 @@ describe('LocalClient', () => {
         return { phase: 'second' as const };
       }
 
-      engine.register('timeline-local', {
-        version: '9.0.0',
-        handler: async function* (ctx: WorkflowContext) {
-          yield* ctx.run(firstStep);
-          return yield* ctx.run(secondStep);
-        },
+      const timelineLocal = workflow({ name: 'timeline-local' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
+        yield* ctx.run(firstStep);
+        return yield* ctx.run(secondStep);
       });
+      engine.register(timelineLocal);
 
       const handle = await client.start('timeline-local', null, { id: 'wf-local-timeline' });
       await handle.result();
@@ -359,7 +366,7 @@ describe('LocalClient', () => {
           completed: '5m',
         },
       });
-      engine.register('echo', echoWorkflow);
+      engine.register(echoWorkflow);
       client = new LocalClient(engine);
 
       const overview = await client.getRetentionOverview();

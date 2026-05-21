@@ -14,6 +14,7 @@ import type {
   SleepInterception,
 } from '../core/interceptor';
 import type { WorkflowContext } from '../core/types';
+import { workflow } from '../core/types/workflow-function.ts';
 import { MemoryStorage } from '../storage/memory';
 import { flush } from '../testing/storage-backends';
 import { createObservabilityInterceptors } from './index';
@@ -1818,9 +1819,12 @@ describe('createObservabilityInterceptors', () => {
       });
       engine.addInterceptor(interceptor);
 
-      engine.register('greeter', async function* (_ctx: WorkflowContext) {
+      const greeter = workflow({ name: 'greeter' }).execute(async function* (
+        _ctx: WorkflowContext,
+      ) {
         return 'hello';
       });
+      engine.register(greeter);
 
       const handle = await engine.start('greeter', { name: 'world' });
       await flush();
@@ -1847,9 +1851,10 @@ describe('createObservabilityInterceptors', () => {
       });
       engine.addInterceptor(interceptor);
 
-      engine.register('flaky', async function* (_ctx: WorkflowContext) {
+      const flaky = workflow({ name: 'flaky' }).execute(async function* (_ctx: WorkflowContext) {
         throw new Error('workflow exploded');
       });
+      engine.register(flaky);
 
       const handle = await engine.start('flaky', undefined);
       await flush();
@@ -1877,10 +1882,11 @@ describe('createObservabilityInterceptors', () => {
       engine.addInterceptor(interceptor);
 
       // A workflow that waits on a signal forever — giving us time to cancel.
-      engine.register('waiter', async function* (ctx: WorkflowContext) {
+      const waiter = workflow({ name: 'waiter' }).execute(async function* (ctx: WorkflowContext) {
         yield* ctx.waitForSignal('never-sent');
         return 'unreached';
       });
+      engine.register(waiter);
 
       const handle = await engine.start('waiter', undefined);
       await flush();

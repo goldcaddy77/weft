@@ -96,7 +96,7 @@ function applyOptionalRegistrationFields(
   if (registration.migrate) {
     entry.migrate = registration.migrate;
   }
-  if (registration.searchAttributes) {
+  if (registration.searchAttributes && Object.keys(registration.searchAttributes).length > 0) {
     entry.searchAttributes = registration.searchAttributes;
   }
   if (registration.constraints && registration.constraints.length > 0) {

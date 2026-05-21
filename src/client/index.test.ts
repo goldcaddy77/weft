@@ -3,6 +3,7 @@ import { Engine } from '../core/engine.ts';
 import { tenantFromInputField } from '../core/tenant.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { query } from '../core/types.ts';
+import { workflow } from '../core/types/workflow-function.ts';
 import { handleRequest } from '../server/handler.ts';
 import { principalFromApiKey } from '../server/principal.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -19,9 +20,32 @@ import type { WeftClient } from './interface.ts';
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
+const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: unknown,
+) {
   return input;
-}
+});
+
+const clientContractSearchAttributesWorkflow = workflow({
+  name: 'client-contract-search-attributes',
+})
+  .searchAttributes({
+    customerId: { type: 'string' },
+    createdAt: { type: 'string', format: 'date-time' },
+  })
+  .execute(async function* (ctx: WorkflowContext, input: unknown) {
+    ctx.expose({ ready: () => true });
+    ctx.onQuery('echoInput', (queryInput) => queryInput);
+    ctx.onUpdate('rename', (payload) => ({
+      accepted: true,
+      input,
+      payload,
+    }));
+
+    const signal = yield* ctx.waitForSignal<string>('continue');
+    return `${String(input)}:${signal}`;
+  });
 
 function requestInputToUrl(input: RequestInfo | URL): string {
   if (typeof input === 'string') {
@@ -423,16 +447,10 @@ beforeAll(() => {
       maxWorkflowCreationRate: { count: 10, window: '1m' },
     },
   });
-  engine.register('echo', echoWorkflow);
-  engine.register('client-contract-echo', clientContractEchoWorkflow);
-  engine.register('client-contract-waiting', clientContractWaitingWorkflow);
-  engine.register('client-contract-search-attributes', {
-    handler: clientContractWaitingWorkflow,
-    searchAttributes: {
-      customerId: { type: 'string' },
-      createdAt: { type: 'string', format: 'date-time' },
-    },
-  });
+  engine.register(echoWorkflow);
+  engine.register(clientContractEchoWorkflow);
+  engine.register(clientContractWaitingWorkflow);
+  engine.register(clientContractSearchAttributesWorkflow);
 
   server = Bun.serve({
     port: 0, // random available port
@@ -671,13 +689,13 @@ describe('HttpClient', () => {
         return { phase: 'second' as const };
       }
 
-      engine.register('http-timeline', {
-        version: '6.0.0',
-        handler: async function* (ctx: WorkflowContext) {
-          yield* ctx.run(firstHttpStep);
-          return yield* ctx.run(secondHttpStep);
-        },
+      const httpTimeline = workflow({ name: 'http-timeline' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
+        yield* ctx.run(firstHttpStep);
+        return yield* ctx.run(secondHttpStep);
       });
+      engine.register(httpTimeline);
 
       const handle = await client.start('http-timeline', null, { id: 'wf-http-client-timeline' });
       await handle.result();

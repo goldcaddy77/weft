@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types/workflow-function.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { waitForCondition } from '../testing/fake-timers.ts';
 import { runMcpStdioSession } from './stdio.ts';
@@ -18,20 +19,22 @@ type ParsedLine = {
 
 function createEngine(): Engine {
   const engine = new Engine({ storage: new MemoryStorage() });
-  engine.register('echo-workflow', {
+  const echoWorkflow = workflow({
+    name: 'echo-workflow',
     description: 'Echo input through a durable workflow.',
     inputSchema: z.object({ value: z.string() }),
-    handler: async function* (_context: WorkflowContext, input: { value: string }) {
-      return { echoed: input.value };
-    },
+  }).execute(async function* (_context: WorkflowContext, input: { value: string }) {
+    return { echoed: input.value };
   });
-  engine.register('hold-for-stdio-cancel', {
+  const holdForStdioCancel = workflow({
+    name: 'hold-for-stdio-cancel',
     description: 'Wait for cancellation or release.',
     inputSchema: z.object({ value: z.string().optional() }),
-    handler: async function* (context: WorkflowContext) {
-      return yield* context.waitForSignal<string>('release');
-    },
+  }).execute(async function* (context: WorkflowContext) {
+    return yield* context.waitForSignal<string>('release');
   });
+  engine.register(echoWorkflow);
+  engine.register(holdForStdioCancel);
   return engine;
 }
 
@@ -468,7 +471,7 @@ describe('runMcpStdioSession', () => {
     await waitForCondition(
       async () => {
         const workflows = await engine.list({ type: 'hold-for-stdio-cancel' });
-        workflowId = workflows.items.find((workflow) => workflow.status === 'running')?.id ?? '';
+        workflowId = workflows.items.find((entry) => entry.status === 'running')?.id ?? '';
         return workflowId.length > 0;
       },
       { timeoutMs: 2_000, intervalMs: 10, label: 'running stdio workflow' },

@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import type { WorkflowContext } from '../../core/types.ts';
+import { workflow } from '../../core/types/workflow-function.ts';
 import type { ChaosScenario, FailureCategory } from '../chaos.ts';
 import {
   ChaosNonRetryableError,
@@ -230,11 +231,15 @@ describe('TestEngine.runN', () => {
 
     const reliableActivity = async (x: number) => x + 1;
 
-    engine.register('reliable', async function* (ctx: WorkflowContext, input: unknown) {
+    const reliable = workflow({ name: 'reliable' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
       const mockedActivity = engine.mocks.get(reliableActivity);
       const fn = mockedActivity ? mockedActivity.implementation : reliableActivity;
       return yield* (ctx as any).run(fn, input);
     });
+    engine.register(reliable);
 
     engine.mock(reliableActivity, async (x: number) => x + 1);
 
@@ -252,11 +257,15 @@ describe('TestEngine.runN', () => {
 
     const flakeyActivity = async (x: number) => x * 2;
 
-    engine.register('flakey', async function* (ctx: WorkflowContext, input: unknown) {
+    const flakey = workflow({ name: 'flakey' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
       const mockedActivity = engine.mocks.get(flakeyActivity);
       const fn = mockedActivity ? mockedActivity.implementation : flakeyActivity;
       return yield* (ctx as any).run(fn, input);
     });
+    engine.register(flakey);
 
     engine.mock(flakeyActivity, async (x: number) => x * 2);
 
@@ -283,11 +292,14 @@ describe('TestEngine.runN', () => {
 
     const activity = async () => 'done';
 
-    engine.register('shape-test', async function* (ctx: WorkflowContext) {
+    const shapeTest = workflow({ name: 'shape-test' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const mockedActivity = engine.mocks.get(activity);
       const fn = mockedActivity ? mockedActivity.implementation : activity;
       return yield* (ctx as any).run(fn, undefined);
     });
+    engine.register(shapeTest);
 
     engine.mock(activity, async () => 'done');
 
@@ -309,9 +321,10 @@ describe('TestEngine.runN', () => {
     }
 
     const engine = new TestEngine();
-    engine.register('planning-failure', async function* () {
+    const planningFailure = workflow({ name: 'planning-failure' }).execute(async function* () {
       throw new ToolSchemaValidationError();
     });
+    engine.register(planningFailure);
 
     const result = await engine.runN('planning-failure', undefined, { runs: 1 });
 
@@ -327,11 +340,15 @@ describe('TestEngine.runN', () => {
 
     const deterministicActivity = async (x: number) => x + 100;
 
-    engine.register('deterministic', async function* (ctx: WorkflowContext, input: unknown) {
+    const deterministic = workflow({ name: 'deterministic' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
       const mockedActivity = engine.mocks.get(deterministicActivity);
       const fn = mockedActivity ? mockedActivity.implementation : deterministicActivity;
       return yield* (ctx as any).run(fn, input);
     });
+    engine.register(deterministic);
 
     engine.mock(deterministicActivity, async (x: number) => x + 100);
 
@@ -351,11 +368,14 @@ describe('TestEngine.runN', () => {
 
     const activity = async () => 'ok';
 
-    engine.register('seed-variety', async function* (ctx: WorkflowContext) {
+    const seedVariety = workflow({ name: 'seed-variety' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const mockedActivity = engine.mocks.get(activity);
       const fn = mockedActivity ? mockedActivity.implementation : activity;
       return yield* (ctx as any).run(fn, undefined);
     });
+    engine.register(seedVariety);
 
     engine.mock(activity, async () => 'ok');
 
@@ -390,11 +410,12 @@ describe('TestEngine.runN', () => {
 
     const activity = async () => 'result';
 
-    engine.register('counting', async function* (ctx: WorkflowContext) {
+    const counting = workflow({ name: 'counting' }).execute(async function* (ctx: WorkflowContext) {
       const mockedActivity = engine.mocks.get(activity);
       const fn = mockedActivity ? mockedActivity.implementation : activity;
       return yield* (ctx as any).run(fn, undefined);
     });
+    engine.register(counting);
 
     engine.mock(activity, async () => 'result');
 
