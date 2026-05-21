@@ -38,19 +38,24 @@ type HasExecuteProperty<T> = T extends { execute: unknown } ? true : false;
  * - Bare async or sync function with a single input parameter (or no
  *   parameters, for void-input activities).
  * - `ActivityCallable<TInput, TOutput>` returned by `activity({ name, execute })`.
- * - Object form (`ActivityObjectInput`) carrying `execute` plus optional
- *   `retry`, `timeout`, `idempotent`, etc.
+ * - Object form carrying `execute` plus optional `retry`, `timeout`,
+ *   `idempotent`, etc.
  *
- * Multi-parameter callables are rejected at the type level: only the input
- * argument shape (zero or one parameter) participates in inference. This keeps
- * `ctx.run('name', input)` from drifting into multi-argument variadic land.
+ * The constraint is intentionally loose: a single union of three structural
+ * shapes (function, callable-shaped, has-execute-object). Tightening it to
+ * fixed-input-type unions (`(input: never) => unknown`) triggers
+ * contravariance errors that prevent the most common authoring forms from
+ * satisfying `extends ActivityMapInput`. `NormalizeActivities<T>` reads the
+ * concrete input/output types off each entry directly via conditional
+ * inference, so the looser constraint does not cost us downstream typing.
+ *
+ * Multi-parameter functions are allowed by the constraint but degrade
+ * gracefully to `unknown` input in `NormalizeActivities<T>` — they cannot
+ * be reliably called via `ctx.run('name', input)` and that is documented.
  */
 export type ActivityEntryInput =
-  | ActivityCallable<never, unknown>
-  | ActivityCallable<void, unknown>
-  | (() => unknown)
-  | ((input: never) => unknown)
-  | ActivityObjectInput;
+  | ((...arguments_: never[]) => unknown)
+  | { readonly execute: (...arguments_: never[]) => unknown };
 
 /**
  * The map shape `.activities({ ... })` accepts. Each value is an

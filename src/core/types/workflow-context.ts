@@ -107,7 +107,7 @@ export interface WorkflowContext<
   TSignals extends SignalMap = {},
   TUpdates extends UpdateMap = {},
   TQueries extends QueryMap = {},
-  TSearchAttributes extends SearchAttributeSchema = SearchAttributeSchema,
+  TSearchAttributes extends SearchAttributeSchema = {},
 > {
   readonly workflowId: WorkflowId;
   readonly signal: AbortSignal;
