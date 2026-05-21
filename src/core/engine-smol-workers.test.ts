@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { Engine } from './engine.ts';
 import type { WorkflowContext } from './types.ts';
-import { activity } from './types.ts';
+import { activity, workflow } from './types.ts';
 
 // ---------------------------------------------------------------------------
 // Worker URLs for integration tests
@@ -34,10 +34,14 @@ describe('Engine with smol: true workers', () => {
         execute: async (input: unknown) => `hello ${String(input)}`,
       });
 
-      engine.register('smol-greet', async function* (ctx: WorkflowContext, input: unknown) {
+      const smolGreetWorkflow = workflow({ name: 'smol-greet' }).execute(async function* (
+        ctx: WorkflowContext,
+        input: unknown,
+      ) {
         const result = yield* ctx.run(greet, input);
         return result;
       });
+      engine.register(smolGreetWorkflow);
 
       const handle = await engine.start('smol-greet', 'world');
       const result = await handle.result();
@@ -60,10 +64,14 @@ describe('Engine with smol: true workers', () => {
         execute: async (input: unknown) => (input as number) * 2,
       });
 
-      engine.register('smol-double', async function* (ctx: WorkflowContext, input: unknown) {
+      const smolDoubleWorkflow = workflow({ name: 'smol-double' }).execute(async function* (
+        ctx: WorkflowContext,
+        input: unknown,
+      ) {
         const result = yield* ctx.run(double, input);
         return result;
       });
+      engine.register(smolDoubleWorkflow);
 
       const handles = await Promise.all([
         engine.start('smol-double', 1),
@@ -93,10 +101,13 @@ describe('Engine with smol: true workers', () => {
         },
       });
 
-      engine.register('smol-failing', async function* (ctx: WorkflowContext) {
+      const smolFailingWorkflow = workflow({ name: 'smol-failing' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         const result = yield* ctx.run(failing);
         return result;
       });
+      engine.register(smolFailingWorkflow);
 
       const handle = await engine.start('smol-failing', null);
 
@@ -124,10 +135,14 @@ describe('Engine with smol: true workers', () => {
         execute: async (input: unknown) => `hello ${String(input)}`,
       });
 
-      engine.register('no-smol-greet', async function* (ctx: WorkflowContext, input: unknown) {
+      const noSmolGreetWorkflow = workflow({ name: 'no-smol-greet' }).execute(async function* (
+        ctx: WorkflowContext,
+        input: unknown,
+      ) {
         const result = yield* ctx.run(greet, input);
         return result;
       });
+      engine.register(noSmolGreetWorkflow);
 
       const handle = await engine.start('no-smol-greet', 'default');
       const result = await handle.result();
@@ -150,10 +165,13 @@ describe('Engine with smol: true workers', () => {
         execute: async (input: unknown) => `hello ${String(input)}`,
       });
 
-      engine.register('explicit-no-smol', async function* (ctx: WorkflowContext, input: unknown) {
-        const result = yield* ctx.run(greet, input);
-        return result;
-      });
+      const explicitNoSmolWorkflow = workflow({ name: 'explicit-no-smol' }).execute(
+        async function* (ctx: WorkflowContext, input: unknown) {
+          const result = yield* ctx.run(greet, input);
+          return result;
+        },
+      );
+      engine.register(explicitNoSmolWorkflow);
 
       const handle = await engine.start('explicit-no-smol', 'explicit');
       const result = await handle.result();

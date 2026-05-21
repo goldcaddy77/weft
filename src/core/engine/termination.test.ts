@@ -5,6 +5,7 @@ import { MemoryStorage } from '../../storage/memory.ts';
 import { sleepForTesting } from '../../testing/fake-timers.ts';
 import { Engine } from '../engine.ts';
 import type { WorkflowContext } from '../types.ts';
+import { workflow } from '../types.ts';
 import type { EngineInternals } from './internals.ts';
 import { getInternals } from './internals.ts';
 import {
@@ -141,15 +142,15 @@ describe('termination helpers', () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
 
-    engine.register('completion-attribute-fallback', {
-      handler: async function* (ctx: WorkflowContext) {
+    const completionAttributeFallbackWorkflow = workflow({ name: 'completion-attribute-fallback' })
+      .searchAttributes({
+        customerId: { type: 'string' },
+      })
+      .execute(async function* (ctx: WorkflowContext) {
         yield* ctx.waitForSignal('finish');
         return 'done';
-      },
-      searchAttributes: {
-        customerId: { type: 'string' },
-      },
-    });
+      });
+    engine.register(completionAttributeFallbackWorkflow);
 
     const handle = await engine.start('completion-attribute-fallback', null, {
       id: 'completion-attribute-fallback-id',
@@ -198,10 +199,13 @@ describe('termination helpers', () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
 
-    engine.register('failure-cleanup-throw', async function* (ctx: WorkflowContext) {
-      yield* ctx.waitForSignal('finish');
-      return 'done';
-    });
+    const failureCleanupThrowWorkflow = workflow({ name: 'failure-cleanup-throw' }).execute(
+      async function* (ctx: WorkflowContext) {
+        yield* ctx.waitForSignal('finish');
+        return 'done';
+      },
+    );
+    engine.register(failureCleanupThrowWorkflow);
 
     const handle = await engine.start('failure-cleanup-throw', null, {
       id: 'failure-cleanup-throw-id',
@@ -245,10 +249,13 @@ describe('termination helpers', () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
 
-    engine.register('cancel-cleanup-throw', async function* (ctx: WorkflowContext) {
-      yield* ctx.waitForSignal('finish');
-      return 'done';
-    });
+    const cancelCleanupThrowWorkflow = workflow({ name: 'cancel-cleanup-throw' }).execute(
+      async function* (ctx: WorkflowContext) {
+        yield* ctx.waitForSignal('finish');
+        return 'done';
+      },
+    );
+    engine.register(cancelCleanupThrowWorkflow);
 
     const handle = await engine.start('cancel-cleanup-throw', null, {
       id: 'cancel-cleanup-throw-id',
@@ -324,10 +331,13 @@ describe('termination helpers', () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
 
-    engine.register('completion-ordering', async function* (ctx: WorkflowContext) {
-      yield* ctx.waitForSignal('finish');
-      return 'done';
-    });
+    const completionOrderingWorkflow = workflow({ name: 'completion-ordering' }).execute(
+      async function* (ctx: WorkflowContext) {
+        yield* ctx.waitForSignal('finish');
+        return 'done';
+      },
+    );
+    engine.register(completionOrderingWorkflow);
 
     const handle = await engine.start('completion-ordering', null, {
       id: 'completion-ordering-id',

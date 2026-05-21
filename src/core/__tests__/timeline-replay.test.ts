@@ -4,7 +4,7 @@ import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { encode } from '../codec.ts';
 import { Engine } from '../engine.ts';
-import type { WorkflowContext } from '../types.ts';
+import { workflow, type WorkflowContext } from '../types.ts';
 
 describe('timeline and replay', () => {
   let engine: Engine;
@@ -34,9 +34,8 @@ describe('timeline and replay', () => {
     }
 
     engine = new Engine({ storage, checkpointHistory: 10, getNow: () => now });
-    engine.register('checkout', {
-      version: '2.0.0',
-      handler: async function* (ctx: WorkflowContext) {
+    const checkoutWorkflow = workflow({ name: 'checkout', version: '2.0.0' }).execute(
+      async function* (ctx: WorkflowContext) {
         const order = yield* ctx.run(loadOrder, {
           authorization: 'Bearer customer-secret',
           orderId: 'order-1',
@@ -47,7 +46,8 @@ describe('timeline and replay', () => {
           orderId: order.orderId,
         });
       },
-    });
+    );
+    engine.register(checkoutWorkflow);
 
     const handle = await engine.start('checkout', null, { id: 'wf-timeline' });
     await handle.result();
@@ -100,14 +100,14 @@ describe('timeline and replay', () => {
     }
 
     engine = new Engine({ storage, checkpointHistory: 10, getNow: () => now });
-    engine.register('three-steps', {
-      version: '3.1.0',
-      handler: async function* (ctx: WorkflowContext) {
+    const threeStepsWorkflow = workflow({ name: 'three-steps', version: '3.1.0' }).execute(
+      async function* (ctx: WorkflowContext) {
         yield* ctx.run(firstStep);
         yield* ctx.run(secondStep);
         return yield* ctx.run(thirdStep);
       },
-    });
+    );
+    engine.register(threeStepsWorkflow);
 
     const handle = await engine.start('three-steps', null, { id: 'wf-replay' });
     await handle.result();
@@ -139,9 +139,10 @@ describe('timeline and replay', () => {
   it('ignores malformed stored timeline entries and returns results sorted by step', async () => {
     const storage = new MemoryStorage();
     engine = new Engine({ storage, checkpointHistory: 10 });
-    engine.register('noop', async function* () {
+    const noopWorkflow = workflow({ name: 'noop' }).execute(async function* () {
       return null;
     });
+    engine.register(noopWorkflow);
 
     await storage.put(
       KEYS.timeline('wf-malformed-timeline', 2),
@@ -261,11 +262,12 @@ describe('timeline and replay', () => {
       throw new Error('timeline failure');
     }
 
-    engine.register('timeline-failure', {
-      handler: async function* (ctx: WorkflowContext) {
-        return yield* ctx.run(failStep);
-      },
+    const timelineFailureWorkflow = workflow({ name: 'timeline-failure' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
+      return yield* ctx.run(failStep);
     });
+    engine.register(timelineFailureWorkflow);
 
     const handle = await engine.start('timeline-failure', null, { id: 'wf-timeline-failure' });
     await handle.result().catch(() => {});

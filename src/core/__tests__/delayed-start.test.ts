@@ -6,6 +6,7 @@ import { TestEngine } from '../../testing/test-engine.ts';
 import { decode, encode } from '../codec.ts';
 import { Engine } from '../engine.ts';
 import type { TimerEntry, WorkflowContext, WorkflowState } from '../types.ts';
+import { workflow } from '../types.ts';
 
 async function collectDelayedEntries(
   storage: MemoryStorage,
@@ -27,10 +28,14 @@ describe('delayed workflow start', () => {
     const engine = new TestEngine({ startTime: 1_000 });
     let executions = 0;
 
-    engine.register('delayed', async function* (_ctx: WorkflowContext, input: unknown) {
+    const delayedWorkflow = workflow({ name: 'delayed' }).execute(async function* (
+      _ctx: WorkflowContext,
+      input: unknown,
+    ) {
       executions += 1;
       return input;
     });
+    engine.register(delayedWorkflow);
 
     const handle = await engine.start('delayed', 'hello', {
       id: 'wf-delayed-start-at',
@@ -72,9 +77,10 @@ describe('delayed workflow start', () => {
   it('persists startAfter as a wf-delayed timer entry', async () => {
     const engine = new TestEngine({ startTime: 10_000 });
 
-    engine.register('delayed', async function* () {
+    const delayedWorkflow2 = workflow({ name: 'delayed' }).execute(async function* () {
       return 'done';
     });
+    engine.register(delayedWorkflow2);
 
     await engine.start('delayed', null, {
       id: 'wf-start-after',
@@ -101,9 +107,10 @@ describe('delayed workflow start', () => {
   it('rejects start() when both startAt and startAfter are provided', async () => {
     const engine = new TestEngine({ startTime: 1_000 });
 
-    engine.register('delayed', async function* () {
+    const delayedWorkflow3 = workflow({ name: 'delayed' }).execute(async function* () {
       return 'done';
     });
+    engine.register(delayedWorkflow3);
 
     await expect(
       engine.start('delayed', null, {
@@ -118,9 +125,10 @@ describe('delayed workflow start', () => {
   it('rejects startAt values that are negative, non-finite, or fractional', async () => {
     const engine = new TestEngine({ startTime: 1_000 });
 
-    engine.register('delayed', async function* () {
+    const delayedWorkflow4 = workflow({ name: 'delayed' }).execute(async function* () {
       return 'done';
     });
+    engine.register(delayedWorkflow4);
 
     await expect(
       engine.start('delayed', null, {
@@ -146,9 +154,10 @@ describe('delayed workflow start', () => {
   it('rejects startAfter values that are not finite or non-negative durations', async () => {
     const engine = new TestEngine({ startTime: 1_000 });
 
-    engine.register('delayed', async function* () {
+    const delayedWorkflow5 = workflow({ name: 'delayed' }).execute(async function* () {
       return 'done';
     });
+    engine.register(delayedWorkflow5);
 
     await expect(
       engine.start('delayed', null, {
@@ -164,9 +173,10 @@ describe('delayed workflow start', () => {
   it('rounds fractional startAfter durations up before persisting delayed starts', async () => {
     const engine = new TestEngine({ startTime: 1_000 });
 
-    engine.register('delayed', async function* () {
+    const delayedWorkflow6 = workflow({ name: 'delayed' }).execute(async function* () {
       return 'done';
     });
+    engine.register(delayedWorkflow6);
 
     await engine.start('delayed', null, {
       id: 'wf-fractional-start-after',
@@ -193,9 +203,10 @@ describe('delayed workflow start', () => {
   it('rejects delayed executionTimeout values that are not finite, non-negative durations', async () => {
     const engine = new TestEngine({ startTime: 1_000 });
 
-    engine.register('delayed', async function* () {
+    const delayedWorkflow7 = workflow({ name: 'delayed' }).execute(async function* () {
       return 'done';
     });
+    engine.register(delayedWorkflow7);
 
     await expect(
       engine.start('delayed', null, {
@@ -215,10 +226,14 @@ describe('delayed workflow start', () => {
     let executions = 0;
 
     const registerDelayedWorkflow = (engine: Engine) => {
-      engine.register('delayed', async function* (_ctx: WorkflowContext, input: unknown) {
+      const delayedWorkflow8 = workflow({ name: 'delayed' }).execute(async function* (
+        _ctx: WorkflowContext,
+        input: unknown,
+      ) {
         executions += 1;
         return `done:${input as string}`;
       });
+      engine.register(delayedWorkflow8);
     };
 
     const firstEngine = new Engine({
@@ -274,13 +289,17 @@ describe('delayed workflow start', () => {
         },
       });
 
-      engine.register('child', async function* () {
+      const childWorkflow2 = workflow({ name: 'child' }).execute(async function* () {
         return 'child-complete';
       });
+      engine.register(childWorkflow2);
 
-      engine.register('parent', async function* (ctx: WorkflowContext) {
+      const parentWorkflow = workflow({ name: 'parent' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         return yield* ctx.startChild<string>('child', null);
       });
+      engine.register(parentWorkflow);
     };
 
     const firstEngine = new Engine({
@@ -323,9 +342,13 @@ describe('delayed workflow start', () => {
     const storage = new MemoryStorage();
 
     const registerDelayedWorkflow = (engine: Engine) => {
-      engine.register('delayed', async function* (_ctx: WorkflowContext, input: unknown) {
+      const delayedWorkflow9 = workflow({ name: 'delayed' }).execute(async function* (
+        _ctx: WorkflowContext,
+        input: unknown,
+      ) {
         return `done:${input as string}`;
       });
+      engine.register(delayedWorkflow9);
     };
 
     const firstEngine = new Engine({
@@ -362,10 +385,11 @@ describe('delayed workflow start', () => {
     const engine = new TestEngine({ startTime: 1_000 });
     let executions = 0;
 
-    engine.register('delayed', async function* () {
+    const delayedWorkflow10 = workflow({ name: 'delayed' }).execute(async function* () {
       executions += 1;
       return 'done';
     });
+    engine.register(delayedWorkflow10);
 
     const handle = await engine.start('delayed', null, {
       id: 'wf-cancel-before-start',
@@ -388,9 +412,10 @@ describe('delayed workflow start', () => {
     const engine = new TestEngine({ startTime: 1_000 });
     const workflowId = 'wf:review/cleanup';
 
-    engine.register('delayed', async function* () {
+    const delayedWorkflow11 = workflow({ name: 'delayed' }).execute(async function* () {
       return 'done';
     });
+    engine.register(delayedWorkflow11);
 
     const handle = await engine.start('delayed', null, {
       id: workflowId,
@@ -412,7 +437,9 @@ describe('delayed workflow start', () => {
   it('starts execution timeouts when the delayed workflow begins running', async () => {
     const engine = new TestEngine({ startTime: 1_000 });
 
-    engine.register('timeout-delayed', async function* (ctx: WorkflowContext) {
+    const timeoutDelayedWorkflow = workflow({ name: 'timeout-delayed' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       await new Promise<void>((resolve) => {
         if (ctx.signal.aborted) {
           resolve();
@@ -424,6 +451,7 @@ describe('delayed workflow start', () => {
 
       return 'never';
     });
+    engine.register(timeoutDelayedWorkflow);
 
     const handle = await engine.start('timeout-delayed', null, {
       id: 'wf-delayed-timeout',
@@ -449,9 +477,10 @@ describe('delayed workflow start', () => {
   it('persists the pending workflow state before the delayed start fires', async () => {
     const engine = new TestEngine({ startTime: 1_000 });
 
-    engine.register('delayed', async function* () {
+    const delayedWorkflow12 = workflow({ name: 'delayed' }).execute(async function* () {
       return 'done';
     });
+    engine.register(delayedWorkflow12);
 
     const handle = await engine.start('delayed', null, {
       id: 'wf-persisted-pending',

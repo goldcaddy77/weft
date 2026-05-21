@@ -6,6 +6,7 @@ import { serializeCheckpoint } from '../checkpoint/serialization.ts';
 import { encode } from '../codec.ts';
 import type { WorkflowStartInterception } from '../interceptor/interception-contexts.ts';
 import type { Checkpoint, WorkflowState } from '../types.ts';
+import { workflow } from '../types.ts';
 import { createLifecycleCallbacks as createEngineLifecycleCallbacks } from './callback-creators.ts';
 import { Engine } from './index.ts';
 import { getInternals } from './internals.ts';
@@ -100,9 +101,12 @@ function createWorkflowState(
 describe('engine lifecycle coverage helpers', () => {
   it('start delegates to startWorkflow with the engine lifecycle callbacks', async () => {
     const engine = new Engine();
-    engine.register('start-wrapper-workflow', async function* () {
-      return 'started';
-    });
+    const startWrapperWorkflowWorkflow = workflow({ name: 'start-wrapper-workflow' }).execute(
+      async function* () {
+        return 'started';
+      },
+    );
+    engine.register(startWrapperWorkflowWorkflow);
 
     const handle = await start(
       getInternals(engine),
@@ -1231,9 +1235,12 @@ describe('engine lifecycle coverage helpers', () => {
 
   it('startWorkflow fires interceptor, persistence, handle creation, and start event in order', async () => {
     const engine = new Engine();
-    engine.register('callback-order-workflow', async function* () {
-      return 'done';
-    });
+    const callbackOrderWorkflowWorkflow = workflow({ name: 'callback-order-workflow' }).execute(
+      async function* () {
+        return 'done';
+      },
+    );
+    engine.register(callbackOrderWorkflowWorkflow);
 
     const events: string[] = [];
     const internals = getInternals(engine);

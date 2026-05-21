@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import { Engine } from '../engine.ts';
+import { workflow } from '../types.ts';
 import { getInternals } from './internals.ts';
 import { resolveWorkflowTypeTarget, type RegistrationCallbacks } from './registration.ts';
 
@@ -23,13 +24,14 @@ describe('resolveWorkflowTypeTarget', () => {
     const engine = new Engine();
     const migrate = (checkpoint: unknown) => checkpoint;
 
-    engine.register('migrated-workflow', {
-      handler: async function* () {
-        return 'done';
-      },
+    const migratedWorkflow = workflow({
+      name: 'migrated-workflow',
       migrate,
       version: '2',
+    }).execute(async function* () {
+      return 'done';
     });
+    engine.register(migratedWorkflow);
 
     expect(getInternals(engine).registrations.get('migrated-workflow')?.migrate).toBe(migrate);
 

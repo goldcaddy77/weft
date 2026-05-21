@@ -12,7 +12,7 @@ import {
   REGISTRY_VERSION,
   RegistrySchemaConversionError,
 } from './registry-snapshot.ts';
-import { activity } from './types.ts';
+import { activity, workflow } from './types.ts';
 
 function createEngine(): Engine {
   return new Engine({ storage: new MemoryStorage() });
@@ -35,15 +35,16 @@ describe('buildRegistrySnapshot', () => {
 
   it('includes workflows with their schema, description, and tags', () => {
     engine = createEngine();
-    engine.register('welcome', {
-      handler: async function* () {
-        return { greeting: 'hi' };
-      },
+    const welcomeWorkflow = workflow({
+      name: 'welcome',
       inputSchema: z.object({ name: z.string() }),
       outputSchema: z.object({ greeting: z.string() }),
       description: 'Greets a person.',
       tags: ['greeting', 'demo'],
+    }).execute(async function* () {
+      return { greeting: 'hi' };
     });
+    engine.register(welcomeWorkflow);
 
     const snapshot = buildRegistrySnapshot(engine);
 
@@ -67,7 +68,8 @@ describe('buildRegistrySnapshot', () => {
 
   it('omits schema fields that are absent on the workflow registration', () => {
     engine = createEngine();
-    engine.register('schemaless', async function* () {});
+    const schemalessWorkflow = workflow({ name: 'schemaless' }).execute(async function* () {});
+    engine.register(schemalessWorkflow);
 
     const snapshot = buildRegistrySnapshot(engine);
 
@@ -80,10 +82,11 @@ describe('buildRegistrySnapshot', () => {
 
   it('includes only one schema when only the input schema is registered', () => {
     engine = createEngine();
-    engine.register('partial', {
-      handler: async function* () {},
+    const partialWorkflow = workflow({
+      name: 'partial',
       inputSchema: z.object({ x: z.number() }),
-    });
+    }).execute(async function* () {});
+    engine.register(partialWorkflow);
 
     const snapshot = buildRegistrySnapshot(engine);
     const entry = snapshot.workflows['partial'];
@@ -94,7 +97,8 @@ describe('buildRegistrySnapshot', () => {
 
   it('does not emit empty tags arrays', () => {
     engine = createEngine();
-    engine.register('untagged', async function* () {});
+    const untaggedWorkflow = workflow({ name: 'untagged' }).execute(async function* () {});
+    engine.register(untaggedWorkflow);
 
     const snapshot = buildRegistrySnapshot(engine);
     expect(snapshot.workflows['untagged']).not.toHaveProperty('tags');
@@ -158,9 +162,12 @@ describe('buildRegistrySnapshot', () => {
 
   it('orders workflow keys alphabetically by codepoint', () => {
     engine = createEngine();
-    engine.register('charlie', async function* () {});
-    engine.register('alpha', async function* () {});
-    engine.register('bravo', async function* () {});
+    const charlieWorkflow = workflow({ name: 'charlie' }).execute(async function* () {});
+    engine.register(charlieWorkflow);
+    const alphaWorkflow = workflow({ name: 'alpha' }).execute(async function* () {});
+    engine.register(alphaWorkflow);
+    const bravoWorkflow = workflow({ name: 'bravo' }).execute(async function* () {});
+    engine.register(bravoWorkflow);
 
     const snapshot = buildRegistrySnapshot(engine);
     expect(Object.keys(snapshot.workflows)).toEqual(['alpha', 'bravo', 'charlie']);
@@ -176,26 +183,23 @@ describe('buildRegistrySnapshot', () => {
     expect(Object.keys(snapshot.activities)).toEqual(['abc', 'mno', 'xyz']);
   });
 
-  it('places integer-like keys first per ECMAScript object iteration semantics', () => {
-    engine = createEngine();
-    engine.register('alpha', async function* () {});
-    engine.register('42', async function* () {});
-    engine.register('beta', async function* () {});
-
-    const snapshot = buildRegistrySnapshot(engine);
-    // Per ECMAScript: integer-index keys come first in numeric order, then
-    // string keys in insertion order. Our insertion is alphabetical, so the
-    // observable order is: ["42", "alpha", "beta"].
-    expect(Object.keys(snapshot.workflows)).toEqual(['42', 'alpha', 'beta']);
+  it.skip('places integer-like keys first per ECMAScript object iteration semantics', () => {
+    // SKIPPED: the workflow-builder refactor enforces a name grammar of
+    // [A-Za-z_][A-Za-z0-9_-]* (no leading digits) so qualified worker wire
+    // names `${workflowType}.${activityName}` parse unambiguously. The
+    // ECMAScript integer-index iteration behaviour this test pins is still
+    // observable through any other map whose keys are user-controlled; it
+    // is no longer reachable through `workflow({ name })` registration.
   });
 
   it('throws RegistrySchemaConversionError with workflow context when input schema conversion fails', () => {
     engine = createEngine();
     const brokenSchema = makeBrokenSchema('input');
-    engine.register('broken', {
-      handler: async function* () {},
+    const brokenWorkflow = workflow({
+      name: 'broken',
       inputSchema: brokenSchema,
-    });
+    }).execute(async function* () {});
+    engine.register(brokenWorkflow);
 
     let captured: unknown;
     try {
@@ -214,10 +218,11 @@ describe('buildRegistrySnapshot', () => {
   it('throws RegistrySchemaConversionError with workflow context when output schema conversion fails', () => {
     engine = createEngine();
     const brokenSchema = makeBrokenSchema('output');
-    engine.register('broken', {
-      handler: async function* () {},
+    const brokenWorkflow2 = workflow({
+      name: 'broken',
       outputSchema: brokenSchema,
-    });
+    }).execute(async function* () {});
+    engine.register(brokenWorkflow2);
 
     let captured: unknown;
     try {
@@ -298,7 +303,8 @@ describe('buildRegistrySnapshot', () => {
     // rather than an own property, which would silently drop the entry from
     // JSON output. Null-prototype maps store it as a normal property.
     engine = createEngine();
-    engine.register('__proto__', { handler: async function* () {} });
+    const ProtoWorkflow = workflow({ name: '__proto__' }).execute(async function* () {});
+    engine.register(ProtoWorkflow);
     engine.register(activity({ name: '__proto__', execute: async () => undefined }));
 
     const snapshot = buildRegistrySnapshot(engine);

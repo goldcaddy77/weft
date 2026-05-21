@@ -13,6 +13,7 @@ import { decode } from './codec.ts';
 import { Engine } from './engine.ts';
 import { searchAttribute } from './search-attributes.ts';
 import type { SearchAttributeValue, WorkflowContext } from './types.ts';
+import { workflow } from './types.ts';
 
 const waitForUpdateTestTimeoutMs = 90_000;
 
@@ -34,7 +35,7 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('noop', async function* () {
+      const noopWorkflow = workflow({ name: 'noop' }).execute(async function* () {
         yield {
           type: 'sleep',
           operationId: 'test',
@@ -43,6 +44,7 @@ for (const backend of storageBackends) {
         };
         return 'done';
       });
+      engine.register(noopWorkflow);
 
       await engine.start('noop', null, {
         id: 'wf-1',
@@ -77,15 +79,18 @@ for (const backend of storageBackends) {
 
       const setAttributeActivity = async () => 'done';
 
-      engine.register('set-attrs-running', async function* (ctx: WorkflowContext) {
-        const context = ctx;
-        context.setAttribute('region', 'us-east');
-        // Run an activity to trigger a checkpoint persist
-        yield* context.run(setAttributeActivity);
-        // Keep workflow running
-        yield* context.waitForSignal('stop');
-        return 'done';
-      });
+      const setAttrsRunningWorkflow = workflow({ name: 'set-attrs-running' }).execute(
+        async function* (ctx: WorkflowContext) {
+          const context = ctx;
+          context.setAttribute('region', 'us-east');
+          // Run an activity to trigger a checkpoint persist
+          yield* context.run(setAttributeActivity);
+          // Keep workflow running
+          yield* context.waitForSignal('stop');
+          return 'done';
+        },
+      );
+      engine.register(setAttrsRunningWorkflow);
 
       await engine.start('set-attrs-running', null, { id: 'wf-3' });
       await flush();
@@ -106,10 +111,13 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('stay-running', async function* (ctx: WorkflowContext) {
+      const stayRunningWorkflow = workflow({ name: 'stay-running' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         yield* ctx.waitForSignal('stop');
         return 'done';
       });
+      engine.register(stayRunningWorkflow);
 
       // Start workflows with different attributes
       await engine.start('stay-running', null, {
@@ -144,10 +152,13 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('stay-running', async function* (ctx: WorkflowContext) {
+      const stayRunningWorkflow2 = workflow({ name: 'stay-running' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         yield* ctx.waitForSignal('stop');
         return 'done';
       });
+      engine.register(stayRunningWorkflow2);
 
       await engine.start('stay-running', null, {
         id: 'wf-price-5',
@@ -188,18 +199,18 @@ for (const backend of storageBackends) {
         items: { type: 'string' },
       });
 
-      engine.register('indexed-order', {
-        searchAttributes: {
+      const indexedOrderWorkflow = workflow({ name: 'indexed-order' })
+        .searchAttributes({
           customerId,
           orderTotal,
           createdAt,
           labels,
-        },
-        handler: async function* (ctx: WorkflowContext) {
+        })
+        .execute(async function* (ctx: WorkflowContext) {
           yield* ctx.waitForSignal('stop');
           return 'done';
-        },
-      });
+        });
+      engine.register(indexedOrderWorkflow);
 
       await engine.start('indexed-order', null, {
         id: 'wf-indexed-a',
@@ -253,9 +264,12 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('complete-quickly', async function* () {
-        return 'done';
-      });
+      const completeQuicklyWorkflow = workflow({ name: 'complete-quickly' }).execute(
+        async function* () {
+          return 'done';
+        },
+      );
+      engine.register(completeQuicklyWorkflow);
 
       await engine.start('complete-quickly', null, {
         id: 'wf-cleanup',
@@ -280,9 +294,10 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('fail-quickly', async function* () {
+      const failQuicklyWorkflow = workflow({ name: 'fail-quickly' }).execute(async function* () {
         throw new Error('intentional failure');
       });
+      engine.register(failQuicklyWorkflow);
 
       const handle = await engine.start('fail-quickly', null, {
         id: 'wf-fail-cleanup',
@@ -315,10 +330,13 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('stay-running', async function* (ctx: WorkflowContext) {
+      const stayRunningWorkflow3 = workflow({ name: 'stay-running' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         yield* ctx.waitForSignal('stop');
         return 'done';
       });
+      engine.register(stayRunningWorkflow3);
 
       const handle = await engine.start('stay-running', null, {
         id: 'wf-cancel-cleanup',
@@ -346,10 +364,13 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('stay-running', async function* (ctx: WorkflowContext) {
+      const stayRunningWorkflow4 = workflow({ name: 'stay-running' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         yield* ctx.waitForSignal('stop');
         return 'done';
       });
+      engine.register(stayRunningWorkflow4);
 
       await engine.start('stay-running', null, {
         id: 'wf-both',
@@ -397,10 +418,13 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('stay-running', async function* (ctx: WorkflowContext) {
+      const stayRunningWorkflow5 = workflow({ name: 'stay-running' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         yield* ctx.waitForSignal('stop');
         return 'done';
       });
+      engine.register(stayRunningWorkflow5);
 
       const handle = await engine.start('stay-running', null, { id: 'wf-handle-set' });
       await flush();
@@ -418,10 +442,13 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('stay-running', async function* (ctx: WorkflowContext) {
+      const stayRunningWorkflow6 = workflow({ name: 'stay-running' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         yield* ctx.waitForSignal('stop');
         return 'done';
       });
+      engine.register(stayRunningWorkflow6);
 
       const handle = await engine.start('stay-running', null, {
         id: 'wf-handle-get',
@@ -440,10 +467,13 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('stay-running', async function* (ctx: WorkflowContext) {
+      const stayRunningWorkflow7 = workflow({ name: 'stay-running' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         yield* ctx.waitForSignal('stop');
         return 'done';
       });
+      engine.register(stayRunningWorkflow7);
 
       const handle = await engine.start('stay-running', null, { id: 'wf-handle-both' });
       await flush();
@@ -476,19 +506,19 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('schema-wf', {
-        handler: async function* (ctx: WorkflowContext) {
+      const schemaWfWorkflow = workflow({ name: 'schema-wf' })
+        .searchAttributes({
+          region: { type: 'string' },
+          priority: { type: 'number' },
+        })
+        .execute(async function* (ctx: WorkflowContext) {
           const context = ctx;
           context.setAttribute('region', 'us-east');
           yield* context.run(async () => 'done');
           yield* context.waitForSignal('stop');
           return 'done';
-        },
-        searchAttributes: {
-          region: { type: 'string' },
-          priority: { type: 'number' },
-        },
-      });
+        });
+      engine.register(schemaWfWorkflow);
 
       await engine.start('schema-wf', null, { id: 'wf-schema-ok' });
       await flush();
@@ -503,18 +533,18 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('schema-strict', {
-        handler: async function* (ctx: WorkflowContext) {
+      const schemaStrictWorkflow = workflow({ name: 'schema-strict' })
+        .searchAttributes({
+          region: { type: 'string' },
+          priority: { type: 'number' },
+        })
+        .execute(async function* (ctx: WorkflowContext) {
           const context = ctx;
           context.setAttribute('unknownKey', 'value');
           yield* context.run(async () => 'done');
           return 'done';
-        },
-        searchAttributes: {
-          region: { type: 'string' },
-          priority: { type: 'number' },
-        },
-      });
+        });
+      engine.register(schemaStrictWorkflow);
 
       const handle = await engine.start('schema-strict', null, { id: 'wf-schema-fail' });
 
@@ -536,7 +566,9 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('no-schema', async function* (ctx: WorkflowContext) {
+      const noSchemaWorkflow = workflow({ name: 'no-schema' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         const context = ctx;
         context.setAttribute('anything', 'goes');
         context.setAttribute('random', 123);
@@ -544,6 +576,7 @@ for (const backend of storageBackends) {
         yield* context.waitForSignal('stop');
         return 'done';
       });
+      engine.register(noSchemaWorkflow);
 
       await engine.start('no-schema', null, { id: 'wf-no-schema' });
       await flush();
@@ -559,16 +592,16 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('schema-ext', {
-        handler: async function* (ctx: WorkflowContext) {
-          yield* ctx.waitForSignal('stop');
-          return 'done';
-        },
-        searchAttributes: {
+      const schemaExtWorkflow = workflow({ name: 'schema-ext' })
+        .searchAttributes({
           region: { type: 'string' },
           priority: { type: 'number' },
-        },
-      });
+        })
+        .execute(async function* (ctx: WorkflowContext) {
+          yield* ctx.waitForSignal('stop');
+          return 'done';
+        });
+      engine.register(schemaExtWorkflow);
 
       await engine.start('schema-ext', null, { id: 'wf-schema-ext' });
       await flush();
@@ -593,17 +626,17 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('schema-batch', {
-        handler: async function* (ctx: WorkflowContext) {
+      const schemaBatchWorkflow = workflow({ name: 'schema-batch' })
+        .searchAttributes({
+          region: { type: 'string' },
+        })
+        .execute(async function* (ctx: WorkflowContext) {
           const context = ctx;
           context.setAttributes({ region: 'us-east', badKey: 'oops' });
           yield* context.run(async () => 'done');
           return 'done';
-        },
-        searchAttributes: {
-          region: { type: 'string' },
-        },
-      });
+        });
+      engine.register(schemaBatchWorkflow);
 
       const handle = await engine.start('schema-batch', null, { id: 'wf-schema-batch' });
 
@@ -621,16 +654,16 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('schema-type-mismatch', {
-        handler: async function* (ctx: WorkflowContext) {
-          yield* ctx.waitForSignal('stop');
-          return 'done';
-        },
-        searchAttributes: {
+      const schemaTypeMismatchWorkflow = workflow({ name: 'schema-type-mismatch' })
+        .searchAttributes({
           status: { type: 'string' },
           priority: { type: 'number' },
-        },
-      });
+        })
+        .execute(async function* (ctx: WorkflowContext) {
+          yield* ctx.waitForSignal('stop');
+          return 'done';
+        });
+      engine.register(schemaTypeMismatchWorkflow);
 
       await engine.start('schema-type-mismatch', null, { id: 'wf-type-mismatch' });
       await flush();
@@ -651,15 +684,15 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('schema-type-mismatch-num', {
-        handler: async function* (ctx: WorkflowContext) {
+      const schemaTypeMismatchNumWorkflow = workflow({ name: 'schema-type-mismatch-num' })
+        .searchAttributes({
+          priority: { type: 'number' },
+        })
+        .execute(async function* (ctx: WorkflowContext) {
           yield* ctx.waitForSignal('stop');
           return 'done';
-        },
-        searchAttributes: {
-          priority: { type: 'number' },
-        },
-      });
+        });
+      engine.register(schemaTypeMismatchNumWorkflow);
 
       await engine.start('schema-type-mismatch-num', null, { id: 'wf-type-mismatch-num' });
       await flush();
@@ -679,17 +712,17 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('schema-type-ok', {
-        handler: async function* (ctx: WorkflowContext) {
-          yield* ctx.waitForSignal('stop');
-          return 'done';
-        },
-        searchAttributes: {
+      const schemaTypeOkWorkflow = workflow({ name: 'schema-type-ok' })
+        .searchAttributes({
           status: { type: 'string' },
           priority: { type: 'number' },
           active: { type: 'boolean' },
-        },
-      });
+        })
+        .execute(async function* (ctx: WorkflowContext) {
+          yield* ctx.waitForSignal('stop');
+          return 'done';
+        });
+      engine.register(schemaTypeOkWorkflow);
 
       await engine.start('schema-type-ok', null, { id: 'wf-type-ok' });
       await flush();
@@ -726,10 +759,13 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('stay-running', async function* (ctx: WorkflowContext) {
+      const stayRunningWorkflow8 = workflow({ name: 'stay-running' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         yield* ctx.waitForSignal('stop');
         return 'done';
       });
+      engine.register(stayRunningWorkflow8);
 
       await engine.start('stay-running', null, {
         id: 'wf-p3',
@@ -764,10 +800,13 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('stay-running', async function* (ctx: WorkflowContext) {
+      const stayRunningWorkflow9 = workflow({ name: 'stay-running' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         yield* ctx.waitForSignal('stop');
         return 'done';
       });
+      engine.register(stayRunningWorkflow9);
 
       await engine.start('stay-running', null, {
         id: 'wf-p3',
@@ -798,10 +837,13 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('stay-running', async function* (ctx: WorkflowContext) {
+      const stayRunningWorkflow10 = workflow({ name: 'stay-running' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         yield* ctx.waitForSignal('stop');
         return 'done';
       });
+      engine.register(stayRunningWorkflow10);
 
       await engine.start('stay-running', null, {
         id: 'wf-p1',
@@ -847,12 +889,17 @@ for (const backend of storageBackends) {
         cleanup = result.cleanup;
         engine = new Engine({ storage: result.storage });
 
-        engine.register('wait-for-update', async function* (ctx: WorkflowContext) {
-          const context = ctx;
-          const { payload, respond } = yield* context.waitForUpdate<{ value: number }>('my-update');
-          respond({ accepted: true, value: payload.value });
-          return payload;
-        });
+        const waitForUpdateWorkflow = workflow({ name: 'wait-for-update' }).execute(
+          async function* (ctx: WorkflowContext) {
+            const context = ctx;
+            const { payload, respond } = yield* context.waitForUpdate<{ value: number }>(
+              'my-update',
+            );
+            respond({ accepted: true, value: payload.value });
+            return payload;
+          },
+        );
+        engine.register(waitForUpdateWorkflow);
 
         const handle = await engine.start('wait-for-update', null, { id: 'wf-update-1' });
 
@@ -883,7 +930,9 @@ for (const backend of storageBackends) {
         cleanup = result.cleanup;
         engine = new Engine({ storage: result.storage });
 
-        engine.register('multi-update', async function* (ctx: WorkflowContext) {
+        const multiUpdateWorkflow = workflow({ name: 'multi-update' }).execute(async function* (
+          ctx: WorkflowContext,
+        ) {
           const context = ctx;
           const { payload: firstPayload, respond: respond1 } =
             yield* context.waitForUpdate<string>('update-a');
@@ -893,6 +942,7 @@ for (const backend of storageBackends) {
           respond2(secondPayload);
           return `${firstPayload}-${secondPayload}`;
         });
+        engine.register(multiUpdateWorkflow);
 
         const handle = await engine.start('multi-update', null, { id: 'wf-multi-update' });
 
@@ -921,7 +971,9 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('pending-update', async function* (ctx: WorkflowContext) {
+      const pendingUpdateWorkflow = workflow({ name: 'pending-update' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         const context = ctx;
         // Run an activity first to give time for the update to be queued
         yield* context.run(async () => {
@@ -933,6 +985,7 @@ for (const backend of storageBackends) {
         respond(payload);
         return payload;
       });
+      engine.register(pendingUpdateWorkflow);
 
       const handle = await engine.start('pending-update', null, { id: 'wf-pending-update' });
 
@@ -965,12 +1018,15 @@ for (const backend of storageBackends) {
         engine.addEventListener('update:received', () => events.push('received'));
         engine.addEventListener('update:completed', () => events.push('completed'));
 
-        engine.register('events-update', async function* (ctx: WorkflowContext) {
+        const eventsUpdateWorkflow = workflow({ name: 'events-update' }).execute(async function* (
+          ctx: WorkflowContext,
+        ) {
           const context = ctx;
           const { payload, respond } = yield* context.waitForUpdate('my-update');
           respond(payload);
           return payload;
         });
+        engine.register(eventsUpdateWorkflow);
 
         const handle = await engine.start('events-update', null, { id: 'wf-events-update' });
         await flush();

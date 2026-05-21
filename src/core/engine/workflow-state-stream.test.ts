@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { flush } from '../../testing/storage-backends.ts';
 import type { ListFilter, WorkflowContext } from '../types.ts';
+import { workflow } from '../types.ts';
 import { Engine } from './index.ts';
 import { getInternals } from './internals.ts';
 import { streamMatchingWorkflowStates } from './workflow-state-stream.ts';
@@ -28,7 +29,8 @@ async function collectMatchingWorkflowIds(engine: Engine, filter: ListFilter): P
 describe('streamMatchingWorkflowStates', () => {
   it('streams workflows from the shared constrained-id scan path', async () => {
     const engine = new Engine();
-    engine.register('echo', echoWorkflow);
+    const echoWorkflow2 = workflow({ name: 'echo' }).execute(echoWorkflow);
+    engine.register(echoWorkflow2);
 
     try {
       const firstHandle = await engine.start('echo', 'first', {
@@ -58,10 +60,10 @@ describe('streamMatchingWorkflowStates', () => {
 
   it('streams workflows constrained by search attributes', async () => {
     const engine = new Engine();
-    engine.register('echo', {
-      handler: waitForSignalWorkflow,
-      searchAttributes: { customerId: { type: 'string' } },
-    });
+    const echoWorkflow3 = workflow({ name: 'echo' })
+      .searchAttributes({ customerId: { type: 'string' } })
+      .execute(waitForSignalWorkflow);
+    engine.register(echoWorkflow3);
 
     try {
       await engine.start('echo', 'first', {
@@ -97,10 +99,10 @@ describe('streamMatchingWorkflowStates', () => {
 
   it('intersects tag and search attribute filters', async () => {
     const engine = new Engine();
-    engine.register('echo', {
-      handler: waitForSignalWorkflow,
-      searchAttributes: { customerId: { type: 'string' } },
-    });
+    const echoWorkflow4 = workflow({ name: 'echo' })
+      .searchAttributes({ customerId: { type: 'string' } })
+      .execute(waitForSignalWorkflow);
+    engine.register(echoWorkflow4);
 
     try {
       await engine.start('echo', 'first', {

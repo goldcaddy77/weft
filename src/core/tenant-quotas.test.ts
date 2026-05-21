@@ -13,6 +13,7 @@ import { buildTimerBatchOperations } from './scheduler.ts';
 import { QuotaExceededError, TenantQuotaManager } from './tenant-quotas.ts';
 import { tenantFromInputField } from './tenant.ts';
 import type { TenantQuotaOptions, WorkflowContext } from './types.ts';
+import { workflow } from './types.ts';
 
 const storageByteEncoder = new TextEncoder();
 
@@ -188,7 +189,10 @@ function createEngine(parameters?: {
 
   const engine = new Engine(engineOptions);
 
-  engine.register('hold', async function* (context: WorkflowContext, input: unknown) {
+  const holdWorkflow = workflow({ name: 'hold' }).execute(async function* (
+    context: WorkflowContext,
+    input: unknown,
+  ) {
     const payload =
       input !== null && typeof input === 'object' && 'payload' in input
         ? (input as { payload?: string }).payload
@@ -196,14 +200,20 @@ function createEngine(parameters?: {
     yield* context.waitForSignal('release');
     return payload ?? 'released';
   });
+  engine.register(holdWorkflow);
 
-  engine.register('echo', async function* (_context: WorkflowContext, input: unknown) {
+  const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+    _context: WorkflowContext,
+    input: unknown,
+  ) {
     return input;
   });
+  engine.register(echoWorkflow);
 
-  engine.register('explode', async function* () {
+  const explodeWorkflow = workflow({ name: 'explode' }).execute(async function* () {
     throw new Error('workflow exploded');
   });
+  engine.register(explodeWorkflow);
 
   return engine;
 }
@@ -631,13 +641,16 @@ describe('tenant resource quotas', () => {
     const activityStarted = Promise.withResolvers<void>();
     const activityResult = Promise.withResolvers<string>();
 
-    engine.register('slow-tenant-completion', async function* (context: WorkflowContext) {
-      const result = yield* context.run(async () => {
-        activityStarted.resolve();
-        return activityResult.promise;
-      });
-      return result;
-    });
+    const slowTenantCompletionWorkflow = workflow({ name: 'slow-tenant-completion' }).execute(
+      async function* (context: WorkflowContext) {
+        const result = yield* context.run(async () => {
+          activityStarted.resolve();
+          return activityResult.promise;
+        });
+        return result;
+      },
+    );
+    engine.register(slowTenantCompletionWorkflow);
 
     const handle = await engine.start(
       'slow-tenant-completion',

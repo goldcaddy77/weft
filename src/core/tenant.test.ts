@@ -10,6 +10,7 @@ import {
 import { Engine } from './engine.ts';
 import { tenantFromInputField, type TenantContext, type TenantResolver } from './tenant.ts';
 import type { WorkflowContext } from './types.ts';
+import { workflow } from './types.ts';
 
 // ---------------------------------------------------------------------------
 // Unit: helpers
@@ -85,10 +86,13 @@ describe('Engine with tenantResolver', () => {
       },
     });
 
-    engine.register('capture-tenant', async function* (ctx: WorkflowContext) {
+    const captureTenantWorkflow = workflow({ name: 'capture-tenant' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       captured.push(ctx.tenant);
       return 'done';
     });
+    engine.register(captureTenantWorkflow);
 
     const handle = await engine.start('capture-tenant', { tenantId: 'acme' });
     await handle.result();
@@ -105,10 +109,13 @@ describe('Engine with tenantResolver', () => {
       },
     });
 
-    engine.register('capture-tenant', async function* (ctx: WorkflowContext) {
+    const captureTenantWorkflow2 = workflow({ name: 'capture-tenant' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       captured.push(ctx.tenant);
       return 'done';
     });
+    engine.register(captureTenantWorkflow2);
 
     const handle = await engine.start('capture-tenant', { tenantId: 'acme' });
     await handle.result();
@@ -127,10 +134,13 @@ describe('Engine with tenantResolver', () => {
     };
     const engine = new Engine({ tenantResolver: resolver });
     const captured: Array<TenantContext | undefined> = [];
-    engine.register('capture-tenant', async function* (ctx: WorkflowContext) {
+    const captureTenantWorkflow3 = workflow({ name: 'capture-tenant' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       captured.push(ctx.tenant);
       return 'done';
     });
+    engine.register(captureTenantWorkflow3);
 
     const handle = await engine.start('capture-tenant', { tenantId: 'beta' });
     await handle.result();
@@ -141,10 +151,13 @@ describe('Engine with tenantResolver', () => {
     const captured: Array<TenantContext | undefined> = [];
     const engine = new Engine();
 
-    engine.register('capture-tenant', async function* (ctx: WorkflowContext) {
+    const captureTenantWorkflow4 = workflow({ name: 'capture-tenant' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       captured.push(ctx.tenant);
       return 'done';
     });
+    engine.register(captureTenantWorkflow4);
 
     const handle = await engine.start('capture-tenant', { tenantId: 'acme' });
     await handle.result();
@@ -159,9 +172,10 @@ describe('Engine with tenantResolver', () => {
         },
       },
     });
-    engine.register('noop', async function* () {
+    const noopWorkflow = workflow({ name: 'noop' }).execute(async function* () {
       return 'done';
     });
+    engine.register(noopWorkflow);
 
     await expect(engine.start('noop', { tenantId: 'acme' })).rejects.toThrow(
       'tenant service unavailable',
@@ -190,10 +204,13 @@ describe('Engine with tenantResolver', () => {
     const firstStorage = new BunSQLiteStorage(fixture.path);
     const firstEngine = new Engine({ storage: firstStorage, tenantResolver: resolver });
 
-    firstEngine.register('park-and-capture', async function* (ctx: WorkflowContext) {
+    const parkAndCaptureWorkflow = workflow({ name: 'park-and-capture' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const payload = yield* ctx.waitForSignal<{ ok: true }>('go');
       return { tenant: ctx.tenant, payload };
     });
+    firstEngine.register(parkAndCaptureWorkflow);
 
     await firstEngine.start('park-and-capture', { note: 'initial' }, { id: workflowId });
     await sleepForTesting(10);
@@ -207,10 +224,13 @@ describe('Engine with tenantResolver', () => {
     const secondStorage = new BunSQLiteStorage(fixture.path);
     const secondEngine = new Engine({ storage: secondStorage });
 
-    secondEngine.register('park-and-capture', async function* (ctx: WorkflowContext) {
+    const parkAndCaptureWorkflow2 = workflow({ name: 'park-and-capture' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const payload = yield* ctx.waitForSignal<{ ok: true }>('go');
       return { tenant: ctx.tenant, payload };
     });
+    secondEngine.register(parkAndCaptureWorkflow2);
 
     await secondEngine.recoverAll();
     const handle = secondEngine.getHandle(workflowId);

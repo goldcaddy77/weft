@@ -14,6 +14,7 @@ import { MemoryStorage } from '../../storage/memory.ts';
 import { Engine } from '../engine.ts';
 import type { WorkflowInterceptor } from '../interceptor.ts';
 import type { ActivityContext, ActivityDefinition, WorkflowContext } from '../types.ts';
+import { workflow } from '../types.ts';
 
 /** Drain microtasks so fire-and-forget engine work completes. */
 async function flush(): Promise<void> {
@@ -72,7 +73,9 @@ describe('ctx.saga()', () => {
       },
     });
 
-    engine.register('saga-reverse', async function* (ctx: WorkflowContext) {
+    const sagaReverseWorkflow = workflow({ name: 'saga-reverse' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       yield* c.saga([
         { definition: step1, input: 'a' },
@@ -80,6 +83,7 @@ describe('ctx.saga()', () => {
         { definition: step3, input: 'c' },
       ]);
     });
+    engine.register(sagaReverseWorkflow);
 
     const handle = await engine.start('saga-reverse', null);
     await expect(handle.result()).rejects.toThrow('step-three failed');
@@ -114,13 +118,16 @@ describe('ctx.saga()', () => {
       },
     });
 
-    engine.register('no-compensate-failing-step', async function* (ctx: WorkflowContext) {
+    const noCompensateFailingStepWorkflow = workflow({
+      name: 'no-compensate-failing-step',
+    }).execute(async function* (ctx: WorkflowContext) {
       const c = ctx;
       yield* c.saga([
         { definition: passing, input: 'x' },
         { definition: failing, input: 'y' },
       ]);
     });
+    engine.register(noCompensateFailingStepWorkflow);
 
     const handle = await engine.start('no-compensate-failing-step', null);
     await expect(handle.result()).rejects.toThrow('expected failure');
@@ -146,7 +153,9 @@ describe('ctx.saga()', () => {
       },
     });
 
-    engine.register('happy-saga', async function* (ctx: WorkflowContext) {
+    const happySagaWorkflow = workflow({ name: 'happy-saga' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const result = yield* c.saga<number>([
         { definition: step, input: 1 },
@@ -155,6 +164,7 @@ describe('ctx.saga()', () => {
       ]);
       return result;
     });
+    engine.register(happySagaWorkflow);
 
     const handle = await engine.start('happy-saga', null);
     const result = await handle.result();
@@ -211,7 +221,9 @@ describe('ctx.saga()', () => {
 
     function registerWorkflow(engine: Engine): void {
       const { activityOne, activityTwo, activityThree } = buildActivities();
-      engine.register('three-step-saga', async function* (ctx: WorkflowContext) {
+      const threeStepSagaWorkflow = workflow({ name: 'three-step-saga' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         const c = ctx;
         yield* c.saga([
           { definition: activityOne, input: 'in-1' },
@@ -219,6 +231,7 @@ describe('ctx.saga()', () => {
           { definition: activityThree, input: 'in-3' },
         ]);
       });
+      engine.register(threeStepSagaWorkflow);
     }
 
     // --- First engine run ---
@@ -280,7 +293,9 @@ describe('ctx.saga()', () => {
       },
     });
 
-    engine.register('arg-check-saga', async function* (ctx: WorkflowContext) {
+    const argCheckSagaWorkflow = workflow({ name: 'arg-check-saga' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       yield* c.saga([
         { definition: trackingActivity, input: 'alpha' },
@@ -288,6 +303,7 @@ describe('ctx.saga()', () => {
         { definition: failingActivity, input: 'gamma' },
       ]);
     });
+    engine.register(argCheckSagaWorkflow);
 
     const handle = await engine.start('arg-check-saga', null);
     await expect(handle.result()).rejects.toThrow('forced failure');
@@ -325,13 +341,16 @@ describe('ctx.saga()', () => {
       },
     });
 
-    engine.register('compensator-failure-saga', async function* (ctx: WorkflowContext) {
-      const c = ctx;
-      yield* c.saga([
-        { definition: passing, input: 'x' },
-        { definition: failing, input: 'y' },
-      ]);
-    });
+    const compensatorFailureSagaWorkflow = workflow({ name: 'compensator-failure-saga' }).execute(
+      async function* (ctx: WorkflowContext) {
+        const c = ctx;
+        yield* c.saga([
+          { definition: passing, input: 'x' },
+          { definition: failing, input: 'y' },
+        ]);
+      },
+    );
+    engine.register(compensatorFailureSagaWorkflow);
 
     const handle = await engine.start('compensator-failure-saga', null);
     // The original error — not the compensator error — must surface to the caller.
@@ -350,11 +369,14 @@ describe('ctx.saga()', () => {
   it('completes successfully with no steps and returns undefined', async () => {
     const engine = new Engine();
 
-    engine.register('empty-saga', async function* (ctx: WorkflowContext) {
+    const emptySagaWorkflow = workflow({ name: 'empty-saga' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const result = yield* c.saga([]);
       return result;
     });
+    engine.register(emptySagaWorkflow);
 
     const handle = await engine.start('empty-saga', null);
     const result = await handle.result();
@@ -385,7 +407,9 @@ describe('ctx.saga()', () => {
       execute: (_input: string) => 'done',
     });
 
-    engine.register('name-check-saga', async function* (ctx: WorkflowContext) {
+    const nameCheckSagaWorkflow = workflow({ name: 'name-check-saga' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
 
       // Patch ctx.run to record the function name it receives.
@@ -400,6 +424,7 @@ describe('ctx.saga()', () => {
 
       yield* c.saga([{ definition: activity, input: 'test' }]);
     });
+    engine.register(nameCheckSagaWorkflow);
 
     const handle = await engine.start('name-check-saga', null);
     await handle.result();
@@ -431,13 +456,16 @@ describe('ctx.saga()', () => {
       },
     });
 
-    engine.register('options-like-saga', async function* (ctx: WorkflowContext) {
-      const c = ctx;
-      // This input has a 'queue' key, which is a DISCRIMINATOR_KEYS member.
-      // If ctx.run() classified every final { queue } object as options, this
-      // would be stripped and the activity would receive undefined.
-      yield* c.saga([{ definition: activity as ActivityDefinition, input: { queue: 'orders' } }]);
-    });
+    const optionsLikeSagaWorkflow = workflow({ name: 'options-like-saga' }).execute(
+      async function* (ctx: WorkflowContext) {
+        const c = ctx;
+        // This input has a 'queue' key, which is a DISCRIMINATOR_KEYS member.
+        // If ctx.run() classified every final { queue } object as options, this
+        // would be stripped and the activity would receive undefined.
+        yield* c.saga([{ definition: activity as ActivityDefinition, input: { queue: 'orders' } }]);
+      },
+    );
+    engine.register(optionsLikeSagaWorkflow);
 
     const handle = await engine.start('options-like-saga', null);
     await handle.result();
@@ -466,11 +494,14 @@ describe('ctx.saga()', () => {
       execute: (input: { queue: string }) => `processed:${input.queue}`,
     });
 
-    engine.register('intercepted-saga', async function* (ctx: WorkflowContext) {
+    const interceptedSagaWorkflow = workflow({ name: 'intercepted-saga' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       return yield* ctx.saga([
         { definition: activity as ActivityDefinition, input: { queue: 'orders' } },
       ]);
     });
+    engine.register(interceptedSagaWorkflow);
 
     const handle = await engine.start('intercepted-saga', null);
     await expect(handle.result()).resolves.toBe('processed:orders');
@@ -501,10 +532,13 @@ describe('ctx.saga()', () => {
       },
     };
 
-    engine.register('context-forwarding-saga', async function* (ctx: WorkflowContext) {
-      const c = ctx;
-      yield* c.saga([{ definition: activity, input: 'hello' }]);
-    });
+    const contextForwardingSagaWorkflow = workflow({ name: 'context-forwarding-saga' }).execute(
+      async function* (ctx: WorkflowContext) {
+        const c = ctx;
+        yield* c.saga([{ definition: activity, input: 'hello' }]);
+      },
+    );
+    engine.register(contextForwardingSagaWorkflow);
 
     const handle = await engine.start('context-forwarding-saga', null);
     await handle.result();

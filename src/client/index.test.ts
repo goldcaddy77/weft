@@ -2,8 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { Engine } from '../core/engine.ts';
 import { tenantFromInputField } from '../core/tenant.ts';
 import type { WorkflowContext } from '../core/types.ts';
-import { query } from '../core/types.ts';
-import { workflow } from '../core/types/workflow-function.ts';
+import { query, workflow } from '../core/types.ts';
 import { handleRequest } from '../server/handler.ts';
 import { principalFromApiKey } from '../server/principal.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -759,7 +758,13 @@ describe('HttpClient', () => {
           completed: '5m',
         },
       });
-      retentionEngine.register('retained-echo', echoWorkflow);
+      const retainedEchoWorkflow = workflow({ name: 'retained-echo' }).execute(async function* (
+        _ctx: WorkflowContext,
+        input: unknown,
+      ) {
+        return input;
+      });
+      retentionEngine.register(retainedEchoWorkflow);
 
       const retentionServer = Bun.serve({
         port: 0,
@@ -847,7 +852,7 @@ describe('HttpClient', () => {
     it('both export WeftClient-compatible classes', async () => {
       const { LocalClient } = await import('./local.ts');
       const localEngine = new Engine({ storage: new MemoryStorage() });
-      localEngine.register('echo', echoWorkflow);
+      localEngine.register(echoWorkflow);
 
       const local: WeftClient = new LocalClient(localEngine);
       const remote: WeftClient = client;

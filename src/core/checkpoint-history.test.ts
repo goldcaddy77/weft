@@ -11,6 +11,7 @@ import {
   type CheckpointState,
   type CheckpointSummary,
   type WorkflowContext,
+  workflow,
 } from './types.ts';
 
 // ---------------------------------------------------------------------------
@@ -59,12 +60,15 @@ function createMultiStepEngine(
 ): Engine {
   const engine = new Engine({ storage, ...options });
 
-  engine.register('multi-step', async function* (ctx: WorkflowContext) {
+  const multiStepWorkflow = workflow({ name: 'multi-step' }).execute(async function* (
+    ctx: WorkflowContext,
+  ) {
     for (let i = 0; i < steps; i++) {
       yield* ctx.run(noop);
     }
     return 'done';
   });
+  engine.register(multiStepWorkflow);
 
   return engine;
 }
@@ -88,9 +92,13 @@ describe('checkpoint history', () => {
     it('returns empty array when checkpointHistory is 0', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage, checkpointHistory: 0 });
-      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+      const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+        _ctx: WorkflowContext,
+        input: unknown,
+      ) {
         return input;
       });
+      engine.register(echoWorkflow);
 
       const handle = await engine.start('echo', 'hello');
       await handle.result();
@@ -107,9 +115,10 @@ describe('checkpoint history', () => {
       writeCheckpointHistory(storage, 'wf-1', 3);
 
       engine = new Engine({ storage, checkpointHistory: 10 });
-      engine.register('noop', async function* () {
+      const noopWorkflow = workflow({ name: 'noop' }).execute(async function* () {
         return null;
       });
+      engine.register(noopWorkflow);
 
       const summaries = await engine.listCheckpoints('wf-1');
       expect(summaries.map((s: CheckpointSummary) => s.step)).toEqual([3, 2, 1]);
@@ -120,9 +129,10 @@ describe('checkpoint history', () => {
       const bytes = writeCheckpointHistory(storage, 'wf-1', 5, { createdAt: 9999 });
 
       engine = new Engine({ storage, checkpointHistory: 10 });
-      engine.register('noop', async function* () {
+      const noopWorkflow2 = workflow({ name: 'noop' }).execute(async function* () {
         return null;
       });
+      engine.register(noopWorkflow2);
 
       const summaries = await engine.listCheckpoints('wf-1');
       expect(summaries).toHaveLength(1);
@@ -136,9 +146,10 @@ describe('checkpoint history', () => {
     it('returns empty array for unknown workflow', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage, checkpointHistory: 10 });
-      engine.register('noop', async function* () {
+      const noopWorkflow3 = workflow({ name: 'noop' }).execute(async function* () {
         return null;
       });
+      engine.register(noopWorkflow3);
 
       const summaries = await engine.listCheckpoints('nonexistent');
       expect(summaries).toEqual([]);
@@ -160,9 +171,10 @@ describe('checkpoint history', () => {
       });
 
       engine = new Engine({ storage, checkpointHistory: 10 });
-      engine.register('noop', async function* () {
+      const noopWorkflow4 = workflow({ name: 'noop' }).execute(async function* () {
         return null;
       });
+      engine.register(noopWorkflow4);
 
       const state = await engine.getCheckpointAt('wf-1', 3);
       expect(state).not.toBeNull();
@@ -180,9 +192,10 @@ describe('checkpoint history', () => {
       writeCheckpointHistory(storage, 'wf-1', 1);
 
       engine = new Engine({ storage, checkpointHistory: 10 });
-      engine.register('noop', async function* () {
+      const noopWorkflow5 = workflow({ name: 'noop' }).execute(async function* () {
         return null;
       });
+      engine.register(noopWorkflow5);
 
       const state = await engine.getCheckpointAt('wf-1', 99);
       expect(state).toBeNull();
@@ -191,9 +204,10 @@ describe('checkpoint history', () => {
     it('returns null for unknown workflow', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage, checkpointHistory: 10 });
-      engine.register('noop', async function* () {
+      const noopWorkflow6 = workflow({ name: 'noop' }).execute(async function* () {
         return null;
       });
+      engine.register(noopWorkflow6);
 
       const state = await engine.getCheckpointAt('nonexistent', 1);
       expect(state).toBeNull();
@@ -209,9 +223,10 @@ describe('checkpoint history', () => {
       });
 
       engine = new Engine({ storage, checkpointHistory: 10 });
-      engine.register('noop', async function* () {
+      const noopWorkflow7 = workflow({ name: 'noop' }).execute(async function* () {
         return null;
       });
+      engine.register(noopWorkflow7);
 
       const state = (await engine.getCheckpointAt('wf-1', 7)) as CheckpointState;
       expect(state.locals).toEqual({ a: 1, b: 'two' });
@@ -231,13 +246,16 @@ describe('checkpoint history', () => {
       engine = new Engine({ storage, checkpointHistory: 3 });
 
       // Register a workflow that does several steps then blocks on a signal
-      engine.register('steps-then-wait', async function* (ctx: WorkflowContext) {
+      const stepsThenWaitWorkflow = workflow({ name: 'steps-then-wait' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         for (let i = 0; i < 6; i++) {
           yield* ctx.run(noop);
         }
         yield* ctx.waitForSignal('done');
         return 'ok';
       });
+      engine.register(stepsThenWaitWorkflow);
 
       const handle = await engine.start('steps-then-wait', null);
       await flush();
@@ -263,13 +281,16 @@ describe('checkpoint history', () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage, checkpointHistory: 2 });
 
-      engine.register('steps-then-wait', async function* (ctx: WorkflowContext) {
+      const stepsThenWaitWorkflow2 = workflow({ name: 'steps-then-wait' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         for (let i = 0; i < 5; i++) {
           yield* ctx.run(noop);
         }
         yield* ctx.waitForSignal('done');
         return 'ok';
       });
+      engine.register(stepsThenWaitWorkflow2);
 
       const handle = await engine.start('steps-then-wait', null);
       await flush();
@@ -335,10 +356,13 @@ describe('checkpoint history', () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage, checkpointHistory: 10 });
 
-      engine.register('wait-forever', async function* (ctx: WorkflowContext) {
+      const waitForeverWorkflow = workflow({ name: 'wait-forever' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         yield* ctx.waitForSignal('never-arrives');
         return 'never';
       });
+      engine.register(waitForeverWorkflow);
 
       const handle = await engine.start('wait-forever', null);
       await flush();

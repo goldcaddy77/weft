@@ -6,6 +6,7 @@ import { AggregateDistinctKeyCapExceededError } from '../aggregate-validation.ts
 import { encode } from '../codec.ts';
 import { Engine } from '../engine.ts';
 import type { WorkflowContext, WorkflowState } from '../types.ts';
+import { workflow } from '../types.ts';
 import { aggregate as aggregateWorkflows } from './aggregate.ts';
 import { getInternals } from './internals.ts';
 
@@ -40,13 +41,15 @@ async function writeDistinctTypeWorkflows(storage: MemoryStorage, count: number)
 describe('engine.aggregate', () => {
   it('groups by status and counts each bucket', async () => {
     const engine = new Engine();
-    engine.register('done', async function* () {
+    const doneWorkflow = workflow({ name: 'done' }).execute(async function* () {
       return 'ok';
     });
-    engine.register('hang', async function* (ctx: WorkflowContext) {
+    engine.register(doneWorkflow);
+    const hangWorkflow = workflow({ name: 'hang' }).execute(async function* (ctx: WorkflowContext) {
       yield* ctx.waitForSignal('go');
       return 'ok';
     });
+    engine.register(hangWorkflow);
 
     await startAndComplete(engine, 'done', 'd-1');
     await startAndComplete(engine, 'done', 'd-2');
@@ -67,12 +70,14 @@ describe('engine.aggregate', () => {
 
   it('groups by type', async () => {
     const engine = new Engine();
-    engine.register('alpha', async function* () {
+    const alphaWorkflow = workflow({ name: 'alpha' }).execute(async function* () {
       return 'ok';
     });
-    engine.register('beta', async function* () {
+    engine.register(alphaWorkflow);
+    const betaWorkflow = workflow({ name: 'beta' }).execute(async function* () {
       return 'ok';
     });
+    engine.register(betaWorkflow);
 
     await startAndComplete(engine, 'alpha', 'a-1');
     await startAndComplete(engine, 'alpha', 'a-2');
@@ -88,15 +93,18 @@ describe('engine.aggregate', () => {
 
   it('sorts groups by count desc with key asc as tiebreaker', async () => {
     const engine = new Engine();
-    engine.register('alpha', async function* () {
+    const alphaWorkflow2 = workflow({ name: 'alpha' }).execute(async function* () {
       return 'ok';
     });
-    engine.register('beta', async function* () {
+    engine.register(alphaWorkflow2);
+    const betaWorkflow2 = workflow({ name: 'beta' }).execute(async function* () {
       return 'ok';
     });
-    engine.register('gamma', async function* () {
+    engine.register(betaWorkflow2);
+    const gammaWorkflow = workflow({ name: 'gamma' }).execute(async function* () {
       return 'ok';
     });
+    engine.register(gammaWorkflow);
 
     await startAndComplete(engine, 'gamma', 'g-1');
     await startAndComplete(engine, 'alpha', 'a-1');
@@ -109,12 +117,14 @@ describe('engine.aggregate', () => {
 
   it('applies the filter before aggregating', async () => {
     const engine = new Engine();
-    engine.register('done', async function* () {
+    const doneWorkflow2 = workflow({ name: 'done' }).execute(async function* () {
       return 'ok';
     });
-    engine.register('done-other', async function* () {
+    engine.register(doneWorkflow2);
+    const doneOtherWorkflow = workflow({ name: 'done-other' }).execute(async function* () {
       return 'ok';
     });
+    engine.register(doneOtherWorkflow);
 
     await startAndComplete(engine, 'done', 'd-1');
     await startAndComplete(engine, 'done', 'd-2');
@@ -129,9 +139,10 @@ describe('engine.aggregate', () => {
   it('groups failureCategory from workflow state, not stale search attributes', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
-    engine.register('fails', async function* () {
+    const failsWorkflow = workflow({ name: 'fails' }).execute(async function* () {
       throw new Error('boom');
     });
+    engine.register(failsWorkflow);
 
     const handle = await engine.start('fails', null, { id: 'failed-1' });
     await expect(handle.result()).rejects.toThrow('boom');
@@ -163,9 +174,10 @@ describe('engine.aggregate', () => {
 
   it('returns an empty result when no workflows match', async () => {
     const engine = new Engine();
-    engine.register('any', async function* () {
+    const anyWorkflow = workflow({ name: 'any' }).execute(async function* () {
       return 'ok';
     });
+    engine.register(anyWorkflow);
 
     const result = await engine.aggregate({ type: 'nope' }, { groupBy: 'status' });
     expect(result.total).toBe(0);
@@ -176,12 +188,12 @@ describe('engine.aggregate', () => {
 
   it('throws when groupBy.attribute is not declared in any registered schema', async () => {
     const engine = new Engine();
-    engine.register('typed', {
-      handler: async function* () {
+    const typedWorkflow = workflow({ name: 'typed' })
+      .searchAttributes({ knownAttribute: { type: 'string' } })
+      .execute(async function* () {
         return 'ok';
-      },
-      searchAttributes: { knownAttribute: { type: 'string' } },
-    });
+      });
+    engine.register(typedWorkflow);
     await startAndComplete(engine, 'typed', 'wf-1');
 
     await expect(
