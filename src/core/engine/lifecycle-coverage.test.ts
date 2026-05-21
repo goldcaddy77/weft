@@ -667,6 +667,7 @@ describe('engine lifecycle coverage helpers', () => {
         ['workflow-begin-worker', new Map([['traceparent', '00-worker']])],
       ]),
       workflowNestingDepths: new Map<string, number>(),
+      workflowTypeByWorkflowId: new Map<string, string>(),
     };
 
     beginWorkflowExecution(
@@ -700,6 +701,7 @@ describe('engine lifecycle coverage helpers', () => {
       strategy: { startWorkflow: startWorkflowStrategy },
       workflowHeaders: new Map<string, Map<string, string>>(),
       workflowNestingDepths: new Map<string, number>(),
+      workflowTypeByWorkflowId: new Map<string, string>(),
     };
     const checkpoint = createCheckpoint('workflow-start-execution');
 
@@ -1078,6 +1080,7 @@ describe('engine lifecycle coverage helpers', () => {
           terminalizingWorkflows,
           workflowHeaders: new Map<string, Map<string, string>>(),
           workflowNestingDepths: new Map(),
+          workflowTypeByWorkflowId: new Map<string, string>(),
           workflowVersionTuples: new Map(),
           workflowsNeedingTerminalCleanup: new Set<string>(),
         } as never,
@@ -1124,6 +1127,7 @@ describe('engine lifecycle coverage helpers', () => {
           terminalizingWorkflows: new Set<string>(),
           workflowHeaders: new Map<string, Map<string, string>>(),
           workflowNestingDepths: new Map(),
+          workflowTypeByWorkflowId: new Map<string, string>(),
           workflowVersionTuples: new Map(),
           workflowsNeedingTerminalCleanup: new Set<string>(),
         } as never,
@@ -1187,6 +1191,7 @@ describe('engine lifecycle coverage helpers', () => {
       terminalizingWorkflows: new Set<string>(),
       workflowHeaders: new Map<string, Map<string, string>>(),
       workflowNestingDepths: new Map([[workflowId, 2]]),
+      workflowTypeByWorkflowId: new Map<string, string>(),
       workflowVersionTuples: new Map<string, { workflowVersion: string }>(),
       workflowsNeedingTerminalCleanup: new Set<string>(),
     };

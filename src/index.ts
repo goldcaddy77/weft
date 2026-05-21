@@ -15,10 +15,12 @@
 export { VERSION } from './version.ts';
 // Core
 export {
+  ActivityResolutionError,
   BulkDeleteRequiresTerminalWorkflowsError,
   BulkOperationConfirmationError,
   Engine,
   EngineCreateNameMismatchError,
+  PersistedDataIncompatibleError,
   ScheduleHandle,
   WorkflowAlreadyExistsError,
   WorkflowHandle,
@@ -387,6 +389,10 @@ export { HeartbeatManager } from './worker/heartbeat';
 export { RemoteWorker } from './worker/index';
 export { LongPollWorker } from './worker/long-poll';
 export { WorkerRegistry } from './worker/registry';
+export {
+  WorkerProtocolIncompatibleError,
+  workerProtocolIncompatibleMessage,
+} from './worker/worker-protocol-incompatible-error';
 
 export { HttpClient, HttpClientError } from './client/index';
 export type { HttpClientOptions } from './client/index';

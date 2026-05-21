@@ -5,6 +5,11 @@ import { AtomicState, type AtomicStateOptions } from '../atomic-state.ts';
 import type { StoredStreamChunk } from '../context.ts';
 import { createHandleCacheFinalizer } from '../engine-helpers.ts';
 import type { Interceptor } from '../interceptor.ts';
+import {
+  CURRENT_PERSISTED_DATA_SCHEMA_VERSION,
+  PERSISTED_DATA_SCHEMA_VERSION_KEY,
+  PersistedDataIncompatibleError,
+} from '../persisted-data-incompatible-error.ts';
 import { ReviewCoordinator, type ReviewRequest } from '../review/index.ts';
 import { Scheduler } from '../scheduler.ts';
 import { TenantQuotaManager } from '../tenant-quotas.ts';
@@ -67,6 +72,7 @@ import {
   type WorkflowTimelineEntry,
 } from '../types.ts';
 import type { TimerEntry } from '../types/checkpoint.ts';
+import type { WorkflowAlreadyRegistered } from '../types/workflow-builder.ts';
 import { UpdateCoordinator } from '../updates.ts';
 import {
   aggregate as aggregateWorkflows,
@@ -229,9 +235,11 @@ export type {
   WorkflowResultWaiter,
 } from './engine-internal-types.ts';
 export {
+  ActivityResolutionError,
   BulkDeleteRequiresTerminalWorkflowsError,
   BulkOperationConfirmationError,
   EngineCreateNameMismatchError,
+  PersistedDataIncompatibleError,
   WorkflowAlreadyExistsError,
   WorkflowNotFoundError,
   WorkflowNotRegisteredError,
@@ -292,6 +300,38 @@ export const ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING = Symbol(
   'engineParkedWorkflowCountForTesting',
 );
 export const ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING = Symbol('engineSignalWaiterCountForTesting');
+
+/**
+ * Read the persisted-data schema-version sentinel and throw
+ * {@link PersistedDataIncompatibleError} when it is older (or newer) than the
+ * engine's {@link CURRENT_PERSISTED_DATA_SCHEMA_VERSION}. Fresh databases (no
+ * sentinel, no user data) are stamped with the current version. Databases
+ * already carrying user data but no sentinel are silently stamped — `new
+ * Engine({ storage })` does not run this check, so an engine that wrote data
+ * via the constructor path and is later opened by `Engine.create({ storage })`
+ * would otherwise look pre-versioned. The intentional "this version cannot
+ * read older data" rejection only fires when a sentinel exists and points at
+ * an older version, which is how a real pre-MVP database written by an older
+ * Weft binary would look.
+ */
+export async function assertCompatiblePersistedDataVersion(storage: WeftStorage): Promise<void> {
+  const raw = await storage.get(PERSISTED_DATA_SCHEMA_VERSION_KEY);
+  if (raw !== null) {
+    const text = new TextDecoder().decode(raw);
+    const parsed = Number.parseInt(text, 10);
+    if (!Number.isFinite(parsed)) {
+      throw new PersistedDataIncompatibleError(null, CURRENT_PERSISTED_DATA_SCHEMA_VERSION);
+    }
+    if (parsed !== CURRENT_PERSISTED_DATA_SCHEMA_VERSION) {
+      throw new PersistedDataIncompatibleError(parsed, CURRENT_PERSISTED_DATA_SCHEMA_VERSION);
+    }
+    return;
+  }
+  await storage.put(
+    PERSISTED_DATA_SCHEMA_VERSION_KEY,
+    new TextEncoder().encode(String(CURRENT_PERSISTED_DATA_SCHEMA_VERSION)),
+  );
+}
 
 /**
  * Durable execution engine.
@@ -397,6 +437,7 @@ export class Engine<
     const engine = new Engine<object, object>(options);
 
     try {
+      await assertCompatiblePersistedDataVersion(getInternals(engine).storage);
       for (const [name, definition] of definitionEntries(options.activities)) {
         if (name !== definition.name) {
           throw new EngineCreateNameMismatchError('activity', name, definition.name);
@@ -462,6 +503,9 @@ export class Engine<
     getInternals(this).composedActivityInterceptor = undefined;
     getInternals(this).updateCoordinator = new UpdateCoordinator(storage);
     getInternals(this).activityRegistry = new ActivityRegistry();
+    getInternals(this).activityRegistriesByWorkflow = new Map();
+    getInternals(this).workflowDefinitionsByName = new Map();
+    getInternals(this).workflowTypeByWorkflowId = new Map();
     getInternals(this).activityWorkerDispatcher = null;
     getInternals(this).checkpoints = new Map();
     getInternals(this).broadcastChannel = null;
@@ -653,6 +697,25 @@ export class Engine<
    * });
    * ```
    */
+  /**
+   * Builder-workflow registration with a parameter-position name-conflict
+   * guard. New names widen the engine's typed workflow registry; re-registering
+   * a name already present intersects the parameter type with
+   * {@link WorkflowAlreadyRegistered} — a branded marker no real
+   * `WorkflowDefinition` satisfies — so the call line itself fails to compile.
+   *
+   * Runtime is more lenient: registering the same `WorkflowDefinition` object
+   * reference again is idempotent (no-op); same-name-different-object throws.
+   * TypeScript cannot distinguish the two at the type level. Callers needing
+   * the runtime-idempotent path from TypeScript must use a documented escape
+   * hatch (e.g. `engine.register(welcome as never)`).
+   */
+  register<TDefinition extends AnyWorkflowDefinition>(
+    workflow: TDefinition &
+      (TDefinition['name'] extends keyof TWorkflows
+        ? WorkflowAlreadyRegistered<TDefinition['name']>
+        : unknown),
+  ): Engine<TWorkflows & InferWorkflowEntry<TDefinition>, TActivities>;
   register<TDefinition extends AnyWorkflowDefinition>(
     definition: TDefinition,
   ): Engine<TWorkflows & InferWorkflowEntry<TDefinition>, TActivities>;
@@ -705,6 +768,43 @@ export class Engine<
     );
     return typedEngineView<TWorkflows, TActivities>(this);
   }
+  /**
+   * Register every workflow from an object map at once and return a typed
+   * engine view that exposes the newly added workflow names.
+   *
+   * Mirrors `Engine.create({ workflows })` for post-construction use. The map
+   * key is canonical: if a value's runtime `name` disagrees with its key, the
+   * call throws {@link EngineCreateNameMismatchError} before any partial
+   * registration completes (insertion order — earlier entries persist).
+   *
+   * @example
+   * ```ts
+   * import { Engine, workflow } from 'weft';
+   *
+   * const welcome = workflow({ name: 'welcome' })
+   *   .execute(async function* (_ctx, name: string) {
+   *     return `Hello, ${name}`;
+   *   });
+   *
+   * const engine = new Engine();
+   * const typedEngine = engine.registerWorkflows({ welcome });
+   * await typedEngine.start('welcome', 'Ada');
+   * ```
+   */
+  registerWorkflows<TWorkflowDefinitions extends Record<string, AnyWorkflowDefinition>>(
+    workflows: TWorkflowDefinitions,
+  ): Engine<TWorkflows & InferWorkflowEntries<TWorkflowDefinitions>, TActivities> {
+    for (const [name, definition] of Object.entries(workflows)) {
+      if (name !== definition.name) {
+        throw new EngineCreateNameMismatchError('workflow', name, definition.name);
+      }
+      this.register(definition);
+    }
+    return typedEngineView<TWorkflows & InferWorkflowEntries<TWorkflowDefinitions>, TActivities>(
+      this,
+    );
+  }
+
   addInterceptor(interceptor: Interceptor): void {
     getInternals(this).interceptors.push(interceptor);
     // Adding ANY interceptor invalidates BOTH composed caches because the
@@ -1242,6 +1342,9 @@ export class Engine<
     internals.pendingTimelineEntries.clear();
     internals.workflowVersionTuples.clear();
     internals.workflowFeedListeners.clear();
+    internals.activityRegistriesByWorkflow.clear();
+    internals.workflowDefinitionsByName.clear();
+    internals.workflowTypeByWorkflowId.clear();
     internals.broadcastChannel?.close();
     internals.broadcastChannel = null;
   }

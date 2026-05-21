@@ -1,11 +1,14 @@
+import { ActivityRegistry } from '../activity-registry.ts';
 import { compileStepWorkflow, isAsyncGeneratorFunction } from '../step-context.ts';
-import type {
-  StepWorkflowFunction,
-  WorkflowDefinition,
-  WorkflowFunction,
-  WorkflowRegistration,
+import {
+  activity,
+  validateDefinitionSchemaMetadata,
+  type ActivityDefinition,
+  type StepWorkflowFunction,
+  type WorkflowDefinition,
+  type WorkflowFunction,
+  type WorkflowRegistration,
 } from '../types.ts';
-import { validateDefinitionSchemaMetadata } from '../types.ts';
 import type { EngineInternals } from './internals.ts';
 import { normalizeRetentionPolicy } from './validation.ts';
 
@@ -149,6 +152,108 @@ function registerBareHandler(
   }
 }
 
+/**
+ * Heuristic detector for `BuiltWorkflowDefinition` — the runtime shape returned
+ * by `workflow({ name }).execute(...)`. We test for the per-message-kind maps
+ * the builder writes (`activities`, `signals`, `updates`, `queries`,
+ * `searchAttributes`) directly on the definition. We do not import the
+ * type from `workflow-builder.ts` to avoid a cycle with the engine package;
+ * the runtime check is sufficient because the builder is the only producer of
+ * objects with all five fields as plain `Readonly<Record<string, ...>>`.
+ */
+function hasNonNullObjectField(value: object, key: string): boolean {
+  if (!(key in value)) return false;
+  const fieldValue = (value as { [k: string]: unknown })[key];
+  return typeof fieldValue === 'object' && fieldValue !== null;
+}
+
+function isBuilderWorkflowDefinition(value: unknown): value is WorkflowDefinition & {
+  readonly activities: Readonly<Record<string, Readonly<ActivityDefinition>>>;
+  readonly signals: Readonly<Record<string, unknown>>;
+  readonly updates: Readonly<Record<string, unknown>>;
+  readonly queries: Readonly<Record<string, unknown>>;
+  readonly searchAttributes: Readonly<Record<string, unknown>>;
+} {
+  if (!isWorkflowDefinition(value)) return false;
+  return (
+    hasNonNullObjectField(value, 'activities') &&
+    hasNonNullObjectField(value, 'signals') &&
+    hasNonNullObjectField(value, 'updates') &&
+    hasNonNullObjectField(value, 'queries') &&
+    hasNonNullObjectField(value, 'searchAttributes')
+  );
+}
+
+/**
+ * Defensive recursive POJO clone — `structuredClone` rejects function values
+ * we carry on activity option subtrees (`execute`, `compensate`, `verify`).
+ * Class instances pass through by reference; the outer container is frozen by
+ * the {@link activity} factory call so reassignment cannot reach the engine's
+ * stored copy.
+ */
+function clonePlainOption<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => clonePlainOption(item)) as unknown as T;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return value;
+  }
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value as Record<string, unknown>)) {
+    out[key] = clonePlainOption((value as Record<string, unknown>)[key]);
+  }
+  return out as T;
+}
+
+/**
+ * Build a fresh per-workflow {@link ActivityRegistry} from a builder workflow's
+ * activities map. Each entry is defensively deep-cloned and then turned into a
+ * fresh `ActivityCallable` via {@link activity}, so the engine's registry holds
+ * its own callable references and the user's `BuiltWorkflowDefinition` cannot
+ * influence dispatch by post-registration mutation.
+ */
+function buildPerWorkflowActivityRegistry(
+  activities: Readonly<Record<string, Readonly<ActivityDefinition>>>,
+): ActivityRegistry {
+  const registry = new ActivityRegistry();
+  for (const definition of Object.values(activities)) {
+    const clonedDefinition = clonePlainOption(definition);
+    // Re-running `activity(...)` rebuilds the callable, validates the name
+    // against the wire-safe grammar, and freezes the colocated metadata
+    // independently from the user's frozen input. The resulting object is the
+    // canonical entry stored in the per-workflow registry.
+    const callable = activity(clonedDefinition);
+    registry.register(callable.name, callable);
+  }
+  return registry;
+}
+
+/**
+ * Apply the runtime collision rule for `engine.register(workflow)`. Same
+ * `WorkflowDefinition` object reference re-registered is a no-op (idempotent
+ * return value `true`). Same-name-but-different-object throws. Same-reference
+ * detection uses identity equality (`===`); deep equality is intentionally not
+ * considered because the builder freezes the returned definition, so two
+ * builder outputs are only equal by reference.
+ */
+function applyWorkflowCollisionRule(
+  internals: EngineInternals,
+  name: string,
+  definition: object,
+): { idempotent: boolean } {
+  const existing = internals.workflowDefinitionsByName.get(name);
+  if (existing === undefined) {
+    internals.workflowDefinitionsByName.set(name, definition);
+    return { idempotent: false };
+  }
+  if (existing === definition) {
+    return { idempotent: true };
+  }
+  throw new Error(`Workflow "${name}" is already registered with a different definition`);
+}
+
 export function register(
   internals: EngineInternals,
   nameOrDefinition: unknown,
@@ -156,7 +261,20 @@ export function register(
   callbacks: RegistrationCallbacks,
 ): void {
   if (isWorkflowDefinition(nameOrDefinition)) {
-    register(internals, nameOrDefinition.name, nameOrDefinition, callbacks);
+    const definition = nameOrDefinition;
+    if (isBuilderWorkflowDefinition(definition)) {
+      const { idempotent } = applyWorkflowCollisionRule(internals, definition.name, definition);
+      if (idempotent) return;
+      // Build the per-workflow ActivityRegistry first so a registration-time
+      // failure (e.g. invalid activity metadata) leaves no partial state.
+      const perWorkflowRegistry = buildPerWorkflowActivityRegistry(definition.activities);
+      internals.activityRegistriesByWorkflow.set(definition.name, perWorkflowRegistry);
+      register(internals, definition.name, definition, callbacks);
+      return;
+    }
+    // Legacy object-literal `WorkflowDefinition` — Phase 5 removes this path.
+    // No collision guard: legacy callers historically re-register names freely.
+    register(internals, definition.name, definition, callbacks);
     return;
   }
 

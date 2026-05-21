@@ -168,12 +168,14 @@ describe('engine sub-operations', () => {
     };
     const internals = {
       activityRegistry: { resolve: () => undefined },
+      activityRegistriesByWorkflow: new Map(),
       activityWorkerDispatcher: null,
       heartbeatDetails: new Map(),
       inlineStrategy: null,
       options: { maxNestingDepth: 10 },
       storage: new MemoryStorage(),
       workflowNestingDepths: new Map(),
+      workflowTypeByWorkflowId: new Map(),
     };
 
     const racePromise = executeSubOperation(

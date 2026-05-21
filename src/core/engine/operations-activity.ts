@@ -1,6 +1,7 @@
 import type { ContextOperationRequest } from '../context.ts';
 import type { ComposedActivityInterceptor, ComposedWorkflowInterceptor } from '../interceptor.ts';
 import type { ActivityContext } from '../types.ts';
+import { ActivityResolutionError } from './errors.ts';
 import type { EngineInternals } from './internals.ts';
 import type { SpeculativeExecutionState } from './speculative-execution-state.ts';
 import { callActivityFunction } from './state-utilities.ts';
@@ -22,38 +23,68 @@ export type ActivityOperationCallbacks = {
   getComposedWorkflowInterceptor: () => ComposedWorkflowInterceptor | null;
 };
 
+/**
+ * Look up `activityName` in the per-workflow registry first (built from
+ * `workflow({ name }).activities({ ... })`), then fall back to the legacy
+ * global {@link ActivityRegistry}. Returns `undefined` when neither resolves —
+ * callers decide whether to throw {@link ActivityResolutionError} or treat the
+ * miss as advisory (e.g. metadata lookup for compensation/verification).
+ */
+function resolveActivityViaRegistries(
+  internals: EngineInternals,
+  workflowId: string,
+  activityName: string,
+): { fn: (...arguments_: unknown[]) => unknown; workflowType: string } | undefined {
+  const workflowType = internals.workflowTypeByWorkflowId.get(workflowId);
+  if (workflowType !== undefined) {
+    const perWorkflow = internals.activityRegistriesByWorkflow.get(workflowType);
+    const perWorkflowFn = perWorkflow?.resolve(activityName);
+    if (perWorkflowFn) {
+      return { fn: perWorkflowFn, workflowType };
+    }
+  }
+  const globalFn = internals.activityRegistry.resolve(activityName);
+  if (globalFn) {
+    return { fn: globalFn, workflowType: workflowType ?? '<unknown>' };
+  }
+  return undefined;
+}
+
 export function getActivityFunctionWithMetadata(
   internals: EngineInternals,
+  workflowId: string,
   operation: ActivityOperation,
 ): ActivityFunctionWithMetadata | undefined {
   if (typeof operation.fn === 'function') {
     return operation.fn as ActivityFunctionWithMetadata;
   }
 
-  const registered = internals.activityRegistry.resolve(operation.activityName);
-  if (registered) {
-    return registered as ActivityFunctionWithMetadata;
+  const resolved = resolveActivityViaRegistries(internals, workflowId, operation.activityName);
+  if (resolved) {
+    return resolved.fn as ActivityFunctionWithMetadata;
   }
 
   return undefined;
 }
 
 /**
- * Resolve the activity function for a given operation. Checks the activity
- * registry first (required for worker mode where `operation.fn` is undefined),
- * then falls back to `operation.fn` for inline mode.
+ * Resolve the activity function for a given operation. Checks the per-workflow
+ * activity registry first, then the legacy global registry (transitional —
+ * Phase 6 removes the fallback). For inline-mode callers that pass an
+ * `operation.fn` directly, the registries are still consulted first so a
+ * workflow's locally-scoped activity wins over the bare callable. Throws
+ * {@link ActivityResolutionError} when neither path resolves.
  */
 export function resolveActivityFunction(
   internals: EngineInternals,
+  workflowId: string,
   operation: ActivityOperation,
 ): (...arguments_: unknown[]) => unknown {
-  const registered = internals.activityRegistry.resolve(operation.activityName);
-  if (registered) return registered;
+  const resolved = resolveActivityViaRegistries(internals, workflowId, operation.activityName);
+  if (resolved) return resolved.fn;
   if (operation.fn) return operation.fn as (...arguments_: unknown[]) => unknown;
-  throw new Error(
-    `No activity registered with name "${operation.activityName}". ` +
-      'In worker mode, activities must be registered via engine.register(activityDefinition).',
-  );
+  const workflowType = internals.workflowTypeByWorkflowId.get(workflowId) ?? '<unknown>';
+  throw new ActivityResolutionError(workflowType, operation.activityName);
 }
 
 export function buildActivityVerification(
@@ -72,10 +103,11 @@ export function buildActivityVerification(
 
 export function buildActivityCompensation(
   internals: EngineInternals,
+  workflowId: string,
   operation: ActivityOperation,
   result: unknown,
 ): (() => Promise<void>) | undefined {
-  const activity = getActivityFunctionWithMetadata(internals, operation);
+  const activity = getActivityFunctionWithMetadata(internals, workflowId, operation);
   if (!activity?.compensate) {
     return undefined;
   }
@@ -111,12 +143,13 @@ export async function invokeWorkerActivity(
 
 export function invokeInlineActivity(
   internals: EngineInternals,
+  workflowId: string,
   operation: ActivityOperation,
   activityContext: ActivityContext,
   _activityName: string,
   input: unknown,
 ): unknown {
-  const activityFunction = resolveActivityFunction(internals, operation);
+  const activityFunction = resolveActivityFunction(internals, workflowId, operation);
   return callActivityFunction(activityFunction, input, activityContext);
 }
 
@@ -147,7 +180,14 @@ export async function executeActivity(
       ? (activityName, input) =>
           invokeWorkerActivity(internals, operation.operationId, activityName, input)
       : (activityName, input) =>
-          invokeInlineActivity(internals, operation, activityContext, activityName, input);
+          invokeInlineActivity(
+            internals,
+            workflowId,
+            operation,
+            activityContext,
+            activityName,
+            input,
+          );
 
   // If there are activity interceptors, use cached composition
   const composedActivity = callbacks.getComposedActivityInterceptor();
@@ -218,13 +258,13 @@ export async function executeActivityOperationResult(
   const result = await executeActivity(internals, workflowId, operation, callbacks);
 
   const compensation = speculativeState
-    ? buildActivityCompensation(internals, operation, result)
+    ? buildActivityCompensation(internals, workflowId, operation, result)
     : undefined;
   if (compensation) {
     speculativeState?.recordCompensation(compensation);
   }
 
-  const activity = getActivityFunctionWithMetadata(internals, operation);
+  const activity = getActivityFunctionWithMetadata(internals, workflowId, operation);
   if (activity?.verify) {
     const verification = buildActivityVerification(
       internals,
