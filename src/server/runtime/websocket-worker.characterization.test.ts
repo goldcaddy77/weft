@@ -158,6 +158,41 @@ describe('handleWorkerWebSocketMessage', () => {
       expect(ws.closeCode).toBeDefined();
     });
 
+    it('rejects a v1 worker at handshake with the canonical incompatibility message', () => {
+      // Phase 4 regression. A worker advertising the retired bare-name protocol
+      // (v1) must be rejected before any task is dispatched. The error message
+      // must point at the protocol mismatch, not at a missing activity.
+      const context = createMinimalContext();
+      const options = createMinimalOptions();
+      const ws = createFakeWs();
+
+      handleWorkerWebSocketMessage(
+        context,
+        options,
+        ws as never,
+        JSON.stringify({
+          type: 'register',
+          protocolVersion: 1,
+          workerId: 'w-legacy',
+          activities: ['formatGreeting'],
+          concurrency: 1,
+        }),
+        NOOP_CLEANUP,
+      );
+
+      expect(ws.sentMessages).toHaveLength(1);
+      const msg = JSON.parse(ws.sentMessages[0]!);
+      expect(msg.type).toBe('registerError');
+      expect(msg.code).toBe('unsupported_protocol_version');
+      expect(msg.requestedProtocolVersion).toBe(1);
+      expect(msg.message).toContain(`protocol v${String(REMOTE_WORKER_PROTOCOL_VERSION)}`);
+      expect(msg.message).toContain('got v1');
+      expect(msg.message).toContain('qualified activity names');
+      // Old-protocol worker never enters the registry.
+      expect(context.registry.getWorker('w-legacy')).toBeUndefined();
+      expect(ws.closeCode).toBeDefined();
+    });
+
     it('rejects when worker sends non-register first message', () => {
       const context = createMinimalContext();
       const options = createMinimalOptions();

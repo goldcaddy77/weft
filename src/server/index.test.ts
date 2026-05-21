@@ -766,7 +766,7 @@ describe('worker WebSocket protocol', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -853,7 +853,7 @@ describe('worker WebSocket protocol', () => {
     const ack = await ackPromise;
     expect(ack).toEqual({
       type: 'registerAck',
-      protocolVersion: 1,
+      protocolVersion: 2,
       workerId: 'w-register-ack',
       queue: 'default',
       activities: ['charge'],
@@ -886,7 +886,7 @@ describe('worker WebSocket protocol', () => {
     expect(error).toMatchObject({
       type: 'registerError',
       code: 'unsupported_protocol_version',
-      supportedProtocolVersions: [1],
+      supportedProtocolVersions: [2],
     });
     await waitFor(() => server.registry.size === 0, { label: 'missing-version worker rejected' });
     await waitForSocketClose(ws, 'missing-version socket close');
@@ -1497,7 +1497,7 @@ describe('worker WebSocket protocol', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: 'rogue',
         activities: ['charge'],
         concurrency: 5,
@@ -1979,7 +1979,7 @@ describe('queue-aware worker stream', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -2789,7 +2789,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: 'rogue',
         activities: ['charge'],
         concurrency: 5,
@@ -3228,7 +3228,7 @@ describe('task assignment deduplication', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -3667,7 +3667,7 @@ describe('visibility timeout persistence', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -3983,7 +3983,7 @@ describe('worker disconnection triggers task reassignment', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -4434,7 +4434,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -4957,7 +4957,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
       ws.send(
         JSON.stringify({
           type: 'register',
-          protocolVersion: 1,
+          protocolVersion: 2,
           workerId: 'race-worker',
           activities: ['charge'],
           concurrency: 1,
@@ -5246,7 +5246,7 @@ describe('concurrent scanner deduplication', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -5553,7 +5553,7 @@ describe('retry policy respected on reassignment', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -5962,7 +5962,7 @@ describe('worker shutdown and cancel propagation', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -6182,7 +6182,7 @@ describe('header propagation in task dispatch', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,

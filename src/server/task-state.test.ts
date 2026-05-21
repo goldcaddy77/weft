@@ -86,7 +86,7 @@ async function connectAndRegisterWorker(
   ws.send(
     JSON.stringify({
       type: 'register',
-      protocolVersion: 1,
+      protocolVersion: 2,
       workerId: options.workerId,
       activities: options.activities,
       concurrency: options.concurrency ?? 10,

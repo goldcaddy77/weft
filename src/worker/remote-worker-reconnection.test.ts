@@ -90,7 +90,7 @@ async function connectAndRegisterWorker(
   sockets.push(worker);
   worker.send({
     type: 'register',
-    protocolVersion: 1,
+    protocolVersion: 2,
     workerId,
     activities: options.activities ?? ['echo'],
     concurrency: options.concurrency ?? 1,
@@ -469,7 +469,7 @@ process.on('SIGINT', () => void stop(0));
     sockets.push(workerA);
     workerA.send({
       type: 'register',
-      protocolVersion: 1,
+      protocolVersion: 2,
       workerId: 'worker-a',
       activities: ['echo'],
       concurrency: 1,
@@ -505,7 +505,7 @@ process.on('SIGINT', () => void stop(0));
     sockets.push(workerB);
     workerB.send({
       type: 'register',
-      protocolVersion: 1,
+      protocolVersion: 2,
       workerId: 'worker-b',
       activities: ['echo'],
       concurrency: 1,

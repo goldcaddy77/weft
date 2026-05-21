@@ -4,7 +4,7 @@ export type ConformanceShortSleepExitWorkerFixture = 'short-sleep-exit';
 
 const serverUrl = Bun.env['WEFT_WORKER_URL'];
 const queue = Bun.env['WEFT_WORKER_QUEUE'] ?? 'conformance';
-const protocolVersion = Number(Bun.env['WEFT_WORKER_PROTOCOL_VERSION'] ?? '1');
+const protocolVersion = Number(Bun.env['WEFT_WORKER_PROTOCOL_VERSION'] ?? '2');
 const mode = Bun.env['WEFT_SHORT_SLEEP_EXIT_MODE'] ?? 'default';
 const launchStateFile = Bun.env['WEFT_SHORT_SLEEP_EXIT_STATE_FILE'];
 const activities = (Bun.env['WEFT_WORKER_ACTIVITIES'] ?? '')

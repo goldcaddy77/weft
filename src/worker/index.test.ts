@@ -29,7 +29,7 @@ function createTestServer(options?: {
               ws.send(
                 JSON.stringify({
                   type: 'registerAck',
-                  protocolVersion: 1,
+                  protocolVersion: 2,
                   workerId: parsed.workerId,
                   queue: parsed.queue ?? 'default',
                   activities: parsed.activities,
@@ -171,7 +171,7 @@ describe('RemoteWorker', () => {
       registerMessage = messages.find((m) => m.type === 'register');
     }
     expect(registerMessage).toBeDefined();
-    expect(registerMessage.protocolVersion).toBe(1);
+    expect(registerMessage.protocolVersion).toBe(2);
     expect(registerMessage.workerId).toBe('test-worker-1');
     expect(registerMessage.activities).toEqual(['processOrder']);
     expect(registerMessage.concurrency).toBe(5);
@@ -241,7 +241,7 @@ describe('RemoteWorker', () => {
               type: 'registerError',
               code: 'unsupported_protocol_version',
               message: 'Unsupported protocol',
-              supportedProtocolVersions: [1],
+              supportedProtocolVersions: [2],
               requestedProtocolVersion: 99,
             }),
           );
@@ -369,7 +369,7 @@ describe('RemoteWorker', () => {
       serverSocket.send(
         JSON.stringify({
           type: 'registerAck',
-          protocolVersion: 1,
+          protocolVersion: 2,
           workerId: 'ack-gated-heartbeat-worker',
           queue: 'default',
           activities: ['processOrder'],
