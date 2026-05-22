@@ -1,5 +1,6 @@
 import { describe, expect, it, mock } from 'bun:test';
 
+import { MemoryStorage } from '../../storage/memory.ts';
 import { Engine } from '../engine.ts';
 import { workflow } from '../types.ts';
 import { getInternals } from './internals.ts';
@@ -45,26 +46,38 @@ describe('retention helpers', () => {
   });
 
   it('reports purge failures through the cleanup error callback', async () => {
+    const underlyingStorage = new MemoryStorage();
+    const purgeError = new Error('scan failed during retention sweep');
+    const storage = {
+      batch: underlyingStorage.batch.bind(underlyingStorage),
+      conditionalBatch: underlyingStorage.conditionalBatch.bind(underlyingStorage),
+      delete: underlyingStorage.delete.bind(underlyingStorage),
+      get: underlyingStorage.get.bind(underlyingStorage),
+      put: underlyingStorage.put.bind(underlyingStorage),
+      scan: async function* () {
+        throw purgeError;
+      },
+      [Symbol.dispose]() {
+        underlyingStorage[Symbol.dispose]();
+      },
+    };
+    const engine = new Engine({
+      retention: { completed: 0 },
+      storage,
+    });
     let cleanupErrorCall: [string, unknown] | null = null;
     const handleCleanupError = mock((source: string, error: unknown) => {
       cleanupErrorCall = [source, error];
     });
 
-    await runRetentionSweep(
-      {
-        options: {
-          getNow: () => 0,
-          retentionSweepBatchSize: 1,
-        },
-      } as never,
-      handleCleanupError,
-      () => undefined,
-    );
+    await runRetentionSweep(getInternals(engine), handleCleanupError, () => undefined);
 
     expect(handleCleanupError).toHaveBeenCalledTimes(1);
     expect(cleanupErrorCall).not.toBeNull();
     expect(cleanupErrorCall![0]).toBe('retentionSweep');
-    expect(cleanupErrorCall![1]).toBeInstanceOf(TypeError);
+    expect(cleanupErrorCall![1]).toBe(purgeError);
+
+    engine[Symbol.dispose]();
   });
 
   it('builds retention overviews with the default type resolver', () => {
