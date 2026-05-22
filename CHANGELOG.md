@@ -155,6 +155,117 @@ agent-specific compression option names (`agentWorkflowIds`, `agentAlgorithm`,
 or `agentThreshold`). Compression now has one storage-level configuration path:
 `CompressionOptions`.
 
+### Removed (breaking) — deprecated workflow registration paths
+
+The deprecated registration overloads and module-augmentation types that
+bridged callers across the tRPC-style workflow-builder refactor are now
+gone. The chained `workflow(options).execute(handler)` form is the only
+supported path.
+
+Removed `Engine.register` overloads:
+
+- `engine.register(name: string, handler: WorkflowFunction): void`
+- `engine.register(name: string, registration: WorkflowRegistration): void`
+
+`engine.register(activityDefinition)` and
+`engine.register(workflowDefinition)` (where `workflowDefinition` is the
+result of `workflow({...}).execute(fn)`) remain supported.
+
+Removed `workflow()` overloads:
+
+- `workflow(handler)` (bare-function form)
+- The three `workflow({ ..., handler })` options-with-handler forms
+- The bare-function form previously inferred a workflow name from the
+  passed function's `.name`; the builder form requires an explicit
+  `name` in the options object.
+
+Removed types:
+
+- `WorkflowRegistration` (use `BuiltWorkflowDefinition` or the
+  builder's return type instead — the builder takes the same fields
+  as builder options or chain-method arguments)
+- `WorkflowDefinitionOptions`
+- `UnknownActivityNameWhenRegistryIsEmpty` (no longer needed; activity
+  names are now typed through the builder's `.activities({...})` step)
+
+Removed global module augmentation:
+
+- `interface ActivityTypes` in `weft` (use the per-workflow
+  `.activities({...})` chain method to type activity names instead).
+  The matching `ctx.run<TName extends keyof ActivityTypes>` overload
+  on `WorkflowContext` is also removed.
+- `weft codegen` no longer emits an `ActivityTypes` block; activity
+  typing now lives on each builder definition. The emitted
+  `WorkflowRegistry` block is unchanged.
+
+### Migration — Phase 6C builder cleanup
+
+Replace each call site with the chained builder form:
+
+```ts
+// Before — bare async generator
+engine.register('greet', async function* (ctx, input) {
+  return `hello ${input}`;
+});
+
+// After
+engine.register(
+  workflow({ name: 'greet' }).execute(async function* (ctx, input) {
+    return `hello ${input}`;
+  }),
+);
+```
+
+```ts
+// Before — object form with metadata
+engine.register('checkout', {
+  version: '2.0',
+  description: 'Runs checkout for an order.',
+  tags: ['orders'],
+  inputSchema,
+  outputSchema,
+  searchAttributes: { customerId: { type: 'string' } },
+  handler,
+});
+
+// After — non-`searchAttributes` fields stay in options; that field
+// moves to a chain method.
+engine.register(
+  workflow({
+    name: 'checkout',
+    version: '2.0',
+    description: 'Runs checkout for an order.',
+    tags: ['orders'],
+    inputSchema,
+    outputSchema,
+  })
+    .searchAttributes({ customerId: { type: 'string' } })
+    .execute(handler),
+);
+```
+
+```ts
+// Before — global ActivityTypes augmentation
+declare module 'weft' {
+  interface ActivityTypes {
+    formatGreeting: { args: [string]; result: string };
+  }
+}
+engine.register('welcome', async function* (ctx, input: string) {
+  return yield* ctx.run<'formatGreeting'>('formatGreeting', input);
+});
+
+// After — per-workflow activity typing on the builder
+const welcome = workflow({ name: 'welcome' })
+  .activities({
+    formatGreeting: async (name: string) => `Hello, ${name}!`,
+  })
+  .execute(async function* (ctx, input: string) {
+    return yield* ctx.run('formatGreeting', input);
+  });
+engine.register(welcome);
+```
+
 ## [0.1.0] - 2026-05-11
 
 ### Removed (breaking)
