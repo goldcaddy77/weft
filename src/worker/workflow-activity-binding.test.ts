@@ -66,6 +66,17 @@ describe('buildQualifiedActivityTable', () => {
     ).toThrow(/activity name "bad\.activity"/);
   });
 
+  it('rejects an `{ execute }` object whose `execute` is not callable', () => {
+    expect(() =>
+      buildQualifiedActivityTable({
+        welcome: {
+          name: 'welcome',
+          activities: { formatGreeting: { execute: 'not-a-function' as any } },
+        },
+      }),
+    ).toThrow(/Activity "welcome\.formatGreeting" must be a function/);
+  });
+
   it('isolates activities across workflows so identical activity keys do not collide', () => {
     const table = buildQualifiedActivityTable({
       welcome: { name: 'welcome', activities: { formatGreeting: async () => 'welcome' } },

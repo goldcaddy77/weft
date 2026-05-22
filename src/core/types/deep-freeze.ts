@@ -38,17 +38,24 @@ function shouldRecurse(value: unknown): boolean {
   return prototype === Object.prototype || prototype === null;
 }
 
-function freezeChildren(value: object): void {
+function freezeChildren(value: object, seen: WeakSet<object>): void {
   const entries = Array.isArray(value) ? value : Object.values(value as Record<string, unknown>);
   for (const child of entries) {
-    if (child !== null && typeof child === 'object') deepFreeze(child);
+    if (child !== null && typeof child === 'object') freezeWithSeen(child, seen);
   }
 }
 
-export function deepFreeze<T>(value: T): T {
+function freezeWithSeen<T>(value: T, seen: WeakSet<object>): T {
   if (value === null || typeof value !== 'object') return value;
+  const objectValue = value as unknown as object;
+  if (seen.has(objectValue)) return value;
+  seen.add(objectValue);
   if (Object.isFrozen(value)) return value;
-  if (shouldRecurse(value)) freezeChildren(value);
+  if (shouldRecurse(value)) freezeChildren(objectValue, seen);
   Object.freeze(value);
   return value;
+}
+
+export function deepFreeze<T>(value: T): T {
+  return freezeWithSeen(value, new WeakSet<object>());
 }

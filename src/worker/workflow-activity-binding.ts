@@ -30,6 +30,14 @@ import type { RemoteActivityContext } from './remote-activity-context.ts';
  *
  * Returns a `Promise<unknown>` to match `executeWithInterceptors`. Sync
  * activities can return `Promise.resolve(...)` or be declared `async`.
+ *
+ * @example
+ * ```ts
+ * import type { RemoteWorkerActivityFunction } from 'weft';
+ *
+ * const formatGreeting: RemoteWorkerActivityFunction = async (input) =>
+ *   `hi ${String((input as { name: string }).name)}`;
+ * ```
  */
 export type RemoteWorkerActivityFunction = (
   input: unknown,
@@ -39,6 +47,14 @@ export type RemoteWorkerActivityFunction = (
 /**
  * Either a bare function or an `{ execute }` object — same shape the engine
  * accepts when normalising a builder's `.activities({ ... })` map.
+ *
+ * @example
+ * ```ts
+ * import type { RemoteWorkerActivityImplementation } from 'weft';
+ *
+ * const bare: RemoteWorkerActivityImplementation = async () => 'a';
+ * const shaped: RemoteWorkerActivityImplementation = { execute: async () => 'b' };
+ * ```
  */
 export type RemoteWorkerActivityImplementation =
   | RemoteWorkerActivityFunction
@@ -48,6 +64,16 @@ export type RemoteWorkerActivityImplementation =
  * Minimal workflow shape the worker SDK consumes from a `workflows` map. Only
  * `name` and `activities` are read; the rest of the engine-side definition is
  * irrelevant to dispatch.
+ *
+ * @example
+ * ```ts
+ * import type { RemoteWorkerWorkflowDefinition } from 'weft';
+ *
+ * const welcome: RemoteWorkerWorkflowDefinition = {
+ *   name: 'welcome',
+ *   activities: { formatGreeting: async () => 'hi' },
+ * };
+ * ```
  */
 export type RemoteWorkerWorkflowDefinition = {
   name: string;
@@ -87,7 +113,7 @@ export function buildQualifiedActivityTable(
     for (const [activityKey, implementation] of Object.entries(workflow.activities)) {
       validateWorkflowOrActivityName(activityKey, 'activity');
       const qualifiedName = `${key}.${activityKey}`;
-      table[qualifiedName] = resolveActivityExecutor(implementation);
+      table[qualifiedName] = resolveActivityExecutor(implementation, qualifiedName);
     }
   }
   return table;
@@ -95,7 +121,17 @@ export function buildQualifiedActivityTable(
 
 function resolveActivityExecutor(
   implementation: RemoteWorkerActivityImplementation,
+  qualifiedName: string,
 ): RemoteWorkerActivityFunction {
   if (typeof implementation === 'function') return implementation;
+  if (
+    implementation === null ||
+    typeof implementation !== 'object' ||
+    typeof (implementation as { execute?: unknown }).execute !== 'function'
+  ) {
+    throw new TypeError(
+      `Activity "${qualifiedName}" must be a function or an object with a callable "execute" method`,
+    );
+  }
   return implementation.execute;
 }

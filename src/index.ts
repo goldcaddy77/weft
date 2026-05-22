@@ -416,6 +416,12 @@ export {
   WorkerProtocolIncompatibleError,
   workerProtocolIncompatibleMessage,
 } from './worker/worker-protocol-incompatible-error';
+export { buildQualifiedActivityTable } from './worker/workflow-activity-binding';
+export type {
+  RemoteWorkerActivityFunction,
+  RemoteWorkerActivityImplementation,
+  RemoteWorkerWorkflowDefinition,
+} from './worker/workflow-activity-binding';
 
 export { HttpClient, HttpClientError } from './client/index';
 export type { HttpClientOptions } from './client/index';

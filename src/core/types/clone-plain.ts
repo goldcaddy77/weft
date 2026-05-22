@@ -15,9 +15,18 @@
  * the user retains.
  */
 export function clonePlain<T>(value: T): T {
+  return cloneWithSeen(value, new WeakMap<object, unknown>());
+}
+
+function cloneWithSeen<T>(value: T, seen: WeakMap<object, unknown>): T {
   if (value === null || typeof value !== 'object') return value;
+  const objectValue = value as unknown as object;
+  const existing = seen.get(objectValue);
+  if (existing !== undefined) return existing as T;
   if (Array.isArray(value)) {
-    const cloned: unknown[] = value.map((item: unknown) => clonePlain(item));
+    const cloned: unknown[] = [];
+    seen.set(objectValue, cloned);
+    for (const item of value) cloned.push(cloneWithSeen(item, seen));
     return cloned as T;
   }
   const prototype = Object.getPrototypeOf(value);
@@ -27,8 +36,9 @@ export function clonePlain<T>(value: T): T {
     return value;
   }
   const out: Record<string, unknown> = {};
+  seen.set(objectValue, out);
   for (const key of Object.keys(value as Record<string, unknown>)) {
-    out[key] = clonePlain((value as Record<string, unknown>)[key]);
+    out[key] = cloneWithSeen((value as Record<string, unknown>)[key], seen);
   }
   return out as T;
 }
