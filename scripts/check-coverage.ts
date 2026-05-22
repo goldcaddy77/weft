@@ -260,12 +260,6 @@ const BASE_COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
     },
   ],
   [
-    'src/core/engine/operations-activity.ts',
-    {
-      lines: new Set([31, 33, 34, 35, 36, 53, 54, 97, 172, 173, 174, 205, 240]),
-    },
-  ],
-  [
     'src/core/engine/operations-coordination.ts',
     {
       lines: new Set([
@@ -315,13 +309,6 @@ const BASE_COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
     'src/core/engine/registration.ts',
     {
       lines: new Set([196]),
-    },
-  ],
-  [
-    'src/core/engine/retention.ts',
-    {
-      functions: 1,
-      lines: new Set([81, 116]),
     },
   ],
   [
@@ -747,12 +734,6 @@ const COVERAGE_ALLOWANCE_OVERRIDES = new Map<string, CoverageAllowance>([
     },
   ],
   [
-    'src/core/engine/operations-activity.ts',
-    {
-      lines: new Set([36, 96, 169, 170, 171, 202, 237]),
-    },
-  ],
-  [
     'src/core/engine/operations-coordination.ts',
     {
       lines: new Set([
@@ -1044,10 +1025,6 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_OVERRIDES = new Map<string, CoverageAllowa
       lines: new Set([55, 106, 128, 146, 150, 151, 166, 167, 168, 221, 287, 325]),
     },
   ],
-  [
-    'src/client/client-contract.test-support.ts',
-    { functions: 1, lines: new Set([19, 40, 42, 43]) },
-  ],
   ['src/client/http-handle.ts', { functions: 1 }],
   ['src/client/http-schedule-handle.ts', { functions: 1 }],
   ['src/client/local.ts', { functions: 1, lines: new Set([124]) }],
@@ -1085,10 +1062,7 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_OVERRIDES = new Map<string, CoverageAllowa
     'src/core/engine/completed-review-storage.ts',
     { lines: new Set([18, 30, 108, 113, 114, 115, 117, 118, 119, 120, 124]) },
   ],
-  [
-    'src/core/engine/index.ts',
-    { functions: 3, lines: new Set([439, 440, 441, 464, 465, 466, 467, 468, 472]) },
-  ],
+  ['src/core/engine/index.ts', { functions: 1 }],
   [
     'src/core/engine/inline-parking.ts',
     { functions: 1, lines: new Set([204, 205, 206, 207, 208, 209, 210, 211]) },
@@ -1263,12 +1237,6 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_REFRESH = new Map<string, CoverageAllowanc
     },
   ],
   [
-    'examples/order-processing/src/workflows/order.ts',
-    {
-      lines: new Set([95, 122, 123, 124, 125, 126]),
-    },
-  ],
-  [
     'scripts/check-lint-disables.ts',
     {
       functions: 9,
@@ -1434,7 +1402,7 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_REFRESH = new Map<string, CoverageAllowanc
       ]),
     },
   ],
-  ['src/server/runtime/websocket-worker.ts', { lines: new Set([354, 355, 358, 359]) }],
+  ['src/server/runtime/websocket-worker.ts', { lines: new Set([361, 362, 365, 366]) }],
   ['src/server/serve-internals.ts', { lines: new Set([173, 216, 271]) }],
   ['src/server/workflow-event-feed.ts', { lines: new Set([405, 425]) }],
   [
