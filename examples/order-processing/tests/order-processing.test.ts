@@ -165,7 +165,7 @@ describe('order-processing reference example', () => {
       handle.update(addItemUpdate, {
         sku: 'late-item',
         quantity: 1,
-        warehouseId: 'denver',
+        warehouseId: 'denver' as const,
         unitPrice: 5,
       }),
     ).resolves.toEqual({
