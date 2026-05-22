@@ -93,7 +93,10 @@ export type RemoteWorkerWorkflowDefinition = {
  * const table = buildQualifiedActivityTable({
  *   welcome: {
  *     name: 'welcome',
- *     activities: { formatGreeting: async ({ name }: { name: string }) => `hi ${name}` },
+ *     activities: {
+ *       formatGreeting: async (input) =>
+ *         `hi ${String((input as { name: string }).name)}`,
+ *     },
  *   },
  * });
  * // table['welcome.formatGreeting'] is the bound executor.
