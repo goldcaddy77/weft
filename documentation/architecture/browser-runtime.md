@@ -44,15 +44,18 @@ The Weft HTTP handler is a pure `Request` to `Response` function. On the server,
 // weft-sw.ts — installed as a Service Worker
 /// <reference lib="webworker" />
 
+import { workflow } from 'weft';
 import { setupServiceWorker } from 'weft/service-worker';
 
 const { engine } = await setupServiceWorker({
   pathPrefix: '/weft/',
   register(engine) {
-    engine.register('checkout', async function* () {
-      yield;
-      return 'done';
-    });
+    engine.register(
+      workflow({ name: 'checkout' }).execute(async function* () {
+        yield;
+        return 'done';
+      }),
+    );
   },
 });
 

@@ -11,13 +11,15 @@ function serve(options: ServeOptions): WeftServer;
 Start the Weft HTTP + WebSocket server. Returns a `WeftServer` handle for introspection and shutdown.
 
 ```ts partial
-import { Engine } from 'weft';
+import { Engine, workflow } from 'weft';
 import { serve } from 'weft/server';
 
 const engine = new Engine();
-engine.register('greet', async function* (context, name) {
-  return `Hello, ${name}!`;
-});
+engine.register(
+  workflow({ name: 'greet' }).execute(async function* (context, name) {
+    return `Hello, ${name}!`;
+  }),
+);
 
 const server = serve({ engine, port: 7233 });
 console.log(`Weft server running at ${server.url}`);

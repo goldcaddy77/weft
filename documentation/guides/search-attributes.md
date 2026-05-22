@@ -13,16 +13,17 @@ const region = searchAttribute('region', 'string');
 const priority = searchAttribute('priority', 'number');
 const tags = searchAttribute('tags', { type: 'array', items: { type: 'string' } });
 
-engine.register('order', {
-  handler: orderWorkflow,
-  searchAttributes: {
-    customerId,
-    orderTotal,
-    region,
-    priority,
-    tags,
-  },
-});
+engine.register(
+  workflow({ name: 'order' })
+    .searchAttributes({
+      customerId,
+      orderTotal,
+      region,
+      priority,
+      tags,
+    })
+    .execute(orderWorkflow),
+);
 ```
 
 The helper accepts primitive JSON Schema type names such as `string`, `number`, and `boolean`, plus JSON Schema fragments. Use `{ type: 'string', format: 'date-time' }` for dates and `{ type: 'array', items: { type: 'string' } }` for string arrays.

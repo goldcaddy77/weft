@@ -20,11 +20,13 @@ const notify = activity({
 engine.register(greet);
 engine.register(notify);
 
-engine.register('welcome', async function* (ctx, input: { name: string }) {
-  const greeting = yield* ctx.run(greet, { name: input.name });
-  yield* ctx.run(notify, { message: greeting });
-  return { greeting, notified: true };
-});
+engine.register(
+  workflow({ name: 'welcome' }).execute(async function* (ctx, input: { name: string }) {
+    const greeting = yield* ctx.run(greet, { name: input.name });
+    yield* ctx.run(notify, { message: greeting });
+    return { greeting, notified: true };
+  }),
+);
 ```
 
 Each `yield* ctx.run()` is a checkpoint boundary. If the process crashes after `greet` completes but before `notify` starts, recovery picks up at the second call---`greet` does not run again. For that to be true in a fresh process, register the same activity names before calling `engine.recoverAll()` or `engine.resume(id)`.
@@ -177,10 +179,12 @@ const triple = activity({
 engine.register(double);
 engine.register(triple);
 
-engine.register('parallel', async function* (ctx, input: number) {
-  const [doubled, tripled] = yield* ctx.all([ctx.run(double, input), ctx.run(triple, input)]);
-  return { doubled, tripled };
-});
+engine.register(
+  workflow({ name: 'parallel' }).execute(async function* (ctx, input: number) {
+    const [doubled, tripled] = yield* ctx.all([ctx.run(double, input), ctx.run(triple, input)]);
+    return { doubled, tripled };
+  }),
+);
 ```
 
 For named concurrent branches where each needs its own error handling, use `ctx.runAll()`.

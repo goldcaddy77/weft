@@ -7,11 +7,11 @@ You've built your workflows and tested them locally. Now you need to expose them
 The `serve()` function takes an engine and optional network configuration, and returns a `WeftServer` handle.
 
 ```typescript partial
-import { Engine } from 'weft';
+import { Engine, workflow } from 'weft';
 import { serve } from 'weft/server';
 
 const engine = new Engine({ storage });
-engine.register('order', orderWorkflow);
+engine.register(workflow({ name: 'order' }).execute(orderWorkflow));
 
 const server = serve({ engine });
 

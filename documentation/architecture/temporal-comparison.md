@@ -58,14 +58,16 @@ if (workflow.patched('v2-shipping')) {
 // v3? Now you have TWO version branches. v4? Three. They never go away.
 
 // Weft: deploy new code. Old checkpoints migrate automatically.
-engine.register('order', {
-  version: '2.0.0',
-  handler: orderWorkflow,
-  migrate: (checkpoint, fromVersion) => ({
-    ...checkpoint,
-    shippingOptions: { express: true },
-  }),
-});
+engine.register(
+  workflow({
+    name: 'order',
+    version: '2.0.0',
+    migrate: (checkpoint, fromVersion) => ({
+      ...checkpoint,
+      shippingOptions: { express: true },
+    }),
+  }).execute(orderWorkflow),
+);
 ```
 
 Weft also provides a `weft version:check` CLI command that analyzes registered workflows against the existing database and reports compatibility _before_ deployment---telling you exactly how many running workflows need migration and whether your migration function covers them.

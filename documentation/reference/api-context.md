@@ -477,19 +477,21 @@ convenience methods, and `.run()`. Durable handles expose yielded `.get()`,
 `.set()`, `.update()`, `.delete()`, and the same convenience methods.
 
 ```ts partial
-engine.register('order', async function* (ctx, order) {
-  const attempts = ctx.state.session<number>('chargeAttempts', { initial: 0 });
-  attempts.set((attempts.get() ?? 0) + 1);
-  if (attempts.get()! > 3) {
-    return { status: 'abandoned' };
-  }
+engine.register(
+  workflow({ name: 'order' }).execute(async function* (ctx, order) {
+    const attempts = ctx.state.session<number>('chargeAttempts', { initial: 0 });
+    attempts.set((attempts.get() ?? 0) + 1);
+    if (attempts.get()! > 3) {
+      return { status: 'abandoned' };
+    }
 
-  const tenantCharges = ctx.state.tenant<number>('chargeCount', { initial: 0 });
-  yield* tenantCharges.increment();
+    const tenantCharges = ctx.state.tenant<number>('chargeCount', { initial: 0 });
+    yield* tenantCharges.increment();
 
-  const receipt = yield* ctx.run(chargeCard, order.token);
-  return { status: 'charged', receipt };
-});
+    const receipt = yield* ctx.run(chargeCard, order.token);
+    return { status: 'charged', receipt };
+  }),
+);
 ```
 
 `ctx.state.session()` is synchronous -- no `yield*` needed. Durable state methods
@@ -529,11 +531,13 @@ Execute a named step as a durable operation. Under the hood, each `step()` call 
 **Returns:** A promise that resolves with the step function's return value.
 
 ```ts partial
-engine.register('onboard', async (ctx, input: { name: string }) => {
-  const user = await ctx.step('create-user', () => createUser(input.name));
-  await ctx.step('send-email', () => sendWelcome(user));
-  return user;
-});
+engine.register(
+  workflow({ name: 'onboard' }).execute(async (ctx, input: { name: string }) => {
+    const user = await ctx.step('create-user', () => createUser(input.name));
+    await ctx.step('send-email', () => sendWelcome(user));
+    return user;
+  }),
+);
 ```
 
 The conversion from step-based to generator-based happens at registration time. The engine always works with generators internally.

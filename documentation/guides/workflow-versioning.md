@@ -14,13 +14,10 @@ When `engine.start()` creates a workflow, it records the version of the currentl
 
 ```typescript partial
 // Shorthand: version defaults to '1'
-engine.register('order', orderWorkflow);
+engine.register(workflow({ name: 'order' }).execute(orderWorkflow));
 
 // Explicit version
-engine.register('order', {
-  version: '2.0.0',
-  handler: orderWorkflowV2,
-});
+engine.register(workflow({ name: 'order', version: '2.0.0' }).execute(orderWorkflowV2));
 ```
 
 The version string is stored alongside the checkpoint. On resume, the engine compares the stored version against the currently registered version.
@@ -38,20 +35,22 @@ The comparison logic is straightforward:
 The `migrate` function receives the checkpoint data and the version it came from. It returns the transformed checkpoint.
 
 ```typescript partial
-engine.register('order', {
-  version: '2.0.0',
-  handler: orderWorkflowV2,
-  migrate(checkpoint, fromVersion) {
-    if (fromVersion.startsWith('1.')) {
-      // V1 stored `address` as a string; V2 uses an Address object
-      return {
-        ...checkpoint,
-        address: parseAddress(checkpoint.address),
-      };
-    }
-    return checkpoint;
-  },
-});
+engine.register(
+  workflow({
+    name: 'order',
+    version: '2.0.0',
+    migrate(checkpoint, fromVersion) {
+      if (fromVersion.startsWith('1.')) {
+        // V1 stored `address` as a string; V2 uses an Address object
+        return {
+          ...checkpoint,
+          address: parseAddress(checkpoint.address),
+        };
+      }
+      return checkpoint;
+    },
+  }).execute(orderWorkflowV2),
+);
 ```
 
 The `migrateCheckpoint()` utility runs this function internally:
@@ -91,45 +90,48 @@ try {
 For simple changes where the checkpoint shape didn't change---you only modified logic after the current pause point---skip the migration entirely:
 
 ```typescript partial
-engine.register('order', {
-  version: '1.1.0',
-  handler: orderWorkflowV1WithBugfix,
+engine.register(
+  workflow({ name: 'order', version: '1.1.0' }).execute(orderWorkflowV1WithBugfix),
   // No migrate needed
-});
+);
 ```
 
 For additive changes where you need a new field with a default:
 
 ```typescript partial
-engine.register('order', {
-  version: '2.0.0',
-  handler: orderWorkflowV2,
-  migrate(checkpoint, fromVersion) {
-    if (fromVersion.startsWith('1.')) {
-      return { ...checkpoint, region: 'us-east-1' };
-    }
-    return checkpoint;
-  },
-});
+engine.register(
+  workflow({
+    name: 'order',
+    version: '2.0.0',
+    migrate(checkpoint, fromVersion) {
+      if (fromVersion.startsWith('1.')) {
+        return { ...checkpoint, region: 'us-east-1' };
+      }
+      return checkpoint;
+    },
+  }).execute(orderWorkflowV2),
+);
 ```
 
 For breaking changes across multiple major versions, chain the transformations:
 
 ```typescript partial
-engine.register('order', {
-  version: '3.0.0',
-  handler: orderWorkflowV3,
-  migrate(checkpoint, fromVersion) {
-    let migrated = checkpoint;
-    if (fromVersion.startsWith('1.')) {
-      migrated = { ...migrated, address: parseAddress(migrated.address) };
-    }
-    if (fromVersion.startsWith('1.') || fromVersion.startsWith('2.')) {
-      migrated = { ...migrated, currency: 'USD' };
-    }
-    return migrated;
-  },
-});
+engine.register(
+  workflow({
+    name: 'order',
+    version: '3.0.0',
+    migrate(checkpoint, fromVersion) {
+      let migrated = checkpoint;
+      if (fromVersion.startsWith('1.')) {
+        migrated = { ...migrated, address: parseAddress(migrated.address) };
+      }
+      if (fromVersion.startsWith('1.') || fromVersion.startsWith('2.')) {
+        migrated = { ...migrated, currency: 'USD' };
+      }
+      return migrated;
+    },
+  }).execute(orderWorkflowV3),
+);
 ```
 
 The beauty of this approach is that you think about data shapes, not execution paths. "What does my checkpoint look like, and what does my new code expect?" is a much simpler question than "Is my new code deterministically compatible with every possible event history?"

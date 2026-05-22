@@ -9,14 +9,16 @@ Session state is the narrowest scope in the [`ctx.state`](./state.md) ladder. It
 `ctx.state.session<T>(key, options?)` returns a `WorkflowSessionState<T>` handle. The core methods are `get`, `set`, `update`, `delete`, and `run`.
 
 ```ts partial
-import { type WorkflowContext } from 'weft';
+import { workflow, type WorkflowContext } from 'weft';
 
-engine.register('counter', async function* (ctx: WorkflowContext) {
-  const counter = ctx.state.session<number>('count', { initial: 0 });
+engine.register(
+  workflow({ name: 'counter' }).execute(async function* (ctx: WorkflowContext) {
+    const counter = ctx.state.session<number>('count', { initial: 0 });
 
-  counter.increment();
-  return counter.get();
-});
+    counter.increment();
+    return counter.get();
+  }),
+);
 ```
 
 `get()` returns the current value or `undefined` if the slot has never been written. `options.initial` primes the handle: `get()` returns it until something else writes.
@@ -34,14 +36,16 @@ counter.update((current) => (current ?? 0) + 1);
 The slot's value is part of the workflow's checkpoint locals, so recovery preserves whatever was written before the last checkpoint.
 
 ```ts partial
-engine.register('survives-crashes', async function* (ctx: WorkflowContext) {
-  const counter = ctx.state.session<number>('count', { initial: 0 });
-  counter.increment();
+engine.register(
+  workflow({ name: 'survives-crashes' }).execute(async function* (ctx: WorkflowContext) {
+    const counter = ctx.state.session<number>('count', { initial: 0 });
+    counter.increment();
 
-  yield* ctx.waitForSignal('resume');
+    yield* ctx.waitForSignal('resume');
 
-  return counter.get();
-});
+    return counter.get();
+  }),
+);
 ```
 
 ## Running Sticky Activities

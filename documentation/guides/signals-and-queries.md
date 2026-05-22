@@ -9,18 +9,20 @@ Inside a workflow, `yield* ctx.waitForSignal(handle)` pauses execution until a s
 ```typescript partial
 const approvalSignal = signal<{ approved: boolean }>('approval');
 
-engine.register('approval', async function* (ctx, input: { orderId: string }) {
-  // Pauses here until 'approval' signal arrives
-  const approval = yield* ctx.waitForSignal(approvalSignal);
+engine.register(
+  workflow({ name: 'approval' }).execute(async function* (ctx, input: { orderId: string }) {
+    // Pauses here until 'approval' signal arrives
+    const approval = yield* ctx.waitForSignal(approvalSignal);
 
-  if (approval.approved) {
-    yield* ctx.run(fulfillOrder, { orderId: input.orderId });
-  } else {
-    yield* ctx.run(cancelOrder, { orderId: input.orderId });
-  }
+    if (approval.approved) {
+      yield* ctx.run(fulfillOrder, { orderId: input.orderId });
+    } else {
+      yield* ctx.run(cancelOrder, { orderId: input.orderId });
+    }
 
-  return { orderId: input.orderId, approved: approval.approved };
-});
+    return { orderId: input.orderId, approved: approval.approved };
+  }),
+);
 ```
 
 The typed handle is a runtime `{ name }` value with phantom TypeScript payload information, so the received payload is inferred without repeating a generic at the wait site.
@@ -65,18 +67,23 @@ A workflow can wait for multiple signals, either sequentially or with different 
 const managerApproval = signal<{ approved: boolean }>('manager-approval');
 const financeApproval = signal<{ approved: boolean }>('finance-approval');
 
-engine.register('multi-step-approval', async function* (ctx, input: { orderId: string }) {
-  // Wait for manager approval
-  const manager = yield* ctx.waitForSignal(managerApproval);
-  if (!manager.approved) return { orderId: input.orderId, status: 'rejected-by-manager' };
+engine.register(
+  workflow({ name: 'multi-step-approval' }).execute(async function* (
+    ctx,
+    input: { orderId: string },
+  ) {
+    // Wait for manager approval
+    const manager = yield* ctx.waitForSignal(managerApproval);
+    if (!manager.approved) return { orderId: input.orderId, status: 'rejected-by-manager' };
 
-  // Then wait for finance approval
-  const finance = yield* ctx.waitForSignal(financeApproval);
-  if (!finance.approved) return { orderId: input.orderId, status: 'rejected-by-finance' };
+    // Then wait for finance approval
+    const finance = yield* ctx.waitForSignal(financeApproval);
+    if (!finance.approved) return { orderId: input.orderId, status: 'rejected-by-finance' };
 
-  yield* ctx.run(fulfillOrder, { orderId: input.orderId });
-  return { orderId: input.orderId, status: 'approved' };
-});
+    yield* ctx.run(fulfillOrder, { orderId: input.orderId });
+    return { orderId: input.orderId, status: 'approved' };
+  }),
+);
 ```
 
 Each `waitForSignal` is an independent checkpoint boundary with its own signal name.
