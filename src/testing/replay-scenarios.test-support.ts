@@ -11,7 +11,13 @@
  */
 
 import { Engine } from '../core/engine.ts';
-import type { ActivityDefinition, StepWorkflowContext, WorkflowContext } from '../core/types.ts';
+import { compileStepWorkflow } from '../core/step-context.ts';
+import {
+  workflow,
+  type ActivityDefinition,
+  type StepWorkflowContext,
+  type WorkflowContext,
+} from '../core/types.ts';
 
 /** Registers one or more workflow handlers for a named scenario on the engine. */
 export type ScenarioHandlerRegistrar = (engine: Engine) => void;
@@ -29,122 +35,164 @@ async function pipeStageThree(_ctx: StepWorkflowContext, input: unknown): Promis
 }
 
 function registerSimpleSequential(engine: Engine): void {
-  engine.register('simple-sequential', async function* (ctx: WorkflowContext, input: unknown) {
-    const result = yield* ctx.run(async (value: unknown) => `processed:${String(value)}`, input);
-    return result;
-  });
+  engine.register(
+    workflow({ name: 'simple-sequential' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
+      const result = yield* ctx.run(async (value: unknown) => `processed:${String(value)}`, input);
+      return result;
+    }),
+  );
 }
 
 function registerTwoParallel(engine: Engine): void {
-  engine.register('two-parallel', async function* (ctx: WorkflowContext, input: unknown) {
-    const context = ctx;
-    const [left, right] = yield* context.all([
-      context.run(async (value: unknown) => `left:${String(value)}`, input),
-      context.run(async (value: unknown) => `right:${String(value)}`, input),
-    ]);
+  engine.register(
+    workflow({ name: 'two-parallel' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
+      const context = ctx;
+      const [left, right] = yield* context.all([
+        context.run(async (value: unknown) => `left:${String(value)}`, input),
+        context.run(async (value: unknown) => `right:${String(value)}`, input),
+      ]);
 
-    return { a: left, b: right };
-  });
+      return { a: left, b: right };
+    }),
+  );
 }
 
 function registerRaceTakesFirst(engine: Engine): void {
-  engine.register('race-takes-first', async function* (ctx: WorkflowContext) {
-    const context = ctx;
-    const result = yield* context.race([
-      context.run(async () => 'fast'),
-      context.run(async () => {
-        await Bun.sleep(50);
-        return 'slow';
-      }),
-    ]);
+  engine.register(
+    workflow({ name: 'race-takes-first' }).execute(async function* (ctx: WorkflowContext) {
+      const context = ctx;
+      const result = yield* context.race([
+        context.run(async () => 'fast'),
+        context.run(async () => {
+          await Bun.sleep(50);
+          return 'slow';
+        }),
+      ]);
 
-    return result;
-  });
+      return result;
+    }),
+  );
 }
 
 function registerSignalAndWait(engine: Engine): void {
-  engine.register('signal-and-wait', async function* (ctx: WorkflowContext) {
-    const payload = yield* ctx.waitForSignal('go');
-    return { received: payload };
-  });
+  engine.register(
+    workflow({ name: 'signal-and-wait' }).execute(async function* (ctx: WorkflowContext) {
+      const payload = yield* ctx.waitForSignal('go');
+      return { received: payload };
+    }),
+  );
 }
 
 function registerSleepAndResume(engine: Engine): void {
-  engine.register('sleep-and-resume', async function* (ctx: WorkflowContext) {
-    yield* ctx.sleep(100);
-    return 'awake';
-  });
+  engine.register(
+    workflow({ name: 'sleep-and-resume' }).execute(async function* (ctx: WorkflowContext) {
+      yield* ctx.sleep(100);
+      return 'awake';
+    }),
+  );
 }
 
 function registerChildWorkflow(engine: Engine): void {
   engine.register(
-    'child-workflow-child',
-    async function childWorkflowChild(_ctx: StepWorkflowContext, input: unknown) {
-      return `child-result:${String(input)}`;
-    },
+    workflow({ name: 'child-workflow-child' }).execute(
+      compileStepWorkflow(async function childWorkflowChild(
+        _ctx: StepWorkflowContext,
+        input: unknown,
+      ) {
+        return `child-result:${String(input)}`;
+      }),
+    ),
   );
 
-  engine.register('child-workflow', async function* (ctx: WorkflowContext, input: unknown) {
-    const childResult = yield* ctx.startChild('child-workflow-child', input);
-    return { parent: String(input), child: childResult };
-  });
+  engine.register(
+    workflow({ name: 'child-workflow' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
+      const childResult = yield* ctx.startChild('child-workflow-child', input);
+      return { parent: String(input), child: childResult };
+    }),
+  );
 }
 
 function registerSagaWithCompensation(engine: Engine): void {
   const compensated: string[] = [];
 
-  engine.register('saga-with-compensation', async function* (ctx: WorkflowContext) {
-    const stepOne: ActivityDefinition<unknown, string> = {
-      name: 'step-one',
-      execute: async () => 'output-one',
-      compensate: async (_input: unknown, output: string) => {
-        compensated.push(output);
-      },
-    };
-    const stepTwo: ActivityDefinition<unknown, string> = {
-      name: 'step-two',
-      execute: async () => {
-        throw new Error('step-two-failed');
-      },
-    };
+  engine.register(
+    workflow({ name: 'saga-with-compensation' }).execute(async function* (ctx: WorkflowContext) {
+      const stepOne: ActivityDefinition<unknown, string> = {
+        name: 'step-one',
+        execute: async () => 'output-one',
+        compensate: async (_input: unknown, output: string) => {
+          compensated.push(output);
+        },
+      };
+      const stepTwo: ActivityDefinition<unknown, string> = {
+        name: 'step-two',
+        execute: async () => {
+          throw new Error('step-two-failed');
+        },
+      };
 
-    try {
-      yield* ctx.saga([
-        { definition: stepOne, input: 'a' },
-        { definition: stepTwo, input: 'b' },
-      ]);
-      return 'no-error';
-    } catch {
-      return `compensated:${compensated.join(',')}`;
-    }
-  });
+      try {
+        yield* ctx.saga([
+          { definition: stepOne, input: 'a' },
+          { definition: stepTwo, input: 'b' },
+        ]);
+        return 'no-error';
+      } catch {
+        return `compensated:${compensated.join(',')}`;
+      }
+    }),
+  );
 }
 
 function registerPipeThreeStages(engine: Engine): void {
-  engine.register('pipe-three-stages', async function* (ctx: WorkflowContext, input: unknown) {
-    return yield* ctx.pipe([pipeStageOne, pipeStageTwo, pipeStageThree], input);
-  });
-  engine.register('stage1', pipeStageOne);
-  engine.register('stage2', pipeStageTwo);
-  engine.register('stage3', pipeStageThree);
+  engine.register(
+    workflow({ name: 'pipe-three-stages' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
+      // Pass string names to `ctx.pipe(...)`. Passing bare step functions
+      // required the engine to look the function up in `workflowTypesByHandler`
+      // — that mapping only fires for raw `WorkflowFunction` references, but
+      // the builder API stores the compiled generator as the registered
+      // handler, so the original step function is no longer the registered
+      // identity.
+      return yield* ctx.pipe(['stage1', 'stage2', 'stage3'], input);
+    }),
+  );
+  engine.register(workflow({ name: 'stage1' }).execute(compileStepWorkflow(pipeStageOne)));
+  engine.register(workflow({ name: 'stage2' }).execute(compileStepWorkflow(pipeStageTwo)));
+  engine.register(workflow({ name: 'stage3' }).execute(compileStepWorkflow(pipeStageThree)));
 }
 
 function registerForkFromCheckpoint(engine: Engine): void {
-  engine.register('fork-from-checkpoint', async function* (ctx: WorkflowContext) {
-    const context = ctx;
-    const phaseOne = yield* context.run(async () => 'phase-one');
-    const branch = yield* context.waitForSignal('branch');
-    return `${String(phaseOne)}:${String(branch)}`;
-  });
+  engine.register(
+    workflow({ name: 'fork-from-checkpoint' }).execute(async function* (ctx: WorkflowContext) {
+      const context = ctx;
+      const phaseOne = yield* context.run(async () => 'phase-one');
+      const branch = yield* context.waitForSignal('branch');
+      return `${String(phaseOne)}:${String(branch)}`;
+    }),
+  );
 }
 
 function registerRecoveryAfterCrash(engine: Engine): void {
-  engine.register('recovery-after-crash', async function* (ctx: WorkflowContext) {
-    const context = ctx;
-    const stepOne = yield* context.run(async () => 'checkpoint-me');
-    const stepTwo = yield* context.run(async () => `resumed:${String(stepOne)}`);
-    return stepTwo;
-  });
+  engine.register(
+    workflow({ name: 'recovery-after-crash' }).execute(async function* (ctx: WorkflowContext) {
+      const context = ctx;
+      const stepOne = yield* context.run(async () => 'checkpoint-me');
+      const stepTwo = yield* context.run(async () => `resumed:${String(stepOne)}`);
+      return stepTwo;
+    }),
+  );
 }
 
 /** Dispatcher record mapping top-level scenario keys to their registrar. */

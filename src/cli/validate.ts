@@ -1,5 +1,5 @@
-import type { ActivityDefinition, WorkflowRegistration } from '../core/types.ts';
-import type { ValidationReport } from '../diagnostics/validate.ts';
+import type { ActivityDefinition } from '../core/types.ts';
+import type { ValidationReport, WorkflowRegistration } from '../diagnostics/validate.ts';
 import type { CommandOutput } from './types.ts';
 import { expandGlobEntryPaths } from './utilities.ts';
 

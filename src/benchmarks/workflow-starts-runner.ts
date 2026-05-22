@@ -1,6 +1,6 @@
 import { Engine } from '../core/engine.ts';
-import { runtimeWorkflowEngine } from '../core/runtime-workflow-engine.ts';
-import type { WorkflowContext } from '../core/types.ts';
+import { registerOnRuntimeEngine, runtimeWorkflowEngine } from '../core/runtime-workflow-engine.ts';
+import { workflow, type WorkflowContext } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 
 export type WorkflowStartAdmissionMeasurement = {
@@ -32,10 +32,15 @@ async function measureWorkflowStartAdmissions(
 
   try {
     // The benchmark needs the minimal immediately-completing workflow shape.
-    // eslint-disable-next-line require-yield
-    engine.register('noop', async function* (_ctx: WorkflowContext) {
-      return 'done';
-    });
+    registerOnRuntimeEngine(
+      engine,
+      workflow({ name: 'noop' }).execute(
+        // eslint-disable-next-line require-yield
+        async function* (_ctx: WorkflowContext) {
+          return 'done';
+        },
+      ),
+    );
 
     for (let index = 0; index < warmupStarts; index += 1) {
       const handle = await engine.start('noop', buildWarmupWorkflowArgument(index));

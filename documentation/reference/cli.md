@@ -91,7 +91,7 @@ weft codegen --from ./registry.json --out ./src/weft.generated.d.ts
 weft codegen --server http://localhost:7233 --out ./src/weft.generated.d.ts --json
 ```
 
-The generated file augments the public `weft` module with `WorkflowRegistry` and `ActivityTypes` entries. Output is byte-stable: running the command again with the same snapshot reports that the file is up to date and does not rewrite it.
+The generated file augments the public `weft` module with `WorkflowRegistry` entries — typed workflow names that make `engine.start('name', ...)` infer the right input shape. Activity names are no longer typed via a global module augmentation; they live on the workflow builder's `.activities({...})` step instead. Output is byte-stable: running the command again with the same snapshot reports that the file is up to date and does not rewrite it.
 
 **Options:**
 
@@ -118,13 +118,6 @@ declare module 'weft' {
     checkout: {
       input: CheckoutInput;
       output: CheckoutOutput;
-    };
-  }
-
-  interface ActivityTypes {
-    sendEmail: {
-      input: SendEmailInput;
-      output: SendEmailOutput;
     };
   }
 }

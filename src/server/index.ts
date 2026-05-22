@@ -248,13 +248,18 @@ export interface WeftServer extends AsyncDisposable {
  *
  * @example
  * ```ts
- * import { Engine, MemoryStorage } from 'weft';
+ * import { Engine, MemoryStorage, workflow } from 'weft';
  * import { serve } from 'weft/server';
  *
  * await using engine = new Engine({ storage: new MemoryStorage() });
- * engine.register('greet', async function* (ctx: import('weft').WorkflowContext, input: { name: string }) {
- *   return `Hello, ${input.name}!`;
- * });
+ * engine.register(
+ *   workflow({ name: 'greet' }).execute(async function* (
+ *     _ctx: import('weft').WorkflowContext,
+ *     input: { name: string },
+ *   ) {
+ *     return `Hello, ${input.name}!`;
+ *   }),
+ * );
  *
  * await using server = serve({ engine, port: 7233 });
  * console.log(`Weft listening on ${server.url}`);

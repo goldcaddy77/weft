@@ -96,12 +96,12 @@ describe('engine + workflow-builder integration', () => {
     const greeter = workflow({ name: 'greeter' })
       .activities({ work: async () => 'greeter-result' })
       .execute(async function* (ctx) {
-        return yield* ctx.run('work', undefined);
+        return yield* ctx.run('work');
       });
     const farewell = workflow({ name: 'farewell' })
       .activities({ work: async () => 'farewell-result' })
       .execute(async function* (ctx) {
-        return yield* ctx.run('work', undefined);
+        return yield* ctx.run('work');
       });
 
     const engine = track(new Engine());
@@ -195,12 +195,12 @@ describe('engine + workflow-builder integration', () => {
     const a = workflow({ name: 'a' })
       .activities({ work: async () => 'a' })
       .execute(async function* (ctx) {
-        return yield* ctx.run('work', undefined);
+        return yield* ctx.run('work');
       });
     const b = workflow({ name: 'b' })
       .activities({ work: async () => 'b' })
       .execute(async function* (ctx) {
-        return yield* ctx.run('work', undefined);
+        return yield* ctx.run('work');
       });
 
     const engine = track(new Engine());

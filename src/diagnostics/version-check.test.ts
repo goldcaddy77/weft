@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 
 import { encode } from '../core/codec.ts';
-import type { WorkflowRegistration, WorkflowState } from '../core/types.ts';
+import type { WorkflowState } from '../core/types.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
+import type { WorkflowRegistration } from './validate.ts';
 import { runVersionCheck } from './version-check.ts';
 
 function makeWorkflowState(

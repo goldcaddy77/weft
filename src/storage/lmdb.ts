@@ -23,11 +23,11 @@ import { scopedStorage } from './scoped-storage';
  * @example
  * ```ts
  * import { LMDBStorage } from 'weft/storage/lmdb';
- * import { Engine } from 'weft';
+ * import { workflow, Engine } from 'weft';
  *
  * await using storage = new LMDBStorage('./weft-data');
  * await using engine = new Engine({ storage });
- * engine.register('ping', async function* () { return 'pong'; });
+ * engine.register(workflow({ name: 'ping' }).execute(async function* () { return 'pong'; }));
  * ```
  */
 export class LMDBStorage implements Storage {

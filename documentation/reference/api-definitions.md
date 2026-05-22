@@ -31,18 +31,17 @@ See [the activities guide](../guides/activities.md) for usage patterns and motiv
 import { workflow } from 'weft';
 import type { WorkflowContext } from 'weft';
 
-const checkout = workflow({
-  name: 'checkout',
-  version: '1.0.0',
-  handler: async function* checkout(ctx: WorkflowContext, input: { orderId: string }) {
-    return input.orderId;
-  },
+const checkout = workflow({ name: 'checkout', version: '1.0.0' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: { orderId: string },
+) {
+  return input.orderId;
 });
 
 void checkout;
 ```
 
-`workflow(namedGenerator)` is also supported. Anonymous bare workflow functions throw at definition time.
+`workflow({ name }).execute(fn)` is the only supported form. The pre-builder `workflow(handler)` and `workflow({ name, handler })` shapes were removed when the chained builder became the canonical API.
 
 See [the workflows guide](../guides/workflows.md) for usage patterns and motivation.
 
@@ -125,7 +124,7 @@ const positiveBalance = constraint({
   onViolation: 'fail',
 });
 
-const checkout = workflow(async function* checkout(
+const checkout = workflow({ name: 'checkout' }).execute(async function* (
   _ctx: WorkflowContext,
   input: { orderId: string },
 ) {

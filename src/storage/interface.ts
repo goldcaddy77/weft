@@ -382,7 +382,7 @@ function formatSortableTimestamp(timestamp: number): string {
  *
  * @example
  * ```ts
- * import { KEYS, MemoryStorage } from 'weft';
+ * import { workflow, KEYS, MemoryStorage } from 'weft';
  *
  * await using storage = new MemoryStorage();
  * const workflowKey = KEYS.workflow('my-workflow-id');

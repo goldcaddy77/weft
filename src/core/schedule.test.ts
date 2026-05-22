@@ -102,7 +102,11 @@ function registerWorkflow<TInput, TOutput>(
   name: string,
   handler: WorkflowFunction<TInput, TOutput>,
 ): void {
-  engine.register(name, handler as WorkflowFunction);
+  const definition = defineWorkflow({ name }).execute(handler as WorkflowFunction);
+  // Cast through `never` to bypass the parameter-position collision brand —
+  // the helper is the documented way for tests to register dynamically-named
+  // workflows.
+  (engine.register as (workflow: typeof definition) => unknown)(definition);
 }
 
 function requireNextFireAt(summary: ScheduleSummary): number {
@@ -308,13 +312,12 @@ describe('recurring schedules', () => {
     const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
     const engine = createEngine(clock);
     const executions: Array<{ value: string }> = [];
-    const scheduledWorkflow = defineWorkflow({
-      name: 'scheduled-definition-echo',
-      handler: async function* (_ctx: WorkflowContext, input: { value: string }) {
+    const scheduledWorkflow = defineWorkflow({ name: 'scheduled-definition-echo' }).execute(
+      async function* (_ctx: WorkflowContext, input: { value: string }) {
         executions.push(input);
         return input.value;
       },
-    });
+    );
 
     engine.register(scheduledWorkflow);
 

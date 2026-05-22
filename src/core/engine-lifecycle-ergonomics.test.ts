@@ -72,12 +72,11 @@ describe('Engine lifecycle ergonomics', () => {
 
   it('requires explicit recovery for both new Engine and Engine.create', async () => {
     const storage = new MemoryStorage();
-    const resumable = workflow({
-      name: 'resumable',
-      handler: async function* (ctx: WorkflowContext): AsyncGenerator<unknown, string, unknown> {
-        const suffix = yield* ctx.waitForSignal<string>('release');
-        return `done:${suffix}`;
-      },
+    const resumable = workflow({ name: 'resumable' }).execute(async function* (
+      ctx: WorkflowContext,
+    ): AsyncGenerator<unknown, string, unknown> {
+      const suffix = yield* ctx.waitForSignal<string>('release');
+      return `done:${suffix}`;
     });
 
     const original = new Engine({ storage });
@@ -110,11 +109,11 @@ describe('Engine lifecycle ergonomics', () => {
       name: 'greet',
       execute: async (input: { name: string }) => `Hello, ${input.name}`,
     });
-    const welcome = workflow({
-      name: 'welcome',
-      handler: async function* (ctx: WorkflowContext, input: { name: string }) {
-        return yield* ctx.run(greet, input);
-      },
+    const welcome = workflow({ name: 'welcome' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: { name: string },
+    ) {
+      return yield* ctx.run(greet, input);
     });
 
     const engine = new Engine();

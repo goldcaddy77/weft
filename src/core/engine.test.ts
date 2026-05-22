@@ -182,13 +182,13 @@ describe('Engine', () => {
       name: 'formatFactoryGreeting',
       execute: async (input: { name: string }) => `Hello, ${input.name}`,
     });
-    const factoryWelcome = workflow({
-      name: 'factoryWelcome',
-      handler: async function* (ctx: WorkflowContext, input: { name: string }) {
-        const greeting = yield* ctx.run(formatFactoryGreeting, input);
-        const suffix = yield* ctx.waitForSignal<string>('suffix');
-        return `${greeting}${suffix}`;
-      },
+    const factoryWelcome = workflow({ name: 'factoryWelcome' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: { name: string },
+    ) {
+      const greeting = yield* ctx.run(formatFactoryGreeting, input);
+      const suffix = yield* ctx.waitForSignal<string>('suffix');
+      return `${greeting}${suffix}`;
     });
 
     firstEngine.register(formatFactoryGreeting);
@@ -244,11 +244,8 @@ describe('Engine', () => {
   });
 
   it('Engine.create rejects workflow and activity map keys that do not match definition names', async () => {
-    const greetWorkflow = workflow({
-      name: 'actualWorkflowName',
-      handler: async function* () {
-        return 'ok';
-      },
+    const greetWorkflow = workflow({ name: 'actualWorkflowName' }).execute(async function* () {
+      return 'ok';
     });
     const greetActivity = activity({
       name: 'actualActivityName',
@@ -281,11 +278,8 @@ describe('Engine', () => {
     };
 
     try {
-      const greetWorkflow = workflow({
-        name: 'disposalWorkflow',
-        handler: async function* () {
-          return 'ok';
-        },
+      const greetWorkflow = workflow({ name: 'disposalWorkflow' }).execute(async function* () {
+        return 'ok';
       });
       await expect(
         Engine.create({ workflows: { wrongKey: greetWorkflow }, recover: false }),
@@ -302,11 +296,11 @@ describe('Engine', () => {
       name: 'formatBuilderGreeting',
       execute: async (input: { name: string }) => `Hello, ${input.name}`,
     });
-    const builderWelcome = workflow({
-      name: 'builderWelcome',
-      handler: async function* (ctx: WorkflowContext, input: { name: string }) {
-        return yield* ctx.run(formatBuilderGreeting, input);
-      },
+    const builderWelcome = workflow({ name: 'builderWelcome' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: { name: string },
+    ) {
+      return yield* ctx.run(formatBuilderGreeting, input);
     });
 
     const engine = new Engine<{}, {}>().register(formatBuilderGreeting).register(builderWelcome);
@@ -3947,11 +3941,13 @@ describe('Engine', () => {
 
     // First engine: start a workflow that waits for a signal
     const engine1 = new Engine({ storage: storage as WeftStorage });
-    engine1.register('dev-resume', async function* (ctx: WorkflowContext) {
-      yield* ctx.waitForSignal('go');
-      const result = yield* ctx.run(async () => 42);
-      return result;
-    });
+    engine1.register(
+      workflow({ name: 'dev-resume' }).execute(async function* (ctx: WorkflowContext) {
+        yield* ctx.waitForSignal('go');
+        const result = yield* ctx.run(async () => 42);
+        return result;
+      }),
+    );
 
     await engine1.start('dev-resume', null, { id: 'dev-resume-id' });
     await flush();
@@ -3963,11 +3959,13 @@ describe('Engine', () => {
     const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
     try {
       const engine2 = new Engine({ development: true, storage: storage as WeftStorage });
-      engine2.register('dev-resume', async function* (ctx: WorkflowContext) {
-        yield* ctx.waitForSignal('go');
-        const result = yield* ctx.run(async () => 42);
-        return result;
-      });
+      engine2.register(
+        workflow({ name: 'dev-resume' }).execute(async function* (ctx: WorkflowContext) {
+          yield* ctx.waitForSignal('go');
+          const result = yield* ctx.run(async () => 42);
+          return result;
+        }),
+      );
 
       const resumed = await engine2.resume('dev-resume-id');
       await flush();
@@ -5444,10 +5442,14 @@ describe('Engine', () => {
       const storage = new MemoryStorage();
       const firstEngine = new Engine({ storage });
 
-      firstEngine.register('restart-terminal-cleanup', async function* (ctx: WorkflowContext) {
-        yield* ctx.waitForSignal('finish');
-        return 'done';
-      });
+      firstEngine.register(
+        workflow({ name: 'restart-terminal-cleanup' }).execute(async function* (
+          ctx: WorkflowContext,
+        ) {
+          yield* ctx.waitForSignal('finish');
+          return 'done';
+        }),
+      );
 
       const handle = await firstEngine.start('restart-terminal-cleanup', null);
       await flush();
@@ -5582,10 +5584,14 @@ describe('Engine', () => {
         storage,
         getNow: () => fixedNow,
       });
-      firstEngine.register('reused-terminal-cleanup', async function* (ctx: WorkflowContext) {
-        yield* ctx.waitForSignal('finish');
-        return 'old';
-      });
+      firstEngine.register(
+        workflow({ name: 'reused-terminal-cleanup' }).execute(async function* (
+          ctx: WorkflowContext,
+        ) {
+          yield* ctx.waitForSignal('finish');
+          return 'old';
+        }),
+      );
 
       const firstHandle = await firstEngine.start('reused-terminal-cleanup', null, {
         id: workflowId,
@@ -5608,10 +5614,14 @@ describe('Engine', () => {
         storage,
         getNow: () => fixedNow,
       });
-      secondEngine.register('reused-terminal-cleanup', async function* (ctx: WorkflowContext) {
-        yield* ctx.waitForSignal('finish');
-        return 'new';
-      });
+      secondEngine.register(
+        workflow({ name: 'reused-terminal-cleanup' }).execute(async function* (
+          ctx: WorkflowContext,
+        ) {
+          yield* ctx.waitForSignal('finish');
+          return 'new';
+        }),
+      );
 
       const secondHandle = await secondEngine.start('reused-terminal-cleanup', null, {
         id: workflowId,

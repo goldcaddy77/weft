@@ -20,10 +20,10 @@ export type ScheduleStatus = 'active' | 'paused' | 'cancelled';
  *
  * @example
  * ```ts
- * import { Engine, type ScheduleOverlapPolicy } from 'weft';
+ * import { workflow, Engine, type ScheduleOverlapPolicy } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('hourly', async function* () { return 'done'; });
+ * engine.register(workflow({ name: 'hourly' }).execute(async function* () { return 'done'; }));
  * const policy: ScheduleOverlapPolicy = 'skip';
  * await engine.schedule('hourly', null, '0 * * * *', { overlap: policy });
  * ```
@@ -38,10 +38,10 @@ export type ScheduleOverlapPolicy = 'skip' | 'queue' | 'cancel-running' | 'allow
  *
  * @example
  * ```ts
- * import { Engine, type ScheduleOptions } from 'weft';
+ * import { workflow, Engine, type ScheduleOptions } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('report', async function* () { return 'ok'; });
+ * engine.register(workflow({ name: 'report' }).execute(async function* () { return 'ok'; }));
  * const options: ScheduleOptions = { id: 'daily-report', overlap: 'skip', backfill: false };
  * const handle = await engine.schedule('report', null, '0 9 * * *', options);
  * void handle;

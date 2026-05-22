@@ -1,6 +1,6 @@
 import { Engine } from '../core/engine.ts';
-import { runtimeWorkflowEngine } from '../core/runtime-workflow-engine.ts';
-import { activity, type WorkflowContext } from '../core/types.ts';
+import { registerOnRuntimeEngine, runtimeWorkflowEngine } from '../core/runtime-workflow-engine.ts';
+import { activity, workflow, type WorkflowContext } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 
 export type ActivityCompletionMeasurement = {
@@ -26,13 +26,16 @@ async function measureActivityCompletionRound(
   try {
     engine.register(echoActivity);
 
-    engine.register('with-activity', async function* (ctx: WorkflowContext) {
-      let result: unknown = 0;
-      for (let index = 0; index < activitiesPerWorkflow; index += 1) {
-        result = yield* ctx.run(echo, index);
-      }
-      return result;
-    });
+    registerOnRuntimeEngine(
+      engine,
+      workflow({ name: 'with-activity' }).execute(async function* (ctx: WorkflowContext) {
+        let result: unknown = 0;
+        for (let index = 0; index < activitiesPerWorkflow; index += 1) {
+          result = yield* ctx.run(echo, index);
+        }
+        return result;
+      }),
+    );
 
     for (let index = 0; index < WARMUP_WORKFLOWS; index += 1) {
       const handle = await engine.start('with-activity', index);

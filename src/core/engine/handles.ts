@@ -112,14 +112,16 @@ export interface ScheduleHandleEngine {
  *
  * @example
  * ```ts
- * import { Engine, WorkflowHandle, activity } from 'weft';
+ * import { workflow, Engine, WorkflowHandle, activity } from 'weft';
  * import type { WorkflowContext, Context } from 'weft';
  *
  * const greet = activity({ name: 'greet', execute: async (i: unknown) => `hi ${i}` });
  * const engine = new Engine();
- * engine.register('wave', async function* (ctx: WorkflowContext, input: unknown) {
- *   return yield* ctx.run(greet, input);
- * });
+ * engine.register(
+ *   workflow({ name: 'wave' }).execute(async function* (ctx: WorkflowContext, input: unknown) {
+ *     return yield* ctx.run(greet, input);
+ *   }),
+ * );
  *
  * const handle = await engine.start('wave', 'world');
  * const typedHandle: WorkflowHandle = handle;
@@ -130,10 +132,10 @@ export interface ScheduleHandleEngine {
  *
  * @example Iterate workflow lifecycle events
  * ```ts
- * import { Engine, type WorkflowHandle } from 'weft';
+ * import { Engine, workflow, type WorkflowHandle } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('ping', async function* () { return 'pong'; });
+ * engine.register(workflow({ name: 'ping' }).execute(async function* () { return 'pong'; }));
  *
  * const handle = await engine.start('ping', null);
  * const typedHandle: WorkflowHandle = handle;
@@ -359,10 +361,10 @@ export class WorkflowHandle<TResult = unknown> extends EventTarget implements As
  *
  * @example
  * ```ts
- * import { Engine, ScheduleHandle } from 'weft';
+ * import { workflow, Engine, ScheduleHandle } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('daily-report', async function* () { return 'ok'; });
+ * engine.register(workflow({ name: 'daily-report' }).execute(async function* () { return 'ok'; }));
  *
  * const handle = await engine.schedule('daily-report', null, '0 9 * * *');
  * const typedHandle: ScheduleHandle = handle;

@@ -2,11 +2,12 @@ import { describe, expect, it } from 'bun:test';
 
 import { Engine } from '../core/engine.ts';
 import {
+  registerOnRuntimeEngine,
   runtimeWorkflowEngine,
   type RuntimeWorkflowEngine,
 } from '../core/runtime-workflow-engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
-import { activity } from '../core/types.ts';
+import { activity, workflow } from '../core/types.ts';
 
 /**
  * Track 3 speculation benchmark.
@@ -56,29 +57,39 @@ describe('Track 3 speculation benchmark', () => {
       },
     });
 
-    engine.register('sequential-agent-like-workflow', async function* (ctx: WorkflowContext) {
-      const context = ctx;
+    registerOnRuntimeEngine(
+      engine,
+      workflow({ name: 'sequential-agent-like-workflow' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
+        const context = ctx;
 
-      let lastResult = '';
-      for (let turn = 1; turn <= TURN_COUNT; turn++) {
-        lastResult = yield* context.run(mockToolTurn, turn);
-      }
-
-      return lastResult;
-    });
-
-    engine.register('speculative-agent-like-workflow', async function* (ctx: WorkflowContext) {
-      const context = ctx;
-
-      return yield* context.speculate(async function* (branch) {
         let lastResult = '';
         for (let turn = 1; turn <= TURN_COUNT; turn++) {
-          lastResult = yield* branch.run(mockToolTurn, turn);
+          lastResult = yield* context.run(mockToolTurn, turn);
         }
 
         return lastResult;
-      });
-    });
+      }),
+    );
+
+    registerOnRuntimeEngine(
+      engine,
+      workflow({ name: 'speculative-agent-like-workflow' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
+        const context = ctx;
+
+        return yield* context.speculate(async function* (branch) {
+          let lastResult = '';
+          for (let turn = 1; turn <= TURN_COUNT; turn++) {
+            lastResult = yield* branch.run(mockToolTurn, turn);
+          }
+
+          return lastResult;
+        });
+      }),
+    );
 
     for (let index = 0; index < 5; index++) {
       const sequentialWarmup = await engine.start('sequential-agent-like-workflow', null, {

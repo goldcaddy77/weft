@@ -7,7 +7,7 @@ import {
 import { runtimeWorkflowEngine } from '../../core/runtime-workflow-engine.ts';
 import { StartWorkflowValidationError } from '../../core/start-workflow-validation.ts';
 import { QuotaExceededError } from '../../core/tenant-quotas.ts';
-import type { WorkflowRegistration } from '../../core/types.ts';
+import type { WorkflowDefinition } from '../../core/types.ts';
 import type { AccessPolicy } from '../authorization.ts';
 import type { OperationFault } from '../operation-fault.ts';
 import { invalidParamsFault } from '../operations/operation-helpers.ts';
@@ -28,7 +28,7 @@ const StartHandleSchema = z.object({
 type StartHandle = z.infer<typeof StartHandleSchema>;
 
 type CatalogWorkflowRegistrationMetadata<Input> = Pick<
-  WorkflowRegistration<Input>,
+  WorkflowDefinition<Input>,
   'description' | 'inputSchema' | 'tags'
 >;
 

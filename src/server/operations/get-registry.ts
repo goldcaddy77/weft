@@ -4,7 +4,7 @@
  * Returns a JSON snapshot of every locally-registered workflow and activity,
  * with their JSON Schemas. Powers the `weft codegen` CLI: a downstream
  * project fetches this document, validates it, and emits a `.d.ts` that
- * augments `WorkflowRegistry` and `ActivityTypes`.
+ * augments `WorkflowRegistry` with the locally-registered workflow names.
  *
  * Access is scoped to `system:read` — schemas can leak internal data shapes
  * so the endpoint sits behind the same scope as the JSON metrics endpoint.

@@ -142,7 +142,7 @@ describe('integration: full workflow lifecycle', () => {
       .execute(async function* (ctx, input: { customerId: string }) {
         ctx.setAttribute('customerId', input.customerId);
         ctx.setAttribute('status', 'processing');
-        yield* ctx.run('noop', undefined);
+        yield* ctx.run('noop');
         ctx.setAttribute('status', 'shipped');
         return 'ok';
       });

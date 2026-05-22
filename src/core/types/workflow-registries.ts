@@ -1,5 +1,4 @@
 import type { ActivityContext, ActivityDefinition, ActivityFunction } from './activity.ts';
-import type { UnknownNameWhenRegistryHasNoKnownNames } from './registry-type-helpers.ts';
 import type {
   StepWorkflowFunction,
   WorkflowDefinition,
@@ -35,32 +34,6 @@ import type {
  */
 export interface WorkflowRegistry {}
 
-/**
- * Module-augmentation target for typed activity names. This intentionally uses
- * `ActivityTypes` instead of `ActivityRegistry` so it does not collide with
- * the public runtime {@link ActivityRegistry} class.
- *
- * @example
- * ```ts
- * import type { ActivityTypes } from 'weft';
- *
- * interface FormatGreetingInput {
- *   name: string;
- * }
- *
- * declare module 'weft' {
- *   interface ActivityTypes {
- *     formatGreeting: (input: FormatGreetingInput) => Promise<string>;
- *   }
- * }
- *
- * const formatGreeting: ActivityTypes['formatGreeting'] = async (input) =>
- *   `Hello, ${input.name}`;
- * void formatGreeting;
- * ```
- */
-export interface ActivityTypes {}
-
 export type WorkflowRegistryEntry = { input: unknown; output: unknown };
 
 declare const defaultWorkflowRegistry: unique symbol;
@@ -77,9 +50,12 @@ export type DefaultWorkflowRegistry = WorkflowRegistry & {
 
 /**
  * Default activity registry carried by `new Engine()` when no local activity
- * type parameter is supplied.
+ * type parameter is supplied. After the global `ActivityTypes` augmentation
+ * surface was removed, an engine constructed without explicit activity type
+ * parameters carries no known activity names; users opt in via the chained
+ * builder API (`workflow({...}).activities({...})`) or `Engine.create({ activities })`.
  */
-export type DefaultActivityTypes = ActivityTypes & {
+export type DefaultActivityTypes = {
   readonly [defaultActivityTypes]: true;
 };
 
@@ -96,11 +72,8 @@ export type IsDefaultWorkflowRegistry<TRegistry extends object> =
  * ```ts
  * import { workflow, type AnyWorkflowDefinition } from 'weft';
  *
- * const greet = workflow({
- *   name: 'greet',
- *   handler: async function* (_ctx, input: string) {
- *     return `Hello, ${input}`;
- *   },
+ * const greet = workflow({ name: 'greet' }).execute(async function* (_ctx, input: string) {
+ *   return `Hello, ${input}`;
  * });
  * const definition: AnyWorkflowDefinition = greet;
  * void definition;
@@ -169,9 +142,6 @@ export type ActivityResult<
     : unknown
   : unknown;
 
-export type UnknownActivityNameWhenRegistryIsEmpty<TName extends string> =
-  UnknownNameWhenRegistryHasNoKnownNames<TName, Extract<keyof ActivityTypes, string>>;
-
 export type RegisteredActivityFunction<
   TActivities extends object,
   TName extends string,
@@ -206,11 +176,8 @@ type MergeDefinitionEntries<TUnion> = [TUnion] extends [never]
  * ```ts
  * import { workflow, type InferWorkflowEntry } from 'weft';
  *
- * const greet = workflow({
- *   name: 'greet',
- *   handler: async function* (_ctx, input: string) {
- *     return `Hello, ${input}`;
- *   },
+ * const greet = workflow({ name: 'greet' }).execute(async function* (_ctx, input: string) {
+ *   return `Hello, ${input}`;
  * });
  * type GreetWorkflow = InferWorkflowEntry<typeof greet>;
  * const input: GreetWorkflow['greet']['input'] = 'Ada';
@@ -236,11 +203,8 @@ type InferWorkflowEntryForKey<TName extends string, TDefinition extends AnyWorkf
  * ```ts
  * import { workflow, type InferWorkflowEntries } from 'weft';
  *
- * const greet = workflow({
- *   name: 'greet',
- *   handler: async function* (_ctx, input: string) {
- *     return `Hello, ${input}`;
- *   },
+ * const greet = workflow({ name: 'greet' }).execute(async function* (_ctx, input: string) {
+ *   return `Hello, ${input}`;
  * });
  * type Workflows = InferWorkflowEntries<{ greet: typeof greet }>;
  * const output: Workflows['greet']['output'] = 'Hello, Ada';

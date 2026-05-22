@@ -1,18 +1,12 @@
-import type { DefinitionSchema, InferSchemaOutput } from './definition-schema.ts';
 import { validateWorkflowOrActivityName } from './name-grammar.ts';
 import type { SearchAttributeSchema } from './search-attributes.ts';
 import type { ActivityMap, QueryMap, SignalMap, UpdateMap } from './workflow-builder-helpers.ts';
 import { WorkflowBuilderImpl, type WorkflowBuilderOptions } from './workflow-builder-runtime.ts';
-import type { BuilderState, InitialBuilderState, WorkflowBuilder } from './workflow-builder.ts';
+import type { InitialBuilderState, WorkflowBuilder } from './workflow-builder.ts';
 import type { WorkflowContext } from './workflow-context.ts';
-import type { WorkflowDefinition, WorkflowDefinitionOptions } from './workflow-definition.ts';
 
 export { WorkflowBuilderError, type WorkflowBuilderOptions } from './workflow-builder-runtime.ts';
-export type {
-  WorkflowDefinition,
-  WorkflowDefinitionOptions,
-  WorkflowRegistration,
-} from './workflow-definition.ts';
+export type { WorkflowDefinition } from './workflow-definition.ts';
 
 // ---------------------------------------------------------------------------
 // Workflow function signature
@@ -29,7 +23,7 @@ export type {
  *
  * @example
  * ```ts
- * import { activity, Engine, type WorkflowContext, type WorkflowFunction } from 'weft';
+ * import { workflow, activity, Engine, type WorkflowContext, type WorkflowFunction } from 'weft';
  *
  * const greet = activity({ name: 'greet', execute: async (input: string) => `hello ${input}` });
  *
@@ -39,7 +33,7 @@ export type {
  *   };
  *
  * const engine = new Engine();
- * engine.register('myWorkflow', myWorkflow);
+ * engine.register(workflow({ name: 'myWorkflow' }).execute(myWorkflow));
  * void engine;
  * ```
  */
@@ -60,7 +54,7 @@ export type WorkflowFunction<TInput = unknown, TOutput = unknown> = (
  *
  * @example
  * ```ts
- * import { Engine, compileStepWorkflow, type StepWorkflowContext } from 'weft';
+ * import { workflow, Engine, compileStepWorkflow, type StepWorkflowContext } from 'weft';
  *
  * async function myStepWorkflow(ctx: StepWorkflowContext, input: unknown) {
  *   const result = await ctx.step('fetchData', async () => {
@@ -70,7 +64,7 @@ export type WorkflowFunction<TInput = unknown, TOutput = unknown> = (
  * }
  *
  * const engine = new Engine();
- * engine.register('stepWorkflow', compileStepWorkflow(myStepWorkflow));
+ * engine.register(workflow({ name: 'stepWorkflow' }).execute(compileStepWorkflow(myStepWorkflow)));
  * void engine;
  * ```
  */
@@ -88,14 +82,14 @@ export interface StepWorkflowContext {
  *
  * @example
  * ```ts
- * import { Engine, compileStepWorkflow, type StepWorkflowFunction } from 'weft';
+ * import { workflow, Engine, compileStepWorkflow, type StepWorkflowFunction } from 'weft';
  *
  * const process: StepWorkflowFunction = async (ctx, input) => {
  *   return ctx.step('transform', () => (input as string).toUpperCase());
  * };
  *
  * const engine = new Engine();
- * engine.register('process', compileStepWorkflow(process));
+ * engine.register(workflow({ name: 'process' }).execute(compileStepWorkflow(process)));
  * void engine;
  * ```
  */
@@ -112,17 +106,21 @@ export type StepWorkflowFunction<TInput = unknown, TOutput = unknown> = (
  *
  * @example
  * ```ts
- * import { Engine, type WorkflowOperation, type WorkflowContext } from 'weft';
+ * import { workflow, Engine, type WorkflowOperation, type WorkflowContext } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('parent', async function* (ctx: WorkflowContext, input: unknown) {
- *   const items = input as string[];
- *   const op: WorkflowOperation<string[]> = ctx.map(items, 'child');
- *   return yield* op;
- * });
- * engine.register('child', async function* (_ctx: WorkflowContext, s: unknown) {
- *   return String(s).toUpperCase();
- * });
+ * engine.register(
+ *   workflow({ name: 'parent' }).execute(async function* (ctx: WorkflowContext, input: unknown) {
+ *     const items = input as string[];
+ *     const op: WorkflowOperation<string[]> = ctx.map(items, 'child');
+ *     return yield* op;
+ *   }),
+ * );
+ * engine.register(
+ *   workflow({ name: 'child' }).execute(async function* (_ctx: WorkflowContext, s: unknown) {
+ *     return String(s).toUpperCase();
+ *   }),
+ * );
  * void engine;
  * ```
  */
@@ -139,17 +137,21 @@ export type WorkflowOperation<TResult> = Generator<unknown, TResult, unknown>;
  *
  * @example
  * ```ts
- * import { Engine, type ChildWorkflowTarget, type WorkflowContext } from 'weft';
+ * import { workflow, Engine, type ChildWorkflowTarget, type WorkflowContext } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('transform', async function* (_ctx: WorkflowContext, input: unknown) {
- *   return String(input).toUpperCase();
- * });
+ * engine.register(
+ *   workflow({ name: 'transform' }).execute(async function* (_ctx: WorkflowContext, input: unknown) {
+ *     return String(input).toUpperCase();
+ *   }),
+ * );
  *
  * const target: ChildWorkflowTarget<unknown, string> = 'transform';
- * engine.register('parent', async function* (ctx: WorkflowContext, input: unknown) {
- *   return yield* ctx.map([input], target);
- * });
+ * engine.register(
+ *   workflow({ name: 'parent' }).execute(async function* (ctx: WorkflowContext, input: unknown) {
+ *     return yield* ctx.map([input], target);
+ *   }),
+ * );
  * void engine;
  * ```
  */
@@ -175,19 +177,21 @@ export type ChildWorkflowOptions = {
  *
  * @example
  * ```ts
- * import { Engine, type WorkflowPipeStage, type WorkflowContext } from 'weft';
+ * import { workflow, Engine, type WorkflowPipeStage, type WorkflowContext } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('step1', async function* (_ctx: WorkflowContext, i: unknown) { return String(i); });
- * engine.register('step2', async function* (_ctx: WorkflowContext, i: unknown) { return (i as string).trim(); });
+ * engine.register(workflow({ name: 'step1' }).execute(async function* (_ctx: WorkflowContext, i: unknown) { return String(i); }));
+ * engine.register(workflow({ name: 'step2' }).execute(async function* (_ctx: WorkflowContext, i: unknown) { return (i as string).trim(); }));
  *
- * engine.register('pipeline', async function* (ctx: WorkflowContext, input: unknown) {
- *   const stages: [WorkflowPipeStage, WorkflowPipeStage] = [
- *     { type: 'step1' },
- *     { type: 'step2', options: { id: 'trim-step' } },
- *   ];
- *   return yield* ctx.pipe(stages, input);
- * });
+ * engine.register(
+ *   workflow({ name: 'pipeline' }).execute(async function* (ctx: WorkflowContext, input: unknown) {
+ *     const stages: [WorkflowPipeStage, WorkflowPipeStage] = [
+ *       { type: 'step1' },
+ *       { type: 'step2', options: { id: 'trim-step' } },
+ *     ];
+ *     return yield* ctx.pipe(stages, input);
+ *   }),
+ * );
  * void engine;
  * ```
  */
@@ -204,20 +208,26 @@ export interface WorkflowPipeStage<TInput = unknown, TOutput = unknown> {
  *
  * @example
  * ```ts
- * import { Engine, type WorkflowPipeStageDefinition, type WorkflowContext } from 'weft';
+ * import { workflow, Engine, type WorkflowPipeStageDefinition, type WorkflowContext } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('upper', async function* (_ctx: WorkflowContext, i: unknown) {
- *   return String(i).toUpperCase();
- * });
- * engine.register('trim', async function* (_ctx: WorkflowContext, i: unknown) {
- *   return String(i).trim();
- * });
+ * engine.register(
+ *   workflow({ name: 'upper' }).execute(async function* (_ctx: WorkflowContext, i: unknown) {
+ *     return String(i).toUpperCase();
+ *   }),
+ * );
+ * engine.register(
+ *   workflow({ name: 'trim' }).execute(async function* (_ctx: WorkflowContext, i: unknown) {
+ *     return String(i).trim();
+ *   }),
+ * );
  *
  * const stages: [WorkflowPipeStageDefinition, WorkflowPipeStageDefinition] = ['upper', 'trim'];
- * engine.register('pipeline', async function* (ctx: WorkflowContext, input: unknown) {
- *   return yield* ctx.pipe(stages, input);
- * });
+ * engine.register(
+ *   workflow({ name: 'pipeline' }).execute(async function* (ctx: WorkflowContext, input: unknown) {
+ *     return yield* ctx.pipe(stages, input);
+ *   }),
+ * );
  * void engine;
  * ```
  */
@@ -235,17 +245,21 @@ export type WorkflowPipeStageDefinition<TInput = unknown, TOutput = unknown> =
  *
  * @example
  * ```ts
- * import { Engine, type WorkflowMapOptions, type WorkflowContext } from 'weft';
+ * import { workflow, Engine, type WorkflowMapOptions, type WorkflowContext } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('processItem', async function* (_ctx: WorkflowContext, item: unknown) {
- *   return String(item).toUpperCase();
- * });
- * engine.register('batchProcess', async function* (ctx: WorkflowContext, input: unknown) {
- *   const items = input as string[];
- *   const options: WorkflowMapOptions = { concurrency: 3 };
- *   return yield* ctx.map(items, 'processItem', options);
- * });
+ * engine.register(
+ *   workflow({ name: 'processItem' }).execute(async function* (_ctx: WorkflowContext, item: unknown) {
+ *     return String(item).toUpperCase();
+ *   }),
+ * );
+ * engine.register(
+ *   workflow({ name: 'batchProcess' }).execute(async function* (ctx: WorkflowContext, input: unknown) {
+ *     const items = input as string[];
+ *     const options: WorkflowMapOptions = { concurrency: 3 };
+ *     return yield* ctx.map(items, 'processItem', options);
+ *   }),
+ * );
  * void engine;
  * ```
  */
@@ -260,21 +274,25 @@ export interface WorkflowMapOptions {
  *
  * @example
  * ```ts
- * import { Engine, type WorkflowReduceInput, type WorkflowContext } from 'weft';
+ * import { Engine, workflow, type WorkflowReduceInput, type WorkflowContext } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('sumStep', async function* (
- *   _ctx: WorkflowContext,
- *   input: WorkflowReduceInput<number, number>,
- * ) {
- *   const { accumulator, item } = input;
- *   return accumulator + item;
- * });
+ * engine.register(
+ *   workflow({ name: 'sumStep' }).execute(async function* (
+ *     _ctx: WorkflowContext,
+ *     input: WorkflowReduceInput<number, number>,
+ *   ) {
+ *     const { accumulator, item } = input;
+ *     return accumulator + item;
+ *   }),
+ * );
  *
- * engine.register('sumAll', async function* (ctx: WorkflowContext, input: unknown) {
- *   const items = input as number[];
- *   return yield* ctx.reduce(items, 'sumStep', 0);
- * });
+ * engine.register(
+ *   workflow({ name: 'sumAll' }).execute(async function* (ctx: WorkflowContext, input: unknown) {
+ *     const items = input as number[];
+ *     return yield* ctx.reduce(items, 'sumStep', 0);
+ *   }),
+ * );
  * void engine;
  * ```
  */
@@ -291,21 +309,25 @@ export interface WorkflowReduceInput<TAccumulator, TItem> {
  *
  * @example
  * ```ts
- * import { Engine, type WorkflowReduceOptions, type WorkflowContext } from 'weft';
+ * import { Engine, workflow, type WorkflowReduceOptions, type WorkflowContext } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('merge', async function* (
- *   _ctx: WorkflowContext,
- *   input: { accumulator: string[]; item: string },
- * ) {
- *   const { accumulator, item } = input;
- *   return [...accumulator, item];
- * });
- * engine.register('collect', async function* (ctx: WorkflowContext, input: unknown) {
- *   const items = input as string[];
- *   const opts: WorkflowReduceOptions = { idPrefix: 'collect-merge' };
- *   return yield* ctx.reduce(items, 'merge', [], opts);
- * });
+ * engine.register(
+ *   workflow({ name: 'merge' }).execute(async function* (
+ *     _ctx: WorkflowContext,
+ *     input: { accumulator: string[]; item: string },
+ *   ) {
+ *     const { accumulator, item } = input;
+ *     return [...accumulator, item];
+ *   }),
+ * );
+ * engine.register(
+ *   workflow({ name: 'collect' }).execute(async function* (ctx: WorkflowContext, input: unknown) {
+ *     const items = input as string[];
+ *     const opts: WorkflowReduceOptions = { idPrefix: 'collect-merge' };
+ *     return yield* ctx.reduce(items, 'merge', [], opts);
+ *   }),
+ * );
  * void engine;
  * ```
  */
@@ -335,100 +357,23 @@ export interface WorkflowReduceOptions extends Record<string, unknown> {
  */
 export function workflow<const TName extends string>(
   options: WorkflowBuilderOptions<TName>,
-): WorkflowBuilder<TName, {}, {}, {}, {}, {}, InitialBuilderState>;
-/**
- * @deprecated The bare-function and object-with-handler forms of `workflow()`
- * are kept temporarily so Phase 2 lands without sweeping every existing caller.
- * Phase 5 migrates callers to the chained builder form; Phase 6 deletes this
- * overload. Pass `{ name }` and use `.execute(fn)` on the returned builder.
- */
-export function workflow<TInput, TOutput>(
-  handler: WorkflowFunction<TInput, TOutput>,
-): WorkflowDefinition<TInput, TOutput>;
-/** @deprecated Use the chained builder form: `workflow({ name }).execute(fn)`. */
-export function workflow<
-  const TName extends string,
-  TInputSchema extends DefinitionSchema<unknown, unknown>,
-  TOutputSchema extends DefinitionSchema<unknown, unknown>,
->(
-  options: Omit<
-    WorkflowDefinitionOptions<
-      InferSchemaOutput<TInputSchema>,
-      InferSchemaOutput<TOutputSchema>,
-      TName
-    >,
-    'inputSchema' | 'outputSchema'
-  > & {
-    inputSchema: TInputSchema;
-    outputSchema: TOutputSchema;
-  },
-): WorkflowDefinition<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>, TName>;
-/** @deprecated Use the chained builder form: `workflow({ name }).execute(fn)`. */
-export function workflow<
-  const TName extends string,
-  TInputSchema extends DefinitionSchema<unknown, unknown>,
-  TOutput,
->(
-  options: Omit<
-    WorkflowDefinitionOptions<InferSchemaOutput<TInputSchema>, TOutput, TName>,
-    'inputSchema'
-  > & {
-    inputSchema: TInputSchema;
-  },
-): WorkflowDefinition<InferSchemaOutput<TInputSchema>, TOutput, TName>;
-/** @deprecated Use the chained builder form: `workflow({ name }).execute(fn)`. */
-export function workflow<const TName extends string, TInput, TOutput>(
-  options: WorkflowDefinitionOptions<TInput, TOutput, TName>,
-): WorkflowDefinition<TInput, TOutput, TName>;
-export function workflow(
-  input: WorkflowFunction | WorkflowBuilderOptions | WorkflowDefinitionOptions,
-):
-  | WorkflowDefinition
-  | WorkflowBuilder<
-      string,
-      ActivityMap,
-      SignalMap,
-      UpdateMap,
-      QueryMap,
-      SearchAttributeSchema,
-      BuilderState
-    > {
-  // Bare function form (legacy/deprecated).
-  if (typeof input === 'function') {
-    const handler = input;
-    const fnName = handler.name;
-    if (!fnName) {
-      throw new Error('workflow() requires a named function or an options object with name.');
-    }
-    validateWorkflowOrActivityName(fnName, 'workflow');
-    return {
-      name: fnName,
-      handler: handler,
-    };
+): WorkflowBuilder<TName, {}, {}, {}, {}, {}, InitialBuilderState> {
+  if (!options.name) {
+    throw new Error('workflow() requires an options object with a name.');
   }
+  validateWorkflowOrActivityName(options.name, 'workflow');
 
-  if (!input.name) {
-    throw new Error('workflow() requires a named function or an options object with name.');
-  }
-  validateWorkflowOrActivityName(input.name, 'workflow');
-
-  // Object form: builder if no `handler`; legacy literal if `handler` is set.
-  if ('handler' in input && typeof (input as { handler?: unknown }).handler === 'function') {
-    return input as WorkflowDefinition;
-  }
-
-  const builderOptions = input as WorkflowBuilderOptions;
+  const builder = new WorkflowBuilderImpl(options);
   // The class implements the structural shape `WorkflowBuilder` describes; the
   // assertion is the cast boundary that lets the runtime class satisfy the
   // phantom-flag-typed interface without leaking the implementation type.
-  const builder = new WorkflowBuilderImpl(builderOptions);
   return builder as unknown as WorkflowBuilder<
-    string,
+    TName,
     ActivityMap,
     SignalMap,
     UpdateMap,
     QueryMap,
     SearchAttributeSchema,
-    BuilderState
+    InitialBuilderState
   >;
 }

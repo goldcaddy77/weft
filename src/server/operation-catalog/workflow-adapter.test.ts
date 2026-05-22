@@ -8,13 +8,17 @@ import {
 } from '../../core/engine/errors.ts';
 import { StartWorkflowValidationError } from '../../core/start-workflow-validation.ts';
 import { QuotaExceededError } from '../../core/tenant-quotas.ts';
-import type { DefinitionSchema, WorkflowContext, WorkflowRegistration } from '../../core/types.ts';
+import type { DefinitionSchema, WorkflowContext, WorkflowDefinition } from '../../core/types.ts';
 import { workflow } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { generateOpenRpcDocument } from '../openrpc.ts';
 import { anonymousPrincipal, principalFromApiKey } from '../principal.ts';
 import { createOperationRegistry, executeOperation } from './index.ts';
 import { catalogWorkflow } from './workflow-adapter.ts';
+
+/** Local alias for the legacy `WorkflowRegistration` shape — name-less form
+ * still used by these tests to construct registration metadata bags. */
+type WorkflowRegistration<TInput, TOutput> = Omit<WorkflowDefinition<TInput, TOutput>, 'name'>;
 
 const checkoutWorkflow = workflow({ name: 'checkout' }).execute(async function* (
   _context: WorkflowContext,

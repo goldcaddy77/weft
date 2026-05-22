@@ -6,12 +6,12 @@
  *
  * @example
  * ```ts
- * import { Engine, QuotaExceededError } from 'weft';
+ * import { workflow, Engine, QuotaExceededError } from 'weft';
  *
  * const engine = new Engine({
  *   quotas: { maxConcurrentWorkflows: 1 },
  * });
- * engine.register('ping', async function* () { return 'pong'; });
+ * engine.register(workflow({ name: 'ping' }).execute(async function* () { return 'pong'; }));
  * try {
  *   await engine.start('ping', null);
  *   await engine.start('ping', null); // may throw if tenant limit reached

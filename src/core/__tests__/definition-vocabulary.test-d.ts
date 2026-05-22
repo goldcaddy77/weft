@@ -50,7 +50,7 @@ context.run(metadataActivity, { name: 'Ada' }, { name: 'Grace' });
 // @ts-expect-error unknown is still an input type and must be provided.
 context.run(unknownInputActivity);
 
-const checkoutWorkflow = workflow(async function* checkout(
+const checkoutWorkflow = workflow({ name: 'checkout' }).execute(async function* (
   _context: WorkflowContext,
   input: { orderId: string },
 ) {
@@ -60,13 +60,13 @@ const checkoutWorkflow = workflow(async function* checkout(
 const metadataWorkflow = workflow({
   name: 'metadataCheckout',
   version: '1.0.0',
-  searchAttributes: {
+})
+  .searchAttributes({
     customerId: { type: 'string' },
-  },
-  handler: async function* (_context: WorkflowContext, input: { orderId: string }) {
+  })
+  .execute(async function* (_context: WorkflowContext, input: { orderId: string }) {
     return input.orderId.length;
-  },
-});
+  });
 
 engine.register(checkoutWorkflow);
 engine.register(metadataWorkflow);

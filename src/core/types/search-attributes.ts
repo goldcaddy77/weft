@@ -10,10 +10,10 @@
  *
  * @example
  * ```ts
- * import { Engine, type SearchAttributeValue } from 'weft';
+ * import { workflow, Engine, type SearchAttributeValue } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('order', async function* () { return 'shipped'; });
+ * engine.register(workflow({ name: 'order' }).execute(async function* () { return 'shipped'; }));
  * const handle = await engine.start('order', null, {
  *   searchAttributes: { region: 'us-east' as SearchAttributeValue },
  * });
@@ -111,20 +111,24 @@ export interface SearchAttributeHandle<TValue extends SearchAttributeValue = Sea
 /**
  * Registry of named search attribute definitions for a workflow type. Each key
  * is an attribute name; each value is a `SearchAttributeDefinition` describing
- * the expected type. Pass via {@link WorkflowRegistration.searchAttributes} so
+ * the expected type. Pass via the workflow builder's `searchAttributes` option
+ * (or `WorkflowDefinition.searchAttributes` on a hand-rolled definition) so
  * the engine validates and indexes attributes at runtime.
  *
  * @example
  * ```ts
- * import { Engine, type SearchAttributeSchema } from 'weft';
+ * import { Engine, workflow, type SearchAttributeSchema } from 'weft';
  *
  * const schema: SearchAttributeSchema = {
  *   customerId: { type: 'string' },
  *   orderValue:  { type: 'number' },
  *   isPriority:  { type: 'boolean' },
  * };
+ * const order = workflow({ name: 'order' })
+ *   .searchAttributes(schema)
+ *   .execute(async function* () { return 'ok'; });
  * const engine = new Engine();
- * engine.register('order', { handler: async function* () { return 'ok'; }, searchAttributes: schema });
+ * engine.register(order);
  * void engine;
  * ```
  */

@@ -12,7 +12,8 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { ActivityDefinition, WorkflowRegistration } from '../core/types.ts';
+import type { ActivityDefinition } from '../core/types.ts';
+import type { WorkflowRegistration } from './validate.ts';
 import {
   formatValidationReport,
   loadRegistrationsFromModule,

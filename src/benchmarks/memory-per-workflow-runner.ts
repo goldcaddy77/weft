@@ -1,9 +1,10 @@
 import { Engine, ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING } from '../core/engine.ts';
 import {
+  registerOnRuntimeEngine,
   runtimeWorkflowEngine,
   type RuntimeWorkflowEngine,
 } from '../core/runtime-workflow-engine.ts';
-import type { WorkflowContext } from '../core/types.ts';
+import { workflow, type WorkflowContext } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 import { isConstrainedCodexRunner } from './benchmark-environment.ts';
 
@@ -91,10 +92,13 @@ async function warmupParkedWorkflows(
   engine: RuntimeWorkflowEngine,
   totalWorkflows: number,
 ): Promise<void> {
-  engine.register('idle', async function* (ctx: WorkflowContext) {
-    yield* ctx.waitForSignal('wake');
-    return 'done';
-  });
+  registerOnRuntimeEngine(
+    engine,
+    workflow({ name: 'idle' }).execute(async function* (ctx: WorkflowContext) {
+      yield* ctx.waitForSignal('wake');
+      return 'done';
+    }),
+  );
 
   for (let index = 0; index < totalWorkflows; index += 1) {
     await engine.start('idle', null, { id: `${WORKFLOW_ID_PREFIX}${index}` });

@@ -24,7 +24,35 @@
 
 import { resolve } from 'node:path';
 
-import type { ActivityDefinition, WorkflowRegistration } from '../core/types.ts';
+import type { ConstraintDefinition } from '../core/constraint.ts';
+import type {
+  ActivityDefinition,
+  DefinitionSchema,
+  RetentionPolicy,
+  SearchAttributeSchema,
+  WorkflowFunction,
+} from '../core/types.ts';
+
+/**
+ * Loosely-typed workflow registration shape used only by the `weft validate`
+ * and `weft schedule` CLIs when loading workflow modules from disk. This is
+ * intentionally separate from the public `WorkflowDefinition` type because
+ * loaded modules historically export bare `{ handler, ... }` objects that
+ * do not carry a `name` field — the registration key comes from the export
+ * key, not the object itself.
+ */
+export interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
+  version?: string;
+  description?: string;
+  tags?: ReadonlyArray<string>;
+  inputSchema?: DefinitionSchema<unknown, TInput>;
+  outputSchema?: DefinitionSchema<unknown, TOutput>;
+  handler: WorkflowFunction<TInput, TOutput>;
+  migrate?: (checkpoint: unknown, fromVersion: string) => unknown;
+  searchAttributes?: SearchAttributeSchema;
+  retention?: RetentionPolicy;
+  constraints?: ConstraintDefinition[];
+}
 
 // ---------------------------------------------------------------------------
 // Types

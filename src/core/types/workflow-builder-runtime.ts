@@ -92,9 +92,9 @@ export interface WorkflowBuilderOptions<TName extends string = string> {
   inputSchema?: DefinitionSchema<unknown, unknown>;
   outputSchema?: DefinitionSchema<unknown, unknown>;
   /**
-   * Explicitly forbidden so the builder overload does not silently swallow
-   * legacy `workflow({ name, handler })` callers — those need to fall through
-   * to the deprecated overload until Phase 5 sweeps them away.
+   * Explicitly forbidden: `workflow({ name }).execute(handler)` is the only
+   * way to attach a handler. The builder rejects an in-options `handler`
+   * field so the chained `.execute()` step is the single source of truth.
    */
   handler?: never;
 }

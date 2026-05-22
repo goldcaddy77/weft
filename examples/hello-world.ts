@@ -14,7 +14,11 @@ export const formatGreetingActivity = activity({
 export const helloWorldWorkflow = workflow({ name: 'helloWorld' })
   .activities({ formatGreeting: formatGreetingActivity })
   .execute(async function* (context, input: string | undefined) {
-    return yield* context.run('formatGreeting', input);
+    // The activity's declared input is `string | undefined`; the builder's
+    // typed `.activities()` entry tightens that to `string` (the non-undefined
+    // half) because `ctx.run('name', input)` expects a concrete value when
+    // the input position is required. Coerce the optional input here.
+    return yield* context.run('formatGreeting', input ?? '');
   });
 
 export default {

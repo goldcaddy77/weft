@@ -34,15 +34,18 @@ const DEFAULT_DATABASE_NAME = 'weft';
  *
  * @example
  * ```ts
+ * import { workflow } from 'weft';
  * import { setupServiceWorker, type SetupServiceWorkerOptions } from 'weft/service-worker';
+ *
+ * const checkout = workflow({ name: 'checkout' }).execute(async function* () {
+ *   yield;
+ *   return 'done';
+ * });
  *
  * const options: SetupServiceWorkerOptions = {
  *   pathPrefix: '/weft/',
  *   register(engine) {
- *     engine.register('checkout', async function* () {
- *       yield;
- *       return 'done';
- *     });
+ *     engine.register(checkout);
  *   },
  * };
  * void setupServiceWorker(options);
@@ -78,14 +81,17 @@ export interface SetupServiceWorkerOptions {
  *
  * @example
  * ```ts
+ * import { workflow } from 'weft';
  * import { setupServiceWorker, type SetupServiceWorkerResult } from 'weft/service-worker';
  *
- * const setup: SetupServiceWorkerResult = await setupServiceWorker();
- * await setup.ready;
- * setup.engine.register('hello', async function* () {
+ * const hello = workflow({ name: 'hello' }).execute(async function* () {
  *   yield;
  *   return 'world';
  * });
+ *
+ * const setup: SetupServiceWorkerResult = await setupServiceWorker();
+ * await setup.ready;
+ * setup.engine.register(hello);
  * ```
  */
 export interface SetupServiceWorkerResult {
@@ -228,14 +234,17 @@ function attachListeners(
  * @example
  * ```ts
  * /// <reference lib="webworker" />
+ * import { workflow } from 'weft';
  * import { setupServiceWorker } from 'weft/service-worker';
+ *
+ * const checkout = workflow({ name: 'checkout' }).execute(async function* () {
+ *   yield;
+ *   return 'done';
+ * });
  *
  * const setup = await setupServiceWorker({
  *   register(engine) {
- *     engine.register('checkout', async function* () {
- *       yield;
- *       return 'done';
- *     });
+ *     engine.register(checkout);
  *   },
  * });
  * void setup;

@@ -17,10 +17,10 @@ import type { SearchAttributeValue } from './search-attributes.ts';
  *
  * @example
  * ```ts
- * import { Engine, type Checkpoint } from 'weft';
+ * import { workflow, Engine, type Checkpoint } from 'weft';
  *
  * const engine = new Engine({ checkpointHistory: 5 });
- * engine.register('counter', async function* () { return 42; });
+ * engine.register(workflow({ name: 'counter' }).execute(async function* () { return 42; }));
  * const handle = await engine.start('counter', null);
  * await handle.result();
  * // Checkpoints are persisted by the engine; retrieve via engine.getCheckpoint()

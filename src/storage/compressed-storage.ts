@@ -27,7 +27,7 @@ import { type BatchOperation, type ScanOptions, type Storage } from './interface
  * @example
  * ```ts
  * import { CompressedStorage } from 'weft/storage/compressed';
- * import { Engine, MemoryStorage } from 'weft';
+ * import { workflow, Engine, MemoryStorage } from 'weft';
  *
  * await using inner = new MemoryStorage();
  * await using storage = new CompressedStorage(inner, {
@@ -36,7 +36,7 @@ import { type BatchOperation, type ScanOptions, type Storage } from './interface
  * });
  * await using engine = new Engine({ storage });
  *
- * engine.register('noop', async function* () { return 'done'; });
+ * engine.register(workflow({ name: 'noop' }).execute(async function* () { return 'done'; }));
  * const handle = await engine.start('noop', null);
  * console.log(await handle.result()); // 'done'
  * ```

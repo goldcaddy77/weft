@@ -18,7 +18,8 @@ import {
   type SignalDefinition,
   type UpdateDefinition,
 } from './message-handles.ts';
-import { workflow, type WorkflowDefinition } from './workflow-function.ts';
+import type { BuiltWorkflowDefinition } from './workflow-builder.ts';
+import { workflow } from './workflow-function.ts';
 
 // ---------------------------------------------------------------------------
 // Helper: strict type equality
@@ -112,20 +113,22 @@ void _check_query_both;
 const workflowInputSchema = z.object({ orderId: z.string() });
 const workflowOutputSchema = z.object({ shipped: z.boolean() });
 
+// The builder infers `TInput` / `TOutput` from the `.execute(fn)` handler
+// signature, not from the `inputSchema` / `outputSchema` options. Annotating
+// the handler parameters is the source of truth.
 const inferredWorkflow = workflow({
   name: 'checkout',
   inputSchema: workflowInputSchema,
   outputSchema: workflowOutputSchema,
-  handler: async function* (_ctx, input) {
-    const _check_workflow_input: Equals<typeof input, { orderId: string }> = true;
-    void _check_workflow_input;
-    yield;
-    return { shipped: true };
-  },
+}).execute(async function* (_ctx, input: { orderId: string }) {
+  const _check_workflow_input: Equals<typeof input, { orderId: string }> = true;
+  void _check_workflow_input;
+  yield;
+  return { shipped: true };
 });
 const _check_workflow_definition: Equals<
   typeof inferredWorkflow,
-  WorkflowDefinition<{ orderId: string }, { shipped: boolean }, 'checkout'>
+  BuiltWorkflowDefinition<{ orderId: string }, { shipped: boolean }, 'checkout', {}, {}, {}, {}, {}>
 > = true;
 void _check_workflow_definition;
 
@@ -207,14 +210,13 @@ const workflowTransformOutput = workflow({
   name: 'project',
   inputSchema: z.object({ x: z.number() }),
   outputSchema: transformedOutputSchema,
-  handler: async function* (_ctx, _input) {
-    yield;
-    return 42;
-  },
+}).execute(async function* (_ctx, _input: { x: number }) {
+  yield;
+  return 42;
 });
 const _check_workflow_transform_output: Equals<
   typeof workflowTransformOutput,
-  WorkflowDefinition<{ x: number }, number, 'project'>
+  BuiltWorkflowDefinition<{ x: number }, number, 'project', {}, {}, {}, {}, {}>
 > = true;
 void _check_workflow_transform_output;
 

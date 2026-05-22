@@ -135,13 +135,15 @@ export function timeRemaining(deadline: number | undefined, now: number): number
  *
  * @example
  * ```ts
- * import { Engine, WorkflowTimeoutError } from 'weft';
+ * import { workflow, Engine, WorkflowTimeoutError } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('slow', async function* () {
- *   await new Promise(resolve => setTimeout(resolve, 60_000));
- *   return 'done';
- * });
+ * engine.register(
+ *   workflow({ name: 'slow' }).execute(async function* () {
+ *     await new Promise(resolve => setTimeout(resolve, 60_000));
+ *     return 'done';
+ *   }),
+ * );
  *
  * try {
  *   const handle = await engine.start('slow', null, { executionTimeout: '1s' });

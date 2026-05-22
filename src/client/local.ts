@@ -113,12 +113,14 @@ class LocalScheduleHandle extends ScheduleHandleDelegation<LocalClient> {
  *
  * @example
  * ```ts
- * import { Engine, MemoryStorage, LocalClient, type WorkflowContext } from 'weft';
+ * import { workflow, Engine, MemoryStorage, LocalClient, type WorkflowContext } from 'weft';
  *
  * await using engine = new Engine({ storage: new MemoryStorage() });
- * engine.register('greet', async function* (ctx: WorkflowContext, input: { name: string }) {
- *   return `Hello, ${input.name}!`;
- * });
+ * engine.register(
+ *   workflow({ name: 'greet' }).execute(async function* (ctx: WorkflowContext, input: { name: string }) {
+ *     return `Hello, ${input.name}!`;
+ *   }),
+ * );
  *
  * const client = new LocalClient(engine);
  * const handle = await client.start('greet', { name: 'World' });

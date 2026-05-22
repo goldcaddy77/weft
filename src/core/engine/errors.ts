@@ -6,10 +6,10 @@
  *
  * @example
  * ```ts
- * import { Engine, WorkflowAlreadyExistsError } from 'weft';
+ * import { workflow, Engine, WorkflowAlreadyExistsError } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('ping', async function* () { return 'pong'; });
+ * engine.register(workflow({ name: 'ping' }).execute(async function* () { return 'pong'; }));
  *
  * await engine.start('ping', null, { id: 'my-ping' });
  * try {
@@ -251,7 +251,7 @@ export class WorkflowNotRegisteredError extends Error {
  *
  * @example
  * ```ts
- * import { ActivityResolutionError } from 'weft';
+ * import { workflow, ActivityResolutionError } from 'weft';
  *
  * function isMissingActivity(error: unknown): boolean {
  *   return error instanceof ActivityResolutionError;

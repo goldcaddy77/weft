@@ -533,7 +533,9 @@ describe('emitRegistryDeclaration', () => {
     const output = emitRegistryDeclaration(buildSnapshot());
     expect(output).toContain("declare module 'weft' {");
     expect(output).toContain('interface WorkflowRegistry {}');
-    expect(output).toContain('interface ActivityTypes {}');
+    // Activity names are typed per-workflow via the builder's
+    // `.activities({...})` step, not via a global module augmentation.
+    expect(output).not.toContain('ActivityTypes');
     expect(output).toContain('export {};');
     expect(output.endsWith('\n')).toBe(true);
   });
@@ -565,26 +567,17 @@ describe('emitRegistryDeclaration', () => {
         zeta: { inputSchema: { type: 'string' } },
         alpha: { inputSchema: { type: 'string' } },
       },
-      activities: {
-        zPing: { queue: 'q', outputSchema: { type: 'string' } },
-        aPing: { queue: 'q', outputSchema: { type: 'string' } },
-      },
     });
     const snapshotB = buildSnapshot({
       workflows: {
         alpha: { inputSchema: { type: 'string' } },
         zeta: { inputSchema: { type: 'string' } },
       },
-      activities: {
-        aPing: { queue: 'q', outputSchema: { type: 'string' } },
-        zPing: { queue: 'q', outputSchema: { type: 'string' } },
-      },
     });
     const outputA = emitRegistryDeclaration(snapshotA);
     const outputB = emitRegistryDeclaration(snapshotB);
     expect(outputA).toBe(outputB);
     expect(outputA.indexOf('"alpha"')).toBeLessThan(outputA.indexOf('"zeta"'));
-    expect(outputA.indexOf('"aPing"')).toBeLessThan(outputA.indexOf('"zPing"'));
   });
 
   it('uses null-prototype-safe key handling for names like __proto__', () => {
@@ -597,7 +590,7 @@ describe('emitRegistryDeclaration', () => {
     expect(output).toContain('"valid"');
   });
 
-  it('emits zero-arg activities when inputSchema is absent', () => {
+  it('does not emit activity entries (they live on per-workflow builders, not a global registry)', () => {
     const output = emitRegistryDeclaration(
       buildSnapshot({
         activities: {
@@ -605,23 +598,8 @@ describe('emitRegistryDeclaration', () => {
         },
       }),
     );
-    expect(output).toContain('"ping": () => Promise<string>;');
-    expect(output).not.toContain('(input:');
-  });
-
-  it('keeps null-input activities explicit (input: null), not zero-arg', () => {
-    const output = emitRegistryDeclaration(
-      buildSnapshot({
-        activities: {
-          poke: {
-            queue: 'default',
-            inputSchema: { type: 'null' },
-            outputSchema: { type: 'string' },
-          },
-        },
-      }),
-    );
-    expect(output).toContain('"poke": (input: null) => Promise<string>;');
+    expect(output).not.toContain('ActivityTypes');
+    expect(output).not.toContain('"ping"');
   });
 
   it('emits unknown for workflows with no schemas', () => {

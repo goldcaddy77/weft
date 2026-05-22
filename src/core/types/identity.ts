@@ -10,10 +10,10 @@
  *
  * @example
  * ```ts
- * import { Engine, type WorkflowId } from 'weft';
+ * import { workflow, Engine, type WorkflowId } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('ping', async function* () { return 'pong'; });
+ * engine.register(workflow({ name: 'ping' }).execute(async function* () { return 'pong'; }));
  *
  * const handle = await engine.start('ping', null);
  * const id: WorkflowId = handle.id;
