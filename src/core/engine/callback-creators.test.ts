@@ -84,6 +84,15 @@ describe('engine callback creators', () => {
     engine[Symbol.dispose]();
   });
 
+  it('routes workflow target resolution through lifecycle callbacks', () => {
+    const engine = new Engine();
+    const callbacks = createLifecycleCallbacks(engine);
+
+    expect(callbacks.resolveWorkflowTypeTarget('workflow-target')).toBe('workflow-target');
+
+    engine[Symbol.dispose]();
+  });
+
   it('persists coordinated update responses through update callbacks', async () => {
     const engine = new Engine();
 
