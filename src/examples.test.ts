@@ -16,7 +16,7 @@ describe('bundled examples', () => {
   it('runs the hello-world workflow through its activity', async () => {
     const iterator = helloWorldWorkflow.handler(
       {
-        run: async function* (activityName: string, input: string | undefined) {
+        run: async function* (activityName: string, input: string) {
           if (activityName !== 'formatGreeting') {
             throw new Error(`unexpected activity ${activityName}`);
           }

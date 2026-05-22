@@ -178,6 +178,14 @@ void verifyModuleAugmentedStart;
 // @ts-expect-error workflow names must be present in the augmented registry or registered.
 void engine.start('runtime-discovered', { id: 'dynamic' });
 
+// Activity name brand-rejection at the `engine.register` boundary was
+// intentionally removed when the global `ActivityTypes` augmentation went
+// away: activity-name typing now lives on the per-workflow builder's
+// `.activities()` step (see the `// @ts-expect-error builder-typed activity
+// names must be present in `.activities()`.` assertion above). There is no
+// equivalent engine-level rejection to test; the builder-level rejection
+// covers the same architectural goal.
+
 const localGreet = workflow({ name: 'localGreet' }).execute(async function* (
   _ctx: WorkflowContext,
   input: string,
