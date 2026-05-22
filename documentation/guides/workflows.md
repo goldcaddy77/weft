@@ -6,23 +6,25 @@ That is what a Weft workflow gives you.
 
 ## Getting started without generators
 
-If you are not familiar with generators, Weft provides a simpler entry point. Register a plain `async` function and use `ctx.step()` for each durable operation:
+If you are not familiar with generators, Weft provides a simpler entry point. Write a plain `async` function that uses `ctx.step()` for each durable operation, then wrap it with `compileStepWorkflow(...)` before passing it to `.execute(...)`:
 
 ```typescript partial
-import { Engine, workflow } from 'weft';
+import { Engine, workflow, compileStepWorkflow, type StepWorkflowContext } from 'weft';
 
 const engine = new Engine();
 
 engine.register(
-  workflow({ name: 'welcome' }).execute(async (ctx, input: { name: string }) => {
-    const greeting = await ctx.step('greet', () => greet(input.name));
-    await ctx.step('notify', () => notify(greeting));
-    return { greeting, notified: true };
-  }),
+  workflow({ name: 'welcome' }).execute(
+    compileStepWorkflow(async (ctx: StepWorkflowContext, input: { name: string }) => {
+      const greeting = await ctx.step('greet', () => greet(input.name));
+      await ctx.step('notify', () => notify(greeting));
+      return { greeting, notified: true };
+    }),
+  ),
 );
 ```
 
-Each `ctx.step()` call is a checkpoint boundary, just like `yield*` in the generator API. The conversion happens automatically at registration time -- the engine always works with generators internally.
+Each `ctx.step()` call is a checkpoint boundary, just like `yield*` in the generator API. `compileStepWorkflow(...)` compiles the step-based function into the generator shape the engine runs internally; the compilation step is explicit so the type system knows what `.execute(...)` is receiving.
 
 The step-based API is a subset of the full API. It supports sequential steps only. When you need durable timers (`sleep()`), external signals (`waitForSignal()`), or parallel execution (`all()`, `race()`), graduate to the generator API described below.
 

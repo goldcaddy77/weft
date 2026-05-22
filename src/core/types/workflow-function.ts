@@ -131,10 +131,16 @@ export type WorkflowOperation<TResult> = Generator<unknown, TResult, unknown>;
  * (`ctx.pipe`, `ctx.map`, `ctx.reduce`): a registered workflow name string,
  * a {@link WorkflowFunction} reference, or a {@link StepWorkflowFunction}
  * reference. The engine resolves the actual workflow type at runtime.
- * Function references must be registered first via
- * `engine.register(workflow({ name }).execute(fn))` before they appear in
- * composition operators — passing an unregistered function reference throws
- * at runtime.
+ *
+ * Prefer the workflow name string. Identity-based lookup of a function
+ * reference only succeeds if the engine's `workflowTypesByHandler` map
+ * contains the exact function passed in — but the builder API wraps the
+ * user-supplied `fn` inside `workflow({ name }).execute(fn)` before storing
+ * it on the definition, so the registered handler is not the same reference
+ * as `fn`. Passing the bare `fn` to a composition operator after registering
+ * via the builder will throw at runtime as an unregistered function. Use
+ * the workflow name string (`ctx.pipe(['stage-one', 'stage-two'], input)`)
+ * or the `definition.handler` of an already-built workflow definition.
  *
  * @example
  * ```ts

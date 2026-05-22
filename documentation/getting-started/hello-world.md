@@ -67,10 +67,10 @@ That's a durable workflow with persistent storage and an explicit recovery path.
 
 ### Step-based alternative
 
-If generators are unfamiliar, you can write the same workflow with plain `async`/`await`:
+If generators are unfamiliar, you can write the same workflow with plain `async`/`await` and compile it with `compileStepWorkflow(...)` before passing it to `.execute(...)`:
 
 ```typescript partial
-import { Engine, workflow } from 'weft';
+import { Engine, workflow, compileStepWorkflow, type StepWorkflowContext } from 'weft';
 import { SQLiteStorage } from 'weft/storage/sqlite';
 
 const engine = new Engine({ storage: new SQLiteStorage('./weft.db') });
@@ -84,11 +84,13 @@ async function notify(message: string) {
 }
 
 engine.register(
-  workflow({ name: 'helloWorldWelcome' }).execute(async (ctx, input: { name: string }) => {
-    const greeting = await ctx.step('greet', () => greet(input.name));
-    await ctx.step('notify', () => notify(greeting));
-    return { greeting, notified: true };
-  }),
+  workflow({ name: 'helloWorldWelcome' }).execute(
+    compileStepWorkflow(async (ctx: StepWorkflowContext, input: { name: string }) => {
+      const greeting = await ctx.step('greet', () => greet(input.name));
+      await ctx.step('notify', () => notify(greeting));
+      return { greeting, notified: true };
+    }),
+  ),
 );
 
 const workflowInput = { name: 'World' };
@@ -100,7 +102,7 @@ console.log(result);
 // { greeting: "Hello, World!", notified: true }
 ```
 
-Each `ctx.step()` call is a checkpoint boundary. The engine converts this to the generator form at registration time. When you need features like durable timers, signals, or parallel execution, switch to the chained builder form shown above. Use `engine.register(workflow(...).execute(...))` or `engine.registerWorkflows({ ... })` to wire workflows into the engine.
+Each `ctx.step()` call is a checkpoint boundary. `compileStepWorkflow(...)` compiles the step-based function into the generator shape the engine runs internally. When you need features like durable timers, signals, or parallel execution, switch to the chained builder form shown above. Use `engine.register(workflow(...).execute(...))` or `engine.registerWorkflows({ ... })` to wire workflows into the engine.
 
 ## How It Works
 

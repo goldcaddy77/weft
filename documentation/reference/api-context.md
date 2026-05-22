@@ -532,15 +532,17 @@ Execute a named step as a durable operation. Under the hood, each `step()` call 
 
 ```ts partial
 engine.register(
-  workflow({ name: 'onboard' }).execute(async (ctx, input: { name: string }) => {
-    const user = await ctx.step('create-user', () => createUser(input.name));
-    await ctx.step('send-email', () => sendWelcome(user));
-    return user;
-  }),
+  workflow({ name: 'onboard' }).execute(
+    compileStepWorkflow(async (ctx: StepWorkflowContext, input: { name: string }) => {
+      const user = await ctx.step('create-user', () => createUser(input.name));
+      await ctx.step('send-email', () => sendWelcome(user));
+      return user;
+    }),
+  ),
 );
 ```
 
-The conversion from step-based to generator-based happens at registration time. The engine always works with generators internally.
+Step-based workflows compile to generators via `compileStepWorkflow(...)`. The engine always works with generators internally, but the compilation is explicit — `.execute(...)` only accepts generator workflows, so passing a plain `async` function would fail to typecheck.
 
 ---
 
