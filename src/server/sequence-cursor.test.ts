@@ -2,11 +2,22 @@ import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { createEngineEventFeedBackend } from './engine-event-feed-backend.ts';
 import { serve, type WeftServer } from './index.ts';
 import { parseOptionalSequenceCursor } from './sequence-cursor.ts';
 import { createWorkflowEventFeed, type EventEnvelope } from './workflow-event-feed.ts';
+
+const multiWorkflow = workflow({ name: 'multi' }).execute(async function* (
+  ctx: WorkflowContext,
+  _input: unknown,
+) {
+  const context = ctx;
+  yield* context.run(async () => 'step-1');
+  yield* context.run(async () => 'step-2');
+  return yield* context.run(async () => 'done');
+});
 
 const engines: Engine[] = [];
 const servers: WeftServer[] = [];
@@ -57,12 +68,7 @@ it('All live views share the same sequence and cursor semantics. Replay, resume,
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
   engines.push(engine);
-  engine.register('multi', async function* (ctx: WorkflowContext, _input: unknown) {
-    const context = ctx;
-    yield* context.run(async () => 'step-1');
-    yield* context.run(async () => 'step-2');
-    return yield* context.run(async () => 'done');
-  });
+  engine.register(multiWorkflow);
 
   const handle = await engine.start('multi', {}, {});
   await handle.result();

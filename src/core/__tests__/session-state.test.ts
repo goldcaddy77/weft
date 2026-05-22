@@ -8,6 +8,7 @@ import { encode } from '../codec.ts';
 import { Engine } from '../engine.ts';
 import { validateSessionStateLocals } from '../session-state.ts';
 import type { WorkflowContext } from '../types.ts';
+import { workflow } from '../types.ts';
 
 async function flush(): Promise<void> {
   await sleepForTesting(10);
@@ -32,7 +33,10 @@ describe('Acceptance criterion: Virtual-Object-style session state', () => {
     }
 
     const engine1 = new Engine({ storage });
-    engine1.register('session-state-workflow', createWorkflow());
+    const sessionStateWorkflowWorkflow = workflow({ name: 'session-state-workflow' }).execute(
+      createWorkflow(),
+    );
+    engine1.register(sessionStateWorkflowWorkflow);
 
     await engine1.start('session-state-workflow', null, { id: 'wf-session-state' });
     await flush();
@@ -49,7 +53,10 @@ describe('Acceptance criterion: Virtual-Object-style session state', () => {
     engine1[Symbol.dispose]();
 
     const engine2 = new Engine({ storage });
-    engine2.register('session-state-workflow', createWorkflow());
+    const sessionStateWorkflowWorkflow2 = workflow({ name: 'session-state-workflow' }).execute(
+      createWorkflow(),
+    );
+    engine2.register(sessionStateWorkflowWorkflow2);
 
     const handles = await engine2.recoverAll();
     expect(handles).toHaveLength(1);
@@ -86,7 +93,10 @@ describe('Acceptance criterion: Virtual-Object-style session state', () => {
     }
 
     const engine1 = new Engine({ storage });
-    engine1.register('session-state-clear-workflow', createWorkflow());
+    const sessionStateClearWorkflowWorkflow = workflow({
+      name: 'session-state-clear-workflow',
+    }).execute(createWorkflow());
+    engine1.register(sessionStateClearWorkflowWorkflow);
 
     await engine1.start('session-state-clear-workflow', null, { id: 'wf-session-state-clear' });
     await flush();
@@ -99,7 +109,10 @@ describe('Acceptance criterion: Virtual-Object-style session state', () => {
     engine1[Symbol.dispose]();
 
     const engine2 = new Engine({ storage });
-    engine2.register('session-state-clear-workflow', createWorkflow());
+    const sessionStateClearWorkflowWorkflow2 = workflow({
+      name: 'session-state-clear-workflow',
+    }).execute(createWorkflow());
+    engine2.register(sessionStateClearWorkflowWorkflow2);
 
     const handles = await engine2.recoverAll();
     expect(handles).toHaveLength(1);

@@ -1,0 +1,59 @@
+/**
+ * Thrown by {@link Engine.create} (and other storage-opening entry points) when
+ * a persisted Weft database carries a schema version older than the engine
+ * understands. Pre-MVP Weft does not migrate persisted data — bumping
+ * {@link CURRENT_PERSISTED_DATA_SCHEMA_VERSION} intentionally invalidates older
+ * databases so the failure surfaces deterministically at boot, before any
+ * workflow attempts replay.
+ *
+ * Inspect `foundVersion` to see what the storage advertised and `expectedVersion`
+ * to see what this engine requires. Resolve by deleting the database (acceptable
+ * pre-MVP) or by starting from fresh storage.
+ *
+ * @example
+ * ```ts
+ * import { Engine, PersistedDataIncompatibleError } from 'weft';
+ *
+ * try {
+ *   await Engine.create({});
+ * } catch (error) {
+ *   if (error instanceof PersistedDataIncompatibleError) {
+ *     console.error(
+ *       `expected schema ${error.expectedVersion}, found ${error.foundVersion ?? 'pre-versioned'}`,
+ *     );
+ *   }
+ * }
+ * ```
+ */
+export class PersistedDataIncompatibleError extends Error {
+  readonly foundVersion: number | null;
+  readonly expectedVersion: number;
+
+  constructor(foundVersion: number | null, expectedVersion: number) {
+    super(
+      `Persisted workflow data was written by an older Weft version (schema ${
+        foundVersion === null ? 'pre-versioned' : `v${foundVersion}`
+      }, current v${expectedVersion}) and is incompatible with the workflow-builder refactor. Delete the database or start fresh.`,
+    );
+    this.name = 'PersistedDataIncompatibleError';
+    this.foundVersion = foundVersion;
+    this.expectedVersion = expectedVersion;
+  }
+}
+
+/**
+ * Bumped to `1` by the workflow-builder refactor (Phase 3). Pre-MVP databases
+ * have no version key recorded — `assertCompatiblePersistedDataVersion` treats
+ * the absence of the key on an otherwise non-empty database as
+ * `pre-versioned`, which is incompatible. Fresh databases get the current
+ * version written on first open.
+ */
+export const CURRENT_PERSISTED_DATA_SCHEMA_VERSION = 1;
+
+/**
+ * Storage key holding the persisted-data schema version (encoded as the UTF-8
+ * digits of an integer). Kept under a `weft:` prefix so it cannot collide with
+ * the public `wf:` / `op:` / `schedule:` / etc. layouts in
+ * `src/storage/interface.ts#KEYS`.
+ */
+export const PERSISTED_DATA_SCHEMA_VERSION_KEY = 'weft:schema-version';

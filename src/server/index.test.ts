@@ -9,6 +9,7 @@ import {
   WorkflowCompletedEvent,
 } from '../core/events.ts';
 import type { RetryPolicy, WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types.ts';
 import { MCP_PROTOCOL_VERSION } from '../mcp/protocol.ts';
 import { METRICS } from '../observability/metrics.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
@@ -26,6 +27,13 @@ import {
 } from './operations/get-task-diagnostics.ts';
 import { principalFromApiKey } from './principal.ts';
 import type { InflightRecord, QueuedRecord, ResolvedRecord } from './task-state.ts';
+
+const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: unknown,
+) {
+  return input;
+});
 
 class TokenEvent extends Event {
   static readonly type = 'stream:token';
@@ -118,9 +126,7 @@ function createEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
 
-  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-    return input;
-  });
+  engine.register(echoWorkflow);
 
   return engine;
 }
@@ -766,7 +772,7 @@ describe('worker WebSocket protocol', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -853,7 +859,7 @@ describe('worker WebSocket protocol', () => {
     const ack = await ackPromise;
     expect(ack).toEqual({
       type: 'registerAck',
-      protocolVersion: 1,
+      protocolVersion: 2,
       workerId: 'w-register-ack',
       queue: 'default',
       activities: ['charge'],
@@ -886,7 +892,7 @@ describe('worker WebSocket protocol', () => {
     expect(error).toMatchObject({
       type: 'registerError',
       code: 'unsupported_protocol_version',
-      supportedProtocolVersions: [1],
+      supportedProtocolVersions: [2],
     });
     await waitFor(() => server.registry.size === 0, { label: 'missing-version worker rejected' });
     await waitForSocketClose(ws, 'missing-version socket close');
@@ -1497,7 +1503,7 @@ describe('worker WebSocket protocol', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: 'rogue',
         activities: ['charge'],
         concurrency: 5,
@@ -1979,7 +1985,7 @@ describe('queue-aware worker stream', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -2716,9 +2722,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     const storage = new MemoryStorage();
 
     engine = new Engine({ storage });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
     server = serve({ engine, port: 0 });
 
     engine.dispatchEvent(new TokenEvent('wf-restart', 'persisted', 'gpt-4'));
@@ -2728,9 +2732,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     engine[Symbol.dispose]();
 
     engine = new Engine({ storage });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
     server = serve({ engine, port: 0 });
 
     const ws = await connectStream(server, 'wf-restart', { resumeFrom: -1 });
@@ -2789,7 +2791,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: 'rogue',
         activities: ['charge'],
         concurrency: 5,
@@ -2956,9 +2958,7 @@ describe('long-poll endpoints (GET /v1/tasks/:queue, POST /v1/tasks/:queue/resul
   it('refreshes lastQueuedAt when redispatching an existing queued record to long-poll', async () => {
     const storage = new MemoryStorage();
     engine = new Engine({ storage });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
     server = serve({ engine, port: 0 });
 
     await storage.put(
@@ -3228,7 +3228,7 @@ describe('task assignment deduplication', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -3644,9 +3644,7 @@ describe('visibility timeout persistence', () => {
   function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
     const s = new MemoryStorage();
     const e = new Engine({ storage: s });
-    e.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    e.register(echoWorkflow);
     return { engine: e, storage: s };
   }
 
@@ -3667,7 +3665,7 @@ describe('visibility timeout persistence', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -3957,9 +3955,7 @@ describe('worker disconnection triggers task reassignment', () => {
   function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
     const s = new MemoryStorage();
     const e = new Engine({ storage: s });
-    e.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    e.register(echoWorkflow);
     return { engine: e, storage: s };
   }
 
@@ -3983,7 +3979,7 @@ describe('worker disconnection triggers task reassignment', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -4408,9 +4404,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
   function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
     const s = new MemoryStorage();
     const e = new Engine({ storage: s });
-    e.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    e.register(echoWorkflow);
     return { engine: e, storage: s };
   }
 
@@ -4434,7 +4428,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -4921,9 +4915,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
 
     const delayedStorage = new DelayedStorage();
     const localEngine = new Engine({ storage: delayedStorage });
-    localEngine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    localEngine.register(echoWorkflow);
     const localServer = serve({
       engine: localEngine,
       port: 0,
@@ -4957,7 +4949,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
       ws.send(
         JSON.stringify({
           type: 'register',
-          protocolVersion: 1,
+          protocolVersion: 2,
           workerId: 'race-worker',
           activities: ['charge'],
           concurrency: 1,
@@ -5223,9 +5215,7 @@ describe('concurrent scanner deduplication', () => {
   function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
     const s = new MemoryStorage();
     const e = new Engine({ storage: s });
-    e.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    e.register(echoWorkflow);
     return { engine: e, storage: s };
   }
 
@@ -5246,7 +5236,7 @@ describe('concurrent scanner deduplication', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -5430,9 +5420,7 @@ describe('concurrent scanner deduplication', () => {
     };
 
     engine = new Engine({ storage: delayedStorage });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
 
     const originalAdd = DeadlineTracker.prototype.add;
     const originalDrainExpired = DeadlineTracker.prototype.drainExpired;
@@ -5527,9 +5515,7 @@ describe('retry policy respected on reassignment', () => {
   function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
     const s = new MemoryStorage();
     const e = new Engine({ storage: s });
-    e.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    e.register(echoWorkflow);
     return { engine: e, storage: s };
   }
 
@@ -5553,7 +5539,7 @@ describe('retry policy respected on reassignment', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -5962,7 +5948,7 @@ describe('worker shutdown and cancel propagation', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,
@@ -6182,7 +6168,7 @@ describe('header propagation in task dispatch', () => {
     ws.send(
       JSON.stringify({
         type: 'register',
-        protocolVersion: 1,
+        protocolVersion: 2,
         workerId: options.workerId,
         activities: options.activities,
         concurrency: options.concurrency ?? 10,

@@ -14,7 +14,8 @@ import { MemoryStorage } from '../storage/memory.ts';
 import { encode } from './codec.ts';
 import { Engine, WorkflowTypeNotRegisteredForRecoveryError } from './engine.ts';
 import { WorkflowRecoverySkippedEvent, WorkflowResumedEvent } from './events.ts';
-import type { WorkflowContext, WorkflowState, WorkflowStatus } from './types.ts';
+import type { WorkflowState, WorkflowStatus } from './types.ts';
+import { workflow } from './types/workflow-function.ts';
 
 /** Drain microtasks so fire-and-forget work completes. */
 async function flush(): Promise<void> {
@@ -54,10 +55,12 @@ describe('crash recovery', () => {
     const storage = new MemoryStorage();
     const firstEngine = new Engine({ storage });
 
-    firstEngine.register('preflight-known', async function* (ctx: WorkflowContext) {
-      yield* ctx.waitForSignal('go');
-      return 'known-done';
-    });
+    firstEngine.register(
+      workflow({ name: 'preflight-known' }).execute(async function* (ctx) {
+        yield* ctx.waitForSignal('go');
+        return 'known-done';
+      }),
+    );
     await firstEngine.start('preflight-known', null, { id: 'preflight-known-id' });
     await flush();
     firstEngine[Symbol.dispose]();
@@ -66,11 +69,13 @@ describe('crash recovery', () => {
 
     const recoveredEngine = new Engine({ storage });
     let resumedRunCount = 0;
-    recoveredEngine.register('preflight-known', async function* (ctx: WorkflowContext) {
-      resumedRunCount += 1;
-      yield* ctx.waitForSignal('go');
-      return 'known-done';
-    });
+    recoveredEngine.register(
+      workflow({ name: 'preflight-known' }).execute(async function* (ctx) {
+        resumedRunCount += 1;
+        yield* ctx.waitForSignal('go');
+        return 'known-done';
+      }),
+    );
     const resumedEvents: WorkflowResumedEvent[] = [];
     recoveredEngine.addEventListener(WorkflowResumedEvent.type, (event) => {
       resumedEvents.push(event as WorkflowResumedEvent);
@@ -104,10 +109,12 @@ describe('crash recovery', () => {
     const storage = new MemoryStorage();
     const firstEngine = new Engine({ storage });
 
-    firstEngine.register('acknowledged-known', async function* (ctx: WorkflowContext) {
-      const signal = yield* ctx.waitForSignal<string>('go');
-      return `known:${signal}`;
-    });
+    firstEngine.register(
+      workflow({ name: 'acknowledged-known' }).execute(async function* (ctx) {
+        const signal = yield* ctx.waitForSignal<string>('go');
+        return `known:${signal}`;
+      }),
+    );
     await firstEngine.start('acknowledged-known', null, { id: 'acknowledged-known-id' });
     await flush();
     firstEngine[Symbol.dispose]();
@@ -120,10 +127,12 @@ describe('crash recovery', () => {
     );
 
     const recoveredEngine = new Engine({ storage });
-    recoveredEngine.register('acknowledged-known', async function* (ctx: WorkflowContext) {
-      const signal = yield* ctx.waitForSignal<string>('go');
-      return `known:${signal}`;
-    });
+    recoveredEngine.register(
+      workflow({ name: 'acknowledged-known' }).execute(async function* (ctx) {
+        const signal = yield* ctx.waitForSignal<string>('go');
+        return `known:${signal}`;
+      }),
+    );
     const skippedEvents: WorkflowRecoverySkippedEvent[] = [];
     recoveredEngine.addEventListener(WorkflowRecoverySkippedEvent.type, (event) => {
       skippedEvents.push(event as WorkflowRecoverySkippedEvent);
@@ -149,10 +158,12 @@ describe('crash recovery', () => {
     const storage = new MemoryStorage();
     const firstEngine = new Engine({ storage });
 
-    firstEngine.register('matrix-running', async function* (ctx: WorkflowContext) {
-      const signal = yield* ctx.waitForSignal<string>('go');
-      return `matrix:${signal}`;
-    });
+    firstEngine.register(
+      workflow({ name: 'matrix-running' }).execute(async function* (ctx) {
+        const signal = yield* ctx.waitForSignal<string>('go');
+        return `matrix:${signal}`;
+      }),
+    );
     await firstEngine.start('matrix-running', null, { id: 'matrix-running-id' });
     await flush();
     firstEngine[Symbol.dispose]();
@@ -200,10 +211,12 @@ describe('crash recovery', () => {
     );
 
     const recoveredEngine = new Engine({ storage });
-    recoveredEngine.register('matrix-running', async function* (ctx: WorkflowContext) {
-      const signal = yield* ctx.waitForSignal<string>('go');
-      return `matrix:${signal}`;
-    });
+    recoveredEngine.register(
+      workflow({ name: 'matrix-running' }).execute(async function* (ctx) {
+        const signal = yield* ctx.waitForSignal<string>('go');
+        return `matrix:${signal}`;
+      }),
+    );
     const skippedEvents: WorkflowRecoverySkippedEvent[] = [];
     recoveredEngine.addEventListener(WorkflowRecoverySkippedEvent.type, (event) => {
       skippedEvents.push(event as WorkflowRecoverySkippedEvent);
@@ -234,10 +247,12 @@ describe('crash recovery', () => {
     // when sorted: a, b, c, d.
     const storage = new MemoryStorage();
     const firstEngine = new Engine({ storage });
-    firstEngine.register('order-known', async function* (ctx: WorkflowContext) {
-      yield* ctx.waitForSignal('go');
-      return 'done';
-    });
+    firstEngine.register(
+      workflow({ name: 'order-known' }).execute(async function* (ctx) {
+        yield* ctx.waitForSignal('go');
+        return 'done';
+      }),
+    );
 
     await firstEngine.start('order-known', null, { id: 'order-a-running' });
     await flush();
@@ -248,10 +263,12 @@ describe('crash recovery', () => {
     firstEngine[Symbol.dispose]();
 
     const recoveredEngine = new Engine({ storage });
-    recoveredEngine.register('order-known', async function* (ctx: WorkflowContext) {
-      yield* ctx.waitForSignal('go');
-      return 'done';
-    });
+    recoveredEngine.register(
+      workflow({ name: 'order-known' }).execute(async function* (ctx) {
+        yield* ctx.waitForSignal('go');
+        return 'done';
+      }),
+    );
 
     const handles = await recoveredEngine.recoverAll();
     expect(handles.map((handle) => handle.id)).toEqual([
@@ -278,9 +295,11 @@ describe('crash recovery', () => {
     }
 
     const engine = new Engine({ storage });
-    engine.register('registered-shape-type', async function* () {
-      return 'registered';
-    });
+    engine.register(
+      workflow({ name: 'registered-shape-type' }).execute(async function* () {
+        return 'registered';
+      }),
+    );
 
     try {
       await engine.recoverAll();
@@ -336,19 +355,19 @@ describe('crash recovery', () => {
     };
 
     function makeWorkflow() {
-      return async function* (ctx: WorkflowContext, input: unknown) {
+      return workflow({ name: 'multi-step' }).execute(async function* (ctx, input: unknown) {
         const c = ctx;
         const { value } = input as { value: string };
         const r1 = yield* c.run(step1, value);
         const r2 = yield* c.run(step2, r1);
         const r3 = yield* c.run(step3, r2);
         return r3;
-      };
+      });
     }
 
     // --- First engine: run step 1, then "crash" ---
     const engine1 = new Engine({ storage });
-    engine1.register('multi-step', makeWorkflow());
+    engine1.register(makeWorkflow());
 
     const handle1 = await engine1.start('multi-step', { value: 'hello' });
 
@@ -370,7 +389,7 @@ describe('crash recovery', () => {
 
     // --- Second engine: recover ---
     const engine2 = new Engine({ storage });
-    engine2.register('multi-step', makeWorkflow());
+    engine2.register(makeWorkflow());
 
     // The workflow is completed, so recoverAll should not resume it
     const handles = await engine2.recoverAll();
@@ -400,19 +419,19 @@ describe('crash recovery', () => {
     };
 
     function makeWorkflow() {
-      return async function* (ctx: WorkflowContext, input: unknown) {
+      return workflow({ name: 'resumable' }).execute(async function* (ctx, input: unknown) {
         const c = ctx;
         const r1 = yield* c.run(step1, input);
         // This signal wait will block, simulating a "crash point"
         const signal = yield* c.waitForSignal<string>('proceed');
         const r2 = yield* c.run(step2, `${r1}:${signal}`);
         return r2;
-      };
+      });
     }
 
     // --- First engine: step1 completes, then waiting for signal ---
     const engine1 = new Engine({ storage });
-    engine1.register('resumable', makeWorkflow());
+    engine1.register(makeWorkflow());
 
     await engine1.start('resumable', 'hello', { id: 'wf-resume-mid' });
     await flush();
@@ -429,7 +448,7 @@ describe('crash recovery', () => {
 
     // --- Second engine: resume ---
     const engine2 = new Engine({ storage });
-    engine2.register('resumable', makeWorkflow());
+    engine2.register(makeWorkflow());
 
     const handles = await engine2.recoverAll();
     expect(handles).toHaveLength(1);
@@ -455,23 +474,23 @@ describe('crash recovery', () => {
     const storage = new MemoryStorage();
 
     function makeWorkflow() {
-      return async function* (ctx: WorkflowContext) {
+      return workflow({ name: 'signal-wait' }).execute(async function* (ctx) {
         const c = ctx;
         const approval = yield* c.waitForSignal<{ approved: boolean }>('approval');
         return { approved: approval.approved };
-      };
+      });
     }
 
     // Start workflow, crash before signal
     const engine1 = new Engine({ storage });
-    engine1.register('signal-wait', makeWorkflow());
+    engine1.register(makeWorkflow());
     await engine1.start('signal-wait', null, { id: 'wf-signal' });
     await flush();
     engine1[Symbol.dispose]();
 
     // Recover and send signal
     const engine2 = new Engine({ storage });
-    engine2.register('signal-wait', makeWorkflow());
+    engine2.register(makeWorkflow());
     const handles = await engine2.recoverAll();
     expect(handles).toHaveLength(1);
     await flush();
@@ -486,21 +505,21 @@ describe('crash recovery', () => {
   it('resumes after crash during sleep and completes when timer fires', async () => {
     const { TestEngine } = await import('../testing/test-engine.ts');
 
-    const sleepWorkflow = async function* (ctx: WorkflowContext) {
+    const sleeperWorkflow = workflow({ name: 'sleeper' }).execute(async function* (ctx) {
       const c = ctx;
       yield* c.sleep(5000);
       return 'awake';
-    };
+    });
 
     const engine1 = new TestEngine({ startTime: 1000 });
-    engine1.register('sleeper', sleepWorkflow);
+    engine1.register(sleeperWorkflow);
 
     await engine1.start('sleeper', null, { id: 'wf-sleep' });
     await flush();
 
     // Recover using TestEngine.recover() which copies storage
     const engine2 = engine1.recover();
-    engine2.register('sleeper', sleepWorkflow);
+    engine2.register(sleeperWorkflow);
 
     const handles = await engine2.recoverAll();
     expect(handles).toHaveLength(1);
@@ -523,15 +542,15 @@ describe('crash recovery', () => {
     const storage = new TestMemoryStorage();
     let currentTime = 1000;
 
-    const sleepWorkflow = async function* (ctx: WorkflowContext) {
+    const sleeperFastPath = workflow({ name: 'sleeper' }).execute(async function* (ctx) {
       const c = ctx;
       yield* c.sleep(5000);
       return 'fast-path-awake';
-    };
+    });
 
     // First engine: start workflow, then "crash" while sleep is pending
     const engine1 = new Engine({ storage, getNow: () => currentTime });
-    engine1.register('sleeper', sleepWorkflow);
+    engine1.register(sleeperFastPath);
 
     await engine1.start('sleeper', null, { id: 'wf-sleep-fast' });
     await flush();
@@ -545,7 +564,7 @@ describe('crash recovery', () => {
 
     // Second engine: resume with the same storage at a time after the sleep expired.
     const engine2 = new Engine({ storage, getNow: () => currentTime });
-    engine2.register('sleeper', sleepWorkflow);
+    engine2.register(sleeperFastPath);
 
     const handles = await engine2.recoverAll();
     expect(handles).toHaveLength(1);
@@ -566,16 +585,16 @@ describe('crash recovery', () => {
     let currentTime = 1000;
 
     // Workflow: sleep 2s, then sleep 3s, return
-    const twoSleepWorkflow = async function* (ctx: WorkflowContext) {
+    const twoSleepWorkflow = workflow({ name: 'two-sleep' }).execute(async function* (ctx) {
       const c = ctx;
       yield* c.sleep(2000);
       yield* c.sleep(3000);
       return 'both-done';
-    };
+    });
 
     // First engine: start workflow, crash while the first sleep is pending.
     const engine1 = new Engine({ storage, getNow: () => currentTime });
-    engine1.register('two-sleep', twoSleepWorkflow);
+    engine1.register(twoSleepWorkflow);
 
     await engine1.start('two-sleep', null, { id: 'wf-two-sleep' });
     await flush();
@@ -588,7 +607,7 @@ describe('crash recovery', () => {
     currentTime = 10_000;
 
     const engine2 = new Engine({ storage, getNow: () => currentTime });
-    engine2.register('two-sleep', twoSleepWorkflow);
+    engine2.register(twoSleepWorkflow);
 
     const handles = await engine2.recoverAll();
     expect(handles).toHaveLength(1);
@@ -611,9 +630,11 @@ describe('crash recovery', () => {
     const storage = new MemoryStorage();
 
     const engine1 = new Engine({ storage });
-    engine1.register('simple', async function* (_ctx: WorkflowContext, input: unknown) {
-      return `done:${String(input)}`;
-    });
+    engine1.register(
+      workflow({ name: 'simple' }).execute(async function* (_ctx, input: unknown) {
+        return `done:${String(input)}`;
+      }),
+    );
 
     const handle = await engine1.start('simple', 'test');
     await handle.result();
@@ -621,9 +642,11 @@ describe('crash recovery', () => {
 
     // Recover — no running workflows to resume
     const engine2 = new Engine({ storage });
-    engine2.register('simple', async function* () {
-      return 'should not run';
-    });
+    engine2.register(
+      workflow({ name: 'simple' }).execute(async function* () {
+        return 'should not run';
+      }),
+    );
 
     const handles = await engine2.recoverAll();
     expect(handles).toHaveLength(0);
@@ -635,12 +658,14 @@ describe('crash recovery', () => {
     const storage = new MemoryStorage();
 
     const engine1 = new Engine({ storage });
-    engine1.register('failing', async function* (ctx: WorkflowContext) {
-      const c = ctx;
-      yield* c.run(async () => {
-        throw new Error('boom');
-      });
-    });
+    engine1.register(
+      workflow({ name: 'failing' }).execute(async function* (ctx) {
+        const c = ctx;
+        yield* c.run(async () => {
+          throw new Error('boom');
+        });
+      }),
+    );
 
     const handle = await engine1.start('failing', null);
     await expect(handle.result()).rejects.toThrow('boom');
@@ -648,9 +673,11 @@ describe('crash recovery', () => {
 
     // Recover — no running workflows
     const engine2 = new Engine({ storage });
-    engine2.register('failing', async function* () {
-      return 'should not run';
-    });
+    engine2.register(
+      workflow({ name: 'failing' }).execute(async function* () {
+        return 'should not run';
+      }),
+    );
 
     const handles = await engine2.recoverAll();
     expect(handles).toHaveLength(0);
@@ -662,21 +689,21 @@ describe('crash recovery', () => {
     const storage = new MemoryStorage();
 
     function makeWorkflow() {
-      return async function* (ctx: WorkflowContext) {
+      return workflow({ name: 'event-test' }).execute(async function* (ctx) {
         const c = ctx;
         yield* c.waitForSignal('go');
         return 'done';
-      };
+      });
     }
 
     const engine1 = new Engine({ storage });
-    engine1.register('event-test', makeWorkflow());
+    engine1.register(makeWorkflow());
     await engine1.start('event-test', null, { id: 'wf-event' });
     await flush();
     engine1[Symbol.dispose]();
 
     const engine2 = new Engine({ storage });
-    engine2.register('event-test', makeWorkflow());
+    engine2.register(makeWorkflow());
 
     const events: WorkflowResumedEvent[] = [];
     engine2.addEventListener(WorkflowResumedEvent.type, (event) => {
@@ -701,13 +728,15 @@ describe('crash recovery', () => {
     const storage = new MemoryStorage();
 
     const engine = new Engine({ storage });
-    engine.register('stepping', async function* (ctx: WorkflowContext) {
-      const c = ctx;
-      yield* c.run(async () => 'a');
-      yield* c.run(async () => 'b');
-      yield* c.run(async () => 'c');
-      return 'done';
-    });
+    engine.register(
+      workflow({ name: 'stepping' }).execute(async function* (ctx) {
+        const c = ctx;
+        yield* c.run(async () => 'a');
+        yield* c.run(async () => 'b');
+        yield* c.run(async () => 'c');
+        return 'done';
+      }),
+    );
 
     const handle = await engine.start('stepping', null, { id: 'wf-step' });
     await handle.result();
@@ -729,13 +758,15 @@ describe('crash recovery', () => {
     const storage = new MemoryStorage();
 
     const engine = new Engine({ storage });
-    engine.register('accumulating', async function* (ctx: WorkflowContext) {
-      const c = ctx;
-      yield* c.run(async () => 'first');
-      // Wait for signal to block the workflow mid-execution
-      yield* c.waitForSignal('go');
-      return 'done';
-    });
+    engine.register(
+      workflow({ name: 'accumulating' }).execute(async function* (ctx) {
+        const c = ctx;
+        yield* c.run(async () => 'first');
+        // Wait for signal to block the workflow mid-execution
+        yield* c.waitForSignal('go');
+        return 'done';
+      }),
+    );
 
     await engine.start('accumulating', null, { id: 'wf-accum' });
     await flush();
@@ -766,19 +797,19 @@ describe('crash recovery', () => {
 
     // Workflow that blocks on a signal so we can inspect the event log mid-run.
     function makeWorkflow() {
-      return async function* (ctx: WorkflowContext) {
+      return workflow({ name: 'event-log-resume' }).execute(async function* (ctx) {
         const c = ctx;
         // Run one activity so a checkpoint is written before we crash.
         yield* c.run(async () => 'step-one');
         // Block here to simulate the engine crashing while still running.
         yield* c.waitForSignal<string>('resume-signal');
         return 'done';
-      };
+      });
     }
 
     // --- Engine 1: start the workflow, let step-one checkpoint flush, then crash ---
     const engine1 = new Engine({ storage });
-    engine1.register('event-log-resume', makeWorkflow());
+    engine1.register(makeWorkflow());
     await engine1.start('event-log-resume', null, { id: 'wf-el-resume' });
     await flush();
     engine1[Symbol.dispose]();
@@ -793,7 +824,7 @@ describe('crash recovery', () => {
 
     // --- Engine 2: resume the same workflow ---
     const engine2 = new Engine({ storage });
-    engine2.register('event-log-resume', makeWorkflow());
+    engine2.register(makeWorkflow());
     const handles = await engine2.recoverAll();
     expect(handles).toHaveLength(1);
     await flush();
@@ -823,16 +854,16 @@ describe('crash recovery', () => {
     using storage = new BunSQLiteStorage(':memory:');
 
     function makeWorkflow() {
-      return async function* (ctx: WorkflowContext) {
+      return workflow({ name: 'sqlite-resume' }).execute(async function* (ctx) {
         const c = ctx;
         yield* c.waitForSignal('go');
         return 'sqlite-recovered';
-      };
+      });
     }
 
     // Start and crash
     const engine1 = new Engine({ storage });
-    engine1.register('sqlite-resume', makeWorkflow());
+    engine1.register(makeWorkflow());
     await engine1.start('sqlite-resume', null, { id: 'wf-sqlite' });
     await flush();
 
@@ -840,7 +871,7 @@ describe('crash recovery', () => {
     // We can't dispose engine1 because it would try to close storage
     // Instead, create engine2 with the same storage directly
     const engine2 = new Engine({ storage });
-    engine2.register('sqlite-resume', makeWorkflow());
+    engine2.register(makeWorkflow());
 
     const handles = await engine2.recoverAll();
     expect(handles).toHaveLength(1);

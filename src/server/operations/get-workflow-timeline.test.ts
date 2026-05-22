@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { decode } from '../../core/codec.ts';
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
+import { workflow } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
@@ -13,14 +14,18 @@ import {
 } from './get-workflow-timeline.ts';
 import { waitForWorkflowStatus } from './operation-test-helpers.test-support.ts';
 
+const twoStepsWorkflow = workflow({ name: 'two-steps' }).execute(async function* (
+  ctx: WorkflowContext,
+) {
+  yield* ctx.run(noop);
+  return yield* ctx.run(noop);
+});
+
 const noop = async () => null;
 
 function createEngine(): Engine {
   const engine = new Engine({ storage: new MemoryStorage(), checkpointHistory: 10 });
-  engine.register('two-steps', async function* (ctx: WorkflowContext) {
-    yield* ctx.run(noop);
-    return yield* ctx.run(noop);
-  });
+  engine.register(twoStepsWorkflow);
   return engine;
 }
 

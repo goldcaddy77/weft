@@ -89,6 +89,31 @@ export interface EngineInternals {
   composedActivityInterceptor: ComposedActivityInterceptor | null | undefined;
   updateCoordinator: UpdateCoordinator;
   activityRegistry: ActivityRegistry;
+  /**
+   * Per-workflow activity registries built from
+   * `workflow({ name }).activities({ ... }).execute(...)`. Indexed by workflow
+   * type. Phase 3 wires lookups via `activityRegistriesByWorkflow.get(type)`
+   * first, falling back to {@link EngineInternals.activityRegistry} so the
+   * legacy global path keeps working until Phase 6 removes it. Each registry
+   * is constructed from a defensive deep clone+freeze of the workflow's
+   * `activities` map so post-registration mutation cannot reach the engine.
+   */
+  activityRegistriesByWorkflow: Map<string, ActivityRegistry>;
+  /**
+   * Per-workflow definition references — the actual `WorkflowDefinition`
+   * object passed to `engine.register(workflow)`. Used for collision detection
+   * (same-reference re-register is idempotent; same-name-different-object
+   * throws) and as the canonical record of `BuiltWorkflowDefinition`s for
+   * worker-protocol qualified-name dispatch in Phase 4.
+   */
+  workflowDefinitionsByName: Map<string, object>;
+  /**
+   * In-memory cache of `workflowId -> workflowType` populated when a workflow
+   * starts executing (see lifecycle/start-exec.ts) and cleared on terminal
+   * cleanup. Lets the activity-dispatch hot path resolve the correct
+   * per-workflow registry synchronously without re-reading storage.
+   */
+  workflowTypeByWorkflowId: Map<string, string>;
   activityWorkerDispatcher: ActivityWorkerDispatcher | null;
   checkpoints: Map<string, Checkpoint>;
   broadcastChannel: BroadcastChannel | null;

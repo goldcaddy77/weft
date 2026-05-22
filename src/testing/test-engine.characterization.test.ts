@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from 'bun:test';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types/workflow-function.ts';
 import { TestEngine } from './test-engine.ts';
 
 // ---------------------------------------------------------------------------
@@ -17,7 +18,8 @@ import { TestEngine } from './test-engine.ts';
 /** Build an engine with a single registered workflow that returns its input. */
 function makeEngine(workflowFn: (ctx: WorkflowContext, input: unknown) => AsyncGenerator) {
   const engine = new TestEngine();
-  engine.register('wf', workflowFn);
+  const wf = workflow({ name: 'wf' }).execute(workflowFn);
+  engine.register(wf);
   return engine;
 }
 
@@ -82,9 +84,13 @@ describe('runN — runs=1 with passing workflow', () => {
     const engine = new TestEngine();
     const outputs: unknown[] = [];
 
-    engine.register('capture', async function* (_ctx: WorkflowContext, input: unknown) {
+    const capture = workflow({ name: 'capture' }).execute(async function* (
+      _ctx: WorkflowContext,
+      input: unknown,
+    ) {
       return input;
     });
+    engine.register(capture);
 
     // Verify single run captures the input by checking passRate and then
     // inspecting the workflow list (runN does not expose individual outputs).
@@ -113,10 +119,14 @@ describe('runN — chaos seed advances per run', () => {
 
     const handle = engine.mock(activityFn, async (_input: unknown) => 'mocked');
 
-    engine.register('wf', async function* (ctx: WorkflowContext, input: unknown) {
+    const wf1 = workflow({ name: 'wf' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
       const fn = engine.mocks.get(activityFn)?.implementation ?? activityFn;
       return yield* ctx.run(fn as (input: unknown) => unknown, input);
     });
+    engine.register(wf1);
 
     const RUNS = 10;
     const SEED = 100;
@@ -135,10 +145,14 @@ describe('runN — chaos seed advances per run', () => {
     // We can verify determinism by running the same config twice.
     const engine2 = new TestEngine();
     engine2.mock(activityFn, async (_input: unknown) => 'mocked');
-    engine2.register('wf', async function* (ctx: WorkflowContext, input: unknown) {
+    const wf2 = workflow({ name: 'wf' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
       const fn = engine2.mocks.get(activityFn)?.implementation ?? activityFn;
       return yield* ctx.run(fn as (input: unknown) => unknown, input);
     });
+    engine2.register(wf2);
 
     const result1 = await engine.runN('wf', null, {
       runs: RUNS,
@@ -185,10 +199,14 @@ describe('runN — chaos seed advances per run', () => {
       const eng = new TestEngine();
       const fn = async (_input: unknown): Promise<string> => 'result';
       eng.mock(fn, async (_input: unknown) => 'mocked');
-      eng.register('wf', async function* (ctx: WorkflowContext, input: unknown) {
+      const wf = workflow({ name: 'wf' }).execute(async function* (
+        ctx: WorkflowContext,
+        input: unknown,
+      ) {
         const mockFn = eng.mocks.get(fn)?.implementation ?? fn;
         return yield* ctx.run(mockFn as (input: unknown) => unknown, input);
       });
+      eng.register(wf);
       return eng;
     }
 
@@ -268,10 +286,14 @@ describe('runN — consistency', () => {
     const activityFn = async (_input: unknown): Promise<number> => 0;
     engine.mock(activityFn, async (_input: unknown) => callIndex++);
 
-    engine.register('wf', async function* (ctx: WorkflowContext, input: unknown) {
+    const wf = workflow({ name: 'wf' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
       const fn = engine.mocks.get(activityFn)?.implementation ?? activityFn;
       return yield* ctx.run(fn as (input: unknown) => unknown, input);
     });
+    engine.register(wf);
 
     const result = await engine.runN('wf', null, { runs: 5 });
 

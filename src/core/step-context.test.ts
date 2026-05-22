@@ -10,17 +10,21 @@ import {
   isGeneratorResult,
 } from './step-context';
 import type { StepWorkflowContext, WorkflowContext } from './types';
+import { workflow } from './types';
 
 describe('step-context', () => {
   it('runs a simple step workflow', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
 
-    engine.register('greeting', async (ctx: StepWorkflowContext, input: unknown) => {
-      const { name } = input as { name: string };
-      const greeting = await ctx.step('greet', () => `Hello, ${name}!`);
-      const notification = await ctx.step('notify', () => `Notified: ${greeting}`);
-      return { greeting, notification };
-    });
+    const greetingWorkflow = workflow({ name: 'greeting' }).execute(
+      compileStepWorkflow(async (ctx: StepWorkflowContext, input: unknown) => {
+        const { name } = input as { name: string };
+        const greeting = await ctx.step('greet', () => `Hello, ${name}!`);
+        const notification = await ctx.step('notify', () => `Notified: ${greeting}`);
+        return { greeting, notification };
+      }),
+    );
+    engine.register(greetingWorkflow);
 
     const handle = await engine.start('greeting', { name: 'World' });
     const result = await handle.result();
@@ -35,21 +39,24 @@ describe('step-context', () => {
     const engine = new Engine({ storage: new MemoryStorage() });
     const callOrder: string[] = [];
 
-    engine.register('sequential', async (ctx: StepWorkflowContext, _input: unknown) => {
-      await ctx.step('first', () => {
-        callOrder.push('first');
-        return 1;
-      });
-      await ctx.step('second', () => {
-        callOrder.push('second');
-        return 2;
-      });
-      await ctx.step('third', () => {
-        callOrder.push('third');
-        return 3;
-      });
-      return callOrder;
-    });
+    const sequentialWorkflow = workflow({ name: 'sequential' }).execute(
+      compileStepWorkflow(async (ctx: StepWorkflowContext, _input: unknown) => {
+        await ctx.step('first', () => {
+          callOrder.push('first');
+          return 1;
+        });
+        await ctx.step('second', () => {
+          callOrder.push('second');
+          return 2;
+        });
+        await ctx.step('third', () => {
+          callOrder.push('third');
+          return 3;
+        });
+        return callOrder;
+      }),
+    );
+    engine.register(sequentialWorkflow);
 
     const handle = await engine.start('sequential', {});
     await handle.result();
@@ -60,17 +67,20 @@ describe('step-context', () => {
   it('handles async step functions', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
 
-    engine.register('async-steps', async (ctx: StepWorkflowContext, _input: unknown) => {
-      const value = await ctx.step('fetch', async () => {
-        await sleepForTesting(1);
-        return 42;
-      });
-      const doubled = await ctx.step('double', async () => {
-        await sleepForTesting(1);
-        return value * 2;
-      });
-      return { value, doubled };
-    });
+    const asyncStepsWorkflow = workflow({ name: 'async-steps' }).execute(
+      compileStepWorkflow(async (ctx: StepWorkflowContext, _input: unknown) => {
+        const value = await ctx.step('fetch', async () => {
+          await sleepForTesting(1);
+          return 42;
+        });
+        const doubled = await ctx.step('double', async () => {
+          await sleepForTesting(1);
+          return value * 2;
+        });
+        return { value, doubled };
+      }),
+    );
+    engine.register(asyncStepsWorkflow);
 
     const handle = await engine.start('async-steps', {});
     const result = await handle.result();
@@ -81,12 +91,15 @@ describe('step-context', () => {
   it('propagates step errors to the workflow', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
 
-    engine.register('error-step', async (ctx: StepWorkflowContext, _input: unknown) => {
-      await ctx.step('will-fail', () => {
-        throw new Error('Step failed intentionally');
-      });
-      return 'should not reach here';
-    });
+    const errorStepWorkflow = workflow({ name: 'error-step' }).execute(
+      compileStepWorkflow(async (ctx: StepWorkflowContext, _input: unknown) => {
+        await ctx.step('will-fail', () => {
+          throw new Error('Step failed intentionally');
+        });
+        return 'should not reach here';
+      }),
+    );
+    engine.register(errorStepWorkflow);
 
     const handle = await engine.start('error-step', {});
     await expect(handle.result()).rejects.toThrow('Step failed intentionally');
@@ -96,11 +109,14 @@ describe('step-context', () => {
     const engine = new Engine({ storage: new MemoryStorage() });
 
     // Register a step-based workflow (plain async function)
-    engine.register('step-based', async (ctx: StepWorkflowContext, input: unknown) => {
-      const { value } = input as { value: number };
-      const result = await ctx.step('compute', () => value * 10);
-      return result;
-    });
+    const stepBasedWorkflow = workflow({ name: 'step-based' }).execute(
+      compileStepWorkflow(async (ctx: StepWorkflowContext, input: unknown) => {
+        const { value } = input as { value: number };
+        const result = await ctx.step('compute', () => value * 10);
+        return result;
+      }),
+    );
+    engine.register(stepBasedWorkflow);
 
     const handle = await engine.start('step-based', { value: 5 });
     const result = await handle.result();
@@ -112,19 +128,25 @@ describe('step-context', () => {
     const engine = new Engine({ storage: new MemoryStorage() });
 
     // Register a step-based workflow
-    engine.register('step-workflow', async (ctx: StepWorkflowContext, input: unknown) => {
-      const { name } = input as { name: string };
-      const greeting = await ctx.step('greet', () => `Hi, ${name}!`);
-      return greeting;
-    });
+    const stepWorkflowWorkflow = workflow({ name: 'step-workflow' }).execute(
+      compileStepWorkflow(async (ctx: StepWorkflowContext, input: unknown) => {
+        const { name } = input as { name: string };
+        const greeting = await ctx.step('greet', () => `Hi, ${name}!`);
+        return greeting;
+      }),
+    );
+    engine.register(stepWorkflowWorkflow);
 
     // Register a generator-based workflow
-    engine.register('generator-workflow', async function* (ctx: WorkflowContext, input: unknown) {
-      const context = ctx;
-      const { name } = input as { name: string };
-      const greeting = yield* context.run(async () => `Hello, ${name}!`);
-      return greeting;
-    });
+    const generatorWorkflowWorkflow = workflow({ name: 'generator-workflow' }).execute(
+      async function* (ctx: WorkflowContext, input: unknown) {
+        const context = ctx;
+        const { name } = input as { name: string };
+        const greeting = yield* context.run(async () => `Hello, ${name}!`);
+        return greeting;
+      },
+    );
+    engine.register(generatorWorkflowWorkflow);
 
     const stepHandle = await engine.start('step-workflow', { name: 'Alice' });
     const generatorHandle = await engine.start('generator-workflow', { name: 'Bob' });
@@ -150,7 +172,8 @@ describe('step-context', () => {
 
     // Use it through the engine to verify it works as a WorkflowFunction
     const engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('compiled', compiled);
+    const compiledWorkflow = workflow({ name: 'compiled' }).execute(compiled);
+    engine.register(compiledWorkflow);
 
     const handle = await engine.start('compiled', { x: 7 });
     const result = await handle.result();

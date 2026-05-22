@@ -3,17 +3,20 @@ import { sleepForTesting } from '../../testing/fake-timers.ts';
 
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
+import { workflow } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
 import { signalWorkflowOperation, signalWorkflowRestBinding } from './signal-workflow.ts';
 
+const holdWorkflow = workflow({ name: 'hold' }).execute(async function* (ctx: WorkflowContext) {
+  return yield* ctx.waitForSignal('release');
+});
+
 function createEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
-  engine.register('hold', async function* (ctx: WorkflowContext) {
-    return yield* ctx.waitForSignal('release');
-  });
+  engine.register(holdWorkflow);
   return engine;
 }
 

@@ -7,6 +7,7 @@ import { TestEngine } from '../../testing/test-engine.ts';
 import { decode, encode } from '../codec.ts';
 import { Engine } from '../engine.ts';
 import type { WorkflowContext } from '../types.ts';
+import { workflow } from '../types.ts';
 import { ReviewCompletedEvent, ReviewRequestedEvent } from './events.ts';
 import {
   ReviewCoordinator,
@@ -305,7 +306,9 @@ describe('G1: ctx.review() pauses workflow with durable storage', () => {
   it('pauses the workflow when review is called', async () => {
     engine = new TestEngine();
 
-    engine.register('review-workflow', async function* (ctx: WorkflowContext) {
+    const reviewWorkflowWorkflow = workflow({ name: 'review-workflow' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const decision = yield* c.review({
         artifact: 'draft report',
@@ -313,6 +316,7 @@ describe('G1: ctx.review() pauses workflow with durable storage', () => {
       });
       return { decision };
     });
+    engine.register(reviewWorkflowWorkflow);
 
     const handle = await engine.start('review-workflow', null);
     await flush();
@@ -325,7 +329,9 @@ describe('G1: ctx.review() pauses workflow with durable storage', () => {
   it('stores review request in storage with review:{wfId}:{reviewId} key', async () => {
     engine = new TestEngine();
 
-    engine.register('review-workflow', async function* (ctx: WorkflowContext) {
+    const reviewWorkflowWorkflow2 = workflow({ name: 'review-workflow' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const decision = yield* c.review({
         artifact: 'draft report',
@@ -333,6 +339,7 @@ describe('G1: ctx.review() pauses workflow with durable storage', () => {
       });
       return { decision };
     });
+    engine.register(reviewWorkflowWorkflow2);
 
     const handle = await engine.start('review-workflow', null);
     await flush();
@@ -354,7 +361,9 @@ describe('G1: ctx.review() pauses workflow with durable storage', () => {
   it('survives engine crash and recovery with review still pending', async () => {
     engine = new TestEngine();
 
-    engine.register('review-workflow', async function* (ctx: WorkflowContext) {
+    const reviewWorkflowWorkflow3 = workflow({ name: 'review-workflow' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const decision = yield* c.review({
         artifact: 'draft report',
@@ -362,13 +371,16 @@ describe('G1: ctx.review() pauses workflow with durable storage', () => {
       });
       return { decision };
     });
+    engine.register(reviewWorkflowWorkflow3);
 
     const handle = await engine.start('review-workflow', null);
     await flush();
 
     // Crash and recover
     const recovered = engine.recover();
-    recovered.register('review-workflow', async function* (ctx: WorkflowContext) {
+    const reviewWorkflowWorkflow4 = workflow({ name: 'review-workflow' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const decision = yield* c.review({
         artifact: 'draft report',
@@ -376,6 +388,7 @@ describe('G1: ctx.review() pauses workflow with durable storage', () => {
       });
       return { decision };
     });
+    recovered.register(reviewWorkflowWorkflow4);
 
     // Verify review request still exists in storage after recovery
     const reviews: ReviewRequest[] = [];
@@ -405,7 +418,9 @@ describe('G2: Review submission resumes workflow', () => {
   it('resumes workflow when review decision is submitted', async () => {
     engine = new TestEngine();
 
-    engine.register('review-workflow', async function* (ctx: WorkflowContext) {
+    const reviewWorkflowWorkflow5 = workflow({ name: 'review-workflow' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const decision = yield* c.review({
         artifact: 'draft report',
@@ -413,6 +428,7 @@ describe('G2: Review submission resumes workflow', () => {
       });
       return { approved: decision.decision === 'approved', reviewer: decision.reviewer };
     });
+    engine.register(reviewWorkflowWorkflow5);
 
     const handle = await engine.start('review-workflow', null);
     await flush();
@@ -442,20 +458,23 @@ describe('G2: Review submission resumes workflow', () => {
 
     const processAfterReview = mock(() => 'processed');
 
-    engine.register('multi-step-review', async function* (ctx: WorkflowContext) {
-      const c = ctx;
+    const multiStepReviewWorkflow = workflow({ name: 'multi-step-review' }).execute(
+      async function* (ctx: WorkflowContext) {
+        const c = ctx;
 
-      // Step 1: human review
-      const decision = yield* c.review({
-        artifact: 'draft',
-        reviewers: ['bob'],
-      });
+        // Step 1: human review
+        const decision = yield* c.review({
+          artifact: 'draft',
+          reviewers: ['bob'],
+        });
 
-      // Step 2: continue processing based on decision
-      const postProcessResult = yield* c.run(processAfterReview);
+        // Step 2: continue processing based on decision
+        const postProcessResult = yield* c.run(processAfterReview);
 
-      return { decision: decision.decision, postProcess: postProcessResult };
-    });
+        return { decision: decision.decision, postProcess: postProcessResult };
+      },
+    );
+    engine.register(multiStepReviewWorkflow);
 
     const handle = await engine.start('multi-step-review', null);
     await flush();
@@ -493,23 +512,26 @@ describe('G4: Escalation with timeout chains', () => {
   it('auto-approves after final escalation timeout', async () => {
     engine = new TestEngine({ startTime: 1000 });
 
-    engine.register('auto-approve-workflow', async function* (ctx: WorkflowContext) {
-      const c = ctx;
-      const decision = yield* c.review({
-        artifact: 'urgent report',
-        reviewers: ['alice'],
-        escalation: [
-          { after: 5000, to: 'manager-queue' },
-          { after: 10000, action: 'auto-approve', auditReason: 'timeout' },
-        ],
-      });
+    const autoApproveWorkflowWorkflow = workflow({ name: 'auto-approve-workflow' }).execute(
+      async function* (ctx: WorkflowContext) {
+        const c = ctx;
+        const decision = yield* c.review({
+          artifact: 'urgent report',
+          reviewers: ['alice'],
+          escalation: [
+            { after: 5000, to: 'manager-queue' },
+            { after: 10000, action: 'auto-approve', auditReason: 'timeout' },
+          ],
+        });
 
-      return {
-        decision: decision.decision,
-        reviewer: decision.reviewer,
-        feedback: decision.feedback,
-      };
-    });
+        return {
+          decision: decision.decision,
+          reviewer: decision.reviewer,
+          feedback: decision.feedback,
+        };
+      },
+    );
+    engine.register(autoApproveWorkflowWorkflow);
 
     const handle = await engine.start('auto-approve-workflow', null);
     await flush();
@@ -529,7 +551,9 @@ describe('G4: Escalation with timeout chains', () => {
   it('persists auto-approved reviews while the workflow keeps running', async () => {
     engine = new TestEngine({ startTime: 1000 });
 
-    engine.register('auto-approve-persisted-workflow', async function* (ctx: WorkflowContext) {
+    const autoApprovePersistedWorkflowWorkflow = workflow({
+      name: 'auto-approve-persisted-workflow',
+    }).execute(async function* (ctx: WorkflowContext) {
       const c = ctx;
       const decision = yield* c.review({
         artifact: 'urgent report',
@@ -540,6 +564,7 @@ describe('G4: Escalation with timeout chains', () => {
       yield* c.sleep(60_000);
       return decision;
     });
+    engine.register(autoApprovePersistedWorkflowWorkflow);
 
     const handle = await engine.start('auto-approve-persisted-workflow', null);
     await flush();
@@ -576,19 +601,22 @@ describe('G5: Partial approval', () => {
   it('receives structured per-section feedback', async () => {
     engine = new TestEngine();
 
-    engine.register('partial-review-workflow', async function* (ctx: WorkflowContext) {
-      const c = ctx;
-      const decision = yield* c.review({
-        artifact: { sections: ['intro', 'methods', 'conclusion'] },
-        reviewers: ['alice'],
-        allowPartial: true,
-      });
+    const partialReviewWorkflowWorkflow = workflow({ name: 'partial-review-workflow' }).execute(
+      async function* (ctx: WorkflowContext) {
+        const c = ctx;
+        const decision = yield* c.review({
+          artifact: { sections: ['intro', 'methods', 'conclusion'] },
+          reviewers: ['alice'],
+          allowPartial: true,
+        });
 
-      return {
-        decision: decision.decision,
-        sectionDecisions: decision.sectionDecisions,
-      };
-    });
+        return {
+          decision: decision.decision,
+          sectionDecisions: decision.sectionDecisions,
+        };
+      },
+    );
+    engine.register(partialReviewWorkflowWorkflow);
 
     const handle = await engine.start('partial-review-workflow', null);
     await flush();
@@ -655,7 +683,9 @@ describe('G6: Webhook notification', () => {
     });
     globalThis.fetch = mockFetch as any;
 
-    engine.register('webhook-workflow', async function* (ctx: WorkflowContext) {
+    const webhookWorkflowWorkflow = workflow({ name: 'webhook-workflow' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const decision = yield* c.review({
         artifact: 'draft report',
@@ -664,6 +694,7 @@ describe('G6: Webhook notification', () => {
       });
       return { decision: decision.decision };
     });
+    engine.register(webhookWorkflowWorkflow);
 
     const handle = await engine.start('webhook-workflow', null);
     await flush();
@@ -700,15 +731,18 @@ describe('G6: Webhook notification', () => {
     });
     globalThis.fetch = mockFetch as unknown as typeof fetch;
 
-    engine.register('webhook-abort-workflow', async function* (ctx: WorkflowContext) {
-      const context = ctx;
-      yield* context.review({
-        artifact: 'draft report',
-        reviewers: ['alice'],
-        webhookUrl: 'https://example.com/hook',
-      });
-      return 'done';
-    });
+    const webhookAbortWorkflowWorkflow = workflow({ name: 'webhook-abort-workflow' }).execute(
+      async function* (ctx: WorkflowContext) {
+        const context = ctx;
+        yield* context.review({
+          artifact: 'draft report',
+          reviewers: ['alice'],
+          webhookUrl: 'https://example.com/hook',
+        });
+        return 'done';
+      },
+    );
+    engine.register(webhookAbortWorkflowWorkflow);
 
     await engine.start('webhook-abort-workflow', null);
     await flush();
@@ -737,7 +771,9 @@ describe('G7: Events', () => {
       requestedEvents.push(event);
     }) as EventListener);
 
-    engine.register('event-workflow', async function* (ctx: WorkflowContext) {
+    const eventWorkflowWorkflow = workflow({ name: 'event-workflow' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const decision = yield* c.review({
         artifact: 'draft',
@@ -746,6 +782,7 @@ describe('G7: Events', () => {
       });
       return decision;
     });
+    engine.register(eventWorkflowWorkflow);
 
     const handle = await engine.start('event-workflow', null);
     await flush();
@@ -777,7 +814,9 @@ describe('G7: Events', () => {
       completedEvents.push(event);
     }) as EventListener);
 
-    engine.register('event-workflow', async function* (ctx: WorkflowContext) {
+    const eventWorkflowWorkflow2 = workflow({ name: 'event-workflow' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const decision = yield* c.review({
         artifact: 'draft',
@@ -785,6 +824,7 @@ describe('G7: Events', () => {
       });
       return decision;
     });
+    engine.register(eventWorkflowWorkflow2);
 
     const handle = await engine.start('event-workflow', null);
     await flush();
@@ -825,7 +865,9 @@ describe('G8: Review cleanup + timeout error', () => {
   it('cleans up review entries when workflow completes', async () => {
     engine = new TestEngine();
 
-    engine.register('cleanup-workflow', async function* (ctx: WorkflowContext) {
+    const cleanupWorkflowWorkflow = workflow({ name: 'cleanup-workflow' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const decision = yield* c.review({
         artifact: 'draft',
@@ -833,6 +875,7 @@ describe('G8: Review cleanup + timeout error', () => {
       });
       return decision;
     });
+    engine.register(cleanupWorkflowWorkflow);
 
     const handle = await engine.start('cleanup-workflow', null);
     await flush();
@@ -877,7 +920,9 @@ describe('G8: Review cleanup + timeout error', () => {
   it('throws ReviewTimeoutError when no reviewer responds within timeout', async () => {
     engine = new TestEngine({ startTime: 1000 });
 
-    engine.register('timeout-workflow', async function* (ctx: WorkflowContext) {
+    const timeoutWorkflowWorkflow = workflow({ name: 'timeout-workflow' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const decision = yield* c.review({
         artifact: 'urgent report',
@@ -886,6 +931,7 @@ describe('G8: Review cleanup + timeout error', () => {
       });
       return decision;
     });
+    engine.register(timeoutWorkflowWorkflow);
 
     const handle = await engine.start('timeout-workflow', null);
     // Attach an error handler so the result rejection doesn't leak
@@ -920,9 +966,13 @@ describe('G9: engine.getReview()', () => {
   it('returns review details by workflowId and reviewId', async () => {
     const storage = new MemoryStorage();
     engine = new Engine({ storage });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+    const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+      _ctx: WorkflowContext,
+      input: unknown,
+    ) {
       return input;
     });
+    engine.register(echoWorkflow);
 
     const review: ReviewRequest = {
       reviewId: 'rev-3',
@@ -946,9 +996,13 @@ describe('G9: engine.getReview()', () => {
   it('returns null for non-existent review', async () => {
     const storage = new MemoryStorage();
     engine = new Engine({ storage });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+    const echoWorkflow2 = workflow({ name: 'echo' }).execute(async function* (
+      _ctx: WorkflowContext,
+      input: unknown,
+    ) {
       return input;
     });
+    engine.register(echoWorkflow2);
 
     const result = await engine.getReview('wf-3', 'nonexistent');
     expect(result).toBeNull();

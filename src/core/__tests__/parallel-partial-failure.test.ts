@@ -18,6 +18,7 @@ import { Engine } from '../engine.ts';
 import {
   CURRENT_CHECKPOINT_SCHEMA_VERSION,
   CheckpointSchemaVersionError,
+  workflow,
   type Checkpoint,
   type WorkflowContext,
 } from '../types.ts';
@@ -44,10 +45,13 @@ describe('ctx.all partial-failure preservation', () => {
       throw new Error('always fails');
     };
 
-    engine.register('partial-fail', async function* (ctx: WorkflowContext) {
+    const partialFailWorkflow2 = workflow({ name: 'partial-fail' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       yield* c.all([c.run(ok), c.run(fail)]);
     });
+    engine.register(partialFailWorkflow2);
 
     const handle = await engine.start('partial-fail', null);
     let captured: Error | undefined;
@@ -111,7 +115,8 @@ describe('ctx.all partial-failure preservation', () => {
     };
 
     const engine1 = new TestEngine();
-    engine1.register('partial-fail', partialFailWorkflow);
+    const partialFailWorkflow3 = workflow({ name: 'partial-fail' }).execute(partialFailWorkflow);
+    engine1.register(partialFailWorkflow3);
 
     await engine1.start('partial-fail', null, { id: 'wf-headline' });
     await flush();
@@ -124,7 +129,8 @@ describe('ctx.all partial-failure preservation', () => {
     // Simulate process restart: a fresh engine sees the persisted
     // checkpoint and resumes.
     const engine2 = engine1.recover();
-    engine2.register('partial-fail', partialFailWorkflow);
+    const partialFailWorkflow4 = workflow({ name: 'partial-fail' }).execute(partialFailWorkflow);
+    engine2.register(partialFailWorkflow4);
 
     const handles = await engine2.recoverAll();
     expect(handles).toHaveLength(1);
@@ -163,10 +169,13 @@ describe('ctx.all partial-failure preservation', () => {
       throw new Error('boom-2');
     };
 
-    engine.register('multi-fail', async function* (ctx: WorkflowContext) {
+    const multiFailWorkflow = workflow({ name: 'multi-fail' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       yield* c.all([c.run(failFirst), c.run(failSecond)]);
     });
+    engine.register(multiFailWorkflow);
 
     const handle = await engine.start('multi-fail', null);
 
@@ -191,10 +200,13 @@ describe('ctx.all partial-failure preservation', () => {
       throw new Error('always fails');
     };
 
-    engine.register('rejected-not-reused', async function* (ctx: WorkflowContext) {
-      const c = ctx;
-      yield* c.all([c.run(fail)]);
-    });
+    const rejectedNotReusedWorkflow = workflow({ name: 'rejected-not-reused' }).execute(
+      async function* (ctx: WorkflowContext) {
+        const c = ctx;
+        yield* c.all([c.run(fail)]);
+      },
+    );
+    engine.register(rejectedNotReusedWorkflow);
 
     const handle = await engine.start('rejected-not-reused', null);
     let captured: Error | undefined;
@@ -222,7 +234,9 @@ describe('ctx.all partial-failure preservation', () => {
     };
 
     let capturedInWorkflow: unknown;
-    engine.register('non-error-throw', async function* (ctx: WorkflowContext) {
+    const nonErrorThrowWorkflow = workflow({ name: 'non-error-throw' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       try {
         yield* c.all([c.run(throwsString)]);
@@ -230,6 +244,7 @@ describe('ctx.all partial-failure preservation', () => {
         capturedInWorkflow = error;
       }
     });
+    engine.register(nonErrorThrowWorkflow);
 
     const handle = await engine.start('non-error-throw', null);
     await handle.result();
@@ -262,15 +277,18 @@ describe('ctx.all partial-failure preservation', () => {
     };
     const followup = async () => 'followup';
 
-    engine.register('partial-fail-catch', async function* (ctx: WorkflowContext) {
-      const c = ctx;
-      try {
-        yield* c.all([c.run(ok), c.run(fail)]);
-      } catch {
-        // Yield again so the next checkpoint persists the partial entry.
-        yield* c.run(followup);
-      }
-    });
+    const partialFailCatchWorkflow = workflow({ name: 'partial-fail-catch' }).execute(
+      async function* (ctx: WorkflowContext) {
+        const c = ctx;
+        try {
+          yield* c.all([c.run(ok), c.run(fail)]);
+        } catch {
+          // Yield again so the next checkpoint persists the partial entry.
+          yield* c.run(followup);
+        }
+      },
+    );
+    engine.register(partialFailCatchWorkflow);
 
     const handle = await engine.start('partial-fail-catch', null, { id: 'wf-partial' });
     await handle.result();
@@ -312,12 +330,15 @@ describe('ctx.all partial-failure preservation', () => {
       return 'b';
     };
 
-    engine.register('happy', async function* (ctx: WorkflowContext) {
+    const happyWorkflow = workflow({ name: 'happy' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const first = yield* c.all([c.run(a), c.run(b)]);
       const second = yield* c.all([c.run(a), c.run(b)]);
       return [first, second];
     });
+    engine.register(happyWorkflow);
 
     const handle = await engine.start('happy', null);
     const result = (await handle.result()) as unknown[];
@@ -349,10 +370,13 @@ describe('ctx.runAll partial-failure preservation', () => {
       throw new Error('boom');
     };
 
-    engine.register('runAll-partial', async function* (ctx: WorkflowContext) {
+    const runAllPartialWorkflow = workflow({ name: 'runAll-partial' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       yield* c.runAll({ first: [ok], second: [fail] });
     });
+    engine.register(runAllPartialWorkflow);
 
     const handle = await engine.start('runAll-partial', null);
     let captured: Error | undefined;
@@ -449,12 +473,15 @@ describe('ctx.race asymmetry: loser results are not preserved', () => {
       return 'loser';
     };
 
-    engine.register('race-cache', async function* (ctx: WorkflowContext) {
+    const raceCacheWorkflow = workflow({ name: 'race-cache' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const a = yield* c.race([c.run(fast), c.run(slow)]);
       const b = yield* c.race([c.run(fast), c.run(slow)]);
       return [a, b];
     });
+    engine.register(raceCacheWorkflow);
 
     const handle = await engine.start('race-cache', null);
     const result = (await handle.result()) as unknown[];

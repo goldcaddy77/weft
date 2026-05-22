@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types/workflow-function.ts';
 import type { WeftServer } from '../server/index.ts';
 import { serve } from '../server/index.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -65,10 +66,13 @@ function createEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
 
-  engine.register('stream-target', async function* (ctx: WorkflowContext) {
+  const streamTarget = workflow({ name: 'stream-target' }).execute(async function* (
+    ctx: WorkflowContext,
+  ) {
     yield* ctx.sleep('1h');
     return 'done';
   });
+  engine.register(streamTarget);
 
   return engine;
 }

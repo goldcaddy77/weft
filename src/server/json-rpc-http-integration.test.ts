@@ -15,9 +15,20 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { decode, encode } from '../core/codec.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext, WorkflowState } from '../core/types.ts';
+import { workflow } from '../core/types.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { serve, type WeftServer } from './index.ts';
+
+const holdWorkflow = workflow({ name: 'hold' }).execute(async function* (
+  ctx: WorkflowContext,
+  _input: unknown,
+) {
+  return yield* ctx.waitForSignal<string>('release');
+});
+const crashWorkflow = workflow({ name: 'crash' }).execute(async function* () {
+  throw new Error('workflow failure');
+});
 
 const createdEngines: Engine[] = [];
 
@@ -25,18 +36,14 @@ function createHoldEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
   createdEngines.push(engine);
-  engine.register('hold', async function* (ctx: WorkflowContext, _input: unknown) {
-    return yield* ctx.waitForSignal<string>('release');
-  });
+  engine.register(holdWorkflow);
   return engine;
 }
 
 function createCrashEngine(storage = new MemoryStorage()): Engine {
   const engine = new Engine({ storage });
   createdEngines.push(engine);
-  engine.register('crash', async function* () {
-    throw new Error('workflow failure');
-  });
+  engine.register(crashWorkflow);
   return engine;
 }
 

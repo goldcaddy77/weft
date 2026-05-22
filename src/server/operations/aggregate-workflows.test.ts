@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { AggregateDistinctKeyCapExceededError } from '../../core/aggregate-validation.ts';
 import { Engine } from '../../core/engine.ts';
+import { workflow } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
@@ -16,12 +17,13 @@ const bindings = [aggregateWorkflowsRestBinding];
 describe('weft.workflows.aggregate', () => {
   it('maps unknown aggregate attributes to Unprocessable instead of EngineFailure', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('typed', {
-      handler: async function* () {
-        return 'ok';
-      },
-      searchAttributes: { knownAttribute: { type: 'string' } },
-    });
+    engine.register(
+      workflow({ name: 'typed' })
+        .searchAttributes({ knownAttribute: { type: 'string' } })
+        .execute(async function* () {
+          return 'ok';
+        }),
+    );
 
     const response = await handleRequest(
       new Request('http://localhost/v1/workflows/aggregate?group_by=attribute:unknownAttribute', {

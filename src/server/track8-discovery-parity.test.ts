@@ -2,9 +2,14 @@ import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { serve, type WeftServer } from './index.ts';
 import { createLiveOperationRegistry, createLiveRestBindings } from './rest-bindings.ts';
+
+const holdWorkflow = workflow({ name: 'hold' }).execute(async function* (ctx: WorkflowContext) {
+  return yield* ctx.waitForSignal('release');
+});
 
 type OpenApiDocument = {
   paths?: Record<string, Record<string, { operationId?: string }>>;
@@ -27,9 +32,7 @@ type OpenRpcDocument = {
 
 function createHoldEngine(): Engine {
   const engine = new Engine({ storage: new MemoryStorage() });
-  engine.register('hold', async function* (ctx: WorkflowContext) {
-    return yield* ctx.waitForSignal('release');
-  });
+  engine.register(holdWorkflow);
   return engine;
 }
 

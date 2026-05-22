@@ -1,14 +1,10 @@
-import { workflow, type WorkflowContext } from 'weft';
+import { workflow } from 'weft';
 
 import { shipOrder } from '../activities/shipping';
-import type { ShipmentInput, ShipmentResult } from '../model';
+import type { ShipmentInput } from '../model';
 
-export const shipmentWorkflow = workflow({
-  name: 'orderProcessingShipment',
-  handler: async function* orderProcessingShipment(
-    context: WorkflowContext,
-    input: ShipmentInput,
-  ): AsyncGenerator<unknown, ShipmentResult, unknown> {
+export const shipmentWorkflow = workflow({ name: 'orderProcessingShipment' })
+  .activities({ orderProcessingShipOrder: shipOrder })
+  .execute(async function* orderProcessingShipment(context, input: ShipmentInput) {
     return yield* context.run(shipOrder, input);
-  },
-});
+  });

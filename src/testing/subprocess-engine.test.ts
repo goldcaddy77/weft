@@ -58,7 +58,7 @@ const databasePath = readOption('--database', ':memory:');
 
 function durableEntrypointSource(): string {
   return `
-import { Engine, activity } from ${JSON.stringify(indexModuleUrl)};
+import { Engine, activity, workflow } from ${JSON.stringify(indexModuleUrl)};
 import { serve } from ${JSON.stringify(serverModuleUrl)};
 import { BunSQLiteStorage } from ${JSON.stringify(sqliteModuleUrl)};
 
@@ -102,19 +102,22 @@ const storage = new BunSQLiteStorage(databasePath);
 const engine = new Engine({ storage });
 engine.register(countedActivity);
 engine.register(blockingActivity);
-engine.register('activity-then-signal', async function* (ctx) {
+const activityThenSignal = workflow({ name: 'activity-then-signal' }).execute(async function* (ctx) {
   const activityCount = yield* ctx.run('countedActivity');
   const signalPayload = yield* ctx.waitForSignal('finish');
   return { activityCount, signalPayload };
 });
-engine.register('blocking-activity', async function* (ctx) {
+const blockingActivityWorkflow = workflow({ name: 'blocking-activity' }).execute(async function* (ctx) {
   const attempt = yield* ctx.run('blockingActivity');
   return { attempt };
 });
-engine.register('signal-only', async function* (ctx) {
+const signalOnly = workflow({ name: 'signal-only' }).execute(async function* (ctx) {
   const signalPayload = yield* ctx.waitForSignal('finish');
   return { signalPayload };
 });
+engine.register(activityThenSignal);
+engine.register(blockingActivityWorkflow);
+engine.register(signalOnly);
 await engine.recoverAll();
 const server = serve({ engine, port, hostname: '127.0.0.1' });
 console.log('WEFT_SUBPROCESS_READY ' + server.url);

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../core/engine.ts';
 import type { SearchAttributeSchema, WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types/workflow-function.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 
 /**
@@ -58,14 +59,13 @@ describe('Search attribute index scan', () => {
     // Park via durable `ctx.sleep` rather than `Bun.sleep` so workflows
     // checkpoint at the yield boundary instead of holding tens of thousands
     // of live in-process timers.
-    engine.register('stay-running', {
-      handler: async function* (ctx: WorkflowContext) {
+    const stayRunning = workflow({ name: 'stay-running' })
+      .searchAttributes(attributeSchema)
+      .execute(async function* (ctx: WorkflowContext) {
         yield* ctx.sleep(999_999);
         return 'done';
-      },
-      version: '1',
-      searchAttributes: attributeSchema,
-    });
+      });
+    engine.register(stayRunning);
 
     // Seed workflows. Each customer id is reused ~10 times so the target row is
     // not the only match, which is representative of real usage.

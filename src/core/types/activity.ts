@@ -1,4 +1,5 @@
 import type { DefinitionSchema, InferSchemaOutput } from './definition-schema.ts';
+import { validateWorkflowOrActivityName } from './name-grammar.ts';
 import type { Duration, RetryPolicy } from './retry-retention.ts';
 
 // ---------------------------------------------------------------------------
@@ -285,6 +286,8 @@ export function activity<TInput, TOutput, TName extends string = string>(
   if (!options.name) {
     throw new Error('activity() requires a named function or an options object with name.');
   }
+
+  validateWorkflowOrActivityName(options.name, 'activity');
 
   // Schema metadata is validated at registration time by the activity registry
   // (`src/core/activity-registry.ts`), not here. Holding off on construction-time

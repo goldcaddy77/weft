@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types/workflow-function.ts';
 import { sleepForTesting } from '../testing/fake-timers.ts';
 import type { WeftClient } from './interface.ts';
 
@@ -16,11 +17,15 @@ type ClientContractTestOptions = {
   waitForRunning?: (workflowId: string) => Promise<void>;
 };
 
-export async function* clientContractEchoWorkflow(_ctx: WorkflowContext, input: unknown) {
-  return input;
-}
+export const clientContractEchoWorkflow = workflow({ name: 'client-contract-echo' }).execute(
+  async function* (_ctx: WorkflowContext, input: unknown) {
+    return input;
+  },
+);
 
-export async function* clientContractWaitingWorkflow(ctx: WorkflowContext, input: unknown) {
+export const clientContractWaitingWorkflow = workflow({
+  name: 'client-contract-waiting',
+}).execute(async function* (ctx: WorkflowContext, input: unknown) {
   ctx.expose({ ready: () => true });
   ctx.onQuery('echoInput', (queryInput) => queryInput);
   ctx.onUpdate('rename', (payload) => ({
@@ -31,7 +36,7 @@ export async function* clientContractWaitingWorkflow(ctx: WorkflowContext, input
 
   const signal = yield* ctx.waitForSignal<string>('continue');
   return `${String(input)}:${signal}`;
-}
+});
 
 async function waitForQueryReady(client: WeftClient, workflowId: string): Promise<void> {
   for (let attempt = 0; attempt < 5; attempt++) {

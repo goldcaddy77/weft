@@ -12,7 +12,7 @@ import type { ConstraintCheckState } from '../constraint.ts';
 import { constraint } from '../constraint.ts';
 import { Engine } from '../engine.ts';
 import { ConstraintViolatedEvent } from '../events.ts';
-import type { ActivityDefinition, WorkflowContext } from '../types.ts';
+import { workflow, type ActivityDefinition, type WorkflowContext } from '../types.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -84,16 +84,17 @@ describe('constraint primitive', () => {
       },
     });
 
-    engine.register('constrained-saga', {
-      handler: async function* (ctx: WorkflowContext) {
-        const c = ctx;
-        yield* c.saga([
-          { definition: stepOne, input: 'a' },
-          { definition: stepTwo, input: 'b' },
-        ]);
-      },
+    const constrainedSagaWorkflow = workflow({
+      name: 'constrained-saga',
       constraints: [balanceCheck],
+    }).execute(async function* (ctx: WorkflowContext) {
+      const c = ctx;
+      yield* c.saga([
+        { definition: stepOne, input: 'a' },
+        { definition: stepTwo, input: 'b' },
+      ]);
     });
+    engine.register(constrainedSagaWorkflow);
 
     const handle = await engine.start('constrained-saga', null);
     await expect(handle.result()).rejects.toThrow('Constraint violated: positiveBalance');
@@ -152,16 +153,16 @@ describe('constraint primitive', () => {
       },
     });
 
-    engine.register('fail-fast', {
-      handler: async function* (ctx: WorkflowContext) {
+    const failFastWorkflow = workflow({ name: 'fail-fast', constraints: [hardLimit] }).execute(
+      async function* (ctx: WorkflowContext) {
         const c = ctx;
         yield* c.saga([
           { definition: step, input: 'x' },
           { definition: step, input: 'y' },
         ]);
       },
-      constraints: [hardLimit],
-    });
+    );
+    engine.register(failFastWorkflow);
 
     const handle = await engine.start('fail-fast', null);
     await expect(handle.result()).rejects.toThrow('Constraint violated: hardLimit');
@@ -214,16 +215,16 @@ describe('constraint primitive', () => {
         },
       });
 
-      engine.register('wf', {
-        handler: async function* (ctx: WorkflowContext) {
-          const cx = ctx;
-          yield* cx.saga([
-            { definition: step, input: 'x' },
-            { definition: step, input: 'y' },
-          ]);
-        },
-        constraints: [c],
+      const wfWorkflow = workflow({ name: 'wf', constraints: [c] }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
+        const cx = ctx;
+        yield* cx.saga([
+          { definition: step, input: 'x' },
+          { definition: step, input: 'y' },
+        ]);
       });
+      engine.register(wfWorkflow);
 
       const handle = await engine.start('wf', null);
       await handle.result().catch(() => {});
@@ -270,16 +271,16 @@ describe('constraint primitive', () => {
       execute: (input: number) => input + 1,
     });
 
-    engine.register('warn-only', {
-      handler: async function* (ctx: WorkflowContext) {
+    const warnOnlyWorkflow = workflow({ name: 'warn-only', constraints: [softLimit] }).execute(
+      async function* (ctx: WorkflowContext) {
         const c = ctx;
         return yield* c.saga([
           { definition: step, input: 1 },
           { definition: step, input: 2 },
         ]);
       },
-      constraints: [softLimit],
-    });
+    );
+    engine.register(warnOnlyWorkflow);
 
     const handle = await engine.start('warn-only', null);
     const result = await handle.result();
@@ -321,17 +322,18 @@ describe('constraint primitive', () => {
       execute: (input: number) => input,
     });
 
-    engine.register('count-checkpoints', {
-      handler: async function* (ctx: WorkflowContext) {
-        const c = ctx;
-        yield* c.saga([
-          { definition: step, input: 1 },
-          { definition: step, input: 2 },
-          { definition: step, input: 3 },
-        ]);
-      },
+    const countCheckpointsWorkflow = workflow({
+      name: 'count-checkpoints',
       constraints: [counter],
+    }).execute(async function* (ctx: WorkflowContext) {
+      const c = ctx;
+      yield* c.saga([
+        { definition: step, input: 1 },
+        { definition: step, input: 2 },
+        { definition: step, input: 3 },
+      ]);
     });
+    engine.register(countCheckpointsWorkflow);
 
     const handle = await engine.start('count-checkpoints', null);
     await handle.result();
@@ -392,16 +394,17 @@ describe('constraint primitive', () => {
       execute: (_input: string) => 'done',
     });
 
-    engine.register('event-type-check', {
-      handler: async function* (ctx: WorkflowContext) {
-        const c = ctx;
-        yield* c.saga([
-          { definition: step, input: 'a' },
-          { definition: step, input: 'b' },
-        ]);
-      },
+    const eventTypeCheckWorkflow = workflow({
+      name: 'event-type-check',
       constraints: [alwaysFail],
+    }).execute(async function* (ctx: WorkflowContext) {
+      const c = ctx;
+      yield* c.saga([
+        { definition: step, input: 'a' },
+        { definition: step, input: 'b' },
+      ]);
     });
+    engine.register(eventTypeCheckWorkflow);
 
     const handle = await engine.start('event-type-check', null);
     await handle.result();
@@ -436,12 +439,13 @@ describe('constraint primitive', () => {
     });
 
     expect(() => {
-      engine.register('worker-mode-constrained', {
-        handler: async function* (_ctx: WorkflowContext) {
-          return 'done';
-        },
+      const workerModeConstrainedWorkflow = workflow({
+        name: 'worker-mode-constrained',
         constraints: [alwaysOk],
+      }).execute(async function* (_ctx: WorkflowContext) {
+        return 'done';
       });
+      engine.register(workerModeConstrainedWorkflow);
     }).toThrow(/constraints are not supported in worker execution mode/);
 
     engine[Symbol.dispose]();
@@ -458,12 +462,13 @@ describe('constraint primitive', () => {
     });
 
     expect(() => {
-      engine.register('inline-mode-constrained', {
-        handler: async function* (_ctx: WorkflowContext) {
-          return 'done';
-        },
+      const inlineModeConstrainedWorkflow = workflow({
+        name: 'inline-mode-constrained',
         constraints: [alwaysOk],
+      }).execute(async function* (_ctx: WorkflowContext) {
+        return 'done';
       });
+      engine.register(inlineModeConstrainedWorkflow);
     }).not.toThrow();
 
     engine[Symbol.dispose]();

@@ -3,7 +3,7 @@ import { waitForever } from '../testing/fake-timers.ts';
 
 import { flush, storageBackends, teardown } from '../testing/storage-backends.ts';
 import { Engine } from './engine.ts';
-import type { WorkflowContext } from './types.ts';
+import { workflow } from './types/workflow-function.ts';
 
 // ---------------------------------------------------------------------------
 // A1: Timer leak in synchronous update Promise.race
@@ -28,7 +28,7 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('counter', async function* (ctx: WorkflowContext) {
+      const counter = workflow({ name: 'counter' }).execute(async function* (ctx) {
         let count = 0;
         ctx.onUpdate('increment', () => {
           count += 1;
@@ -38,6 +38,7 @@ for (const backend of storageBackends) {
         await waitForever();
         return count;
       });
+      engine.register(counter);
 
       const handle = await engine.start('counter', undefined);
       handle.result().catch(() => {});

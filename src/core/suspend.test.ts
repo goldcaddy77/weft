@@ -3,6 +3,7 @@ import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { Engine } from './engine.ts';
 import type { WorkflowContext } from './types.ts';
+import { workflow } from './types/workflow-function.ts';
 
 // ---------------------------------------------------------------------------
 // ctx.suspendUntil() resumes via signal delivery
@@ -13,10 +14,13 @@ describe('ctx.suspendUntil', () => {
     const engine = new Engine();
     const token = 'resume-token-abc';
 
-    engine.register('await-webhook', async function* (ctx: WorkflowContext) {
+    const awaitWebhook = workflow({ name: 'await-webhook' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const payload = yield* ctx.suspendUntil<{ status: string }>(token);
       return payload.status;
     });
+    engine.register(awaitWebhook);
 
     const handle = await engine.start('await-webhook', null);
 
@@ -37,12 +41,15 @@ describe('ctx.suspendUntil', () => {
   it('multiple suspensions in the same workflow use distinct tokens', async () => {
     const engine = new Engine();
 
-    engine.register('multi-suspend', async function* (ctx: WorkflowContext) {
+    const multiSuspend = workflow({ name: 'multi-suspend' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const context = ctx;
       const first = yield* context.suspendUntil<{ value: number }>('token-one');
       const second = yield* context.suspendUntil<{ value: number }>('token-two');
       return first.value + second.value;
     });
+    engine.register(multiSuspend);
 
     const handle = await engine.start('multi-suspend', null);
     const resultPromise = handle.result();

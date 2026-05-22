@@ -7,6 +7,7 @@ import { decode } from './codec.ts';
 import { WorkflowTimedOutEvent } from './events.ts';
 import { WorkflowTimeoutError } from './timeouts.ts';
 import type { WorkflowContext, WorkflowState } from './types.ts';
+import { workflow } from './types.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -34,10 +35,11 @@ describe('Execution Timeouts', () => {
   it('sets workflow status to "timed-out" when deadline expires', async () => {
     const engine = new TestEngine();
 
-    engine.register('slow', async function* (ctx: WorkflowContext) {
+    const slowWorkflow = workflow({ name: 'slow' }).execute(async function* (ctx: WorkflowContext) {
       yield* ctx.run(slowActivity);
       return 'never';
     });
+    engine.register(slowWorkflow);
 
     const handle = await engine.start('slow', undefined, {
       executionTimeout: '1 second',
@@ -65,10 +67,13 @@ describe('Execution Timeouts', () => {
       events.push(event);
     }) as EventListener);
 
-    engine.register('slow', async function* (ctx: WorkflowContext) {
+    const slowWorkflow2 = workflow({ name: 'slow' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       yield* ctx.run(slowActivity);
       return 'never';
     });
+    engine.register(slowWorkflow2);
 
     const handle = await engine.start('slow', undefined, {
       executionTimeout: '5 seconds',
@@ -89,10 +94,13 @@ describe('Execution Timeouts', () => {
   it('rejects result promise with WorkflowTimeoutError', async () => {
     const engine = new TestEngine();
 
-    engine.register('slow', async function* (ctx: WorkflowContext) {
+    const slowWorkflow3 = workflow({ name: 'slow' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       yield* ctx.run(slowActivity);
       return 'never';
     });
+    engine.register(slowWorkflow3);
 
     const handle = await engine.start('slow', undefined, {
       executionTimeout: '1 second',
@@ -122,10 +130,13 @@ describe('Execution Timeouts', () => {
       cancelledCount++;
     });
 
-    engine.register('slow', async function* (ctx: WorkflowContext) {
+    const slowWorkflow4 = workflow({ name: 'slow' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       yield* ctx.run(slowActivity);
       return 'never';
     });
+    engine.register(slowWorkflow4);
 
     const handle = await engine.start('slow', undefined, {
       executionTimeout: '1 second',
@@ -149,11 +160,14 @@ describe('Execution Timeouts', () => {
       return capturedRemaining;
     };
 
-    engine.register('check-time', async function* (ctx: WorkflowContext) {
+    const checkTimeWorkflow = workflow({ name: 'check-time' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const remaining = ctx.executionTimeRemaining;
       yield* ctx.run(captureRemaining, remaining);
       return remaining;
     });
+    engine.register(checkTimeWorkflow);
 
     await engine.start('check-time', undefined, {
       executionTimeout: '10 seconds',
@@ -178,11 +192,14 @@ describe('Execution Timeouts', () => {
       return capturedRemaining;
     };
 
-    engine.register('no-timeout', async function* (ctx: WorkflowContext) {
+    const noTimeoutWorkflow = workflow({ name: 'no-timeout' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const remaining = ctx.executionTimeRemaining;
       yield* ctx.run(captureRemaining, remaining);
       return remaining;
     });
+    engine.register(noTimeoutWorkflow);
 
     await engine.start('no-timeout', undefined);
     await flush();
@@ -202,10 +219,11 @@ describe('Execution Timeouts', () => {
 
     const fastActivity = async () => 'fast';
 
-    engine.register('fast', async function* (ctx: WorkflowContext) {
+    const fastWorkflow = workflow({ name: 'fast' }).execute(async function* (ctx: WorkflowContext) {
       const result = yield* ctx.run(fastActivity);
       return result;
     });
+    engine.register(fastWorkflow);
 
     const handle = await engine.start('fast', undefined, {
       executionTimeout: '10 seconds',
@@ -235,10 +253,13 @@ describe('Execution Timeouts', () => {
       timedOutCount++;
     });
 
-    engine.register('cancellable', async function* (ctx: WorkflowContext) {
+    const cancellableWorkflow = workflow({ name: 'cancellable' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       yield* ctx.run(slowActivity);
       return 'never';
     });
+    engine.register(cancellableWorkflow);
 
     const handle = await engine.start('cancellable', undefined, {
       executionTimeout: '10 seconds',
@@ -271,11 +292,14 @@ describe('Execution Timeouts', () => {
       throw new Error('boom');
     };
 
-    engine.register('failing', async function* (ctx: WorkflowContext) {
+    const failingWorkflow = workflow({ name: 'failing' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       // Yield through an activity so the deadline timer is committed to storage
       yield* ctx.run(failingActivity);
       return 'never';
     });
+    engine.register(failingWorkflow);
 
     const handle = await engine.start('failing', undefined, {
       executionTimeout: '10 seconds',
@@ -309,10 +333,13 @@ describe('Execution Timeouts', () => {
 
     const fastActivity = async () => 'fast';
 
-    engine.register('completes-first', async function* (ctx: WorkflowContext) {
+    const completesFirstWorkflow = workflow({ name: 'completes-first' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const result = yield* ctx.run(fastActivity);
       return result;
     });
+    engine.register(completesFirstWorkflow);
 
     const handle = await engine.start('completes-first', undefined, {
       executionTimeout: '5 seconds',
@@ -340,10 +367,13 @@ describe('Execution Timeouts', () => {
     const engine = new TestEngine();
     const handleEvents: WorkflowTimedOutEvent[] = [];
 
-    engine.register('slow', async function* (ctx: WorkflowContext) {
+    const slowWorkflow5 = workflow({ name: 'slow' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       yield* ctx.run(slowActivity);
       return 'never';
     });
+    engine.register(slowWorkflow5);
 
     const handle = await engine.start('slow', undefined, {
       executionTimeout: '1 second',

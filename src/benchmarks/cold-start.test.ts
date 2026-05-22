@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types/workflow-function.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 import { isConstrainedCodexRunner } from './benchmark-environment.ts';
 
@@ -39,9 +40,10 @@ describe('Library cold start', () => {
       const storage = new BunSQLiteStorage(':memory:');
       const engine = new Engine({ storage });
 
-      engine.register('ping', async function* (_ctx: WorkflowContext) {
+      const ping = workflow({ name: 'ping' }).execute(async function* (_ctx: WorkflowContext) {
         return 'pong';
       });
+      engine.register(ping);
 
       const handle = await engine.start('ping', null);
       await handle.result();

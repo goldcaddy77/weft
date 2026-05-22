@@ -14,6 +14,7 @@ import { decode, encode } from './codec.ts';
 import { BulkDeleteRequiresTerminalWorkflowsError, Engine } from './engine.ts';
 import { cancelAll } from './engine/bulk-operations.ts';
 import type { SearchAttributeValue, WorkflowContext, WorkflowState } from './types.ts';
+import { workflow } from './types.ts';
 
 async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
   return input;
@@ -381,7 +382,10 @@ describe('bulk workflow operations', () => {
   it('acceptance criterion: engine.cancelAll(filter) cancels matching workflows and reports per-workflow failures', async () => {
     const storage = new BulkCancelFailureStorage();
     const engine = new Engine({ storage });
-    engine.register('wait-for-signal', waitForSignalWorkflow);
+    const waitForSignalWorkflow2 = workflow({ name: 'wait-for-signal' }).execute(
+      waitForSignalWorkflow,
+    );
+    engine.register(waitForSignalWorkflow2);
 
     try {
       await engine.start('wait-for-signal', 'one', {
@@ -429,7 +433,10 @@ describe('bulk workflow operations', () => {
 
   it('acceptance criterion: engine.signalAll(filter, name, payload) signals all matching workflows', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('wait-for-signal', waitForSignalWorkflow);
+    const waitForSignalWorkflow3 = workflow({ name: 'wait-for-signal' }).execute(
+      waitForSignalWorkflow,
+    );
+    engine.register(waitForSignalWorkflow3);
 
     try {
       const firstHandle = await engine.start('wait-for-signal', 'first', {
@@ -468,7 +475,10 @@ describe('bulk workflow operations', () => {
 
   it('keeps three-argument signalAll object payloads as payloads even when they contain control-shaped keys', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('wait-for-unknown-signal', waitForUnknownSignalWorkflow);
+    const waitForUnknownSignalWorkflow2 = workflow({ name: 'wait-for-unknown-signal' }).execute(
+      waitForUnknownSignalWorkflow,
+    );
+    engine.register(waitForUnknownSignalWorkflow2);
 
     try {
       const payload = {
@@ -498,7 +508,10 @@ describe('bulk workflow operations', () => {
   it('tracks failed signals when one matching workflow cannot be signalled', async () => {
     const storage = new BulkSignalFailureStorage();
     const engine = new Engine({ storage });
-    engine.register('wait-for-signal', waitForSignalWorkflow);
+    const waitForSignalWorkflow4 = workflow({ name: 'wait-for-signal' }).execute(
+      waitForSignalWorkflow,
+    );
+    engine.register(waitForSignalWorkflow4);
 
     try {
       const firstHandle = await engine.start('wait-for-signal', 'first', {
@@ -548,7 +561,8 @@ describe('bulk workflow operations', () => {
       storage: new MemoryStorage(),
       getNow: () => now,
     });
-    engine.register('echo', echoWorkflow);
+    const echoWorkflow2 = workflow({ name: 'echo' }).execute(echoWorkflow);
+    engine.register(echoWorkflow2);
 
     try {
       for (const workflowId of ['bulk-window-01', 'bulk-window-02', 'bulk-window-03']) {
@@ -578,8 +592,12 @@ describe('bulk workflow operations', () => {
 
   it('applies limit and offset after narrowing to actionable statuses for cancellation', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('echo', echoWorkflow);
-    engine.register('wait-for-signal', waitForSignalWorkflow);
+    const echoWorkflow3 = workflow({ name: 'echo' }).execute(echoWorkflow);
+    engine.register(echoWorkflow3);
+    const waitForSignalWorkflow5 = workflow({ name: 'wait-for-signal' }).execute(
+      waitForSignalWorkflow,
+    );
+    engine.register(waitForSignalWorkflow5);
 
     try {
       await createCompletedWorkflow(engine, 'bulk-pagination-01-completed', ['bulk-pagination']);
@@ -607,9 +625,14 @@ describe('bulk workflow operations', () => {
 
   it('acceptance criterion: engine.deleteAll(filter) deletes matching terminal workflows and rejects when running workflows would match', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('echo', echoWorkflow);
-    engine.register('wait-for-signal', waitForSignalWorkflow);
-    engine.register('failing', failingWorkflow);
+    const echoWorkflow4 = workflow({ name: 'echo' }).execute(echoWorkflow);
+    engine.register(echoWorkflow4);
+    const waitForSignalWorkflow6 = workflow({ name: 'wait-for-signal' }).execute(
+      waitForSignalWorkflow,
+    );
+    engine.register(waitForSignalWorkflow6);
+    const failingWorkflow2 = workflow({ name: 'failing' }).execute(failingWorkflow);
+    engine.register(failingWorkflow2);
 
     try {
       await createCompletedWorkflow(engine, 'bulk-delete-completed', ['bulk-delete']);
@@ -654,7 +677,8 @@ describe('bulk workflow operations', () => {
   it('prepares bulk delete dry runs from the terminal scan without reloading workflow states', async () => {
     const storage = new WorkflowStateGetFailureStorage();
     const engine = new Engine({ storage });
-    engine.register('echo', echoWorkflow);
+    const echoWorkflow5 = workflow({ name: 'echo' }).execute(echoWorkflow);
+    engine.register(echoWorkflow5);
 
     try {
       await createCompletedWorkflow(engine, 'bulk-delete-single-scan');
@@ -678,7 +702,8 @@ describe('bulk workflow operations', () => {
 
   it('rejects invalid limit and offset values for destructive bulk operations instead of widening the filter', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('echo', echoWorkflow);
+    const echoWorkflow6 = workflow({ name: 'echo' }).execute(echoWorkflow);
+    engine.register(echoWorkflow6);
 
     try {
       await createCompletedWorkflow(engine, 'bulk-invalid-pagination', ['bulk-invalid-pagination']);
@@ -727,7 +752,8 @@ describe('bulk workflow operations', () => {
   it('acceptance criterion: engine.tagAll(filter, tags) and engine.untagAll(filter, tags) bulk-modify workflow tags durably', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
-    engine.register('echo', echoWorkflow);
+    const echoWorkflow7 = workflow({ name: 'echo' }).execute(echoWorkflow);
+    engine.register(echoWorkflow7);
 
     try {
       await createCompletedWorkflow(engine, 'bulk-tags-first', ['selected']);
@@ -750,7 +776,8 @@ describe('bulk workflow operations', () => {
     }
 
     const recoveredEngine = new Engine({ storage });
-    recoveredEngine.register('echo', echoWorkflow);
+    const echoWorkflow8 = workflow({ name: 'echo' }).execute(echoWorkflow);
+    recoveredEngine.register(echoWorkflow8);
 
     try {
       const recoveredFirstState = await recoveredEngine.get('bulk-tags-first');
@@ -766,7 +793,8 @@ describe('bulk workflow operations', () => {
 
   it('applies limit and offset to tag-indexed bulk tag mutations after filtering', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('echo', echoWorkflow);
+    const echoWorkflow9 = workflow({ name: 'echo' }).execute(echoWorkflow);
+    engine.register(echoWorkflow9);
 
     try {
       await createCompletedWorkflow(engine, 'bulk-tags-window-01', ['bulk-window']);
@@ -799,10 +827,10 @@ describe('bulk workflow operations', () => {
 
   it('applies limit and offset to attribute-indexed bulk tag mutations after filtering', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('attribute-window', {
-      handler: waitForSignalWorkflow,
-      searchAttributes: { customerId: { type: 'string' } },
-    });
+    const attributeWindowWorkflow = workflow({ name: 'attribute-window' })
+      .searchAttributes({ customerId: { type: 'string' } })
+      .execute(waitForSignalWorkflow);
+    engine.register(attributeWindowWorkflow);
 
     try {
       await engine.start('attribute-window', 'first', {
@@ -849,7 +877,8 @@ describe('bulk workflow operations', () => {
   it('snapshots workflow ids before bulk tag mutation rewrites workflow state entries mid-scan', async () => {
     const storage = new BulkWorkflowReorderingScanStorage();
     const engine = new Engine({ storage });
-    engine.register('echo', echoWorkflow);
+    const echoWorkflow10 = workflow({ name: 'echo' }).execute(echoWorkflow);
+    engine.register(echoWorkflow10);
 
     try {
       await createCompletedWorkflow(engine, 'bulk-tags-scan-first');
@@ -879,7 +908,8 @@ describe('bulk workflow operations', () => {
         storage,
         getNow: () => now,
       });
-      engine.register('echo', echoWorkflow);
+      const echoWorkflow11 = workflow({ name: 'echo' }).execute(echoWorkflow);
+      engine.register(echoWorkflow11);
 
       try {
         for (let index = 0; index < 1_001; index++) {
@@ -908,7 +938,10 @@ describe('bulk workflow operations', () => {
     async () => {
       const storage = new BulkWorkflowReorderingScanStorage();
       const engine = new Engine({ storage });
-      engine.register('wait-for-signal', waitForSignalWorkflow);
+      const waitForSignalWorkflow7 = workflow({ name: 'wait-for-signal' }).execute(
+        waitForSignalWorkflow,
+      );
+      engine.register(waitForSignalWorkflow7);
 
       try {
         const handles = [];
@@ -939,7 +972,8 @@ describe('bulk workflow operations', () => {
   it('skips workflows deleted after the bulk tag snapshot instead of aborting the whole operation', async () => {
     const storage = new BulkTagDeletionDuringMutationStorage();
     const engine = new Engine({ storage });
-    engine.register('echo', echoWorkflow);
+    const echoWorkflow12 = workflow({ name: 'echo' }).execute(echoWorkflow);
+    engine.register(echoWorkflow12);
 
     try {
       await createCompletedWorkflow(engine, 'bulk-tags-delete-first');
@@ -970,7 +1004,8 @@ describe('bulk workflow operations', () => {
         storage,
         getNow: () => now,
       });
-      engine.register('echo', echoWorkflow);
+      const echoWorkflow13 = workflow({ name: 'echo' }).execute(echoWorkflow);
+      engine.register(echoWorkflow13);
 
       try {
         for (let index = 0; index < 1_005; index++) {
@@ -996,7 +1031,10 @@ describe('bulk workflow operations', () => {
   it('previews bulk cancellation without mutating matching workflows', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
-    engine.register('wait-for-signal', waitForSignalWorkflow);
+    const waitForSignalWorkflow8 = workflow({ name: 'wait-for-signal' }).execute(
+      waitForSignalWorkflow,
+    );
+    engine.register(waitForSignalWorkflow8);
 
     try {
       await engine.start('wait-for-signal', 'first', {
@@ -1055,7 +1093,8 @@ describe('bulk workflow operations', () => {
   it('rejects stale bulk confirmation tokens when the matched workflow set changes', async () => {
     const now = 1_000;
     const engine = new Engine({ getNow: () => now });
-    engine.register('echo', echoWorkflow);
+    const echoWorkflow14 = workflow({ name: 'echo' }).execute(echoWorkflow);
+    engine.register(echoWorkflow14);
 
     try {
       await engine.start('echo', 'first', {
@@ -1090,7 +1129,10 @@ describe('bulk workflow operations', () => {
   it('accepts confirmation tokens after workflow progress keeps the same bulk scope', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
-    engine.register('wait-for-signal', waitForSignalWorkflow);
+    const waitForSignalWorkflow9 = workflow({ name: 'wait-for-signal' }).execute(
+      waitForSignalWorkflow,
+    );
+    engine.register(waitForSignalWorkflow9);
 
     try {
       const handle = await engine.start('wait-for-signal', 'first', {
@@ -1135,7 +1177,10 @@ describe('bulk workflow operations', () => {
 
   it('rejects signal confirmation tokens when the action payload changes', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('wait-for-signal', waitForSignalWorkflow);
+    const waitForSignalWorkflow10 = workflow({ name: 'wait-for-signal' }).execute(
+      waitForSignalWorkflow,
+    );
+    engine.register(waitForSignalWorkflow10);
 
     try {
       const handle = await engine.start('wait-for-signal', 'first', {
@@ -1168,7 +1213,8 @@ describe('bulk workflow operations', () => {
 
   it('rejects tag confirmation tokens when the action tags or operation change', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('echo', echoWorkflow);
+    const echoWorkflow15 = workflow({ name: 'echo' }).execute(echoWorkflow);
+    engine.register(echoWorkflow15);
 
     try {
       await createCompletedWorkflow(engine, 'bulk-stale-tag-action', ['selected']);
@@ -1196,7 +1242,10 @@ describe('bulk workflow operations', () => {
   it('persists durable audit records for committed bulk actions', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage, getNow: () => 42_000 });
-    engine.register('wait-for-signal', waitForSignalWorkflow);
+    const waitForSignalWorkflow11 = workflow({ name: 'wait-for-signal' }).execute(
+      waitForSignalWorkflow,
+    );
+    engine.register(waitForSignalWorkflow11);
 
     try {
       await engine.start('wait-for-signal', 'first', {

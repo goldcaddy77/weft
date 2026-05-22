@@ -19,11 +19,19 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { createEngineEventFeedBackend } from './engine-event-feed-backend.ts';
 import { createLiveOperationRegistry } from './rest-bindings.ts';
 import { runStdioSession } from './stdio-session.ts';
 import { createWorkflowEventFeed, type WorkflowEventFeed } from './workflow-event-feed.ts';
+
+const holdWorkflow = workflow({ name: 'hold' }).execute(async function* (
+  ctx: WorkflowContext,
+  _input: unknown,
+) {
+  return yield* ctx.waitForSignal<string>('release');
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -178,9 +186,7 @@ function createHoldEngine(): Engine {
   // gives us a stable "workflow is running" state for test assertions,
   // and signalling it from the test drives engine commits that the feed
   // can deliver to the stdio subscriber.
-  engine.register('hold', async function* (ctx: WorkflowContext, _input: unknown) {
-    return yield* ctx.waitForSignal<string>('release');
-  });
+  engine.register(holdWorkflow);
   return engine;
 }
 

@@ -6,16 +6,24 @@ import { MemoryStorage } from '../storage/memory.ts';
 import { Engine, ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING, type WorkflowHandle } from './engine.ts';
 import { WorkflowCompletedEvent } from './events.ts';
 import type { WorkflowContext } from './types.ts';
+import { workflow } from './types/workflow-function.ts';
 
 const workerUrl = new URL('../workers/test-browser-worker.ts', import.meta.url);
 
+const waitSignalThenCompleteWorkflow = workflow({ name: 'wait-signal-then-complete' }).execute(
+  async function* (_ctx: WorkflowContext) {
+    return undefined;
+  },
+);
+const simpleWorkflow = workflow({ name: 'simple' }).execute(async function* (
+  _ctx: WorkflowContext,
+) {
+  return undefined;
+});
+
 function registerWorkerExecutionTestWorkflows(engine: Engine): void {
-  engine.register('wait-signal-then-complete', async function* (_ctx: WorkflowContext) {
-    return undefined;
-  });
-  engine.register('simple', async function* (_ctx: WorkflowContext) {
-    return undefined;
-  });
+  engine.register(waitSignalThenCompleteWorkflow);
+  engine.register(simpleWorkflow);
 }
 
 async function countStoredSignals(

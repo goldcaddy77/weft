@@ -202,6 +202,9 @@ describe('Engine', () => {
       activities: { formatFactoryGreeting },
       workflows: { factoryWelcome },
       recover: true,
+      // Storage was populated by `new Engine({ storage })` above (before the
+      // schema-version sentinel was written), so opt into the migration path.
+      allowLegacyData: true,
     });
 
     expect(recoveredEngine.getActivityDefinition('formatFactoryGreeting')).toMatchObject({
@@ -231,7 +234,7 @@ describe('Engine', () => {
     };
     await storage.put(KEYS.workflow('factory-unknown-id'), encode(unknownState));
 
-    const engine = await Engine.create({ storage, recover: false });
+    const engine = await Engine.create({ storage, recover: false, allowLegacyData: true });
     expect(await engine.get('factory-unknown-id')).toMatchObject({
       id: 'factory-unknown-id',
       type: 'factory-unknown',

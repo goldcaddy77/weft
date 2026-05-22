@@ -28,6 +28,7 @@ import {
 import { expandGlobEntryPaths } from './cli/utilities.ts';
 import { encode } from './core/codec.ts';
 import type { WorkflowContext } from './core/types.ts';
+import { workflow } from './core/types/workflow-function.ts';
 import { KEYS } from './storage/interface.ts';
 
 const publicEntryPointUrl = new URL('./index.ts', import.meta.url).href;
@@ -1846,13 +1847,13 @@ describe('executeTimeline', () => {
         return { phase: 'second' as const };
       }
 
-      engine.register('cli-timeline', {
-        version: '7.0.0',
-        handler: async function* (ctx) {
+      const cliTimeline = workflow({ name: 'cli-timeline', version: '7.0.0' }).execute(
+        async function* (ctx) {
           yield* ctx.run(firstCliStep);
           return yield* ctx.run(secondCliStep);
         },
-      });
+      );
+      engine.register(cliTimeline);
 
       const handle = await engine.start('cli-timeline', null, { id: 'wf-cli-timeline' });
       await handle.result();
@@ -1908,12 +1909,13 @@ describe('executeTimeline', () => {
         throw new Error('cli timeline failure');
       }
 
-      engine.register('cli-timeline-failed', {
-        handler: async function* (ctx) {
+      const cliTimelineFailed = workflow({ name: 'cli-timeline-failed' }).execute(
+        async function* (ctx) {
           yield* ctx.run(prepareCliFailure);
           return yield* ctx.run(failCliTimeline);
         },
-      });
+      );
+      engine.register(cliTimelineFailed);
 
       const handle = await engine.start('cli-timeline-failed', null, {
         id: 'wf-cli-timeline-failed',
@@ -1956,9 +1958,10 @@ describe('executeTimeline', () => {
     const engine = new Engine({ storage });
 
     try {
-      engine.register('timeline-missing', async function* () {
+      const timelineMissing = workflow({ name: 'timeline-missing' }).execute(async function* () {
         return 'done';
       });
+      engine.register(timelineMissing);
 
       const handle = await engine.start('timeline-missing', null, { id: 'wf-cli-missing-replay' });
       await handle.result();
@@ -2031,9 +2034,13 @@ describe('executeSchedule', () => {
     let engine = new Engine({ storage });
 
     try {
-      engine.register('scheduledEcho', async function* (_ctx: WorkflowContext, input: unknown) {
+      const scheduledEcho = workflow({ name: 'scheduledEcho' }).execute(async function* (
+        _ctx: WorkflowContext,
+        input: unknown,
+      ) {
         return input;
       });
+      engine.register(scheduledEcho);
       await engine.schedule('scheduledEcho', { payload: 'existing' }, '0 * * * *', {
         id: 'existing-schedule',
       });

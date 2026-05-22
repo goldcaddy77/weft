@@ -4,6 +4,7 @@ import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { createEngineEventFeedBackend } from './engine-event-feed-backend.ts';
 import { faultToHttpResponse } from './fault-to-http.ts';
@@ -18,16 +19,21 @@ import { createLiveOperationRegistry } from './rest-bindings.ts';
 import { runStdioSession } from './stdio-session.ts';
 import { createWorkflowEventFeed, type EventEnvelope } from './workflow-event-feed.ts';
 
+const holdWorkflow = workflow({ name: 'hold' }).execute(async function* (
+  ctx: WorkflowContext,
+  _input: unknown,
+) {
+  const context = ctx;
+  const value = yield* context.waitForSignal<string>('release');
+  yield* context.run(async () => `echoed:${value}`);
+  yield* context.run(async () => 'done');
+  return value;
+});
+
 function createSignalWorkflowEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
-  engine.register('hold', async function* (ctx: WorkflowContext, _input: unknown) {
-    const context = ctx;
-    const value = yield* context.waitForSignal<string>('release');
-    yield* context.run(async () => `echoed:${value}`);
-    yield* context.run(async () => 'done');
-    return value;
-  });
+  engine.register(holdWorkflow);
   return engine;
 }
 

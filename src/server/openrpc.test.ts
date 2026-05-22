@@ -15,6 +15,7 @@ import { describe, expect, it, spyOn } from 'bun:test';
 import { z } from 'zod';
 
 import { Engine } from '../core/engine.ts';
+import { workflow } from '../core/types.ts';
 import type { StandardJSONSchemaV1 } from '../core/types/definition-schema.ts';
 import { listMcpTools } from '../mcp/tools.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -34,18 +35,24 @@ function byString(a: string, b: string): number {
 
 function createMcpEngine(): Engine {
   const engine = new Engine({ storage: new MemoryStorage() });
-  engine.register('checkout flow', {
-    inputSchema: z.object({ orderId: z.string() }),
-    handler: async function* () {
+  // Two workflow names that collapse to the same MCP tool name after
+  // normalization — the dedup test pins that downstream behavior.
+  engine.register(
+    workflow({
+      name: 'checkout_flow',
+      inputSchema: z.object({ orderId: z.string() }),
+    }).execute(async function* () {
       return { ok: true };
-    },
-  });
-  engine.register('checkout-flow', {
-    inputSchema: z.object({ refundId: z.string() }),
-    handler: async function* () {
+    }),
+  );
+  engine.register(
+    workflow({
+      name: 'checkout-flow',
+      inputSchema: z.object({ refundId: z.string() }),
+    }).execute(async function* () {
       return { ok: true };
-    },
-  });
+    }),
+  );
   return engine;
 }
 
@@ -446,7 +453,7 @@ describe('generateOpenRpcDocument — MCP metadata', () => {
       makeOp({
         name: 'weft.workflows.checkout.start',
         mcpExposable: true,
-        mcpTool: { workflowType: 'checkout flow' },
+        mcpTool: { workflowType: 'checkout-flow' },
         inputSchema: z.object({ orderId: z.string() }),
         outputSchema: z.object({ workflowId: z.string(), status: z.string() }),
         discoverable: true,
@@ -480,7 +487,7 @@ describe('generateOpenRpcDocument — MCP metadata', () => {
       (candidate) => candidate['name'] === 'weft.workflows.internal.start',
     );
     expect(checkout?.['x-weft-mcp']).toEqual({
-      workflowType: 'checkout flow',
+      workflowType: 'checkout-flow',
       toolName: 'checkout_flow',
       toolDiscovery: {
         method: 'tools/list',
@@ -496,7 +503,7 @@ describe('generateOpenRpcDocument — MCP metadata', () => {
       makeOp({
         name: 'weft.workflows.checkout.start',
         mcpExposable: true,
-        mcpTool: { workflowType: 'checkout flow' },
+        mcpTool: { workflowType: 'checkout_flow' },
         inputSchema: z.object({ orderId: z.string() }),
         outputSchema: z.object({ workflowId: z.string(), status: z.string() }),
         discoverable: true,

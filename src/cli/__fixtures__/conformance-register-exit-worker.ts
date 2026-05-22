@@ -4,7 +4,7 @@ export type ConformanceRegisterExitWorkerFixture = 'register-exit';
 
 const serverUrl = Bun.env['WEFT_WORKER_URL'];
 const queue = Bun.env['WEFT_WORKER_QUEUE'] ?? 'conformance';
-const protocolVersion = Number(Bun.env['WEFT_WORKER_PROTOCOL_VERSION'] ?? '1');
+const protocolVersion = Number(Bun.env['WEFT_WORKER_PROTOCOL_VERSION'] ?? '2');
 const activities = (Bun.env['WEFT_WORKER_ACTIVITIES'] ?? '')
   .split(',')
   .map((activity) => activity.trim())

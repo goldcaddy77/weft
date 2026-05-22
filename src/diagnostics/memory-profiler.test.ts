@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types/workflow-function.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import {
   advanceTimersByTime,
@@ -235,9 +236,13 @@ describe('engine memory stability under load', () => {
     });
 
     // A trivial workflow that completes in one step
-    engine.register('trivial', async function* (_context: WorkflowContext, input: unknown) {
+    const trivial = workflow({ name: 'trivial' }).execute(async function* (
+      _context: WorkflowContext,
+      input: unknown,
+    ) {
       return `done:${String(input)}`;
     });
+    engine.register(trivial);
 
     const profiler = new MemoryProfiler();
     profiler.start(100); // sample every 100ms
@@ -283,9 +288,13 @@ describe('engine memory stability under load', () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
 
-    engine.register('trivial', async function* (_context: WorkflowContext, input: unknown) {
+    const trivial = workflow({ name: 'trivial' }).execute(async function* (
+      _context: WorkflowContext,
+      input: unknown,
+    ) {
       return `done:${String(input)}`;
     });
+    engine.register(trivial);
 
     // Run a batch of workflows
     const handles = await Promise.all(
