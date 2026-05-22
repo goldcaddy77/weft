@@ -12,6 +12,7 @@
 
 import { afterEach, describe, expect, it } from 'bun:test';
 
+import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import {
   CURRENT_PERSISTED_DATA_SCHEMA_VERSION,
@@ -248,6 +249,39 @@ describe('persisted data schema gate', () => {
   it('Engine.create rejects storage stamped with an unparseable schema version', async () => {
     const storage = new MemoryStorage();
     await storage.put(PERSISTED_DATA_SCHEMA_VERSION_KEY, new TextEncoder().encode('not-a-number'));
+
+    let caught: unknown;
+    try {
+      await Engine.create({ storage });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(PersistedDataIncompatibleError);
+    expect((caught as PersistedDataIncompatibleError).foundVersion).toBeNull();
+  });
+
+  it('Engine.create rejects storage stamped with an unsafe integer schema version', async () => {
+    const storage = new MemoryStorage();
+    await storage.put(
+      PERSISTED_DATA_SCHEMA_VERSION_KEY,
+      new TextEncoder().encode(String(Number.MAX_SAFE_INTEGER + 1)),
+    );
+
+    let caught: unknown;
+    try {
+      await Engine.create({ storage });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(PersistedDataIncompatibleError);
+    expect((caught as PersistedDataIncompatibleError).foundVersion).toBeNull();
+  });
+
+  it('Engine.create rejects legacy user data when no schema version sentinel exists', async () => {
+    const storage = new MemoryStorage();
+    await storage.put(KEYS.workflow('legacy-workflow'), new Uint8Array());
 
     let caught: unknown;
     try {
