@@ -7,6 +7,7 @@ import { describe, expect, it } from 'bun:test';
 import { Engine } from '../../core/engine.ts';
 import { EventLog } from '../../core/event-log.ts';
 import type { WorkflowContext } from '../../core/types.ts';
+import { workflow } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
@@ -14,12 +15,17 @@ import type { OperationFault } from '../operation-fault.ts';
 import { getWorkflowEventsOperation, getWorkflowEventsRestBinding } from './get-workflow-events.ts';
 import { waitForWorkflowStatus } from './operation-test-helpers.test-support.ts';
 
+const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: unknown,
+) {
+  return input;
+});
+
 function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
-  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-    return input;
-  });
+  engine.register(echoWorkflow);
   return { engine, storage };
 }
 

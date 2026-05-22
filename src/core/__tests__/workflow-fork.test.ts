@@ -6,7 +6,7 @@ import { TestEngine } from '../../testing/test-engine.ts';
 import { deserializeCheckpoint } from '../checkpoint.ts';
 import { decode } from '../codec.ts';
 import { WorkflowCompletedEvent, WorkflowStartedEvent } from '../events.ts';
-import { activity, type WorkflowContext } from '../types.ts';
+import { activity, workflow, type WorkflowContext } from '../types.ts';
 
 async function waitForCheckpointStep(
   engine: TestEngine,
@@ -28,12 +28,17 @@ describe('workflow forking', () => {
   it('forks a running workflow and lets the two workflows diverge independently', async () => {
     const engine = new TestEngine();
 
-    engine.register('choose-branch', async function* (ctx: WorkflowContext, input: unknown) {
-      const durableContext = ctx;
-      const branch = yield* durableContext.waitForSignal('branch');
-      const typedInput = input as { label: string };
-      return `${typedInput.label}:${String(branch)}`;
-    });
+    engine.register(
+      workflow({ name: 'choose-branch' }).execute(async function* (
+        ctx: WorkflowContext,
+        input: unknown,
+      ) {
+        const durableContext = ctx;
+        const branch = yield* durableContext.waitForSignal('branch');
+        const typedInput = input as { label: string };
+        return `${typedInput.label}:${String(branch)}`;
+      }),
+    );
 
     const original = await engine.start('choose-branch', { label: 'base' }, { id: 'wf-original' });
     const forked = await engine.fork(original.id);
@@ -74,14 +79,16 @@ describe('workflow forking', () => {
       },
     });
 
-    engine.register('historical-fork', async function* (ctx: WorkflowContext) {
-      const durableContext = ctx;
-      const first = yield* durableContext.run(recordStage, 'first');
-      const second = yield* durableContext.run(recordStage, 'second');
-      yield* durableContext.waitForSignal('hold');
-      yield* durableContext.waitForSignal('continue');
-      return `${String(first)}:${String(second)}`;
-    });
+    engine.register(
+      workflow({ name: 'historical-fork' }).execute(async function* (ctx: WorkflowContext) {
+        const durableContext = ctx;
+        const first = yield* durableContext.run(recordStage, 'first');
+        const second = yield* durableContext.run(recordStage, 'second');
+        yield* durableContext.waitForSignal('hold');
+        yield* durableContext.waitForSignal('continue');
+        return `${String(first)}:${String(second)}`;
+      }),
+    );
 
     const original = await engine.start('historical-fork', null, { id: 'wf-historical' });
     await engine.signal(original.id, 'hold');
@@ -112,12 +119,14 @@ describe('workflow forking', () => {
   it('refreshes fork checkpoint timestamps so resumed sleeps use the fork time', async () => {
     const engine = new TestEngine({ startTime: 1_000 });
 
-    engine.register('fork-sleep-reference', async function* (ctx: WorkflowContext) {
-      const durableContext = ctx;
-      yield* durableContext.waitForSignal('continue');
-      yield* durableContext.sleep('1 hour');
-      return 'done';
-    });
+    engine.register(
+      workflow({ name: 'fork-sleep-reference' }).execute(async function* (ctx: WorkflowContext) {
+        const durableContext = ctx;
+        yield* durableContext.waitForSignal('continue');
+        yield* durableContext.sleep('1 hour');
+        return 'done';
+      }),
+    );
 
     const original = await engine.start('fork-sleep-reference', null, { id: 'wf-sleep-root' });
     const originalResult = original.result();
@@ -167,15 +176,20 @@ describe('workflow forking', () => {
       },
     });
 
-    engine.register('completed-fork', async function* (ctx: WorkflowContext, input: unknown) {
-      const durableContext = ctx;
-      const stage = yield* durableContext.run(recordStage, 'prepare');
-      const typedInput = String(input);
-      return yield* durableContext.memo('terminal-summary', () => {
-        terminalSummaries.push(typedInput);
-        return `${typedInput}:${String(stage)}`;
-      });
-    });
+    engine.register(
+      workflow({ name: 'completed-fork' }).execute(async function* (
+        ctx: WorkflowContext,
+        input: unknown,
+      ) {
+        const durableContext = ctx;
+        const stage = yield* durableContext.run(recordStage, 'prepare');
+        const typedInput = String(input);
+        return yield* durableContext.memo('terminal-summary', () => {
+          terminalSummaries.push(typedInput);
+          return `${typedInput}:${String(stage)}`;
+        });
+      }),
+    );
 
     const original = await engine.start('completed-fork', 'original', { id: 'wf-completed' });
     await expect(original.result()).resolves.toBe('original:prepare-done');
@@ -207,9 +221,11 @@ describe('workflow forking', () => {
       });
     });
 
-    engine.register('completed-ordering', async function* () {
-      return 'done';
-    });
+    engine.register(
+      workflow({ name: 'completed-ordering' }).execute(async function* () {
+        return 'done';
+      }),
+    );
 
     const original = await engine.start('completed-ordering', null, { id: 'wf-order-root' });
     await expect(original.result()).resolves.toBe('done');
@@ -228,9 +244,14 @@ describe('workflow forking', () => {
   it('records lineage chains across multiple forks', async () => {
     const engine = new TestEngine();
 
-    engine.register('lineage-fork', async function* (_ctx: WorkflowContext, input: unknown) {
-      return String(input);
-    });
+    engine.register(
+      workflow({ name: 'lineage-fork' }).execute(async function* (
+        _ctx: WorkflowContext,
+        input: unknown,
+      ) {
+        return String(input);
+      }),
+    );
 
     const original = await engine.start('lineage-fork', 'root', { id: 'wf-root' });
     await original.result();
@@ -271,10 +292,12 @@ describe('workflow forking', () => {
   it('keeps fork lineage queryable after cancellation', async () => {
     const engine = new TestEngine();
 
-    engine.register('cancelled-fork', async function* (ctx: WorkflowContext) {
-      yield* ctx.waitForSignal('continue');
-      return 'done';
-    });
+    engine.register(
+      workflow({ name: 'cancelled-fork' }).execute(async function* (ctx: WorkflowContext) {
+        yield* ctx.waitForSignal('continue');
+        return 'done';
+      }),
+    );
 
     const original = await engine.start('cancelled-fork', null, { id: 'wf-cancel-root' });
     const forked = await engine.fork(original.id);
@@ -314,15 +337,19 @@ describe('workflow forking', () => {
       },
     });
 
-    engine.register('child', async function* () {
-      return 'child-complete';
-    });
+    engine.register(
+      workflow({ name: 'child' }).execute(async function* () {
+        return 'child-complete';
+      }),
+    );
 
-    engine.register('parent-with-headers', async function* (ctx: WorkflowContext) {
-      const durableContext = ctx;
-      yield* durableContext.waitForSignal('continue');
-      return yield* durableContext.startChild<string>('child', null);
-    });
+    engine.register(
+      workflow({ name: 'parent-with-headers' }).execute(async function* (ctx: WorkflowContext) {
+        const durableContext = ctx;
+        yield* durableContext.waitForSignal('continue');
+        return yield* durableContext.startChild<string>('child', null);
+      }),
+    );
 
     const original = await engine.start('parent-with-headers', null, { id: 'wf-header-root' });
     const forked = await engine.fork(original.id);
@@ -354,16 +381,21 @@ describe('workflow forking', () => {
   it('preserves workflow function resolution for composition operators after a fork', async () => {
     const engine = new TestEngine();
 
-    const childWorkflow = async function* (_ctx: WorkflowContext, input: unknown) {
-      return Number(input) * 2;
-    };
-
-    engine.register('fork-child-function', childWorkflow);
-    engine.register('fork-parent-composition', async function* (ctx: WorkflowContext) {
-      const durableContext = ctx;
-      yield* durableContext.waitForSignal('continue');
-      return yield* durableContext.map([1, 2], childWorkflow);
-    });
+    engine.register(
+      workflow({ name: 'fork-child-function' }).execute(async function* (
+        _ctx: WorkflowContext,
+        input: unknown,
+      ) {
+        return Number(input) * 2;
+      }),
+    );
+    engine.register(
+      workflow({ name: 'fork-parent-composition' }).execute(async function* (ctx: WorkflowContext) {
+        const durableContext = ctx;
+        yield* durableContext.waitForSignal('continue');
+        return yield* durableContext.map([1, 2], 'fork-child-function');
+      }),
+    );
 
     const original = await engine.start('fork-parent-composition', null, {
       id: 'wf-fork-composition-root',

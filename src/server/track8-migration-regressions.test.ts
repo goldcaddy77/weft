@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { Engine } from '../core/engine.ts';
 import { tenantFromInputField } from '../core/tenant.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types.ts';
 import { METRICS } from '../observability/metrics.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { signJWT } from './authentication.ts';
@@ -22,13 +23,18 @@ import { executeOperation } from './operation-catalog.ts';
 import { principalFromJwtClaims } from './principal.ts';
 import { createLiveOperationRegistry } from './rest-bindings.ts';
 
+const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: unknown,
+) {
+  return input;
+});
+
 const TEST_SECRET = 'track-8-wave-1-test-secret-1234567890';
 
 function createScheduleEngine(): Engine {
   const engine = new Engine({ storage: new MemoryStorage() });
-  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-    return input;
-  });
+  engine.register(echoWorkflow);
   return engine;
 }
 
@@ -41,9 +47,7 @@ function createTenantAwareEngine(): Engine {
       maxWorkflowCreationRate: { count: 5, window: '1m' },
     },
   });
-  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-    return input;
-  });
+  engine.register(echoWorkflow);
   return engine;
 }
 
@@ -65,14 +69,15 @@ function createReplayEngine(): Engine {
     return { phase: 'third' as const };
   }
 
-  engine.register('three-steps', {
-    version: '1.0.0',
-    handler: async function* (ctx: WorkflowContext) {
+  engine.register(
+    workflow({ name: 'three-steps', version: '1.0.0' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       yield* ctx.run(firstStep);
       yield* ctx.run(secondStep);
       return yield* ctx.run(thirdStep);
-    },
-  });
+    }),
+  );
 
   return engine;
 }

@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { executeSchedule, executeTimeline, parseCliArguments } from './cli/index.ts';
 import { encode } from './core/codec.ts';
 import { Engine } from './core/engine.ts';
-import type { WorkflowContext } from './core/types.ts';
+import { workflow } from './core/types/workflow-function.ts';
 import { BunSQLiteStorage } from './storage/bun-sql.ts';
 import { KEYS } from './storage/interface.ts';
 
@@ -37,13 +37,12 @@ async function seedTimelineDatabase(databasePath: string): Promise<void> {
   }
 
   try {
-    engine.register('timeline-edge', {
-      version: '1.0.0',
-      handler: async function* (ctx: WorkflowContext) {
+    engine.register(
+      workflow({ name: 'timeline-edge', version: '1.0.0' }).execute(async function* (ctx) {
         yield* ctx.run(firstStep);
         return 'done';
-      },
-    });
+      }),
+    );
 
     const handle = await engine.start('timeline-edge', null, { id: 'wf-cli-edge' });
     await handle.result();

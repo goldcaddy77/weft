@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { restoreRealTimers, sleepForTesting, useFakeTimers } from './fake-timers.ts';
 
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types/workflow-function.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { TestEngine } from './test-engine.ts';
 
@@ -31,10 +32,11 @@ describe('TestEngine', () => {
   it('advanceTime fires sleeping workflows', async () => {
     const engine = new TestEngine({ startTime: 0 });
 
-    engine.register('sleeper', async function* (ctx: WorkflowContext) {
+    const sleeper = workflow({ name: 'sleeper' }).execute(async function* (ctx: WorkflowContext) {
       yield* ctx.sleep(5000);
       return 'awake';
     });
+    engine.register(sleeper);
 
     const handle = await engine.start('sleeper', null);
     await flush();
@@ -78,13 +80,17 @@ describe('TestEngine', () => {
     // The engine doesn't know about mocks natively yet -- we need to
     // integrate the mock into the workflow. For now, mock the activity
     // function directly and use it in the workflow.
-    engine.register('user-workflow', async function* (ctx: WorkflowContext, input: unknown) {
+    const userWorkflow = workflow({ name: 'user-workflow' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
       // Use the mock-aware version: check if mocked
       const mockedActivity = engine.mocks.get(fetchUser);
       const fn = mockedActivity ? mockedActivity.implementation : fetchUser;
       const user = yield* ctx.run(fn, input);
       return user;
     });
+    engine.register(userWorkflow);
 
     const handle = await engine.start('user-workflow', 'user-123');
     const result = await handle.result();
@@ -97,9 +103,10 @@ describe('TestEngine', () => {
   it('recover creates new engine with same storage', async () => {
     const engine = new TestEngine({ startTime: 1000 });
 
-    engine.register('persistent', async function* () {
+    const persistent = workflow({ name: 'persistent' }).execute(async function* () {
       return 'persisted-result';
     });
+    engine.register(persistent);
 
     const handle = await engine.start('persistent', null, { id: 'recover-test' });
     await handle.result();
@@ -124,10 +131,14 @@ describe('TestEngine', () => {
       return (input as number) * 100;
     };
 
-    engine.register('recoverable', async function* (ctx: WorkflowContext, input: unknown) {
+    const recoverable = workflow({ name: 'recoverable' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
       const result = yield* ctx.run(expensiveComputation, input);
       return result;
     });
+    engine.register(recoverable);
 
     const handle = await engine.start('recoverable', 5, { id: 'recovery-wf' });
     const result = await handle.result();

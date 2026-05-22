@@ -18,26 +18,56 @@ import {
   type ServerToWorkerMessage,
   type TaskMessage,
 } from './protocol.ts';
+import {
+  buildQualifiedActivityTable,
+  type RemoteWorkerActivityFunction,
+  type RemoteWorkerWorkflowDefinition,
+} from './workflow-activity-binding.ts';
 
 export { HeartbeatManager } from './heartbeat.ts';
 export { LongPollWorker } from './long-poll.ts';
 export type { LongPollWorkerOptions } from './long-poll.ts';
 export { WorkerRegistry } from './registry.ts';
 export type { InFlightTask, RoutingOptions, WorkerInfo } from './registry.ts';
+export type { RemoteActivityContext } from './remote-activity-context.ts';
+export {
+  buildQualifiedActivityTable,
+  type RemoteWorkerActivityFunction,
+  type RemoteWorkerActivityImplementation,
+  type RemoteWorkerWorkflowDefinition,
+} from './workflow-activity-binding.ts';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-/** Context passed to activity functions executed by a remote worker. */
-export interface RemoteActivityContext {
-  signal: AbortSignal;
-}
-
+/**
+ * Options accepted by `new RemoteWorker(...)`.
+ *
+ * Workers may advertise their activities in two equivalent ways:
+ *
+ *   1. **Preferred — `workflows`**: a map of `workflowType → { name, activities }`.
+ *      The SDK builds the qualified `${workflowType}.${activityName}` table that
+ *      protocol v2 expects and validates that each outer key matches the inner
+ *      `workflow.name`. This is the API the engine-side builder produces.
+ *   2. **Legacy — `activities`**: a flat map whose keys are already qualified
+ *      names. Useful for tests and ad-hoc workers that don't use the builder.
+ *
+ * Exactly one of `workflows` / `activities` must be provided.
+ */
 export interface RemoteWorkerOptions {
   serverUrl: string;
   workerId?: string;
-  activities: Record<string, (input: unknown, context?: RemoteActivityContext) => Promise<unknown>>;
+  /**
+   * Map of workflow type → workflow definition. The SDK produces qualified
+   * activity names from this map and validates name grammar + key/name match.
+   */
+  workflows?: Record<string, RemoteWorkerWorkflowDefinition>;
+  /**
+   * Flat map of qualified activity name → executor. When supplied without
+   * `workflows`, the worker advertises these names verbatim.
+   */
+  activities?: Record<string, RemoteWorkerActivityFunction>;
   concurrency?: number; // default: 10
   queue?: string; // default: 'default'
   disconnectTimeoutMs?: number; // default: 30_000
@@ -94,6 +124,13 @@ const DEFAULT_DISCONNECT_TIMEOUT_MS = 30_000;
  */
 export class RemoteWorker implements Disposable {
   #options: RemoteWorkerOptions;
+  /**
+   * Resolved at construction time so name-grammar / key-vs-name violations
+   * fail fast at the SDK entry instead of mid-dispatch. Keys are qualified
+   * activity names (`${workflowType}.${activityName}`) when `workflows` was
+   * supplied, or verbatim when only `activities` was supplied.
+   */
+  #activityTable: Record<string, RemoteWorkerActivityFunction>;
   #ws: WebSocket | null;
   #inFlight: number;
   #abortController: AbortController;
@@ -104,6 +141,7 @@ export class RemoteWorker implements Disposable {
   #pendingRegistration: PendingRegistration | null;
 
   constructor(options: RemoteWorkerOptions) {
+    this.#activityTable = resolveActivityTable(options);
     this.#options = {
       ...options,
       concurrency: options.concurrency ?? DEFAULT_CONCURRENCY,
@@ -141,7 +179,7 @@ export class RemoteWorker implements Disposable {
             type: 'register',
             protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
             workerId: this.#options.workerId,
-            activities: Object.keys(this.#options.activities),
+            activities: Object.keys(this.#activityTable),
             concurrency: this.#options.concurrency,
             queue: this.#options.queue,
             ...(this.#options.deploymentName !== undefined
@@ -351,7 +389,7 @@ export class RemoteWorker implements Disposable {
   }
 
   async #executeTask(task: TaskMessage): Promise<void> {
-    const activityFunction = this.#options.activities[task.activityName];
+    const activityFunction = this.#activityTable[task.activityName];
     if (activityFunction === undefined) {
       this.#sendMessage({
         type: 'taskResult',
@@ -416,4 +454,34 @@ function normalizeWorkerJsonValue(value: unknown): RemoteWorkerJsonValue {
   if (encoded === undefined) return null;
   const parsed: unknown = JSON.parse(encoded);
   return isRemoteWorkerJsonValue(parsed) ? parsed : null;
+}
+
+/**
+ * Resolve the activity table the worker will advertise and dispatch against.
+ *
+ * Centralises the precondition checks so name-grammar violations and
+ * key/name mismatches fail fast at construction time, before any WebSocket
+ * connection is opened. Exactly one of `workflows` / `activities` must be set.
+ */
+function resolveActivityTable(
+  options: RemoteWorkerOptions,
+): Record<string, RemoteWorkerActivityFunction> {
+  const hasWorkflows = options.workflows !== undefined;
+  const hasActivities = options.activities !== undefined;
+  if (hasWorkflows && hasActivities) {
+    throw new Error(
+      'RemoteWorker accepts either `workflows` or `activities`, not both — `workflows` is the canonical entry; remove `activities` when migrating.',
+    );
+  }
+  if (!hasWorkflows && !hasActivities) {
+    throw new Error(
+      'RemoteWorker requires either `workflows` (preferred) or `activities` (legacy) — both were omitted.',
+    );
+  }
+  if (options.workflows !== undefined) {
+    return buildQualifiedActivityTable(options.workflows);
+  }
+  // Legacy entry: callers pre-qualified the activity names themselves. We
+  // still trust the keys verbatim — Phase 5 sweeps these call sites.
+  return { ...options.activities };
 }

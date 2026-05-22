@@ -6,6 +6,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
+import { workflow } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
@@ -17,16 +18,20 @@ import {
   queryWorkflowWithInputRestBinding,
 } from './query-workflow.ts';
 
+const queryableWorkflow = workflow({ name: 'queryable' }).execute(async function* (
+  ctx: WorkflowContext,
+) {
+  const context = ctx;
+  context.expose({ counter: () => 42 });
+  context.onQuery('echoInput', (input) => input);
+  yield* context.waitForSignal('done');
+  return 42;
+});
+
 function createEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
-  engine.register('queryable', async function* (ctx: WorkflowContext) {
-    const context = ctx;
-    context.expose({ counter: () => 42 });
-    context.onQuery('echoInput', (input) => input);
-    yield* context.waitForSignal('done');
-    return 42;
-  });
+  engine.register(queryableWorkflow);
   return engine;
 }
 

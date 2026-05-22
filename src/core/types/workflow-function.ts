@@ -1,8 +1,18 @@
-import type { ConstraintDefinition } from '../constraint.ts';
 import type { DefinitionSchema, InferSchemaOutput } from './definition-schema.ts';
-import type { RetentionPolicy } from './retry-retention.ts';
+import { validateWorkflowOrActivityName } from './name-grammar.ts';
 import type { SearchAttributeSchema } from './search-attributes.ts';
+import type { ActivityMap, QueryMap, SignalMap, UpdateMap } from './workflow-builder-helpers.ts';
+import { WorkflowBuilderImpl, type WorkflowBuilderOptions } from './workflow-builder-runtime.ts';
+import type { BuilderState, InitialBuilderState, WorkflowBuilder } from './workflow-builder.ts';
 import type { WorkflowContext } from './workflow-context.ts';
+import type { WorkflowDefinition, WorkflowDefinitionOptions } from './workflow-definition.ts';
+
+export { WorkflowBuilderError, type WorkflowBuilderOptions } from './workflow-builder-runtime.ts';
+export type {
+  WorkflowDefinition,
+  WorkflowDefinitionOptions,
+  WorkflowRegistration,
+} from './workflow-definition.ts';
 
 // ---------------------------------------------------------------------------
 // Workflow function signature
@@ -303,111 +313,39 @@ export interface WorkflowReduceOptions extends Record<string, unknown> {
   idPrefix?: string;
 }
 
-// Workflow registration
-// ---------------------------------------------------------------------------
-
 /**
- * Full registration descriptor used when calling `engine.register(type, registration)`.
- * Bundles the workflow handler with optional metadata: version for live
- * migration, `searchAttributes` schema for indexing, a `retention` policy,
- * domain `constraints`, and a `migrate` callback that transforms checkpoint
- * state when versions differ.
+ * Create a workflow via the chained builder API.
  *
  * @example
  * ```ts
- * import { activity, Engine, type WorkflowRegistration, type WorkflowContext } from 'weft';
+ * import { workflow, signal } from 'weft';
  *
- * const noop = activity({ name: 'noop', execute: async (i: unknown) => i });
- * const registration: WorkflowRegistration = {
- *   version: '1.0.0',
- *   retention: { completed: '7d' },
- *   handler: async function* (ctx: WorkflowContext, input: unknown) {
- *     return yield* ctx.run(noop, input);
- *   },
- * };
- * const engine = new Engine();
- * engine.register('myWorkflow', registration);
- * void engine;
+ * const welcome = workflow({ name: 'welcome' })
+ *   .activities({
+ *     formatGreeting: async ({ name }: { name: string }) => `Hello, ${name}!`,
+ *   })
+ *   .signals({ approve: signal<{ approverId: string }>('approve') })
+ *   .execute(async function* (ctx, input: { name: string }) {
+ *     const greeting = yield* ctx.run('formatGreeting', input);
+ *     const { approverId } = yield* ctx.waitForSignal('approve');
+ *     return { greeting, approverId };
+ *   });
+ * void welcome;
  * ```
  */
-export interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
-  /** Version recorded with workflow state and used for checkpoint migration. */
-  version?: string;
-  /** User-facing description for catalog, code generation, and tool surfaces. */
-  description?: string;
-  /** User-facing grouping tags for catalog and documentation surfaces. */
-  tags?: ReadonlyArray<string>;
-  /** Optional input schema metadata for introspection; registration validates metadata shape only. */
-  inputSchema?: DefinitionSchema<unknown, TInput>;
-  /** Optional output schema metadata for introspection; registration validates metadata shape only. */
-  outputSchema?: DefinitionSchema<unknown, TOutput>;
-  /** Workflow generator function executed by the engine. */
-  handler: WorkflowFunction<TInput, TOutput>;
-  /** Optional checkpoint migration from a prior workflow version. */
-  migrate?: (checkpoint: unknown, fromVersion: string) => unknown;
-  /** Search-attribute schema used to validate indexed workflow metadata. */
-  searchAttributes?: SearchAttributeSchema;
-  /** Retention policy for terminal workflow records. */
-  retention?: RetentionPolicy;
-  /**
-   * Domain constraints evaluated at every checkpoint commit. When a constraint's
-   * `check` returns false, the engine dispatches a `ConstraintViolatedEvent`
-   * and reacts per `onViolation` ('fail' | 'compensate' | 'warn').
-   *
-   * **Note**: Constraints are only evaluated when using the default inline
-   * execution strategy. Workflows running in a Web Worker
-   * (`workerExecution` option) will silently skip constraint evaluation.
-   */
-  constraints?: ConstraintDefinition[];
-}
+export function workflow<const TName extends string>(
+  options: WorkflowBuilderOptions<TName>,
+): WorkflowBuilder<TName, {}, {}, {}, {}, {}, InitialBuilderState>;
 /**
- * Named workflow definition returned by {@link workflow}. The runtime object
- * carries the workflow name plus the same metadata accepted by
- * {@link WorkflowRegistration}.
- *
- * @example
- * ```ts
- * import { workflow, type WorkflowDefinition } from 'weft';
- *
- * const greet: WorkflowDefinition<string, string> = workflow(async function* greet(ctx, input: string) {
- *   return `hello ${input}`;
- * });
- * ```
- */
-export interface WorkflowDefinition<
-  TInput = unknown,
-  TOutput = unknown,
-  TName extends string = string,
-> extends WorkflowRegistration<TInput, TOutput> {
-  name: TName;
-}
-
-export interface WorkflowDefinitionOptions<
-  TInput = unknown,
-  TOutput = unknown,
-  TName extends string = string,
-> extends WorkflowRegistration<TInput, TOutput> {
-  name: TName;
-}
-
-/**
- * Create a named workflow definition.
- *
- * @example
- * ```ts
- * import { workflow } from 'weft';
- *
- * const checkout = workflow({
- *   name: 'checkout',
- *   handler: async function* checkout(ctx, input: { orderId: string }) {
- *     return input.orderId;
- *   },
- * });
- * ```
+ * @deprecated The bare-function and object-with-handler forms of `workflow()`
+ * are kept temporarily so Phase 2 lands without sweeping every existing caller.
+ * Phase 5 migrates callers to the chained builder form; Phase 6 deletes this
+ * overload. Pass `{ name }` and use `.execute(fn)` on the returned builder.
  */
 export function workflow<TInput, TOutput>(
   handler: WorkflowFunction<TInput, TOutput>,
 ): WorkflowDefinition<TInput, TOutput>;
+/** @deprecated Use the chained builder form: `workflow({ name }).execute(fn)`. */
 export function workflow<
   const TName extends string,
   TInputSchema extends DefinitionSchema<unknown, unknown>,
@@ -425,6 +363,7 @@ export function workflow<
     outputSchema: TOutputSchema;
   },
 ): WorkflowDefinition<InferSchemaOutput<TInputSchema>, InferSchemaOutput<TOutputSchema>, TName>;
+/** @deprecated Use the chained builder form: `workflow({ name }).execute(fn)`. */
 export function workflow<
   const TName extends string,
   TInputSchema extends DefinitionSchema<unknown, unknown>,
@@ -437,28 +376,59 @@ export function workflow<
     inputSchema: TInputSchema;
   },
 ): WorkflowDefinition<InferSchemaOutput<TInputSchema>, TOutput, TName>;
+/** @deprecated Use the chained builder form: `workflow({ name }).execute(fn)`. */
 export function workflow<const TName extends string, TInput, TOutput>(
   options: WorkflowDefinitionOptions<TInput, TOutput, TName>,
 ): WorkflowDefinition<TInput, TOutput, TName>;
-export function workflow<TInput, TOutput, TName extends string = string>(
-  input: WorkflowFunction<TInput, TOutput> | WorkflowDefinitionOptions<TInput, TOutput, TName>,
-): WorkflowDefinition<TInput, TOutput, TName> {
-  const definition =
-    typeof input === 'function'
-      ? ({
-          name: input.name,
-          handler: input,
-        } as WorkflowDefinition<TInput, TOutput, TName>)
-      : input;
-
-  if (!definition.name) {
-    throw new Error('workflow() requires a named function or an options object with name.');
+export function workflow(
+  input: WorkflowFunction | WorkflowBuilderOptions | WorkflowDefinitionOptions,
+):
+  | WorkflowDefinition
+  | WorkflowBuilder<
+      string,
+      ActivityMap,
+      SignalMap,
+      UpdateMap,
+      QueryMap,
+      SearchAttributeSchema,
+      BuilderState
+    > {
+  // Bare function form (legacy/deprecated).
+  if (typeof input === 'function') {
+    const handler = input;
+    const fnName = handler.name;
+    if (!fnName) {
+      throw new Error('workflow() requires a named function or an options object with name.');
+    }
+    validateWorkflowOrActivityName(fnName, 'workflow');
+    return {
+      name: fnName,
+      handler: handler,
+    };
   }
 
-  // Schema metadata is validated at registration time
-  // (`src/core/engine/registration.ts`), not here. Keeping the helper as a
-  // pure constructor avoids double validation and the helper-vs-registration
-  // surface mismatch the previous version had.
+  if (!input.name) {
+    throw new Error('workflow() requires a named function or an options object with name.');
+  }
+  validateWorkflowOrActivityName(input.name, 'workflow');
 
-  return definition;
+  // Object form: builder if no `handler`; legacy literal if `handler` is set.
+  if ('handler' in input && typeof (input as { handler?: unknown }).handler === 'function') {
+    return input as WorkflowDefinition;
+  }
+
+  const builderOptions = input as WorkflowBuilderOptions;
+  // The class implements the structural shape `WorkflowBuilder` describes; the
+  // assertion is the cast boundary that lets the runtime class satisfy the
+  // phantom-flag-typed interface without leaking the implementation type.
+  const builder = new WorkflowBuilderImpl(builderOptions);
+  return builder as unknown as WorkflowBuilder<
+    string,
+    ActivityMap,
+    SignalMap,
+    UpdateMap,
+    QueryMap,
+    SearchAttributeSchema,
+    BuilderState
+  >;
 }

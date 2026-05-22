@@ -14,6 +14,7 @@ import type {
   ListFilter,
   WorkflowContext,
 } from '../core/types.ts';
+import { workflow } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { createEngineEventFeedBackend } from './engine-event-feed-backend.ts';
 import { serve, type WeftServer } from './index.ts';
@@ -26,6 +27,16 @@ import {
   type ParityInvariants,
 } from './track8-parity-invariants.ts';
 import { createWorkflowEventFeed } from './workflow-event-feed.ts';
+
+const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: unknown,
+) {
+  return input;
+});
+const holdWorkflow = workflow({ name: 'hold' }).execute(async function* (ctx: WorkflowContext) {
+  return yield* ctx.waitForSignal('release');
+});
 
 type WorkflowTerminalStatus = 'completed' | 'failed' | 'cancelled' | 'timed-out';
 type WorkflowStatus = 'running' | WorkflowTerminalStatus;
@@ -63,12 +74,8 @@ function bulkJsonHeaders(): Record<string, string> {
 
 function createHoldEngine(): Engine {
   const engine = new Engine({ storage: new MemoryStorage() });
-  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-    return input;
-  });
-  engine.register('hold', async function* (ctx: WorkflowContext) {
-    return yield* ctx.waitForSignal('release');
-  });
+  engine.register(echoWorkflow);
+  engine.register(holdWorkflow);
   return engine;
 }
 

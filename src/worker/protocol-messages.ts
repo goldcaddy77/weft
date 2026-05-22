@@ -45,15 +45,18 @@ export type RemoteWorkerCapabilities = Readonly<Record<string, RemoteWorkerJsonV
 /**
  * Worker registration message sent immediately after opening a worker stream.
  *
+ * Each entry of `activities` is a qualified `${workflowType}.${activityName}`
+ * name; bare activity names were retired in protocol v2.
+ *
  * @example
  * ```ts
  * import type { RegisterMessage } from 'weft/worker-protocol';
  *
  * const message: RegisterMessage = {
  *   type: 'register',
- *   protocolVersion: 1,
+ *   protocolVersion: 2,
  *   workerId: 'worker-1',
- *   activities: ['sendEmail'],
+ *   activities: ['welcome.sendEmail'],
  * };
  * ```
  */
@@ -164,10 +167,10 @@ export type CancelledTaskResultMessage = {
  *
  * const message: RegisterAckMessage = {
  *   type: 'registerAck',
- *   protocolVersion: 1,
+ *   protocolVersion: 2,
  *   workerId: 'worker-1',
  *   queue: 'default',
- *   activities: ['sendEmail'],
+ *   activities: ['welcome.sendEmail'],
  *   concurrency: 10,
  * };
  * ```
@@ -191,9 +194,9 @@ export type RegisterAckMessage = {
  * const message: RegisterErrorMessage = {
  *   type: 'registerError',
  *   code: 'unsupported_protocol_version',
- *   message: 'Unsupported RemoteWorker protocol version: 2',
- *   supportedProtocolVersions: [1],
- *   requestedProtocolVersion: 2,
+ *   message: 'Unsupported RemoteWorker protocol version: 1',
+ *   supportedProtocolVersions: [2],
+ *   requestedProtocolVersion: 1,
  * };
  * ```
  */

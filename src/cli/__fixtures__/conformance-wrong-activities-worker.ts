@@ -15,7 +15,7 @@ socket.addEventListener('open', () => {
   socket.send(
     JSON.stringify({
       type: 'register',
-      protocolVersion: Number(Bun.env['WEFT_WORKER_PROTOCOL_VERSION'] ?? '1'),
+      protocolVersion: Number(Bun.env['WEFT_WORKER_PROTOCOL_VERSION'] ?? '2'),
       workerId: 'wrong-activities-worker',
       activities: ['weft.other.activity'],
       concurrency: 1,

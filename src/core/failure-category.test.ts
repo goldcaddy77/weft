@@ -13,6 +13,7 @@ import { Engine } from './engine.ts';
 import { classifyErrorAsFailureCategory } from './failure-categories.ts';
 import { buildIndexOperations as buildSearchAttributeIndexOperations } from './search-attributes.ts';
 import type { FailureCategory } from './types.ts';
+import { workflow } from './types.ts';
 
 /** Drain microtasks so fire-and-forget work completes. */
 async function flush(): Promise<void> {
@@ -29,9 +30,10 @@ describe('failureCategory on WorkflowState', () => {
   it('sets failureCategory to "application" when workflow code throws', async () => {
     engine = new Engine();
 
-    engine.register('crash', async function* () {
+    const crashWorkflow = workflow({ name: 'crash' }).execute(async function* () {
       throw new Error('intentional failure');
     });
+    engine.register(crashWorkflow);
 
     const handle = await engine.start('crash', null, { id: 'wf-system-fail' });
 
@@ -55,9 +57,10 @@ describe('failureCategory on WorkflowState', () => {
     }
 
     engine = new Engine();
-    engine.register('timeout-crash', async function* () {
+    const timeoutCrashWorkflow = workflow({ name: 'timeout-crash' }).execute(async function* () {
       throw new ReviewTimeoutError();
     });
+    engine.register(timeoutCrashWorkflow);
 
     const handle = await engine.start('timeout-crash', null, { id: 'wf-timeout-fail' });
     await expect(handle.result()).rejects.toThrow('review timed out');
@@ -68,9 +71,10 @@ describe('failureCategory on WorkflowState', () => {
 
   it('sets failureCategory to "cancellation" for abort-shaped errors', async () => {
     engine = new Engine();
-    engine.register('abort-crash', async function* () {
+    const abortCrashWorkflow = workflow({ name: 'abort-crash' }).execute(async function* () {
       throw new DOMException('operation aborted', 'AbortError');
     });
+    engine.register(abortCrashWorkflow);
 
     const handle = await engine.start('abort-crash', null, { id: 'wf-cancellation-fail' });
     await expect(handle.result()).rejects.toThrow('operation aborted');
@@ -88,9 +92,10 @@ describe('failureCategory on WorkflowState', () => {
     }
 
     engine = new Engine();
-    engine.register('quota-crash', async function* () {
+    const quotaCrashWorkflow = workflow({ name: 'quota-crash' }).execute(async function* () {
       throw new QuotaExceededError();
     });
+    engine.register(quotaCrashWorkflow);
 
     const handle = await engine.start('quota-crash', null, { id: 'wf-resource-fail' });
     await expect(handle.result()).rejects.toThrow('tenant quota exceeded');
@@ -104,10 +109,11 @@ describe('failureCategory on WorkflowState', () => {
 
     const { promise: blocker, resolve } = Promise.withResolvers<void>();
 
-    engine.register('long-running', async function* () {
+    const longRunningWorkflow = workflow({ name: 'long-running' }).execute(async function* () {
       await blocker;
       return 'done';
     });
+    engine.register(longRunningWorkflow);
 
     const handle = await engine.start('long-running', null, { id: 'wf-running' });
     handle.result().catch(() => {});
@@ -137,13 +143,15 @@ describe('failureCategory search attribute indexing', () => {
   it('engine.list({ attributes: [{ key: "failureCategory", value: "application" }] }) returns failed workflow', async () => {
     engine = new Engine();
 
-    engine.register('crash-a', async function* () {
+    const crashAWorkflow = workflow({ name: 'crash-a' }).execute(async function* () {
       throw new Error('system failure a');
     });
+    engine.register(crashAWorkflow);
 
-    engine.register('crash-b', async function* () {
+    const crashBWorkflow = workflow({ name: 'crash-b' }).execute(async function* () {
       throw new Error('system failure b');
     });
+    engine.register(crashBWorkflow);
 
     const handleA = await engine.start('crash-a', null, { id: 'wf-cat-a' });
     const handleB = await engine.start('crash-b', null, { id: 'wf-cat-b' });
@@ -172,13 +180,15 @@ describe('failureCategory search attribute indexing', () => {
   it('engine.list({ attributes: [{ key: "failureCategory", value: "application" }] }) does not return completed workflows', async () => {
     engine = new Engine();
 
-    engine.register('succeed', async function* () {
+    const succeedWorkflow = workflow({ name: 'succeed' }).execute(async function* () {
       return 'done';
     });
+    engine.register(succeedWorkflow);
 
-    engine.register('crash', async function* () {
+    const crashWorkflow2 = workflow({ name: 'crash' }).execute(async function* () {
       throw new Error('failure');
     });
+    engine.register(crashWorkflow2);
 
     const successHandle = await engine.start('succeed', null, { id: 'wf-success' });
     const failHandle = await engine.start('crash', null, { id: 'wf-fail' });

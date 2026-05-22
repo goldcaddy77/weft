@@ -10,8 +10,24 @@ import type { ActivityCallable, ActivityCallOptions } from './activity.ts';
 import type { WorkflowId } from './identity.ts';
 import type { QueryDefinition, SignalDefinition, UpdateDefinition } from './message-handles.ts';
 import type { Duration } from './retry-retention.ts';
-import type { SearchAttributeHandle, SearchAttributeValue } from './search-attributes.ts';
+import type {
+  SearchAttributeHandle,
+  SearchAttributeSchema,
+  SearchAttributeValue,
+  SearchAttributeValueForDefinition,
+} from './search-attributes.ts';
 import type { WorkflowStateNamespace } from './state.ts';
+import type {
+  ActivityArgsFor,
+  ActivityMap,
+  ActivityResultFor,
+  QueryMap,
+  QueryShape,
+  SignalMap,
+  SignalPayload,
+  UpdateMap,
+  UpdatePayload,
+} from './workflow-builder-helpers.ts';
 import type {
   ChildWorkflowOptions,
   ChildWorkflowTarget,
@@ -86,7 +102,13 @@ export type RunAllResult<TBranches extends Record<string, WorkflowRunAllBranch>>
  * void engine;
  * ```
  */
-export interface WorkflowContext {
+export interface WorkflowContext<
+  TActivities extends ActivityMap = {},
+  TSignals extends SignalMap = {},
+  TUpdates extends UpdateMap = {},
+  TQueries extends QueryMap = {},
+  TSearchAttributes extends SearchAttributeSchema = {},
+> {
   readonly workflowId: WorkflowId;
   readonly signal: AbortSignal;
   readonly executionTimeRemaining: number;
@@ -105,6 +127,23 @@ export interface WorkflowContext {
    */
   readonly tenant: TenantContext | undefined;
   readonly state: WorkflowStateNamespace;
+  // ---------------------------------------------------------------------
+  // Workflow-scoped typed-key overloads. These fire first when the workflow
+  // was built with the chained builder (`.activities({...})`, `.signals({...})`
+  // etc.) and the corresponding map has known keys. When the maps default to
+  // `{}` (legacy bare-`WorkflowContext` callers), `keyof TActivities & string`
+  // collapses to `never`, the overload silently de-prioritises, and TypeScript
+  // falls through to the existing `ActivityTypes`-driven and string-name
+  // overloads below.
+  // ---------------------------------------------------------------------
+  run<TName extends keyof TActivities & string>(
+    name: TName,
+    ...rest: ActivityArgsFor<TActivities[TName]>
+  ): WorkflowOperation<ActivityResultFor<TActivities[TName]>>;
+  run<TName extends keyof TActivities & string>(
+    name: TName,
+    ...rest: [...ActivityArgsFor<TActivities[TName]>, ActivityCallOptions]
+  ): WorkflowOperation<ActivityResultFor<TActivities[TName]>>;
   run<TName extends Extract<keyof ActivityTypes, string>>(
     name: TName,
     ...rest: ActivityArguments<ActivityTypes, TName>
@@ -138,8 +177,16 @@ export interface WorkflowContext {
   ): WorkflowOperation<TResult>;
   sleep(duration: Duration): WorkflowOperation<void>;
   suspendUntil<T = unknown>(resumeToken: string): WorkflowOperation<T>;
+  // Workflow-scoped typed-key overload for declared signals.
+  waitForSignal<TName extends keyof TSignals & string>(
+    name: TName,
+  ): WorkflowOperation<SignalPayload<TSignals[TName]>>;
   waitForSignal<TInput>(definition: SignalDefinition<TInput>): WorkflowOperation<TInput>;
   waitForSignal<T = unknown>(name: string): WorkflowOperation<T>;
+  // Workflow-scoped typed-key overload for declared updates.
+  waitForUpdate<TName extends keyof TUpdates & string>(
+    name: TName,
+  ): WorkflowOperation<UpdatePayload<TUpdates[TName]>>;
   waitForUpdate<TInput, TOutput>(
     definition: UpdateDefinition<TInput, TOutput>,
   ): WorkflowOperation<{ payload: TInput; respond: (result: TOutput) => void }>;
@@ -219,20 +266,46 @@ export interface WorkflowContext {
       context: WorkflowContext,
     ) => WorkflowOperation<TResult> | AsyncGenerator<unknown, TResult, unknown>,
   ): WorkflowOperation<TResult>;
+  // Workflow-scoped typed-key setAttribute overload — uses the declared schema's
+  // value type for each known attribute name.
+  setAttribute<TName extends keyof TSearchAttributes & string>(
+    key: TName,
+    value: SearchAttributeValueForDefinition<TSearchAttributes[TName]>,
+  ): void;
   setAttribute<TValue extends SearchAttributeValue>(
     key: SearchAttributeHandle<TValue>,
     value: TValue,
   ): void;
   setAttribute(key: string, value: SearchAttributeValue): void;
   setAttributes(attributes: Record<string, SearchAttributeValue>): void;
+  // Workflow-scoped typed-key getAttribute overload.
+  getAttribute<TName extends keyof TSearchAttributes & string>(
+    key: TName,
+  ): SearchAttributeValueForDefinition<TSearchAttributes[TName]> | undefined;
   getAttribute<T extends SearchAttributeValue>(key: SearchAttributeHandle<T>): T | undefined;
   getAttribute<T extends SearchAttributeValue = SearchAttributeValue>(key: string): T | undefined;
   getAttributes(): Readonly<Record<string, SearchAttributeValue>>;
+  // Workflow-scoped typed-key onUpdate overload.
+  onUpdate<TName extends keyof TUpdates & string>(
+    name: TName,
+    handler: (
+      payload: UpdatePayload<TUpdates[TName]>['payload'],
+    ) =>
+      | Parameters<UpdatePayload<TUpdates[TName]>['respond']>[0]
+      | Promise<Parameters<UpdatePayload<TUpdates[TName]>['respond']>[0]>,
+  ): void;
   onUpdate<TInput, TOutput>(
     definition: UpdateDefinition<TInput, TOutput>,
     handler: (payload: TInput) => TOutput | Promise<TOutput>,
   ): void;
   onUpdate(name: string, handler: (payload: unknown) => unknown): void;
+  // Workflow-scoped typed-key onQuery overload.
+  onQuery<TName extends keyof TQueries & string>(
+    name: TName,
+    handler: (
+      input: QueryShape<TQueries[TName]>['input'],
+    ) => QueryShape<TQueries[TName]>['output'] | Promise<QueryShape<TQueries[TName]>['output']>,
+  ): void;
   onQuery<TInput, TOutput>(
     definition: QueryDefinition<TInput, TOutput>,
     handler: (input: TInput) => TOutput | Promise<TOutput>,

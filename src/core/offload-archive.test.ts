@@ -8,6 +8,7 @@ import { decode, encode } from './codec';
 import type { OffloadReference } from './context';
 import { Engine } from './engine';
 import type { WorkflowContext } from './types';
+import { workflow } from './types';
 
 describe('offload, load, and archive', () => {
   it('round-trips data through offload and load', async () => {
@@ -16,12 +17,13 @@ describe('offload, load, and archive', () => {
 
     const payload = { items: [1, 2, 3], nested: { flag: true } };
 
-    engine.register('test', async function* (ctx: WorkflowContext) {
+    const testWorkflow = workflow({ name: 'test' }).execute(async function* (ctx: WorkflowContext) {
       const c = ctx;
       const reference = yield* c.offload('big-data', async () => payload);
       const loaded = yield* c.load<typeof payload>(reference);
       return loaded;
     });
+    engine.register(testWorkflow);
 
     const handle = await engine.start('test', {});
     const result = await handle.result();
@@ -37,12 +39,15 @@ describe('offload, load, and archive', () => {
 
     let capturedReference: OffloadReference | undefined;
 
-    engine.register('test', async function* (ctx: WorkflowContext) {
+    const testWorkflow2 = workflow({ name: 'test' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const reference = yield* c.offload('sized-data', async () => payload);
       capturedReference = reference;
       return reference;
     });
+    engine.register(testWorkflow2);
 
     const handle = await engine.start('test', {});
     await handle.result();
@@ -55,7 +60,9 @@ describe('offload, load, and archive', () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
 
-    engine.register('test', async function* (ctx: WorkflowContext) {
+    const testWorkflow3 = workflow({ name: 'test' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const fakeReference: OffloadReference = {
         key: 'nonexistent-key',
@@ -65,6 +72,7 @@ describe('offload, load, and archive', () => {
       const loaded = yield* c.load(fakeReference);
       return loaded;
     });
+    engine.register(testWorkflow3);
 
     const handle = await engine.start('test', {});
     await expect(handle.result()).rejects.toThrow('Offloaded data not found');
@@ -76,16 +84,22 @@ describe('offload, load, and archive', () => {
 
     let trustedReference: OffloadReference | undefined;
 
-    engine.register('producer', async function* (ctx: WorkflowContext) {
+    const producerWorkflow = workflow({ name: 'producer' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       trustedReference = yield* c.offload('cross-workflow', async () => ({ ok: true }));
       return trustedReference;
     });
+    engine.register(producerWorkflow);
 
-    engine.register('consumer', async function* (ctx: WorkflowContext) {
+    const consumerWorkflow = workflow({ name: 'consumer' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       return yield* c.load(trustedReference!);
     });
+    engine.register(consumerWorkflow);
 
     await engine.start('producer', {}).then((handle) => handle.result());
     const consumerHandle = await engine.start('consumer', {});
@@ -99,7 +113,9 @@ describe('offload, load, and archive', () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
 
-    engine.register('test', async function* (ctx: WorkflowContext) {
+    const testWorkflow4 = workflow({ name: 'test' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const malformedReference = {
         workflowId: ctx.workflowId,
@@ -108,6 +124,7 @@ describe('offload, load, and archive', () => {
       } as unknown as OffloadReference;
       return yield* c.load(malformedReference);
     });
+    engine.register(testWorkflow4);
 
     const handle = await engine.start('test', {});
 
@@ -122,11 +139,14 @@ describe('offload, load, and archive', () => {
 
     const archivePayload = { report: 'quarterly', values: [100, 200, 300] };
 
-    engine.register('test', async function* (ctx: WorkflowContext) {
+    const testWorkflow5 = workflow({ name: 'test' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       yield* c.archive('report-q1', archivePayload);
       return 'done';
     });
+    engine.register(testWorkflow5);
 
     const handle = await engine.start('test', {});
     const result = await handle.result();
@@ -145,7 +165,9 @@ describe('offload, load, and archive', () => {
     const payload = { large: 'data', count: 42 };
     let offloadRuns = 0;
 
-    engine.register('offload-step', async function* (ctx: WorkflowContext) {
+    const offloadStepWorkflow = workflow({ name: 'offload-step' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const reference = yield* c.offload('recovery-data', async () => {
         offloadRuns++;
@@ -155,6 +177,7 @@ describe('offload, load, and archive', () => {
       yield* c.waitForSignal('continue');
       return yield* c.load<typeof payload>(reference);
     });
+    engine.register(offloadStepWorkflow);
 
     const handle = await engine.start('offload-step', {});
     // Let the offload complete and the workflow pause at waitForSignal
@@ -164,7 +187,9 @@ describe('offload, load, and archive', () => {
     const recovered = engine.recover();
 
     // Register same workflow on recovered engine
-    recovered.register('offload-step', async function* (ctx: WorkflowContext) {
+    const offloadStepWorkflow2 = workflow({ name: 'offload-step' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       const reference = yield* c.offload('recovery-data', async () => {
         offloadRuns++;
@@ -173,6 +198,7 @@ describe('offload, load, and archive', () => {
       yield* c.waitForSignal('continue');
       return yield* c.load<typeof payload>(reference);
     });
+    recovered.register(offloadStepWorkflow2);
 
     const resumedHandle = await recovered.resume(handle.id);
     await resumedHandle.signal('continue');
@@ -185,7 +211,9 @@ describe('offload, load, and archive', () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
 
-    engine.register('test', async function* (ctx: WorkflowContext) {
+    const testWorkflow6 = workflow({ name: 'test' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const c = ctx;
       try {
         yield* c.offload('failing', async () => {
@@ -196,6 +224,7 @@ describe('offload, load, and archive', () => {
         return `caught: ${(error as Error).message}`;
       }
     });
+    engine.register(testWorkflow6);
 
     const handle = await engine.start('test', {});
     const result = await handle.result();

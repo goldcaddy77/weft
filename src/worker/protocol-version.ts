@@ -11,6 +11,13 @@
 /**
  * Current RemoteWorker wire protocol version.
  *
+ * **Version 2** (Phase 4 of the workflow-builder refactor) bumps the semantics
+ * of the `activities: string[]` field in the register message. Each entry is
+ * now a qualified `${workflowType}.${activityName}` name rather than a bare
+ * activity name, so the server can dispatch the correct workflow's activity
+ * implementation when the same activity key is used by multiple workflows. The
+ * wire shape did not change; only the meaning of the strings.
+ *
  * @example
  * ```ts
  * import { REMOTE_WORKER_PROTOCOL_VERSION } from 'weft/worker-protocol';
@@ -18,7 +25,7 @@
  * const registration = { type: 'register', protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION };
  * ```
  */
-export const REMOTE_WORKER_PROTOCOL_VERSION = 1;
+export const REMOTE_WORKER_PROTOCOL_VERSION = 2;
 
 /**
  * Lowest RemoteWorker protocol version accepted by this package.
@@ -27,10 +34,10 @@ export const REMOTE_WORKER_PROTOCOL_VERSION = 1;
  * ```ts
  * import { REMOTE_WORKER_MIN_PROTOCOL_VERSION } from 'weft/worker-protocol';
  *
- * const supportsVersionOne = REMOTE_WORKER_MIN_PROTOCOL_VERSION === 1;
+ * const supportsCurrentVersion = REMOTE_WORKER_MIN_PROTOCOL_VERSION === 2;
  * ```
  */
-export const REMOTE_WORKER_MIN_PROTOCOL_VERSION = 1;
+export const REMOTE_WORKER_MIN_PROTOCOL_VERSION = 2;
 
 /**
  * Highest RemoteWorker protocol version accepted by this package.
@@ -39,10 +46,10 @@ export const REMOTE_WORKER_MIN_PROTOCOL_VERSION = 1;
  * ```ts
  * import { REMOTE_WORKER_MAX_PROTOCOL_VERSION } from 'weft/worker-protocol';
  *
- * const canUseRequestedVersion = 1 <= REMOTE_WORKER_MAX_PROTOCOL_VERSION;
+ * const canUseRequestedVersion = 2 <= REMOTE_WORKER_MAX_PROTOCOL_VERSION;
  * ```
  */
-export const REMOTE_WORKER_MAX_PROTOCOL_VERSION = 1;
+export const REMOTE_WORKER_MAX_PROTOCOL_VERSION = 2;
 
 /**
  * Explicit supported RemoteWorker protocol versions.
@@ -51,7 +58,7 @@ export const REMOTE_WORKER_MAX_PROTOCOL_VERSION = 1;
  * ```ts
  * import { REMOTE_WORKER_SUPPORTED_PROTOCOL_VERSIONS } from 'weft/worker-protocol';
  *
- * const supported = REMOTE_WORKER_SUPPORTED_PROTOCOL_VERSIONS.includes(1);
+ * const supported = REMOTE_WORKER_SUPPORTED_PROTOCOL_VERSIONS.includes(2);
  * ```
  */
 export const REMOTE_WORKER_SUPPORTED_PROTOCOL_VERSIONS = [REMOTE_WORKER_PROTOCOL_VERSION] as const;
@@ -63,7 +70,7 @@ export const REMOTE_WORKER_SUPPORTED_PROTOCOL_VERSIONS = [REMOTE_WORKER_PROTOCOL
  * ```ts
  * import type { RemoteWorkerProtocolVersion } from 'weft/worker-protocol';
  *
- * const version: RemoteWorkerProtocolVersion = 1;
+ * const version: RemoteWorkerProtocolVersion = 2;
  * ```
  */
 export type RemoteWorkerProtocolVersion =

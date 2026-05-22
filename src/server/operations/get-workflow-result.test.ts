@@ -7,6 +7,7 @@ import { describe, expect, it } from 'bun:test';
 import { encode } from '../../core/codec.ts';
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
+import { workflow } from '../../core/types.ts';
 import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
@@ -15,18 +16,25 @@ import type { OperationFault } from '../operation-fault.ts';
 import { getWorkflowResultOperation, getWorkflowResultRestBinding } from './get-workflow-result.ts';
 import { waitForWorkflowStatus } from './operation-test-helpers.test-support.ts';
 
+const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: unknown,
+) {
+  return input;
+});
+const holdWorkflow = workflow({ name: 'hold' }).execute(async function* (ctx: WorkflowContext) {
+  return yield* ctx.waitForSignal<string>('release');
+});
+const failingWorkflow = workflow({ name: 'failing' }).execute(async function* () {
+  throw new Error('workflow failed');
+});
+
 function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
-  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-    return input;
-  });
-  engine.register('hold', async function* (ctx: WorkflowContext) {
-    return yield* ctx.waitForSignal<string>('release');
-  });
-  engine.register('failing', async function* () {
-    throw new Error('workflow failed');
-  });
+  engine.register(echoWorkflow);
+  engine.register(holdWorkflow);
+  engine.register(failingWorkflow);
   return { engine, storage };
 }
 

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../core/engine';
+import { workflow } from '../core/types/workflow-function.ts';
 import { MemoryStorage } from '../storage/memory';
 import { resetSetupServiceWorkerRegistry, setupServiceWorker } from './setup.ts';
 
@@ -178,10 +179,11 @@ describe('setupServiceWorker', () => {
         storage: new MemoryStorage(),
         pathPrefix: '/weft/',
         register: (engine) => {
-          engine.register('hello', async function* hello() {
+          const hello = workflow({ name: 'hello' }).execute(async function* hello() {
             yield;
             return 'world';
           });
+          engine.register(hello);
         },
       });
       const fetchListener = listenerFor(scope, 'fetch');
@@ -297,10 +299,11 @@ describe('setupServiceWorker', () => {
           await new Promise<void>((resolve) => {
             releaseRegister = resolve;
           });
-          engine.register('hello', async function* hello() {
+          const hello = workflow({ name: 'hello' }).execute(async function* hello() {
             yield;
             return 'world';
           });
+          engine.register(hello);
         },
       });
       // Immediately fire a fetch matching the prefix while register is still

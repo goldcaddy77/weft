@@ -10,7 +10,7 @@ import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { encode } from '../codec.ts';
 import { Engine } from '../engine.ts';
-import type { AttributeFilter, WorkflowContext } from '../types.ts';
+import { workflow, type AttributeFilter, type WorkflowContext } from '../types.ts';
 
 async function waitForWorkflowPresence(
   engine: Engine,
@@ -155,16 +155,22 @@ describe('workflow retention', () => {
       retentionSweepInterval: '10ms',
     });
 
-    engine.register('retention-completed', async function* () {
-      return 'done';
-    });
-    engine.register('retention-failed', async function* () {
-      throw new Error('boom');
-    });
-    engine.register('retention-blocked', async function* (ctx: WorkflowContext) {
-      yield* ctx.waitForSignal('continue');
-      return 'done';
-    });
+    engine.register(
+      workflow({ name: 'retention-completed' }).execute(async function* () {
+        return 'done';
+      }),
+    );
+    engine.register(
+      workflow({ name: 'retention-failed' }).execute(async function* () {
+        throw new Error('boom');
+      }),
+    );
+    engine.register(
+      workflow({ name: 'retention-blocked' }).execute(async function* (ctx: WorkflowContext) {
+        yield* ctx.waitForSignal('continue');
+        return 'done';
+      }),
+    );
 
     const completedHandle = await engine.start('retention-completed', null, {
       id: 'retention-completed',
@@ -212,9 +218,11 @@ describe('workflow retention', () => {
       storage: new MemoryStorage(),
     });
 
-    engine.register('retention-default', async function* () {
-      return 'done';
-    });
+    engine.register(
+      workflow({ name: 'retention-default' }).execute(async function* () {
+        return 'done';
+      }),
+    );
 
     const handle = await engine.start('retention-default', null, {
       id: 'retention-default',
@@ -243,9 +251,14 @@ describe('workflow retention', () => {
       retentionSweepBatchSize: 1,
     });
 
-    engine.register('retention-batched', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(
+      workflow({ name: 'retention-batched' }).execute(async function* (
+        _ctx: WorkflowContext,
+        input: unknown,
+      ) {
+        return input;
+      }),
+    );
 
     const first = await engine.start('retention-batched', 'a', { id: 'batched-a' });
     const second = await engine.start('retention-batched', 'b', { id: 'batched-b' });
@@ -289,9 +302,14 @@ describe('workflow retention', () => {
       retentionSweepBatchSize: 1,
     });
 
-    engine.register('retention-overlap', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(
+      workflow({ name: 'retention-overlap' }).execute(async function* (
+        _ctx: WorkflowContext,
+        input: unknown,
+      ) {
+        return input;
+      }),
+    );
 
     const first = await engine.start('retention-overlap', 'a', { id: 'retention-overlap-a' });
     const second = await engine.start('retention-overlap', 'b', { id: 'retention-overlap-b' });
@@ -324,9 +342,11 @@ describe('workflow retention', () => {
       },
     });
 
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(
+      workflow({ name: 'echo' }).execute(async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      }),
+    );
 
     const overview = engine.getRetentionOverview();
     expect(overview.sweepIntervalMs).toBe(300_000);
@@ -346,17 +366,19 @@ describe('workflow retention', () => {
       retentionSweepInterval: '10ms',
     });
 
-    engine.register('short-lived', async function* () {
-      return 'short';
-    });
-    engine.register('long-lived', {
-      handler: async function* () {
+    engine.register(
+      workflow({ name: 'short-lived' }).execute(async function* () {
+        return 'short';
+      }),
+    );
+    engine.register(
+      workflow({
+        name: 'long-lived',
+        retention: { completed: '10s' },
+      }).execute(async function* () {
         return 'long';
-      },
-      retention: {
-        completed: '10s',
-      },
-    });
+      }),
+    );
 
     const shortHandle = await engine.start('short-lived', null, { id: 'short-lived' });
     const longHandle = await engine.start('long-lived', null, { id: 'long-lived' });
@@ -378,16 +400,18 @@ describe('workflow retention', () => {
       storage,
     });
 
-    engine.register('artifact-workflow', async function* (ctx: WorkflowContext) {
-      const concreteContext = ctx;
-      yield* concreteContext.stream('chunks', async function* () {
-        yield { index: 0 };
-        yield { index: 1 };
-      });
-      yield* concreteContext.offload('export', async () => ({ rows: [1, 2, 3] }));
-      yield* concreteContext.archive('snapshot', { ok: true });
-      return 'done';
-    });
+    engine.register(
+      workflow({ name: 'artifact-workflow' }).execute(async function* (ctx: WorkflowContext) {
+        const concreteContext = ctx;
+        yield* concreteContext.stream('chunks', async function* () {
+          yield { index: 0 };
+          yield { index: 1 };
+        });
+        yield* concreteContext.offload('export', async () => ({ rows: [1, 2, 3] }));
+        yield* concreteContext.archive('snapshot', { ok: true });
+        return 'done';
+      }),
+    );
 
     const handle = await engine.start('artifact-workflow', null, {
       id: 'purge-me',
@@ -427,13 +451,17 @@ describe('workflow retention', () => {
     });
     const targetFilter: AttributeFilter[] = [{ key: 'bucket', value: 'target' }];
 
-    engine.register('completed', async function* () {
-      return 'done';
-    });
-    engine.register('waiting', async function* (ctx: WorkflowContext) {
-      yield* ctx.waitForSignal('continue');
-      return 'done';
-    });
+    engine.register(
+      workflow({ name: 'completed' }).execute(async function* () {
+        return 'done';
+      }),
+    );
+    engine.register(
+      workflow({ name: 'waiting' }).execute(async function* (ctx: WorkflowContext) {
+        yield* ctx.waitForSignal('continue');
+        return 'done';
+      }),
+    );
 
     await createCompletedWorkflow(engine, 'completed', 'purge-match-1');
     await createCompletedWorkflow(engine, 'completed', 'purge-match-2');
@@ -468,9 +496,11 @@ describe('workflow retention', () => {
       storage: new MemoryStorage(),
     });
 
-    engine.register('limit-zero', async function* () {
-      return 'done';
-    });
+    engine.register(
+      workflow({ name: 'limit-zero' }).execute(async function* () {
+        return 'done';
+      }),
+    );
 
     await createCompletedWorkflow(engine, 'limit-zero', 'purge-limit-zero');
 
@@ -482,66 +512,28 @@ describe('workflow retention', () => {
     engine[Symbol.dispose]();
   });
 
-  it('re-registering a workflow without retention clears the sweep interval when no other retention is configured', async () => {
+  it.skip('re-registering a workflow without retention clears the sweep interval when no other retention is configured', async () => {
+    // SKIPPED: this test exercises legacy "re-register replaces" semantics on
+    // the deprecated `engine.register(name, handler)` overload. Phase 3 of the
+    // workflow-builder refactor changed engine.register(workflow) to be
+    // idempotent on the same WorkflowDefinition reference and to throw on
+    // same-name-different-reference. Replacing a registered workflow's
+    // retention behaviour is no longer reachable from the public API; a
+    // future `.replace()` or `.upgrade()` method on the builder may be added
+    // if real users need it.
     const storage = new CountingWorkflowStateScanStorage();
-    const engine = new Engine({
-      storage,
-      retentionSweepInterval: '30ms',
-    });
-
-    engine.register('retained', {
-      handler: async function* (ctx: WorkflowContext) {
-        yield* ctx.waitForSignal('continue');
-        return 'done';
-      },
-      retention: {
-        completed: '1s',
-      },
-    });
-
-    const handle = await engine.start('retained', null, { id: 'retained-running' });
-    await waitForRunningWorkflow(engine, handle.id);
-
-    const initialNextSweepAt = engine.getRetentionOverview().nextSweepAt;
-    await waitForCondition(
-      async () => {
-        const nextSweepAt = engine.getRetentionOverview().nextSweepAt;
-        return (
-          initialNextSweepAt !== null && nextSweepAt !== null && nextSweepAt > initialNextSweepAt
-        );
-      },
-      {
-        label: 'retention sweep interval to remain active while retention is configured',
-        timeoutMs: 500,
-        intervalMs: 5,
-      },
-    );
-
-    engine.register('retained', async function* (ctx: WorkflowContext) {
-      yield* ctx.waitForSignal('continue');
-      return 'done';
-    });
-
-    expect(engine.getRetentionOverview().nextSweepAt).toBeNull();
-
-    await sleepForTesting(5);
-    storage.resetTopLevelWorkflowStateEntriesSeen();
-    await sleepForTesting(75);
-
-    expect(storage.topLevelWorkflowStateEntriesSeen).toBe(0);
-
-    await engine.cancel(handle.id);
-    await handle.result().catch(() => {});
-    engine[Symbol.dispose]();
+    void storage;
   });
 
   it('engine.purge(filter) stops scanning workflow state entries once the limit is reached', async () => {
     const storage = new CountingWorkflowStateScanStorage();
     const engine = new Engine({ storage });
 
-    engine.register('limited-purge', async function* () {
-      return 'done';
-    });
+    engine.register(
+      workflow({ name: 'limited-purge' }).execute(async function* () {
+        return 'done';
+      }),
+    );
 
     await createCompletedWorkflow(engine, 'limited-purge', 'purge-limit-a');
     await createCompletedWorkflow(engine, 'limited-purge', 'purge-limit-b');
@@ -564,9 +556,14 @@ describe('workflow retention', () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
 
-    engine.register('tagged-purge', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(
+      workflow({ name: 'tagged-purge' }).execute(async function* (
+        _ctx: WorkflowContext,
+        input: unknown,
+      ) {
+        return input;
+      }),
+    );
 
     const purgedHandle = await engine.start('tagged-purge', 'purge me', {
       id: 'purge-tagged-workflow',
@@ -643,13 +640,17 @@ describe('workflow retention', () => {
       retentionSweepBatchSize: 1,
     });
 
-    engine.register('retention-expired', async function* () {
-      return 'done';
-    });
-    engine.register('retention-running', async function* (ctx: WorkflowContext) {
-      yield* ctx.waitForSignal('continue');
-      return 'done';
-    });
+    engine.register(
+      workflow({ name: 'retention-expired' }).execute(async function* () {
+        return 'done';
+      }),
+    );
+    engine.register(
+      workflow({ name: 'retention-running' }).execute(async function* (ctx: WorkflowContext) {
+        yield* ctx.waitForSignal('continue');
+        return 'done';
+      }),
+    );
 
     await createCompletedWorkflow(engine, 'retention-expired', 'retention-expired-target');
     const runningHandle = await engine.start('retention-running', null, {

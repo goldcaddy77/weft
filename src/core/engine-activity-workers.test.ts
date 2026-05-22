@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { Engine } from './engine.ts';
 import type { WorkflowContext } from './types.ts';
-import { activity } from './types.ts';
+import { activity, workflow } from './types.ts';
 
 // ---------------------------------------------------------------------------
 // Test activity worker URL — uses test-activity-worker.ts which registers
@@ -34,10 +34,14 @@ describe('Engine with activity worker execution', () => {
         execute: async (input: unknown) => `hello ${String(input)}`,
       });
 
-      engine.register('greet-workflow', async function* (ctx: WorkflowContext, input: unknown) {
+      const greetWorkflowWorkflow = workflow({ name: 'greet-workflow' }).execute(async function* (
+        ctx: WorkflowContext,
+        input: unknown,
+      ) {
         const result = yield* ctx.run(greet, input);
         return result;
       });
+      engine.register(greetWorkflowWorkflow);
 
       const handle = await engine.start('greet-workflow', 'world');
       const result = await handle.result();
@@ -59,10 +63,14 @@ describe('Engine with activity worker execution', () => {
         execute: async (input: unknown) => (input as number) * 2,
       });
 
-      engine.register('async-double', async function* (ctx: WorkflowContext, input: unknown) {
+      const asyncDoubleWorkflow = workflow({ name: 'async-double' }).execute(async function* (
+        ctx: WorkflowContext,
+        input: unknown,
+      ) {
         const result = yield* ctx.run(asyncDouble, input);
         return result;
       });
+      engine.register(asyncDoubleWorkflow);
 
       const handle = await engine.start('async-double', 21);
       const result = await handle.result();
@@ -84,9 +92,12 @@ describe('Engine with activity worker execution', () => {
         execute: async (input: number) => input * 2,
       });
 
-      engine.register('worker-saga', async function* (ctx: WorkflowContext) {
+      const workerSagaWorkflow = workflow({ name: 'worker-saga' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         return yield* ctx.saga([{ definition: double, input: 21 }]);
       });
+      engine.register(workerSagaWorkflow);
 
       const handle = await engine.start('worker-saga', null);
       await expect(handle.result()).resolves.toBe(42);
@@ -118,12 +129,16 @@ describe('Engine with activity worker execution', () => {
         execute: async (input: unknown) => (input as number) * 2,
       });
 
-      engine.register('multi-step', async function* (ctx: WorkflowContext, input: unknown) {
+      const multiStepWorkflow = workflow({ name: 'multi-step' }).execute(async function* (
+        ctx: WorkflowContext,
+        input: unknown,
+      ) {
         const data = input as { name: string; value: number };
         const greeting = yield* ctx.run(greet, data.name);
         const doubled = yield* ctx.run(double, data.value);
         return { greeting, doubled };
       });
+      engine.register(multiStepWorkflow);
 
       const handle = await engine.start('multi-step', { name: 'test', value: 5 });
       const result = await handle.result();
@@ -153,10 +168,13 @@ describe('Engine with activity worker execution', () => {
         },
       });
 
-      engine.register('failing-workflow', async function* (ctx: WorkflowContext) {
-        const result = yield* ctx.run(failing);
-        return result;
-      });
+      const failingWorkflowWorkflow = workflow({ name: 'failing-workflow' }).execute(
+        async function* (ctx: WorkflowContext) {
+          const result = yield* ctx.run(failing);
+          return result;
+        },
+      );
+      engine.register(failingWorkflowWorkflow);
 
       const handle = await engine.start('failing-workflow', null);
 
@@ -178,10 +196,13 @@ describe('Engine with activity worker execution', () => {
         execute: async () => 'should not reach',
       });
 
-      engine.register('unknown-activity-workflow', async function* (ctx: WorkflowContext) {
+      const unknownActivityWorkflowWorkflow = workflow({
+        name: 'unknown-activity-workflow',
+      }).execute(async function* (ctx: WorkflowContext) {
         const result = yield* ctx.run(unknown);
         return result;
       });
+      engine.register(unknownActivityWorkflowWorkflow);
 
       const handle = await engine.start('unknown-activity-workflow', null);
 
@@ -208,10 +229,14 @@ describe('Engine with activity worker execution', () => {
         execute: async (input: unknown) => `hello ${String(input)}`,
       });
 
-      engine.register('default-pool', async function* (ctx: WorkflowContext, input: unknown) {
+      const defaultPoolWorkflow = workflow({ name: 'default-pool' }).execute(async function* (
+        ctx: WorkflowContext,
+        input: unknown,
+      ) {
         const result = yield* ctx.run(greet, input);
         return result;
       });
+      engine.register(defaultPoolWorkflow);
 
       const handle = await engine.start('default-pool', 'test');
       const result = await handle.result();
@@ -233,10 +258,14 @@ describe('Engine with activity worker execution', () => {
         execute: async (input: unknown) => (input as number) * 2,
       });
 
-      engine.register('pool-1', async function* (ctx: WorkflowContext, input: unknown) {
+      const pool1Workflow = workflow({ name: 'pool-1' }).execute(async function* (
+        ctx: WorkflowContext,
+        input: unknown,
+      ) {
         const result = yield* ctx.run(double, input);
         return result;
       });
+      engine.register(pool1Workflow);
 
       const handle = await engine.start('pool-1', 7);
       const result = await handle.result();
@@ -258,10 +287,14 @@ describe('Engine with activity worker execution', () => {
         execute: async (input: unknown) => (input as number) * 2,
       });
 
-      engine.register('concurrent', async function* (ctx: WorkflowContext, input: unknown) {
+      const concurrentWorkflow = workflow({ name: 'concurrent' }).execute(async function* (
+        ctx: WorkflowContext,
+        input: unknown,
+      ) {
         const result = yield* ctx.run(double, input);
         return result;
       });
+      engine.register(concurrentWorkflow);
 
       // Start 4 workflows concurrently
       const handles = await Promise.all([
@@ -288,10 +321,14 @@ describe('Engine with activity worker execution', () => {
 
       const doubleInline = async (...args: unknown[]) => (args[0] as number) * 2;
 
-      engine.register('inline', async function* (ctx: WorkflowContext, input: unknown) {
+      const inlineWorkflow = workflow({ name: 'inline' }).execute(async function* (
+        ctx: WorkflowContext,
+        input: unknown,
+      ) {
         const result = yield* ctx.run(doubleInline, input);
         return result;
       });
+      engine.register(inlineWorkflow);
 
       const handle = await engine.start('inline', 5);
       const result = await handle.result();

@@ -41,6 +41,7 @@ import { sleepForTesting } from '../../testing/fake-timers.ts';
 import { BunSQLiteStorage } from '../bun-sql.ts';
 import { KEYS as STORAGE_KEYS } from '../interface.ts';
 
+import { workflow } from '../../core/types.ts';
 import { FixtureScope } from './adapter-spec.test-support.ts';
 
 async function flush(): Promise<void> {
@@ -98,7 +99,8 @@ describe('on-disk crash recovery — BunSQLiteStorage', () => {
 
       storage1 = openStorage(databasePath);
       engine1 = new Engine({ storage: storage1 });
-      engine1.register('signal-resume', makeWorkflow());
+      const signalResumeWorkflow = workflow({ name: 'signal-resume' }).execute(makeWorkflow());
+      engine1.register(signalResumeWorkflow);
       await engine1.start('signal-resume', null, { id: 'wf-signal' });
       await flush();
 
@@ -115,7 +117,8 @@ describe('on-disk crash recovery — BunSQLiteStorage', () => {
 
       storage2 = openStorage(databasePath);
       engine2 = new Engine({ storage: storage2 });
-      engine2.register('signal-resume', makeWorkflow());
+      const signalResumeWorkflow2 = workflow({ name: 'signal-resume' }).execute(makeWorkflow());
+      engine2.register(signalResumeWorkflow2);
 
       const handles = await engine2.recoverAll();
       expect(handles).toHaveLength(1);
@@ -152,7 +155,8 @@ describe('on-disk crash recovery — BunSQLiteStorage', () => {
 
       storage1 = openStorage(databasePath);
       engine1 = new Engine({ storage: storage1 });
-      engine1.register('completed-once', makeWorkflow());
+      const completedOnceWorkflow = workflow({ name: 'completed-once' }).execute(makeWorkflow());
+      engine1.register(completedOnceWorkflow);
       const initialHandle = await engine1.start('completed-once', null, { id: 'wf-done' });
       const firstResult = await initialHandle.result();
       expect(firstResult).toBe('done');
@@ -168,7 +172,8 @@ describe('on-disk crash recovery — BunSQLiteStorage', () => {
 
       storage2 = openStorage(databasePath);
       engine2 = new Engine({ storage: storage2 });
-      engine2.register('completed-once', makeWorkflow());
+      const completedOnceWorkflow2 = workflow({ name: 'completed-once' }).execute(makeWorkflow());
+      engine2.register(completedOnceWorkflow2);
 
       const handles = await engine2.recoverAll();
       expect(handles).toHaveLength(0);
@@ -202,7 +207,8 @@ describe('on-disk crash recovery — BunSQLiteStorage', () => {
 
       storage1 = openStorage(databasePath);
       engine1 = new Engine({ storage: storage1 });
-      engine1.register('two-signal', makeWorkflow());
+      const twoSignalWorkflow = workflow({ name: 'two-signal' }).execute(makeWorkflow());
+      engine1.register(twoSignalWorkflow);
       await engine1.start('two-signal', null, { id: 'wf-two' });
       await flush();
 
@@ -226,7 +232,8 @@ describe('on-disk crash recovery — BunSQLiteStorage', () => {
 
       storage2 = openStorage(databasePath);
       engine2 = new Engine({ storage: storage2 });
-      engine2.register('two-signal', makeWorkflow());
+      const twoSignalWorkflow2 = workflow({ name: 'two-signal' }).execute(makeWorkflow());
+      engine2.register(twoSignalWorkflow2);
 
       const handles = await engine2.recoverAll();
       expect(handles).toHaveLength(1);
@@ -264,7 +271,8 @@ describe('on-disk crash recovery — BunSQLiteStorage', () => {
 
       storage1 = openStorage(databasePath);
       engine1 = new Engine({ storage: storage1 });
-      engine1.register('scan-order', makeWorkflow());
+      const scanOrderWorkflow = workflow({ name: 'scan-order' }).execute(makeWorkflow());
+      engine1.register(scanOrderWorkflow);
       await engine1.start('scan-order', null, { id: 'aaa' });
       await engine1.start('scan-order', null, { id: 'bbb' });
       await engine1.start('scan-order', null, { id: 'ccc' });
@@ -282,7 +290,8 @@ describe('on-disk crash recovery — BunSQLiteStorage', () => {
 
       storage2 = openStorage(databasePath);
       engine2 = new Engine({ storage: storage2 });
-      engine2.register('scan-order', makeWorkflow());
+      const scanOrderWorkflow2 = workflow({ name: 'scan-order' }).execute(makeWorkflow());
+      engine2.register(scanOrderWorkflow2);
 
       const handles = await engine2.recoverAll();
       expect(handles.map((handle) => handle.id)).toEqual(['aaa', 'bbb', 'ccc']);

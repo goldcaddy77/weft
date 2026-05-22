@@ -7,6 +7,23 @@ import { flush } from '../testing/storage-backends.ts';
 import { Engine } from './engine.ts';
 import { CleanupWarningEvent } from './events.ts';
 import type { WorkflowContext } from './types.ts';
+import { workflow } from './types/workflow-function.ts';
+
+const resumableWorkflow = workflow({ name: 'resumable' }).execute(async function* (
+  ctx: WorkflowContext,
+) {
+  ctx.onUpdate('validate', (payload) => `validated: ${String(payload)}`);
+  await waitForever();
+  return 'done';
+});
+
+const updaterWorkflow = workflow({ name: 'updater' }).execute(async function* (
+  ctx: WorkflowContext,
+) {
+  const { payload, respond } = yield* ctx.waitForUpdate<string>('process');
+  respond(`processed: ${payload}`);
+  return payload;
+});
 
 // ---------------------------------------------------------------------------
 // A5: Fire-and-forget cleanup errors dispatch CleanupWarningEvent
@@ -73,11 +90,7 @@ describe('Engine dispatches CleanupWarningEvent on cleanup errors', () => {
       warnings.push(event as CleanupWarningEvent);
     });
 
-    engine.register('resumable', async function* (ctx: WorkflowContext) {
-      ctx.onUpdate('validate', (payload) => `validated: ${String(payload)}`);
-      await waitForever();
-      return 'done';
-    });
+    engine.register(resumableWorkflow);
 
     // Start the workflow -- the resume path triggers processPendingUpdates
     const handle = await engine.start('resumable', undefined);
@@ -134,11 +147,7 @@ describe('Engine dispatches CleanupWarningEvent on cleanup errors', () => {
       warnings.push(event as CleanupWarningEvent);
     });
 
-    engine.register('updater', async function* (ctx: WorkflowContext) {
-      const { payload, respond } = yield* ctx.waitForUpdate<string>('process');
-      respond(`processed: ${payload}`);
-      return payload;
-    });
+    engine.register(updaterWorkflow);
 
     // Pre-seed a coordinated update in storage so the workflow picks it up
     const { encode } = await import('./codec.ts');

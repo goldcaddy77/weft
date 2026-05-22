@@ -3,22 +3,31 @@ import { describe, expect, it } from 'bun:test';
 import { MemoryStorage } from '../storage/memory';
 import { Engine } from './engine';
 import type { WorkflowContext } from './types';
+import { workflow } from './types';
 
 describe('child workflows', () => {
   it('parent starts child and gets result', async () => {
     const engine = new Engine();
 
-    engine.register('child', async function* (_ctx: WorkflowContext, input: unknown) {
+    const childWorkflow = workflow({ name: 'child' }).execute(async function* (
+      _ctx: WorkflowContext,
+      input: unknown,
+    ) {
       const { value } = input as { value: number };
       return value * 2;
     });
+    engine.register(childWorkflow);
 
-    engine.register('parent', async function* (ctx: WorkflowContext, input: unknown) {
+    const parentWorkflow = workflow({ name: 'parent' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
       const context = ctx;
       const { value } = input as { value: number };
       const childResult = yield* context.startChild<number>('child', { value });
       return { doubled: childResult };
     });
+    engine.register(parentWorkflow);
 
     const handle = await engine.start('parent', { value: 21 });
     const result = await handle.result();
@@ -28,11 +37,14 @@ describe('child workflows', () => {
   it('child failure propagates to parent', async () => {
     const engine = new Engine();
 
-    engine.register('failing-child', async function* () {
+    const failingChildWorkflow = workflow({ name: 'failing-child' }).execute(async function* () {
       throw new Error('child exploded');
     });
+    engine.register(failingChildWorkflow);
 
-    engine.register('parent-catches', async function* (ctx: WorkflowContext) {
+    const parentCatchesWorkflow = workflow({ name: 'parent-catches' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const context = ctx;
       try {
         yield* context.startChild('failing-child', {});
@@ -41,6 +53,7 @@ describe('child workflows', () => {
         return { caught: true, message: (error as Error).message };
       }
     });
+    engine.register(parentCatchesWorkflow);
 
     const handle = await engine.start('parent-catches', {});
     const result = (await handle.result()) as { caught: boolean; message: string };
@@ -52,7 +65,10 @@ describe('child workflows', () => {
     const engine = new Engine();
 
     // Register a recursive workflow that calls itself as a child
-    engine.register('recursive', async function* (ctx: WorkflowContext, input: unknown) {
+    const recursiveWorkflow = workflow({ name: 'recursive' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
       const context = ctx;
       const { depth } = input as { depth: number };
       if (depth > 0) {
@@ -60,6 +76,7 @@ describe('child workflows', () => {
       }
       return depth;
     });
+    engine.register(recursiveWorkflow);
 
     // Start with depth 15, which will nest 15 levels deep (exceeding default limit of 10)
     const handle = await engine.start('recursive', { depth: 15 });
@@ -71,7 +88,10 @@ describe('child workflows', () => {
   it('custom maxNestingDepth limits nesting', async () => {
     const engine = new Engine({ maxNestingDepth: 2 });
 
-    engine.register('nested', async function* (ctx: WorkflowContext, input: unknown) {
+    const nestedWorkflow = workflow({ name: 'nested' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
       const context = ctx;
       const { level } = input as { level: number };
       if (level < 3) {
@@ -79,6 +99,7 @@ describe('child workflows', () => {
       }
       return `reached level ${level}`;
     });
+    engine.register(nestedWorkflow);
 
     // Starting at level 0, it will try to nest: 0 -> 1 -> 2 -> 3
     // At depth 0->1 (depth 1), 1->2 (depth 2), 2->3 (depth 3 > max 2) should fail
@@ -89,7 +110,10 @@ describe('child workflows', () => {
   it('succeeds within custom maxNestingDepth', async () => {
     const engine = new Engine({ maxNestingDepth: 3 });
 
-    engine.register('nested-ok', async function* (ctx: WorkflowContext, input: unknown) {
+    const nestedOkWorkflow = workflow({ name: 'nested-ok' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
       const context = ctx;
       const { level } = input as { level: number };
       if (level < 3) {
@@ -97,6 +121,7 @@ describe('child workflows', () => {
       }
       return `reached level ${level}`;
     });
+    engine.register(nestedOkWorkflow);
 
     // 0 -> 1 (depth 1), 1 -> 2 (depth 2), 2 -> 3 (depth 3) = exactly at limit
     const handle = await engine.start('nested-ok', { level: 0 });
@@ -108,15 +133,22 @@ describe('child workflows', () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
 
-    engine.register('stored-child', async function* (_ctx: WorkflowContext, input: unknown) {
+    const storedChildWorkflow = workflow({ name: 'stored-child' }).execute(async function* (
+      _ctx: WorkflowContext,
+      input: unknown,
+    ) {
       return `child result: ${(input as { data: string }).data}`;
     });
+    engine.register(storedChildWorkflow);
 
-    engine.register('stored-parent', async function* (ctx: WorkflowContext) {
+    const storedParentWorkflow = workflow({ name: 'stored-parent' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const context = ctx;
       const result = yield* context.startChild<string>('stored-child', { data: 'test' });
       return result;
     });
+    engine.register(storedParentWorkflow);
 
     const handle = await engine.start('stored-parent', {});
     await handle.result();
@@ -138,12 +170,19 @@ describe('child workflows', () => {
 
     let childCallCount = 0;
 
-    engine.register('counting-child', async function* (_ctx: WorkflowContext, input: unknown) {
+    const countingChildWorkflow = workflow({ name: 'counting-child' }).execute(async function* (
+      _ctx: WorkflowContext,
+      input: unknown,
+    ) {
       childCallCount++;
       return `result-${(input as { id: number }).id}`;
     });
+    engine.register(countingChildWorkflow);
 
-    engine.register('recovery-parent', async function* (ctx: WorkflowContext, input: unknown) {
+    const recoveryParentWorkflow = workflow({ name: 'recovery-parent' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
       const context = ctx;
       const { count } = input as { count: number };
       const results: string[] = [];
@@ -153,6 +192,7 @@ describe('child workflows', () => {
       }
       return results;
     });
+    engine.register(recoveryParentWorkflow);
 
     const handle = await engine.start('recovery-parent', { count: 3 });
     const result = await handle.result();

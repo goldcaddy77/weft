@@ -20,6 +20,7 @@ import { handleRequest } from '../server/handler.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { Engine } from './engine.ts';
 import type { WorkflowContext } from './types.ts';
+import { workflow } from './types.ts';
 
 // ---------------------------------------------------------------------------
 // Shared workflow functions — identical code used across all three modes
@@ -87,9 +88,12 @@ function handlerRequest(method: string, path: string, body?: unknown): Request {
 }
 
 function registerWorkflows(engine: Engine): void {
-  engine.register('multi-step', multiStepWorkflow);
-  engine.register('echo', echoWorkflow);
-  engine.register('signal', signalWorkflow);
+  const multiStepWorkflow2 = workflow({ name: 'multi-step' }).execute(multiStepWorkflow);
+  engine.register(multiStepWorkflow2);
+  const echoWorkflow2 = workflow({ name: 'echo' }).execute(echoWorkflow);
+  engine.register(echoWorkflow2);
+  const signalWorkflow2 = workflow({ name: 'signal' }).execute(signalWorkflow);
+  engine.register(signalWorkflow2);
 }
 
 beforeAll(() => {

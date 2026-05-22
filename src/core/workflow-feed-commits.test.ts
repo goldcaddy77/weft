@@ -16,17 +16,19 @@ import { describe, expect, it } from 'bun:test';
 
 import { MemoryStorage } from '../storage/memory.ts';
 import { Engine, type WorkflowFeedRecord } from './engine.ts';
-import type { WorkflowContext } from './types.ts';
+import { workflow } from './types/workflow-function.ts';
+
+const holdWorkflow = workflow({ name: 'hold' }).execute(async function* (ctx, _input: unknown) {
+  const context = ctx;
+  const value = yield* context.waitForSignal<string>('release');
+  yield* context.run(async () => `echoed:${value}`);
+  yield* context.run(async () => 'done');
+  return value;
+});
 
 function createEngineWithWorkflow(storage = new MemoryStorage()): Engine {
   const engine = new Engine({ storage });
-  engine.register('hold', async function* (ctx: WorkflowContext, _input: unknown) {
-    const context = ctx;
-    const value = yield* context.waitForSignal<string>('release');
-    yield* context.run(async () => `echoed:${value}`);
-    yield* context.run(async () => 'done');
-    return value;
-  });
+  engine.register(holdWorkflow);
   return engine;
 }
 

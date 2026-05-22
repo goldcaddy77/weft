@@ -10,6 +10,7 @@ import {
   MAX_WORKFLOW_TAGS,
 } from './start-workflow-validation.ts';
 import type { WorkflowContext } from './types.ts';
+import { workflow } from './types.ts';
 import {
   buildWorkflowTagIndexOperations,
   isWorkflowTagArray,
@@ -180,7 +181,8 @@ describe('workflow tags', () => {
 
   it('StartOptions.tags accepts string[] and stores normalized tags alongside workflow state', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('echo', echoWorkflow);
+    const echoWorkflow2 = workflow({ name: 'echo' }).execute(echoWorkflow);
+    engine.register(echoWorkflow2);
 
     try {
       const handle = await engine.start('echo', 'hello', {
@@ -200,7 +202,10 @@ describe('workflow tags', () => {
   it('handle.addTags(...tags) and handle.removeTags(...tags) mutate tags durably', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
-    engine.register('wait-for-signal', waitForSignalWorkflow);
+    const waitForSignalWorkflow2 = workflow({ name: 'wait-for-signal' }).execute(
+      waitForSignalWorkflow,
+    );
+    engine.register(waitForSignalWorkflow2);
 
     try {
       const handle = await engine.start('wait-for-signal', 'payload', {
@@ -219,7 +224,10 @@ describe('workflow tags', () => {
     }
 
     const recoveredEngine = new Engine({ storage });
-    recoveredEngine.register('wait-for-signal', waitForSignalWorkflow);
+    const waitForSignalWorkflow3 = workflow({ name: 'wait-for-signal' }).execute(
+      waitForSignalWorkflow,
+    );
+    recoveredEngine.register(waitForSignalWorkflow3);
 
     try {
       const recoveredState = await recoveredEngine.get('durable-tags');
@@ -236,7 +244,8 @@ describe('workflow tags', () => {
       storage,
       getNow: () => now,
     });
-    engine.register('echo', echoWorkflow);
+    const echoWorkflow3 = workflow({ name: 'echo' }).execute(echoWorkflow);
+    engine.register(echoWorkflow3);
 
     try {
       const handle = await engine.start('echo', 'done', {
@@ -265,7 +274,10 @@ describe('workflow tags', () => {
 
   it('handle.addTags(...tags) enforces the total tag count after combining with existing tags', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('wait-for-signal', waitForSignalWorkflow);
+    const waitForSignalWorkflow4 = workflow({ name: 'wait-for-signal' }).execute(
+      waitForSignalWorkflow,
+    );
+    engine.register(waitForSignalWorkflow4);
 
     try {
       const handle = await engine.start('wait-for-signal', 'payload', {
@@ -289,7 +301,10 @@ describe('workflow tags', () => {
 
   it('handle.addTags(...tags) reports tag mutation validation errors with workflow-tag context', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('wait-for-signal', waitForSignalWorkflow);
+    const waitForSignalWorkflow5 = workflow({ name: 'wait-for-signal' }).execute(
+      waitForSignalWorkflow,
+    );
+    engine.register(waitForSignalWorkflow5);
 
     try {
       const handle = await engine.start('wait-for-signal', 'payload', {
@@ -308,7 +323,10 @@ describe('workflow tags', () => {
     const workflowId = 'serialized-tag-mutations';
     const storage = new WorkflowStateWriteTrackingStorage(workflowId);
     const engine = new Engine({ storage });
-    engine.register('wait-for-signal', waitForSignalWorkflow);
+    const waitForSignalWorkflow6 = workflow({ name: 'wait-for-signal' }).execute(
+      waitForSignalWorkflow,
+    );
+    engine.register(waitForSignalWorkflow6);
 
     try {
       const handle = await engine.start('wait-for-signal', 'payload', {
@@ -335,7 +353,8 @@ describe('workflow tags', () => {
 
   it("engine.list({ tags: ['nightly', 'v2'] }) filters by tag intersection", async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('echo', echoWorkflow);
+    const echoWorkflow4 = workflow({ name: 'echo' }).execute(echoWorkflow);
+    engine.register(echoWorkflow4);
 
     try {
       const firstHandle = await engine.start('echo', 'one', {
@@ -360,12 +379,12 @@ describe('workflow tags', () => {
 
   it('Tags are distinct from search attributes', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('searchable', {
-      handler: waitForSignalWorkflow,
-      searchAttributes: {
+    const searchableWorkflow = workflow({ name: 'searchable' })
+      .searchAttributes({
         priority: { type: 'string' },
-      },
-    });
+      })
+      .execute(waitForSignalWorkflow);
+    engine.register(searchableWorkflow);
 
     try {
       await engine.start('searchable', 'payload', {

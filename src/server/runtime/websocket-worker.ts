@@ -13,6 +13,7 @@ import {
   type TaskResultMessage,
   type WorkerToServerMessage,
 } from '../../worker/protocol.ts';
+import { workerProtocolIncompatibleMessage } from '../../worker/worker-protocol-incompatible-error.ts';
 import type { ServeOptions } from '../index.ts';
 import type { WebSocketData } from '../json-rpc-websocket-runtime.ts';
 import {
@@ -301,12 +302,18 @@ function parseAndValidateWorkerFrame(
       result.error.code === 'invalid_registration' ||
       result.error.code === 'unsupported_protocol_version'
     ) {
-      rejectRegistration(
-        ws,
-        result.error.code,
-        result.error.message,
-        result.error.requestedProtocolVersion,
-      );
+      // Phase 4: a worker advertising an older protocol version (the v1 wire
+      // semantics, which sent bare activity names) is rejected with the
+      // canonical incompatibility message so operators see "upgrade the worker
+      // SDK" instead of "no worker for activity X" later in replay.
+      const message =
+        result.error.code === 'unsupported_protocol_version'
+          ? workerProtocolIncompatibleMessage({
+              expected: REMOTE_WORKER_PROTOCOL_VERSION,
+              received: result.error.requestedProtocolVersion,
+            })
+          : result.error.message;
+      rejectRegistration(ws, result.error.code, message, result.error.requestedProtocolVersion);
       return { ok: false };
     }
 

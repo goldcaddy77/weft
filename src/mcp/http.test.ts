@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { Engine } from '../core/engine.ts';
 import { tenantFromInputField } from '../core/tenant.ts';
 import { activity, type DefinitionSchema, type WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types/workflow-function.ts';
 import { signJWT } from '../server/authentication.ts';
 import { serve, type WeftServer } from '../server/index.ts';
 import { anonymousPrincipal, principalFromJwtClaims } from '../server/principal.ts';
@@ -36,40 +37,44 @@ function createEngine(): Engine {
   });
   enginesToDispose.push(engine);
 
-  engine.register('greet-customer', {
+  const greetCustomer = workflow({
+    name: 'greet-customer',
     description: 'Greet a customer by name.',
     inputSchema: z.object({
       tenantId: z.string().optional(),
       name: z.string(),
     }),
-    handler: async function* (_context: WorkflowContext, input: { name: string }) {
-      return { message: `Hello, ${input.name}!` };
-    },
+  }).execute(async function* (_context: WorkflowContext, input: { name: string }) {
+    return { message: `Hello, ${input.name}!` };
   });
+  engine.register(greetCustomer);
 
-  engine.register('hold-for-cancel', {
+  const holdForCancel = workflow({
+    name: 'hold-for-cancel',
     description: 'Wait for a release signal.',
     inputSchema: z.object({
       tenantId: z.string().optional(),
       label: z.string().optional(),
     }),
-    handler: async function* (
-      context: WorkflowContext,
-      input: { tenantId?: string | undefined; label?: string | undefined },
-    ) {
-      let label = input.label ?? 'initial';
-      context.onQuery('label', () => label);
-      context.onUpdate('setLabel', (payload) => {
-        label = typeof payload === 'string' ? payload : 'updated';
-        return label;
-      });
-      const released = yield* context.waitForSignal<string>('release');
-      return { label, released };
-    },
+  }).execute(async function* (
+    context: WorkflowContext,
+    input: { tenantId?: string | undefined; label?: string | undefined },
+  ) {
+    let label = input.label ?? 'initial';
+    context.onQuery('label', () => label);
+    context.onUpdate('setLabel', (payload) => {
+      label = typeof payload === 'string' ? payload : 'updated';
+      return label;
+    });
+    const released = yield* context.waitForSignal<string>('release');
+    return { label, released };
   });
-  engine.register('hidden-no-schema', async function* () {
+  engine.register(holdForCancel);
+
+  const hiddenNoSchema = workflow({ name: 'hidden-no-schema' }).execute(async function* () {
     return 'hidden';
   });
+  engine.register(hiddenNoSchema);
 
   engine.register(activity({ name: 'internal-only-activity', execute: async () => 'not exposed' }));
 
@@ -337,14 +342,15 @@ describe('MCP Streamable HTTP transport', () => {
   it('reuses the converted tool registry until workflow definitions change', async () => {
     const engine = trackEngine(new Engine({ storage: new MemoryStorage() }));
     let inputConversions = 0;
-    engine.register('counted-tool', {
+    const countedTool = workflow({
+      name: 'counted-tool',
       inputSchema: countingDefinitionSchema<{ name?: string }>(() => {
         inputConversions += 1;
       }),
-      handler: async function* (_context: WorkflowContext, input: { name?: string }) {
-        return { message: `Hello, ${input.name ?? 'there'}!` };
-      },
+    }).execute(async function* (_context: WorkflowContext, input: { name?: string }) {
+      return { message: `Hello, ${input.name ?? 'there'}!` };
     });
+    engine.register(countedTool);
     server = serve({ engine, port: 0 });
     const sessionId = await initialize(server);
 
@@ -373,14 +379,15 @@ describe('MCP Streamable HTTP transport', () => {
     });
     expect(inputConversions).toBe(1);
 
-    engine.register('late-tool', {
+    const lateTool = workflow({
+      name: 'late-tool',
       inputSchema: countingDefinitionSchema(() => {
         inputConversions += 1;
       }),
-      handler: async function* () {
-        return { ok: true };
-      },
+    }).execute(async function* () {
+      return { ok: true };
     });
+    engine.register(lateTool);
 
     const afterRegistration = await mcpJson(server, sessionId, {
       jsonrpc: '2.0',
@@ -423,12 +430,13 @@ describe('MCP Streamable HTTP transport', () => {
 
   it('masks unexpected workflow tool failures while preserving domain errors', async () => {
     const engine = createEngine();
-    engine.register('explode-secretly', {
+    const explodeSecretly = workflow({
+      name: 'explode-secretly',
       inputSchema: z.object({}),
-      handler: async function* () {
-        throw new Error('secret implementation detail');
-      },
+    }).execute(async function* () {
+      throw new Error('secret implementation detail');
     });
+    engine.register(explodeSecretly);
     const session = new McpSession('mask-errors-session', anonymousPrincipal());
 
     const result = await callMcpTool(

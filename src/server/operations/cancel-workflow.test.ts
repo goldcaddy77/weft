@@ -2,18 +2,21 @@ import { describe, expect, it } from 'bun:test';
 
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
+import { workflow } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
 import { cancelWorkflowOperation, cancelWorkflowRestBinding } from './cancel-workflow.ts';
 import { waitForWorkflowStatus } from './operation-test-helpers.test-support.ts';
 
+const holdWorkflow = workflow({ name: 'hold' }).execute(async function* (ctx: WorkflowContext) {
+  return yield* ctx.waitForSignal<string>('release');
+});
+
 function createEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
-  engine.register('hold', async function* (ctx: WorkflowContext) {
-    return yield* ctx.waitForSignal<string>('release');
-  });
+  engine.register(holdWorkflow);
   return engine;
 }
 

@@ -10,19 +10,25 @@ import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { signJWT } from './authentication.ts';
 import { serve, type WeftServer } from './index.ts';
 import { createLiveOperationRegistry, REST_BINDINGS } from './rest-bindings.ts';
+
+const holdWorkflow = workflow({ name: 'hold' }).execute(async function* (
+  ctx: WorkflowContext,
+  _input: unknown,
+) {
+  return yield* ctx.waitForSignal<string>('release');
+});
 
 const TEST_SECRET = 'track-8-milestone-1-secret-1234567890';
 
 function createHoldEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
-  engine.register('hold', async function* (ctx: WorkflowContext, _input: unknown) {
-    return yield* ctx.waitForSignal<string>('release');
-  });
+  engine.register(holdWorkflow);
   return engine;
 }
 

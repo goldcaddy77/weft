@@ -236,3 +236,43 @@ export class WorkflowNotRegisteredError extends Error {
     this.workflowType = workflowType;
   }
 }
+
+/**
+ * Thrown when the engine cannot resolve an activity name to a registered
+ * function during dispatch. The per-workflow {@link ActivityRegistry} (built
+ * from `workflow(...).activities({...})`) is consulted first; if the workflow
+ * type is unknown or the activity name is missing there, the engine falls back
+ * to the global registry. When neither resolves, this error is raised with the
+ * (bounded) workflow type and activity name so logs and operator surfaces can
+ * pin the misconfiguration without leaking high-cardinality detail.
+ *
+ * Replaces the prior unstructured `Error("No activity registered with name X")`
+ * thrown deep in `resolveActivityFunction`.
+ *
+ * @example
+ * ```ts
+ * import { ActivityResolutionError } from 'weft';
+ *
+ * function isMissingActivity(error: unknown): boolean {
+ *   return error instanceof ActivityResolutionError;
+ * }
+ * ```
+ */
+export class ActivityResolutionError extends Error {
+  readonly code = 'ActivityResolutionError';
+  readonly workflowType: string;
+  readonly activityName: string;
+
+  constructor(workflowType: string, activityName: string) {
+    super(
+      `No activity registered with name "${activityName}" for workflow type "${workflowType}". ` +
+        'Register the activity via `workflow({ name }).activities({ ... })` on the workflow that runs it, ' +
+        'or via `engine.register(activityDefinition)` for the legacy global registry.',
+    );
+    this.name = 'ActivityResolutionError';
+    this.workflowType = workflowType;
+    this.activityName = activityName;
+  }
+}
+
+export { PersistedDataIncompatibleError } from '../persisted-data-incompatible-error.ts';

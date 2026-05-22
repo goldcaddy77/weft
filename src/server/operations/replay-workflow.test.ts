@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
+import { workflow } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { signJWT } from '../authentication.ts';
 import { handleRequest } from '../handler.ts';
@@ -32,14 +33,15 @@ function createReplayEngine(): Engine {
     return { phase: 'third' as const };
   }
 
-  engine.register('three-steps', {
-    version: '1.0.0',
-    handler: async function* (ctx: WorkflowContext) {
+  engine.register(
+    workflow({ name: 'three-steps', version: '1.0.0' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       yield* ctx.run(firstStep);
       yield* ctx.run(secondStep);
       return yield* ctx.run(thirdStep);
-    },
-  });
+    }),
+  );
 
   return engine;
 }

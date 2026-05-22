@@ -7,6 +7,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
+import { workflow } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
@@ -17,12 +18,17 @@ import {
   bulkSignalWorkflowsRestBinding,
 } from './bulk-signal-workflows.ts';
 
+const waitingWorkflow = workflow({ name: 'waiting' }).execute(async function* (
+  ctx: WorkflowContext,
+  input: unknown,
+) {
+  const payload = yield* ctx.waitForSignal<string>('continue');
+  return `${String(input)}:${payload}`;
+});
+
 function createEngine(): Engine {
   const engine = new Engine({ storage: new MemoryStorage() });
-  engine.register('waiting', async function* (ctx: WorkflowContext, input: unknown) {
-    const payload = yield* ctx.waitForSignal<string>('continue');
-    return `${String(input)}:${payload}`;
-  });
+  engine.register(waitingWorkflow);
   return engine;
 }
 

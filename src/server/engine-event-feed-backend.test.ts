@@ -17,6 +17,7 @@ import { describe, expect, it } from 'bun:test';
 import { encode } from '../core/codec.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { createEngineEventFeedBackend } from './engine-event-feed-backend.ts';
@@ -26,21 +27,26 @@ import {
   type EventEnvelope,
 } from './workflow-event-feed.ts';
 
+const holdWorkflow = workflow({ name: 'hold' }).execute(async function* (
+  ctx: WorkflowContext,
+  _input: unknown,
+) {
+  const context = ctx;
+  const value = yield* context.waitForSignal<string>('release');
+  // After the signal unblocks the workflow, run durable activities
+  // so the engine commits additional event log entries. A bare
+  // `waitForSignal → return` only produces the initial
+  // `workflow:checkpoint`; the feed's live tests need several
+  // post-resume commits to verify listener invocation.
+  yield* context.run(async () => `echoed:${value}`);
+  yield* context.run(async () => 'done');
+  return value;
+});
+
 function createEngineWithSignalWorkflow(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
-  engine.register('hold', async function* (ctx: WorkflowContext, _input: unknown) {
-    const context = ctx;
-    const value = yield* context.waitForSignal<string>('release');
-    // After the signal unblocks the workflow, run durable activities
-    // so the engine commits additional event log entries. A bare
-    // `waitForSignal → return` only produces the initial
-    // `workflow:checkpoint`; the feed's live tests need several
-    // post-resume commits to verify listener invocation.
-    yield* context.run(async () => `echoed:${value}`);
-    yield* context.run(async () => 'done');
-    return value;
-  });
+  engine.register(holdWorkflow);
   return engine;
 }
 
@@ -359,7 +365,10 @@ describe('createEngineEventFeedBackend — tokens selector', () => {
   function createTokenStreamerEngine(chunks: ReadonlyArray<unknown>): Engine {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
-    engine.register('streamer', async function* (ctx: WorkflowContext, _input: unknown) {
+    const streamerWorkflow = workflow({ name: 'streamer' }).execute(async function* (
+      ctx: WorkflowContext,
+      _input: unknown,
+    ) {
       const context = ctx;
       yield* context.stream('tokens', async function* () {
         for (const chunk of chunks) {
@@ -369,6 +378,7 @@ describe('createEngineEventFeedBackend — tokens selector', () => {
       yield* context.waitForSignal<string>('finish');
       return 'done';
     });
+    engine.register(streamerWorkflow);
     return engine;
   }
 

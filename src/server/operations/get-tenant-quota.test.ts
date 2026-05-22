@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { Engine } from '../../core/engine.ts';
 import { tenantFromInputField } from '../../core/tenant.ts';
 import type { WorkflowContext } from '../../core/types.ts';
+import { workflow } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry, executeOperation } from '../operation-catalog.ts';
@@ -21,6 +22,13 @@ import type { OperationFault } from '../operation-fault.ts';
 import { principalFromApiKey, principalFromJwtClaims } from '../principal.ts';
 import { createLiveOperationRegistry } from '../rest-bindings.ts';
 import { getTenantQuotaOperation, getTenantQuotaRestBinding } from './get-tenant-quota.ts';
+
+const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: unknown,
+) {
+  return input;
+});
 
 function createEngine(): Engine {
   return new Engine({ storage: new MemoryStorage() });
@@ -35,9 +43,7 @@ function createTenantAwareEngine(): Engine {
       maxWorkflowCreationRate: { count: 10, window: '1m' },
     },
   });
-  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-    return input;
-  });
+  engine.register(echoWorkflow);
   return engine;
 }
 

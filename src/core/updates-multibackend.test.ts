@@ -11,6 +11,7 @@ import {
 import { encode } from './codec.ts';
 import { Engine } from './engine.ts';
 import type { WorkflowContext } from './types.ts';
+import { workflow } from './types.ts';
 import { WorkflowTerminalError } from './updates.ts';
 
 // ---------------------------------------------------------------------------
@@ -39,11 +40,14 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('echo', async function* (ctx: WorkflowContext) {
+      const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         ctx.onUpdate('echo', (payload) => `echo: ${String(payload)}`);
         await waitForever();
         return 'done';
       });
+      engine.register(echoWorkflow);
 
       const handle = await engine.start('echo', undefined);
       handle.result().catch(() => {});
@@ -62,11 +66,14 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('waiter', async function* (ctx: WorkflowContext) {
+      const waiterWorkflow = workflow({ name: 'waiter' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         const { payload, respond } = yield* ctx.waitForUpdate<string>('review');
         respond({ accepted: true, data: payload });
         return `processed: ${payload}`;
       });
+      engine.register(waiterWorkflow);
 
       const handle = await engine.start('waiter', undefined);
       await waitForWorkflowStatus(engine, handle.id, 'running');
@@ -87,9 +94,12 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('quick', async function* (_ctx: WorkflowContext) {
+      const quickWorkflow = workflow({ name: 'quick' }).execute(async function* (
+        _ctx: WorkflowContext,
+      ) {
         return 'done';
       });
+      engine.register(quickWorkflow);
 
       const handle = await engine.start('quick', undefined);
       await handle.result();
@@ -113,10 +123,13 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('no-handler', async function* (_ctx: WorkflowContext) {
+      const noHandlerWorkflow = workflow({ name: 'no-handler' }).execute(async function* (
+        _ctx: WorkflowContext,
+      ) {
         await waitForever();
         return 'done';
       });
+      engine.register(noHandlerWorkflow);
 
       const handle = await engine.start('no-handler', undefined);
       handle.result().catch(() => {});
@@ -140,7 +153,9 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       let counter = 0;
-      engine.register('counter', async function* (ctx: WorkflowContext) {
+      const counterWorkflow = workflow({ name: 'counter' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         ctx.onUpdate('increment', () => {
           counter += 1;
           return counter;
@@ -148,6 +163,7 @@ for (const backend of storageBackends) {
         await waitForever();
         return counter;
       });
+      engine.register(counterWorkflow);
 
       const handle = await engine.start('counter', undefined);
       handle.result().catch(() => {});
@@ -193,11 +209,14 @@ for (const backend of storageBackends) {
       await result.storage.put(KEYS.update(workflowId, 'upd-new'), encode(newer));
       await result.storage.put(KEYS.update(workflowId, 'upd-old'), encode(older));
 
-      engine.register('fifo', async function* (ctx: WorkflowContext) {
+      const fifoWorkflow = workflow({ name: 'fifo' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         const { payload, respond } = yield* ctx.waitForUpdate<string>('data');
         respond(payload);
         return payload;
       });
+      engine.register(fifoWorkflow);
 
       const handle = await engine.start('fifo', undefined, { id: workflowId });
       const handleResult = await handle.result();
@@ -215,10 +234,13 @@ for (const backend of storageBackends) {
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });
 
-      engine.register('cancelable', async function* (ctx: WorkflowContext) {
+      const cancelableWorkflow = workflow({ name: 'cancelable' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         yield* ctx.sleep('1 hour');
         return 'done';
       });
+      engine.register(cancelableWorkflow);
 
       const handle = await engine.start('cancelable', undefined);
       handle.result().catch(() => {});

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext, WorkflowState, WorkflowStatus } from '../../core/types.ts';
+import { workflow } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { restoreRealTimers, useFakeTimers } from '../../testing/fake-timers.ts';
 import {
@@ -9,6 +10,13 @@ import {
   jsonRequest,
   waitForWorkflowStatus,
 } from './operation-test-helpers.test-support.ts';
+
+const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: unknown,
+) {
+  return input;
+});
 
 function workflowState(status: WorkflowStatus, workflowId = 'helper-status'): WorkflowState {
   return {
@@ -51,9 +59,7 @@ describe('operation test helpers', () => {
 
   it('waits for a workflow to reach an expected status', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
-    });
+    engine.register(echoWorkflow);
 
     try {
       const handle = await engine.start('echo', { ok: true }, { id: 'helper-status-success' });

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'bun:test';
 import { encode } from '../../core/codec.ts';
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
+import { workflow } from '../../core/types.ts';
 import { KEYS, type ScanOptions } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { WorkerRegistry } from '../../worker/registry.ts';
@@ -16,11 +17,16 @@ import {
   type GetTaskDiagnosticsOutput,
 } from './get-task-diagnostics.ts';
 
+const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: unknown,
+) {
+  return input;
+});
+
 function createEngine(storage: MemoryStorage): Engine {
   const engine = new Engine({ storage });
-  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-    return input;
-  });
+  engine.register(echoWorkflow);
   return engine;
 }
 

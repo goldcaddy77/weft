@@ -18,6 +18,7 @@ import { TestEngine } from '../../testing/test-engine.ts';
 import { computeSemanticHash, EffectLog } from '../effect-log/index.ts';
 import { ReviewTimeoutError } from '../review/index.ts';
 import type { WorkflowContext } from '../types.ts';
+import { workflow } from '../types.ts';
 
 describe('remove-ai-surface acceptance gates', () => {
   let engine: TestEngine | undefined;
@@ -30,7 +31,9 @@ describe('remove-ai-surface acceptance gates', () => {
   it('ctx.review() round-trip: persist, retrieve, submit, resume with decision', async () => {
     engine = new TestEngine();
 
-    engine.register('needs-approval', async function* (ctx: WorkflowContext) {
+    const needsApprovalWorkflow = workflow({ name: 'needs-approval' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       const result = yield* ctx.review({
         artifact: { amount: 99, recipient: 'alice' },
         reviewType: 'payment',
@@ -38,6 +41,7 @@ describe('remove-ai-surface acceptance gates', () => {
       });
       return result;
     });
+    engine.register(needsApprovalWorkflow);
 
     const handle = await engine.start('needs-approval', null);
     const resultPromise = handle.result();
@@ -74,13 +78,16 @@ describe('remove-ai-surface acceptance gates', () => {
   it('ctx.review() timeout fails the workflow with ReviewTimeoutError after deadline elapses', async () => {
     engine = new TestEngine({ startTime: 1_000 });
 
-    engine.register('approval-with-timeout', async function* (ctx: WorkflowContext) {
-      return yield* ctx.review({
-        artifact: 'release plan',
-        reviewers: ['alice@example.com'],
-        timeout: 5_000,
-      });
-    });
+    const approvalWithTimeoutWorkflow = workflow({ name: 'approval-with-timeout' }).execute(
+      async function* (ctx: WorkflowContext) {
+        return yield* ctx.review({
+          artifact: 'release plan',
+          reviewers: ['alice@example.com'],
+          timeout: 5_000,
+        });
+      },
+    );
+    engine.register(approvalWithTimeoutWorkflow);
 
     const handle = await engine.start('approval-with-timeout', null);
     // Attach the catch up-front so the eventual rejection isn't reported
@@ -164,12 +171,14 @@ describe('remove-ai-surface acceptance gates', () => {
     const engineA = new TestEngine();
     const engineB = new TestEngine();
     try {
-      engineA.register('noop', async function* () {
+      const noopWorkflow = workflow({ name: 'noop' }).execute(async function* () {
         return 1;
       });
-      engineB.register('noop', async function* () {
+      engineA.register(noopWorkflow);
+      const noopWorkflow2 = workflow({ name: 'noop' }).execute(async function* () {
         return 2;
       });
+      engineB.register(noopWorkflow2);
       expect(computeSemanticHash(input)).toBe(baseline);
     } finally {
       engineA[Symbol.dispose]();

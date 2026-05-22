@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { z } from 'zod';
 
 import { Engine } from '../../core/engine.ts';
-import { activity } from '../../core/types.ts';
+import { activity, workflow } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry, executeOperation } from '../operation-catalog.ts';
@@ -48,18 +48,18 @@ describe('GET /v1/registry — successful responses', () => {
 
   it('returns the snapshot for a populated engine', async () => {
     engine = createEngine();
-    engine.register('welcome', {
-      handler: async function* () {
+    engine.register(
+      workflow({
+        name: 'welcome',
+        inputSchema: z.object({ name: z.string() }),
+        outputSchema: z.object({ greeting: z.string() }),
+        description: 'Greets a person.',
+        tags: ['greeting'],
+      }).execute(async function* () {
         return { greeting: 'hi' };
-      },
-      inputSchema: z.object({ name: z.string() }),
-      outputSchema: z.object({ greeting: z.string() }),
-      description: 'Greets a person.',
-      tags: ['greeting'],
-    });
-    engine.register('schemaless', {
-      handler: async function* () {},
-    });
+      }),
+    );
+    engine.register(workflow({ name: 'schemaless' }).execute(async function* () {}));
     engine.register(
       activity({
         name: 'sendEmail',
@@ -154,9 +154,9 @@ describe('GET /v1/registry — successful responses', () => {
 
   it('produces alphabetically sorted workflow and activity keys', async () => {
     engine = createEngine();
-    engine.register('charlie', { handler: async function* () {} });
-    engine.register('alpha', { handler: async function* () {} });
-    engine.register('bravo', { handler: async function* () {} });
+    engine.register(workflow({ name: 'charlie' }).execute(async function* () {}));
+    engine.register(workflow({ name: 'alpha' }).execute(async function* () {}));
+    engine.register(workflow({ name: 'bravo' }).execute(async function* () {}));
     engine.register(activity({ name: 'zulu', execute: async () => undefined }));
     engine.register(activity({ name: 'alpha', execute: async () => undefined }));
 
@@ -187,7 +187,7 @@ describe('GET /v1/registry — successful responses', () => {
     // including the strict Zod outputSchema, does not drop or reshape the
     // entry.
     engine = createEngine();
-    engine.register('__proto__', { handler: async function* () {} });
+    engine.register(workflow({ name: '__proto__' }).execute(async function* () {}));
     engine.register(activity({ name: '__proto__', execute: async () => undefined }));
 
     const response = await handleRequest(
@@ -289,7 +289,7 @@ describe('GET /v1/registry — authorization', () => {
 
   it('succeeds with system:read scope via executeOperation', async () => {
     engine = createEngine();
-    engine.register('demo', { handler: async function* () {} });
+    engine.register(workflow({ name: 'demo' }).execute(async function* () {}));
     const liveRegistry = createLiveOperationRegistry();
 
     const result = await executeOperation(
@@ -335,10 +335,9 @@ describe('GET /v1/registry — error shaping', () => {
         validate: (value: unknown) => ({ value }),
       },
     };
-    engine.register('broken', {
-      handler: async function* () {},
-      inputSchema: brokenSchema,
-    });
+    engine.register(
+      workflow({ name: 'broken', inputSchema: brokenSchema }).execute(async function* () {}),
+    );
 
     const response = await handleRequest(
       new Request('http://localhost/v1/registry', { method: 'GET' }),

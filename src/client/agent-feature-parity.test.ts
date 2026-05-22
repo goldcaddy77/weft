@@ -12,6 +12,7 @@ import type { StreamReference } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import { ReviewCoordinator } from '../core/review/index.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types/workflow-function.ts';
 import { handleRequest } from '../server/handler.ts';
 import { principalFromApiKey } from '../server/principal.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -23,11 +24,17 @@ import { LocalClient } from './local.ts';
 // Test workflows
 // ---------------------------------------------------------------------------
 
-async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
+const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: unknown,
+) {
   return input;
-}
+});
 
-async function* streamingWorkflow(ctx: WorkflowContext, _input: unknown) {
+const streamingWorkflow = workflow({ name: 'streaming' }).execute(async function* (
+  ctx: WorkflowContext,
+  _input: unknown,
+) {
   const c = ctx;
   const reference = yield* c.stream('report', async function* () {
     yield { row: 1, data: 'alpha' };
@@ -38,7 +45,7 @@ async function* streamingWorkflow(ctx: WorkflowContext, _input: unknown) {
   // state, so tests need the workflow to stay in `running` while they read.
   yield* c.waitForSignal('finish-streaming');
   return reference;
-}
+});
 
 // ---------------------------------------------------------------------------
 // Shared test suite — runs against both LocalClient and HttpClient
@@ -183,8 +190,8 @@ describe('Agent feature parity: LocalClient (library mode)', () => {
 
   beforeAll(() => {
     engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('echo', echoWorkflow);
-    engine.register('streaming', streamingWorkflow);
+    engine.register(echoWorkflow);
+    engine.register(streamingWorkflow);
     client = new LocalClient(engine);
   });
 
@@ -211,8 +218,8 @@ describe('Agent feature parity: HttpClient (server mode)', () => {
 
   beforeAll(() => {
     engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('echo', echoWorkflow);
-    engine.register('streaming', streamingWorkflow);
+    engine.register(echoWorkflow);
+    engine.register(streamingWorkflow);
 
     server = Bun.serve({
       port: 0,

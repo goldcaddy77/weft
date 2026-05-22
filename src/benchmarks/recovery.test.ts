@@ -3,6 +3,7 @@ import { waitForRealTimersForTesting } from '../testing/fake-timers.ts';
 
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 
 /**
@@ -40,10 +41,13 @@ async function measureRecoverAll(totalWorkflows: number): Promise<RecoveryMeasur
   try {
     // A workflow that waits for a signal so it stays in 'running' state
     // after checkpointing.
-    creationEngine.register('waiter', async function* (ctx: WorkflowContext) {
+    const waiterWorkflow = workflow({ name: 'waiter' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       yield* ctx.waitForSignal('go');
       return 'done';
     });
+    creationEngine.register(waiterWorkflow);
 
     // Start workflows — they'll checkpoint at the signal-wait yield point.
     for (let i = 0; i < totalWorkflows; i++) {
@@ -60,10 +64,13 @@ async function measureRecoverAll(totalWorkflows: number): Promise<RecoveryMeasur
     // Create a new engine on the same storage.
     recoveryEngine = new Engine({ storage });
 
-    recoveryEngine.register('waiter', async function* (ctx: WorkflowContext) {
+    const waiterWorkflow2 = workflow({ name: 'waiter' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
       yield* ctx.waitForSignal('go');
       return 'done';
     });
+    recoveryEngine.register(waiterWorkflow2);
 
     // Measure recovery time for all workflows via recoverAll().
     const start = performance.now();
@@ -125,10 +132,13 @@ describe('Workflow recovery', () => {
       // Phase 1: create a workflow with shallow history.
       const engine1 = new Engine({ storage });
 
-      engine1.register('waiter', async function* (ctx: WorkflowContext) {
+      const waiterWorkflow3 = workflow({ name: 'waiter' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         yield* ctx.waitForSignal('go');
         return 'done';
       });
+      engine1.register(waiterWorkflow3);
 
       for (let index = 0; index < RECOVERY_SAMPLE_SIZE; index++) {
         await engine1.start('waiter', `shallow-${index}`, {
@@ -140,10 +150,13 @@ describe('Workflow recovery', () => {
 
       // Measure shallow recovery.
       const engine2 = new Engine({ storage });
-      engine2.register('waiter', async function* (ctx: WorkflowContext) {
+      const waiterWorkflow4 = workflow({ name: 'waiter' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         yield* ctx.waitForSignal('go');
         return 'done';
       });
+      engine2.register(waiterWorkflow4);
 
       const shallowTimes: number[] = [];
       for (let index = 0; index < RECOVERY_SAMPLE_SIZE; index++) {
@@ -158,15 +171,21 @@ describe('Workflow recovery', () => {
       // in storage via many completed workflows to fill the store).
       const engine3 = new Engine({ storage });
 
-      engine3.register('waiter', async function* (ctx: WorkflowContext) {
+      const waiterWorkflow5 = workflow({ name: 'waiter' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         yield* ctx.waitForSignal('go');
         return 'done';
       });
+      engine3.register(waiterWorkflow5);
 
       // Add 500 completed workflows to increase overall storage volume.
-      engine3.register('filler', async function* (_ctx: WorkflowContext) {
+      const fillerWorkflow = workflow({ name: 'filler' }).execute(async function* (
+        _ctx: WorkflowContext,
+      ) {
         return 'filler';
       });
+      engine3.register(fillerWorkflow);
       for (let i = 0; i < 500; i++) {
         const handle = await engine3.start('filler', i);
         await handle.result();
@@ -183,10 +202,13 @@ describe('Workflow recovery', () => {
 
       // Measure deep recovery.
       const engine4 = new Engine({ storage });
-      engine4.register('waiter', async function* (ctx: WorkflowContext) {
+      const waiterWorkflow6 = workflow({ name: 'waiter' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
         yield* ctx.waitForSignal('go');
         return 'done';
       });
+      engine4.register(waiterWorkflow6);
 
       const deepTimes: number[] = [];
       for (let index = 0; index < RECOVERY_SAMPLE_SIZE; index++) {

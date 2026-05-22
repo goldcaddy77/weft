@@ -4,6 +4,7 @@ import { storageBackends, teardown } from '../testing/storage-backends.ts';
 import { Engine } from './engine.ts';
 import type { WorkflowInterceptor, WorkflowStartInterception } from './interceptor.ts';
 import type { WorkflowContext } from './types.ts';
+import { workflow } from './types.ts';
 
 // ---------------------------------------------------------------------------
 // A4: Interceptor workflowStart hook invoked during engine.start()
@@ -37,9 +38,12 @@ for (const backend of storageBackends) {
 
       engine.addInterceptor(interceptor);
 
-      engine.register('greeter', async function* (_ctx: WorkflowContext) {
+      const greeterWorkflow = workflow({ name: 'greeter' }).execute(async function* (
+        _ctx: WorkflowContext,
+      ) {
         return 'hello';
       });
+      engine.register(greeterWorkflow);
 
       const handle = await engine.start('greeter', { name: 'world' });
       const handleResult = await handle.result();
@@ -64,9 +68,12 @@ for (const backend of storageBackends) {
 
       engine.addInterceptor(interceptor);
 
-      engine.register('blocked', async function* (_ctx: WorkflowContext) {
+      const blockedWorkflow = workflow({ name: 'blocked' }).execute(async function* (
+        _ctx: WorkflowContext,
+      ) {
         return 'should not reach';
       });
+      engine.register(blockedWorkflow);
 
       try {
         await engine.start('blocked', undefined);
@@ -100,9 +107,12 @@ for (const backend of storageBackends) {
       engine.addInterceptor(first);
       engine.addInterceptor(second);
 
-      engine.register('ordered', async function* (_ctx: WorkflowContext) {
+      const orderedWorkflow = workflow({ name: 'ordered' }).execute(async function* (
+        _ctx: WorkflowContext,
+      ) {
         return 'done';
       });
+      engine.register(orderedWorkflow);
 
       const handle = await engine.start('ordered', undefined);
       await handle.result();
@@ -134,9 +144,12 @@ for (const backend of storageBackends) {
       engine.addInterceptor(headerSetter);
       engine.addInterceptor(headerReader);
 
-      engine.register('traced', async function* (_ctx: WorkflowContext) {
+      const tracedWorkflow = workflow({ name: 'traced' }).execute(async function* (
+        _ctx: WorkflowContext,
+      ) {
         return 'traced';
       });
+      engine.register(tracedWorkflow);
 
       const handle = await engine.start('traced', undefined);
       await handle.result();
@@ -151,9 +164,12 @@ for (const backend of storageBackends) {
 
       // No interceptors added
 
-      engine.register('no-interceptors', async function* (_ctx: WorkflowContext) {
+      const noInterceptorsWorkflow = workflow({ name: 'no-interceptors' }).execute(async function* (
+        _ctx: WorkflowContext,
+      ) {
         return 42;
       });
+      engine.register(noInterceptorsWorkflow);
 
       const handle = await engine.start('no-interceptors', undefined);
       const handleResult = await handle.result();
@@ -174,9 +190,12 @@ for (const backend of storageBackends) {
 
       engine.addInterceptor(interceptor);
 
-      engine.register('silent-block', async function* (_ctx: WorkflowContext) {
+      const silentBlockWorkflow = workflow({ name: 'silent-block' }).execute(async function* (
+        _ctx: WorkflowContext,
+      ) {
         return 'done';
       });
+      engine.register(silentBlockWorkflow);
 
       // When an interceptor silently blocks (doesn't call next), start() should
       // still succeed because the interceptor runs before execution begins

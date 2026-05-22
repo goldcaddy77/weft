@@ -17,49 +17,27 @@ bun add weft
 Create a file called `index.ts` and paste this:
 
 ```typescript
-import {
-  Engine,
-  WorkflowAlreadyExistsError,
-  activity,
-  workflow,
-  type WorkflowHandle,
-  type WorkflowContext,
-} from 'weft';
+import { Engine, WorkflowAlreadyExistsError, workflow, type WorkflowHandle } from 'weft';
 import { SQLiteStorage } from 'weft/storage/sqlite';
 
 interface HelloWorldWelcomeInput {
   name: string;
 }
 
-interface HelloWorldWelcomeOutput {
-  greeting: string;
-  notified: boolean;
-}
-
-const helloWorldFormatGreeting = activity({
-  name: 'helloWorldFormatGreeting',
-  execute: async (input: HelloWorldWelcomeInput) => `Hello, ${input.name}!`,
-});
-
-const helloWorldSendNotification = activity({
-  name: 'helloWorldSendNotification',
-  execute: async (input: { message: string }) => `Notified: ${input.message}`,
-});
-
-const helloWorldWelcome = workflow({
-  name: 'helloWorldWelcome',
-  handler: async function* helloWorldWelcome(ctx: WorkflowContext, input: HelloWorldWelcomeInput) {
-    const greeting = yield* ctx.run(helloWorldFormatGreeting, { name: input.name });
+const helloWorldWelcome = workflow({ name: 'helloWorldWelcome' })
+  .activities({
+    formatGreeting: async (input: HelloWorldWelcomeInput) => `Hello, ${input.name}!`,
+    sendNotification: async (input: { message: string }) => `Notified: ${input.message}`,
+  })
+  .execute(async function* (ctx, input: HelloWorldWelcomeInput) {
+    const greeting = yield* ctx.run('formatGreeting', input);
     yield* ctx.sleep('1s');
-    yield* ctx.run(helloWorldSendNotification, { message: greeting });
-    const output: HelloWorldWelcomeOutput = { greeting, notified: true };
-    return output;
-  },
-});
+    yield* ctx.run('sendNotification', { message: greeting });
+    return { greeting, notified: true };
+  });
 
 const engine = await Engine.create({
   storage: new SQLiteStorage('./weft.db'),
-  activities: { helloWorldFormatGreeting, helloWorldSendNotification },
   workflows: { helloWorldWelcome },
 });
 
@@ -85,7 +63,7 @@ Run it:
 bun run index.ts
 ```
 
-That's a durable workflow with persistent storage and an explicit recovery path. A **workflow** is the durable process the engine drives to completion. An **activity** is a named side-effecting unit of work, such as formatting a message, calling an API, or writing to another system. Let's break down what just happened.
+That's a durable workflow with persistent storage and an explicit recovery path. A **workflow** is the durable process the engine drives to completion. An **activity** is a named side-effecting unit of work, such as formatting a message, calling an API, or writing to another system. Activities are declared inside the workflow's `.activities({ ... })` block so they're co-located with the workflow that uses them, and `ctx.run('name', input)` autocompletes from that block. Let's break down what just happened.
 
 ### Step-based alternative
 
@@ -120,7 +98,7 @@ console.log(result);
 // { greeting: "Hello, World!", notified: true }
 ```
 
-Each `ctx.step()` call is a checkpoint boundary. The engine converts this to the generator form at registration time. When you need features like durable timers, signals, or parallel execution, switch to the generator API shown above. The inline form `engine.register('name', handler)` shown here and the builder form `engine.register(workflow({ name, handler }))` used in the README register the same thing two different ways—pick whichever reads cleaner at the call site.
+Each `ctx.step()` call is a checkpoint boundary. The engine converts this to the generator form at registration time. When you need features like durable timers, signals, or parallel execution, switch to the chained builder form shown above. The string-name `engine.register('name', handler)` shape used above is deprecated and will be removed in an upcoming release; prefer `engine.register(workflow(...).execute(...))` or `engine.registerWorkflows({ ... })` for new code.
 
 ## How It Works
 
@@ -133,7 +111,7 @@ There's no replay happening here. Weft doesn't re-execute your workflow from the
 > [!NOTE]
 > **Checkpoint:** a serialized snapshot of the workflow's current position and local variables. Each durable operation creates a checkpoint boundary, so recovery resumes from the latest saved boundary instead of starting over.
 
-`Engine.create()` does the registration dance for you in one call: construct the engine, register every activity in the `activities` map, then register every workflow in the `workflows` map. Pass `recover: true` when booting against durable storage to call `engine.recoverAll()` after registration so any workflows still running from a previous process pick up where they left off. The map keys (`helloWorldFormatGreeting`, `helloWorldWelcome`) become the inferred type-system names — Weft validates at runtime that each key matches its definition's `name` field, so you can't accidentally register `farewell` under the key `welcome`.
+`Engine.create()` does the registration dance for you in one call: construct the engine, then register every workflow in the `workflows` map (including each workflow's `.activities({ ... })` block). Pass `recover: true` when booting against durable storage to call `engine.recoverAll()` after registration so any workflows still running from a previous process pick up where they left off. The map key (`helloWorldWelcome`) is canonical — Weft validates at runtime that the key matches its definition's `name` field, so you can't accidentally register `farewell` under the key `welcome`.
 
 `engine.start()` kicks off a new execution and returns a handle. `handle.result()` waits for the workflow to finish and gives you the output. Without `options.id`, each call gets a fresh UUID; with a stable id, the second run of this script throws `WorkflowAlreadyExistsError` instead of double-starting — which is what the `try`/`catch` block handles by resuming the existing workflow.
 

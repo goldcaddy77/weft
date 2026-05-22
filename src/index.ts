@@ -15,10 +15,12 @@
 export { VERSION } from './version.ts';
 // Core
 export {
+  ActivityResolutionError,
   BulkDeleteRequiresTerminalWorkflowsError,
   BulkOperationConfirmationError,
   Engine,
   EngineCreateNameMismatchError,
+  PersistedDataIncompatibleError,
   ScheduleHandle,
   WorkflowAlreadyExistsError,
   WorkflowHandle,
@@ -32,6 +34,7 @@ export {
   DEFAULT_MAX_NESTING_DEPTH,
   DEFAULT_RETRY_POLICY,
   DEFAULT_VISIBILITY_TIMEOUT_MS,
+  WorkflowBuilderError,
   query,
   schedule,
   signal,
@@ -39,14 +42,22 @@ export {
   workflow,
 } from './core/types';
 export type {
+  ActivityArgsFor,
   ActivityCallOptions,
   ActivityCallable,
   ActivityContext,
   ActivityDefinition,
+  ActivityEntryInput,
   ActivityFunction,
+  ActivityMap,
+  ActivityMapInput,
+  ActivityObjectInput,
+  ActivityResultFor,
   ActivityTypes,
   AnyActivityDefinition,
   AnyWorkflowDefinition,
+  BuilderState,
+  BuiltWorkflowDefinition,
   BulkCancelResult,
   BulkDeleteResult,
   BulkOperationAction,
@@ -79,13 +90,19 @@ export type {
   InferActivityEntry,
   InferWorkflowEntries,
   InferWorkflowEntry,
+  InitialBuilderState,
   ListFilter,
   ListOptions,
+  MarkBuilderState,
+  NormalizeActivities,
+  NormalizedActivityEntry,
   NormalizedRetentionPolicy,
   PaginatedResult,
   PendingReviewEntry,
   PurgeResult,
   QueryDefinition,
+  QueryMap,
+  QueryShape,
   RegisteredWorkflowDefinition,
   RetentionOverview,
   RetentionPolicy,
@@ -107,6 +124,8 @@ export type {
   SearchAttributeValue,
   Serializer,
   SignalDefinition,
+  SignalMap,
+  SignalPayload,
   StartOptions,
   SubmitReviewOptions,
   TenantQuotaMetricUsage,
@@ -115,12 +134,18 @@ export type {
   TenantWorkflowCreationRateLimit,
   TenantWorkflowCreationRateUsage,
   UpdateDefinition,
+  UpdateMap,
+  UpdatePayload,
+  WorkflowAlreadyRegistered,
   WorkflowAtomicState,
   WorkflowAtomicStateOptions,
+  WorkflowBuilder,
+  WorkflowBuilderOptions,
   WorkflowContext,
   WorkflowDefinition,
   WorkflowEvent,
   WorkflowFunction,
+  WorkflowGenerator,
   WorkflowId,
   WorkflowRegistration,
   WorkflowRegistry,
@@ -387,6 +412,16 @@ export { HeartbeatManager } from './worker/heartbeat';
 export { RemoteWorker } from './worker/index';
 export { LongPollWorker } from './worker/long-poll';
 export { WorkerRegistry } from './worker/registry';
+export {
+  WorkerProtocolIncompatibleError,
+  workerProtocolIncompatibleMessage,
+} from './worker/worker-protocol-incompatible-error';
+export { buildQualifiedActivityTable } from './worker/workflow-activity-binding';
+export type {
+  RemoteWorkerActivityFunction,
+  RemoteWorkerActivityImplementation,
+  RemoteWorkerWorkflowDefinition,
+} from './worker/workflow-activity-binding';
 
 export { HttpClient, HttpClientError } from './client/index';
 export type { HttpClientOptions } from './client/index';

@@ -213,6 +213,7 @@ export async function purgeWorkflow(
   internals.resultResolvers.delete(workflowId);
   internals.workflowHeaders.delete(workflowId);
   internals.workflowNestingDepths.delete(workflowId);
+  internals.workflowTypeByWorkflowId.delete(workflowId);
   cleanupWaiters(workflowId);
 }
 

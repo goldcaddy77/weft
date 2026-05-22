@@ -1,11 +1,15 @@
+import { ActivityRegistry } from '../activity-registry.ts';
 import { compileStepWorkflow, isAsyncGeneratorFunction } from '../step-context.ts';
-import type {
-  StepWorkflowFunction,
-  WorkflowDefinition,
-  WorkflowFunction,
-  WorkflowRegistration,
+import {
+  activity,
+  validateDefinitionSchemaMetadata,
+  type ActivityDefinition,
+  type StepWorkflowFunction,
+  type WorkflowDefinition,
+  type WorkflowFunction,
+  type WorkflowRegistration,
 } from '../types.ts';
-import { validateDefinitionSchemaMetadata } from '../types.ts';
+import { clonePlain } from '../types/clone-plain.ts';
 import type { EngineInternals } from './internals.ts';
 import { normalizeRetentionPolicy } from './validation.ts';
 
@@ -93,7 +97,7 @@ function applyOptionalRegistrationFields(
   if (registration.migrate) {
     entry.migrate = registration.migrate;
   }
-  if (registration.searchAttributes) {
+  if (registration.searchAttributes && Object.keys(registration.searchAttributes).length > 0) {
     entry.searchAttributes = registration.searchAttributes;
   }
   if (registration.constraints && registration.constraints.length > 0) {
@@ -149,6 +153,97 @@ function registerBareHandler(
   }
 }
 
+/**
+ * Heuristic detector for `BuiltWorkflowDefinition` — the runtime shape returned
+ * by `workflow({ name }).execute(...)`. We test for the per-message-kind maps
+ * the builder writes (`activities`, `signals`, `updates`, `queries`,
+ * `searchAttributes`) directly on the definition. We do not import the
+ * type from `workflow-builder.ts` to avoid a cycle with the engine package;
+ * the runtime check is sufficient because the builder is the only producer of
+ * objects with all five fields as plain `Readonly<Record<string, ...>>`.
+ */
+function hasNonNullObjectField(value: object, key: string): boolean {
+  if (!(key in value)) return false;
+  const fieldValue = (value as { [k: string]: unknown })[key];
+  return typeof fieldValue === 'object' && fieldValue !== null;
+}
+
+function isBuilderWorkflowDefinition(value: unknown): value is WorkflowDefinition & {
+  readonly activities: Readonly<Record<string, Readonly<ActivityDefinition>>>;
+  readonly signals: Readonly<Record<string, unknown>>;
+  readonly updates: Readonly<Record<string, unknown>>;
+  readonly queries: Readonly<Record<string, unknown>>;
+  readonly searchAttributes: Readonly<Record<string, unknown>>;
+} {
+  if (!isWorkflowDefinition(value)) return false;
+  return (
+    hasNonNullObjectField(value, 'activities') &&
+    hasNonNullObjectField(value, 'signals') &&
+    hasNonNullObjectField(value, 'updates') &&
+    hasNonNullObjectField(value, 'queries') &&
+    hasNonNullObjectField(value, 'searchAttributes')
+  );
+}
+
+// `clonePlain` is imported from `../types/clone-plain.ts` — see the import at
+// the top of this file. The engine's defensive deep clone of activity option
+// subtrees uses the same helper as the builder.
+
+/**
+ * Build a fresh per-workflow {@link ActivityRegistry} from a builder workflow's
+ * activities map. Each entry is defensively deep-cloned and then turned into a
+ * fresh `ActivityCallable` via {@link activity}, so the engine's registry holds
+ * its own callable references and the user's `BuiltWorkflowDefinition` cannot
+ * influence dispatch by post-registration mutation.
+ */
+function buildPerWorkflowActivityRegistry(
+  activities: Readonly<Record<string, Readonly<ActivityDefinition>>>,
+): ActivityRegistry {
+  const registry = new ActivityRegistry();
+  for (const definition of Object.values(activities)) {
+    const clonedDefinition = clonePlain(definition);
+    // Re-running `activity(...)` rebuilds the callable, validates the name
+    // against the wire-safe grammar, and freezes the colocated metadata
+    // independently from the user's frozen input. The resulting object is the
+    // canonical entry stored in the per-workflow registry.
+    const callable = activity(clonedDefinition);
+    registry.register(callable.name, callable);
+  }
+  return registry;
+}
+
+/**
+ * Apply the runtime collision rule for `engine.register(workflow)`. Same
+ * `WorkflowDefinition` object reference re-registered is a no-op (idempotent
+ * return value `true`). Same-name-but-different-object throws. Same-reference
+ * detection uses identity equality (`===`); deep equality is intentionally not
+ * considered because the builder freezes the returned definition, so two
+ * builder outputs are only equal by reference.
+ */
+/**
+ * Read-only collision check. Returns whether the registration is a no-op
+ * (same reference), throws on name-already-registered-with-different-ref, or
+ * returns "register" when the name is new. Callers are responsible for the
+ * actual `set` once subsequent registration steps succeed — splitting check
+ * from commit ensures a mid-registration failure cannot leave an orphan
+ * entry in `workflowDefinitionsByName` that would make later retries falsely
+ * report idempotency.
+ */
+function checkWorkflowCollision(
+  internals: EngineInternals,
+  name: string,
+  definition: object,
+): { kind: 'idempotent' } | { kind: 'register' } {
+  const existing = internals.workflowDefinitionsByName.get(name);
+  if (existing === undefined) {
+    return { kind: 'register' };
+  }
+  if (existing === definition) {
+    return { kind: 'idempotent' };
+  }
+  throw new Error(`Workflow "${name}" is already registered with a different definition`);
+}
+
 export function register(
   internals: EngineInternals,
   nameOrDefinition: unknown,
@@ -156,7 +251,25 @@ export function register(
   callbacks: RegistrationCallbacks,
 ): void {
   if (isWorkflowDefinition(nameOrDefinition)) {
-    register(internals, nameOrDefinition.name, nameOrDefinition, callbacks);
+    const definition = nameOrDefinition;
+    if (isBuilderWorkflowDefinition(definition)) {
+      const decision = checkWorkflowCollision(internals, definition.name, definition);
+      if (decision.kind === 'idempotent') return;
+      // Build the per-workflow ActivityRegistry before any commits so an
+      // activity-metadata failure leaves zero state behind. Commit both maps
+      // (workflowDefinitionsByName + activityRegistriesByWorkflow) together
+      // after every fallible step has succeeded — if `register()` throws on
+      // the recursive call below, neither commit happens and a retry sees the
+      // workflow as still unregistered.
+      const perWorkflowRegistry = buildPerWorkflowActivityRegistry(definition.activities);
+      register(internals, definition.name, definition, callbacks);
+      internals.workflowDefinitionsByName.set(definition.name, definition);
+      internals.activityRegistriesByWorkflow.set(definition.name, perWorkflowRegistry);
+      return;
+    }
+    // Legacy object-literal `WorkflowDefinition` — Phase 5 removes this path.
+    // No collision guard: legacy callers historically re-register names freely.
+    register(internals, definition.name, definition, callbacks);
     return;
   }
 

@@ -8,8 +8,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { serve, type WeftServer } from './index.ts';
+
+const holdWorkflow = workflow({ name: 'hold' }).execute(async function* (
+  ctx: WorkflowContext,
+  _input: unknown,
+) {
+  return yield* ctx.waitForSignal<string>('release');
+});
 
 function waitForMessage(
   ws: WebSocket,
@@ -80,9 +88,7 @@ function openAuthenticatedWebSocket(url: string): Promise<WebSocket> {
 function createHoldEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
-  engine.register('hold', async function* (ctx: WorkflowContext, _input: unknown) {
-    return yield* ctx.waitForSignal<string>('release');
-  });
+  engine.register(holdWorkflow);
   return engine;
 }
 

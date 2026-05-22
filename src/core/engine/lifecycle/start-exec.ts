@@ -57,6 +57,9 @@ export function startWorkflowExecution(
   if (nestingDepth !== 0) {
     internals.workflowNestingDepths.set(workflowId, nestingDepth);
   }
+  // Cache the workflow type for synchronous activity-registry lookup on the
+  // dispatch hot path. Cleared on terminal cleanup (see termination/cleanup.ts).
+  internals.workflowTypeByWorkflowId.set(workflowId, workflowType);
   internals.strategy.startWorkflow({
     workflowId,
     workflowType,

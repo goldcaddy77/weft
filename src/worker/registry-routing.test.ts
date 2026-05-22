@@ -253,4 +253,74 @@ describe('WorkerRegistry routing policies', () => {
       });
     }
   });
+
+  describe('qualified-name exact match (protocol v2)', () => {
+    // Phase 4: workers advertise `${workflowType}.${activityName}` qualified
+    // names. The server matches the dispatched activity name against the
+    // advertised list with EXACT string equality — not substring, not prefix.
+    // These tests pin that contract so a future routing refactor cannot drift
+    // into "contains"-style matching, which would silently break cross-workflow
+    // isolation.
+
+    it('matches a qualified activity name exactly against the advertised list', () => {
+      const registry = new WorkerRegistry();
+      registry.register({
+        id: 'worker-welcome',
+        queue: 'default',
+        activities: ['welcome.formatGreeting'],
+        concurrency: 5,
+      });
+
+      const pick = registry.findWorker('welcome.formatGreeting');
+      expect(pick?.id).toBe('worker-welcome');
+    });
+
+    it('does not match a bare activity name when the worker advertised a qualified name', () => {
+      const registry = new WorkerRegistry();
+      registry.register({
+        id: 'worker-welcome',
+        queue: 'default',
+        activities: ['welcome.formatGreeting'],
+        concurrency: 5,
+      });
+
+      expect(registry.findWorker('formatGreeting')).toBeUndefined();
+    });
+
+    it('does not match a prefix or substring of the qualified name', () => {
+      const registry = new WorkerRegistry();
+      registry.register({
+        id: 'worker-welcome',
+        queue: 'default',
+        activities: ['welcome.formatGreeting'],
+        concurrency: 5,
+      });
+
+      expect(registry.findWorker('welcome')).toBeUndefined();
+      expect(registry.findWorker('welcome.format')).toBeUndefined();
+      expect(registry.findWorker('formatGreeting')).toBeUndefined();
+    });
+
+    it('isolates identical activity keys across workflows', () => {
+      // A worker advertising only welcome.formatGreeting must not serve
+      // other.formatGreeting, and vice versa. This is the load-bearing
+      // promise of qualified names.
+      const registry = new WorkerRegistry();
+      registry.register({
+        id: 'worker-welcome',
+        queue: 'default',
+        activities: ['welcome.formatGreeting'],
+        concurrency: 5,
+      });
+      registry.register({
+        id: 'worker-other',
+        queue: 'default',
+        activities: ['other.formatGreeting'],
+        concurrency: 5,
+      });
+
+      expect(registry.findWorker('welcome.formatGreeting')?.id).toBe('worker-welcome');
+      expect(registry.findWorker('other.formatGreeting')?.id).toBe('worker-other');
+    });
+  });
 });

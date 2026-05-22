@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
+import { workflow } from './core/types/workflow-function.ts';
 import type { WorkflowOperation, WorkflowReplay, WorkflowTimelineEntry } from './index';
 import { Engine, MemoryStorage, VERSION, WorkflowAlreadyExistsError } from './index';
 
@@ -48,9 +49,10 @@ describe('weft', () => {
 
   it('exports WorkflowAlreadyExistsError for duplicate workflow ids', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
-    engine.register('duplicate-id', async function* () {
+    const duplicate = workflow({ name: 'duplicate-id' }).execute(async function* () {
       return 'ok';
     });
+    engine.register(duplicate);
 
     try {
       await engine.start('duplicate-id', null, { id: 'duplicate-id' });

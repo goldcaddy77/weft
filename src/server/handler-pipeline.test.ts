@@ -20,6 +20,7 @@ import { describe, expect, it } from 'bun:test';
 import { z } from 'zod';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { workflow } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { handleRequest } from './handler.ts';
 import { createOperationRegistry, type OperationRegistry } from './operation-catalog.ts';
@@ -28,12 +29,17 @@ import { principalFromApiKey, type Principal } from './principal.ts';
 import type { RestBinding } from './rest-binding.ts';
 import type { UnknownRestBinding } from './rest-bindings.ts';
 
+const holdWorkflow = workflow({ name: 'hold' }).execute(async function* (
+  ctx: WorkflowContext,
+  _input: unknown,
+) {
+  return yield* ctx.waitForSignal<string>('release');
+});
+
 function createEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
-  engine.register('hold', async function* (ctx: WorkflowContext, _input: unknown) {
-    return yield* ctx.waitForSignal<string>('release');
-  });
+  engine.register(holdWorkflow);
   return engine;
 }
 
