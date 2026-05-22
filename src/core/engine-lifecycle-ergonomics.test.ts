@@ -87,7 +87,10 @@ describe('Engine lifecycle ergonomics', () => {
     await flush();
     original[Symbol.dispose]();
 
-    const createdWithoutRecovery = await Engine.create({ storage });
+    // Storage was populated by the legacy `new Engine({ storage })` path
+    // above, so opt into the migration path that stamps the schema-version
+    // sentinel for pre-sentinel data.
+    const createdWithoutRecovery = await Engine.create({ storage, allowLegacyData: true });
     const unrecoveredState = await createdWithoutRecovery.get('recoverable-workflow');
     expect(unrecoveredState?.status).toBe('running');
     createdWithoutRecovery[Symbol.dispose]();

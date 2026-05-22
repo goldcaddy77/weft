@@ -11,11 +11,11 @@ describe('workflow() builder — name grammar', () => {
   });
 
   it('rejects workflow names containing a dot', () => {
-    expect(() => workflow({ name: 'bad.name' })).toThrow(/workflow name "bad\.name" is invalid/);
+    expect(() => workflow({ name: 'bad.name' })).toThrow(/workflow name "bad\.name" /);
   });
 
   it('rejects workflow names starting with a digit', () => {
-    expect(() => workflow({ name: '1bad' })).toThrow(/workflow name "1bad" is invalid/);
+    expect(() => workflow({ name: '1bad' })).toThrow(/workflow name "1bad" /);
   });
 });
 
@@ -82,7 +82,7 @@ describe('workflow() builder — chain method invariants', () => {
 describe('workflow() builder — .activities() normalisation', () => {
   it('validates activity key grammar', () => {
     expect(() => workflow({ name: 'w' }).activities({ 'bad.name': async () => 1 })).toThrow(
-      /activity name "bad\.name" is invalid/,
+      /activity name "bad\.name" /,
     );
   });
 

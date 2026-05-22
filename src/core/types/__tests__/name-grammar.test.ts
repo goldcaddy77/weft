@@ -44,10 +44,16 @@ describe('validateWorkflowOrActivityName', () => {
 
   it('includes the kind in the error message', () => {
     expect(() => validateWorkflowOrActivityName('bad.name', 'workflow')).toThrow(
-      /workflow name "bad.name" is invalid/,
+      /workflow name "bad.name"/,
     );
     expect(() => validateWorkflowOrActivityName('bad.name', 'activity')).toThrow(
-      /activity name "bad.name" is invalid/,
+      /activity name "bad.name"/,
+    );
+  });
+
+  it('includes migration guidance pointing at the rename pattern', () => {
+    expect(() => validateWorkflowOrActivityName('payments.charge', 'workflow')).toThrow(
+      /payments-charge|paymentsCharge/,
     );
   });
 
@@ -63,7 +69,7 @@ describe('activity() runtime name validation', () => {
         name: 'bad.name',
         execute: async (i: unknown) => i,
       }),
-    ).toThrow(/activity name "bad\.name" is invalid/);
+    ).toThrow(/activity name "bad\.name"/);
   });
 
   it('rejects names starting with a digit', () => {

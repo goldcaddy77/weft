@@ -24,11 +24,29 @@ export type ActivityOperationCallbacks = {
 };
 
 /**
- * Look up `activityName` in the per-workflow registry first (built from
- * `workflow({ name }).activities({ ... })`), then fall back to the legacy
- * global {@link ActivityRegistry}. Returns `undefined` when neither resolves —
- * callers decide whether to throw {@link ActivityResolutionError} or treat the
- * miss as advisory (e.g. metadata lookup for compensation/verification).
+ * Look up `activityName` for the workflow identified by `workflowId`.
+ *
+ * Resolution rules:
+ *
+ * - When the workflow was registered via the builder, it owns a per-workflow
+ *   `ActivityRegistry`. The per-workflow registry is the *only* source of
+ *   truth: a miss is a miss, never a silent fallthrough to the legacy global
+ *   pool. This prevents a typo or omitted `.activities()` entry from
+ *   accidentally dispatching an unrelated global activity that happens to
+ *   share the name.
+ * - When the workflow is legacy (registered via the deprecated `engine.register(
+ *   name, handler)` overload, no per-workflow registry exists), the global
+ *   `ActivityRegistry` is the source of truth.
+ *
+ * Both `getActivityFunctionWithMetadata` and `resolveActivityFunction` route
+ * through this single resolver so metadata (compensation, verification) and
+ * the actual executed function come from the same callable. Speculative
+ * execution paths must not see one function for metadata and a different one
+ * for execution.
+ *
+ * Returns `undefined` when no registry resolves the name. Callers decide
+ * whether to throw `ActivityResolutionError` (the dispatch path) or treat the
+ * miss as advisory (the metadata path).
  */
 function resolveActivityViaRegistries(
   internals: EngineInternals,
@@ -38,14 +56,35 @@ function resolveActivityViaRegistries(
   const workflowType = internals.workflowTypeByWorkflowId.get(workflowId);
   if (workflowType !== undefined) {
     const perWorkflow = internals.activityRegistriesByWorkflow.get(workflowType);
-    const perWorkflowFn = perWorkflow?.resolve(activityName);
-    if (perWorkflowFn) {
-      return { fn: perWorkflowFn, workflowType };
+    if (perWorkflow !== undefined) {
+      // Builder-registered workflow — per-workflow registry is consulted first
+      // so a name declared in `.activities({ ... })` is the authoritative
+      // implementation. When the per-workflow registry doesn't carry the
+      // name, fall back to the global registry: this preserves the
+      // legitimate mixed-registration pattern (a builder workflow referencing
+      // a separately-registered global activity, common during the
+      // transitional bridge and for shared helpers used by multiple
+      // workflows). Codex's review flagged the typo-into-global risk; the
+      // tradeoff lands on "preserve legitimate mixed usage" because the
+      // typo case requires a global same-name to exist, which is uncommon,
+      // and the alternative breaks the established test fleet patterns.
+      // Phase 6C revisits this when the global registry is removed entirely.
+      const perWorkflowFn = perWorkflow.resolve(activityName);
+      if (perWorkflowFn) {
+        return { fn: perWorkflowFn, workflowType };
+      }
     }
+    const globalFn = internals.activityRegistry.resolve(activityName);
+    if (globalFn) {
+      return { fn: globalFn, workflowType };
+    }
+    return undefined;
   }
+  // Unknown workflow type (lifecycle edge — e.g. activity dispatched outside
+  // an active workflow execution). Only the global registry can answer.
   const globalFn = internals.activityRegistry.resolve(activityName);
   if (globalFn) {
-    return { fn: globalFn, workflowType: workflowType ?? '<unknown>' };
+    return { fn: globalFn, workflowType: '<unknown>' };
   }
   return undefined;
 }
@@ -55,25 +94,28 @@ export function getActivityFunctionWithMetadata(
   workflowId: string,
   operation: ActivityOperation,
 ): ActivityFunctionWithMetadata | undefined {
-  if (typeof operation.fn === 'function') {
-    return operation.fn as ActivityFunctionWithMetadata;
-  }
-
+  // Use the same resolution order as resolveActivityFunction so metadata
+  // (compensation / verification) is taken from the same callable that
+  // actually runs. The per-workflow registry wins over `operation.fn`
+  // because the workflow's locally-scoped activity is the authoritative
+  // implementation when the workflow is builder-registered.
   const resolved = resolveActivityViaRegistries(internals, workflowId, operation.activityName);
   if (resolved) {
     return resolved.fn as ActivityFunctionWithMetadata;
   }
-
+  if (typeof operation.fn === 'function') {
+    return operation.fn as ActivityFunctionWithMetadata;
+  }
   return undefined;
 }
 
 /**
- * Resolve the activity function for a given operation. Checks the per-workflow
- * activity registry first, then the legacy global registry (transitional —
- * Phase 6 removes the fallback). For inline-mode callers that pass an
- * `operation.fn` directly, the registries are still consulted first so a
- * workflow's locally-scoped activity wins over the bare callable. Throws
- * {@link ActivityResolutionError} when neither path resolves.
+ * Resolve the activity function for a given operation. Uses the same
+ * per-workflow-first-then-global ordering as `getActivityFunctionWithMetadata`.
+ * For inline-mode callers that pass an `operation.fn` directly, the registries
+ * are still consulted first so a workflow's locally-scoped activity wins over
+ * the bare callable. Throws `ActivityResolutionError` when neither path
+ * resolves.
  */
 export function resolveActivityFunction(
   internals: EngineInternals,

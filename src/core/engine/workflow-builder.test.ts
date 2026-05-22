@@ -10,7 +10,7 @@
  *     schema version
  */
 
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 
 import { MemoryStorage } from '../../storage/memory.ts';
 import {
@@ -20,6 +20,24 @@ import {
 import { workflow } from '../types/workflow-function.ts';
 import { ActivityResolutionError, Engine, PersistedDataIncompatibleError } from './index.ts';
 import { getInternals } from './internals.ts';
+
+// Engines created in this test file are tracked here so `afterEach` disposes
+// them, mirroring the project's `engine[Symbol.dispose]()` discipline. Without
+// this, background timers and pending micro-tasks would leak between tests and
+// surface as non-deterministic flakes under parallel execution.
+const engines: Disposable[] = [];
+
+function track<TEngine extends Disposable>(engine: TEngine): TEngine {
+  engines.push(engine);
+  return engine;
+}
+
+afterEach(() => {
+  while (engines.length > 0) {
+    const engine = engines.pop();
+    engine?.[Symbol.dispose]();
+  }
+});
 
 describe('engine + workflow-builder integration', () => {
   it('register(builderWorkflow) populates the per-workflow ActivityRegistry', () => {
@@ -31,7 +49,7 @@ describe('engine + workflow-builder integration', () => {
         return yield* ctx.run('formatGreeting', input);
       });
 
-    const engine = new Engine();
+    const engine = track(new Engine());
     engine.register(welcome);
 
     const perWorkflow = getInternals(engine).activityRegistriesByWorkflow.get('welcome');
@@ -49,7 +67,7 @@ describe('engine + workflow-builder integration', () => {
         return 'ok';
       });
 
-    const engine = new Engine();
+    const engine = track(new Engine());
     engine.register(welcome);
     // Second call with the SAME object reference is a no-op. No throw.
     expect(() => engine.register(welcome)).not.toThrow();
@@ -67,7 +85,7 @@ describe('engine + workflow-builder integration', () => {
         return 'b';
       });
 
-    const engine = new Engine();
+    const engine = track(new Engine());
     engine.register(welcomeA);
     expect(() => engine.register(welcomeB)).toThrow(
       'Workflow "welcome" is already registered with a different definition',
@@ -86,7 +104,7 @@ describe('engine + workflow-builder integration', () => {
         return yield* ctx.run('work', undefined);
       });
 
-    const engine = new Engine();
+    const engine = track(new Engine());
     engine.register(greeter);
     engine.register(farewell);
 
@@ -105,7 +123,7 @@ describe('engine + workflow-builder integration', () => {
         return yield* ctx.run('unknownActivity' as never, undefined as never);
       });
 
-    const engine = new Engine();
+    const engine = track(new Engine());
     engine.register(broken);
     const handle = await engine.start('broken', undefined);
 
@@ -135,7 +153,7 @@ describe('engine + workflow-builder integration', () => {
         return 'ok';
       });
 
-    const engine = new Engine();
+    const engine = track(new Engine());
     const widened = engine.registerWorkflows({ welcome });
     expect(widened.getWorkflowDefinition('welcome')).toBeDefined();
 
@@ -145,7 +163,7 @@ describe('engine + workflow-builder integration', () => {
       .execute(async function* () {
         return 'ok';
       });
-    const engine2 = new Engine();
+    const engine2 = track(new Engine());
     expect(() => engine2.registerWorkflows({ wrong: renamedWelcome })).toThrow(
       /key "wrong" does not match definition name "welcome"/,
     );
@@ -163,7 +181,7 @@ describe('engine + workflow-builder integration', () => {
         return input.customerId;
       });
 
-    const engine = new Engine();
+    const engine = track(new Engine());
     engine.register(tracked);
 
     const definition = engine.getWorkflowDefinition('tracked');
@@ -185,7 +203,7 @@ describe('engine + workflow-builder integration', () => {
         return yield* ctx.run('work', undefined);
       });
 
-    const engine = new Engine();
+    const engine = track(new Engine());
     engine.register(a);
     const handleA = await engine.start('a', undefined);
     expect(await handleA.result()).toBe('a');

@@ -65,14 +65,14 @@ const result = await handle.result();
 // result is { greeting: "Hello, Steve!", onboarded: true }
 ```
 
-That's the core loop. `workflow({ name })` opens a **chained builder**: `.activities({...})` co-locates the workflow's side-effecting steps with the workflow itself, and `.execute(fn)` seals the builder and returns a `WorkflowDefinition`. Inside the generator, `ctx.run('formatGreeting', input)` autocompletes from the workflow's own activity table, typechecks the input, and infers the output. Every `yield*` is a checkpoint boundary; `handle.result()` waits for the output. Checkpoints are written to `./weft.db`, so running workflows survive process crashes.
+That's the core loop: `workflow({ name })` is a **chained builder** that co-locates the workflow's side-effecting steps inside `.activities({...})`, and `.execute(fn)` seals it all together and returns a `WorkflowDefinition`. Inside the generator, `ctx.run('formatGreeting', input)` autocompletes from the workflow's own activity table, typechecks the input, and infers the output. Every `yield*` is a checkpoint boundary; `handle.result()` waits for the output. Checkpoints are written to `./weft.db`, so running workflows survive process crashes.
 
-`Engine.create()` constructs the engine and registers each workflow in the `workflows` map, including all of the activities each workflow declares. Pass `recover: true` when booting against durable storage so `engine.recoverAll()` runs after registration and any workflows still running from a previous process pick up where they left off.
+`Engine.create()` does the registration dance for you: it constructs the engine and registers each workflow in the `workflows` map, pulling in all the activities each workflow declares. Pass `recover: true` when booting against durable storage so `engine.recoverAll()` runs after registration and any workflows still running from a previous process pick up where they left off.
 
-If you'd rather wire things up by hand — useful for tests, multi-tenant setups, or hot-registering workflows after the engine boots — `new Engine({ storage })`, `engine.register(workflow)` or `engine.registerWorkflows({ ... })`, and `await engine.recoverAll()` are the underlying primitives. Each `engine.register(workflow)` call returns the engine widened with that workflow's name and input/output types, so `engine.start('welcome', ...)` autocompletes immediately.
+If you'd rather wire things up by hand — useful for tests, multi-tenant setups, or adding new workflows after the engine starts up — `new Engine({ storage })`, `engine.register(workflow)` or `engine.registerWorkflows({ ... })`, and `await engine.recoverAll()` are the underlying primitives. Each `engine.register(workflow)` call returns the engine with that workflow's name and types baked in, so `engine.start('welcome', ...)` autocompletes immediately.
 
 > [!NOTE]
-> The chained builder also accepts `.signals({...})`, `.updates({...})`, `.queries({...})`, and `.searchAttributes({...})`. Each can be called at most once before `.execute(fn)`; the type system flips a phantom flag so a duplicate call fails to typecheck, and the runtime mirrors the same invariant. These maps thread their payload types into `ctx.waitForSignal('approve')`, `ctx.waitForUpdate('checkStatus')`, and friends so the surrounding workflow code keeps full IntelliSense. They do not introduce new runtime gating — they are type-safety and introspection metadata that ride on top of the existing dispatch paths.
+> The chained builder also accepts `.signals({...})`, `.updates({...})`, `.queries({...})`, and `.searchAttributes({...})`. Each can be called at most once before `.execute(fn)`; the type system flips a phantom flag so a duplicate call fails to typecheck, and the runtime mirrors the same invariant. These maps don't introduce new runtime gating — they're type hints that thread into `ctx.run()`, `ctx.waitForSignal()`, `ctx.waitForUpdate()`, and friends so your editor autocompletes and your code typechecks. The underlying dispatch paths are unchanged.
 
 > [!NOTE]
 > `MemoryStorage` (also exported from `weft`) is fine for tests and ephemeral scripts, but it lives in process memory—a crash takes the checkpoints with it. Use a persistent backend like `SQLiteStorage` whenever durability actually matters.
@@ -415,11 +415,13 @@ const engine = new Engine();
 engine.register(welcome);
 ```
 
-What changed:
+Here's what's different:
 
-- **Activities are workflow-scoped.** Pass them inline to `.activities({ ... })` and reference them by their map key inside `ctx.run('key', input)`. The engine builds one activity registry per workflow type; there is no global pool to populate.
-- **`engine.register(name, handler)` is gone.** Pass the workflow definition itself: `engine.register(welcome)` or `engine.registerWorkflows({ welcome })`. The return value is the engine widened with the workflow's name and input/output types so `engine.start('welcome', input)` autocompletes.
-- **Standalone `engine.register(activityDefinition)` is gone.** Activities live on the workflow they belong to. If multiple workflows truly share an activity, declare it on each `.activities({ ... })` block — duplicated declarations isolate scope and let the engine route remote workers per workflow.
+- **Activities are workflow-scoped.** Pass them inline to `.activities({ ... })` and reference them by their map key inside `ctx.run('key', input)`. The engine builds one activity registry per workflow type, so there's no global pool to manage anymore.
+- **`engine.register(name, handler)` is gone.** Pass the workflow definition itself: `engine.register(welcome)` or `engine.registerWorkflows({ welcome })`. The return value is the engine with that workflow's name and types baked in, so `engine.start('welcome', input)` autocompletes immediately.
+- **Standalone `engine.register(activityDefinition)` is gone.** Activities live on the workflow they belong to. If multiple workflows truly share an activity, declare it on each one — this keeps scope local and lets the engine route remote work cleanly per workflow.
+- **Workflow and activity names follow a grammar now.** Use `[A-Za-z_][A-Za-z0-9_-]*` — no dots, no leading digits. Dotted names like `payments.charge` need renaming to `payments-charge` or `paymentsCharge`. The wire format encodes activity names as `${workflowType}.${activityName}` for remote workers, and that qualifier has to split cleanly.
+- **Re-registering the same name with a different `WorkflowDefinition` throws.** The old API silently replaced the registration; the builder rejects it loudly. If you genuinely need to swap behavior for the same name at runtime, that's a separate request — open an issue. TypeScript catches same-name re-registration at compile time too; use `engine.register(welcome as never)` as a documented escape hatch when you know the same definition reference is being registered idempotently.
 
 ## Weft vs. Temporal
 

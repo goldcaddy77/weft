@@ -47,20 +47,24 @@ export type NameKind = 'workflow' | 'activity';
  * }
  * ```
  */
+const RULE_DESCRIPTION =
+  'must match /^[A-Za-z_][A-Za-z0-9_-]*$/ — start with a letter or underscore, ' +
+  "use only letters, digits, underscores, or hyphens, and contain no '.' characters. " +
+  'The remote worker protocol encodes activity names as `${workflowType}.${activityName}` ' +
+  "on the wire, so a '.' inside either name would break the qualifier split. " +
+  "If you previously used dotted names like 'payments.charge', rename to 'payments-charge' " +
+  "or 'paymentsCharge' before adopting the workflow-builder API.";
+
 export function validateWorkflowOrActivityName(name: string, kind: NameKind): void {
   if (typeof name !== 'string' || name.length === 0) {
-    throw new Error(
-      `${kind} name must be a non-empty string — must match /^[A-Za-z_][A-Za-z0-9_-]*$/ and contain no '.' characters`,
-    );
+    throw new Error(`${kind} name must be a non-empty string — ${RULE_DESCRIPTION}`);
   }
   if (name.includes('.')) {
     throw new Error(
-      `${kind} name "${name}" is invalid — must match /^[A-Za-z_][A-Za-z0-9_-]*$/ and contain no '.' characters`,
+      `${kind} name "${name}" contains '.', which is reserved for qualified activity names. ${RULE_DESCRIPTION}`,
     );
   }
   if (!NAME_PATTERN.test(name)) {
-    throw new Error(
-      `${kind} name "${name}" is invalid — must match /^[A-Za-z_][A-Za-z0-9_-]*$/ and contain no '.' characters`,
-    );
+    throw new Error(`${kind} name "${name}" is invalid — ${RULE_DESCRIPTION}`);
   }
 }

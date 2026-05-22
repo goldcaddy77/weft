@@ -7,6 +7,7 @@
 
 import type { ConstraintDefinition } from '../constraint.ts';
 import type { ActivityDefinition, ActivityFunction } from './activity.ts';
+import { clonePlain } from './clone-plain.ts';
 import { deepFreeze } from './deep-freeze.ts';
 import type { DefinitionSchema } from './definition-schema.ts';
 import type { QueryDefinition, SignalDefinition, UpdateDefinition } from './message-handles.ts';
@@ -207,7 +208,7 @@ export class WorkflowBuilderImpl<TName extends string> {
     const frozenSignals = freezeRecord(this.#signals);
     const frozenUpdates = freezeRecord(this.#updates);
     const frozenQueries = freezeRecord(this.#queries);
-    const frozenSearchAttributes = deepFreeze(cloneValue(this.#searchAttributes));
+    const frozenSearchAttributes = deepFreeze(clonePlain(this.#searchAttributes));
 
     const handler: WorkflowFunction = (context, input) => fn(context, input);
 
@@ -254,29 +255,9 @@ export class WorkflowBuilderImpl<TName extends string> {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/**
- * `structuredClone` refuses function values, which our option subtrees carry
- * for `execute`, `compensate`, `verify`, `resourceScope`, and `idempotencyKey`.
- * This recursive POJO clone preserves function refs verbatim and lets
- * {@link deepFreeze} lock the containers down.
- */
-function cloneValue<T>(value: T): T {
-  if (value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) {
-    return value.map((item) => cloneValue(item)) as unknown as T;
-  }
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
-    // Class instance: pass through by reference. The outer container that
-    // holds it will be frozen, preventing reassignment.
-    return value;
-  }
-  const out: Record<string, unknown> = {};
-  for (const key of Object.keys(value as Record<string, unknown>)) {
-    out[key] = cloneValue((value as Record<string, unknown>)[key]);
-  }
-  return out as T;
-}
+// `clonePlain` is imported from `./clone-plain.ts` — the shared recursive POJO
+// clone that preserves function refs verbatim (which `structuredClone` cannot)
+// and lets `deepFreeze` lock the containers down.
 
 /**
  * Deep-clone each entry, deep-freeze the clone, and assemble into a frozen
@@ -288,7 +269,7 @@ function freezeRecord<T extends object>(
 ): Readonly<Record<string, Readonly<T>>> {
   const out: Record<string, T> = {};
   for (const key of Object.keys(map)) {
-    out[key] = deepFreeze(cloneValue(map[key])) as T;
+    out[key] = deepFreeze(clonePlain(map[key])) as T;
   }
   return Object.freeze(out);
 }
