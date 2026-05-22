@@ -38,7 +38,10 @@ export const clientContractWaitingWorkflow = workflow({
   return `${String(input)}:${signal}`;
 });
 
-async function waitForQueryReady(client: WeftClient, workflowId: string): Promise<void> {
+export async function waitForQueryReadyForTesting(
+  client: WeftClient,
+  workflowId: string,
+): Promise<void> {
   for (let attempt = 0; attempt < 5; attempt++) {
     if ((await client.query(workflowId, 'ready')) === true) {
       return;
@@ -61,7 +64,7 @@ export function runWeftClientContractTests(options: ClientContractTestOptions): 
       });
 
       await waitForRunning?.(handle.id);
-      await waitForQueryReady(client, handle.id);
+      await waitForQueryReadyForTesting(client, handle.id);
 
       await expect(client.query(handle.id, 'echoInput', { detail: true })).resolves.toEqual({
         detail: true,
@@ -96,7 +99,7 @@ export function runWeftClientContractTests(options: ClientContractTestOptions): 
       });
 
       await waitForRunning?.(handle.id);
-      await waitForQueryReady(client, handle.id);
+      await waitForQueryReadyForTesting(client, handle.id);
 
       await handle.setAttributes({ priority: 'high' });
       await expect(handle.getAttributes()).resolves.toEqual({ priority: 'high' });
