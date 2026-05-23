@@ -20,6 +20,22 @@ describe('resolveWorkflowTypeTarget', () => {
     engine[Symbol.dispose]();
   });
 
+  it('resolves a registered workflow function back to its workflow type', () => {
+    const engine = new Engine();
+    const registeredWorkflow = workflow({ name: 'registered-workflow' }).execute(
+      async function* registeredWorkflowHandler() {
+        return 'done';
+      },
+    );
+    engine.register(registeredWorkflow);
+
+    expect(
+      resolveWorkflowTypeTarget(getInternals(engine), registeredWorkflow.handler, callbacks),
+    ).toBe('registered-workflow');
+
+    engine[Symbol.dispose]();
+  });
+
   it('preserves migration functions on registration entries', () => {
     const engine = new Engine();
     const migrate = (checkpoint: unknown) => checkpoint;
@@ -34,6 +50,16 @@ describe('resolveWorkflowTypeTarget', () => {
     engine.register(migratedWorkflow);
 
     expect(getInternals(engine).registrations.get('migrated-workflow')?.migrate).toBe(migrate);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('rejects non-workflow registration inputs with a clear error', () => {
+    const engine = new Engine();
+
+    expect(() => engine.register(undefined as never)).toThrow(
+      'engine.register() expects a WorkflowDefinition',
+    );
 
     engine[Symbol.dispose]();
   });

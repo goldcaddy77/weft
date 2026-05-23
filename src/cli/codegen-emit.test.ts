@@ -403,6 +403,24 @@ describe('jsonSchemaToTypeScript objects', () => {
     expect(jsonSchemaToTypeScript({ type: 'object' })).toBe('Record<string, unknown>');
   });
 
+  it('empty typed-open object emits an explicit index signature', () => {
+    expect(
+      jsonSchemaToTypeScript({
+        type: 'object',
+        additionalProperties: { type: 'string' },
+      }),
+    ).toBe('{ [index: string]: string }');
+  });
+
+  it('invalid additionalProperties values degrade to an unknown index signature', () => {
+    expect(
+      jsonSchemaToTypeScript({
+        type: 'object',
+        additionalProperties: 123,
+      }),
+    ).toBe('Record<string, unknown>');
+  });
+
   it('infers object shape when `type` is absent but `properties` is present', () => {
     expect(
       jsonSchemaToTypeScript({
@@ -474,8 +492,21 @@ describe('jsonSchemaToTypeScript arrays (draft-2020-12)', () => {
     ).toBe('[string, ...number[]]');
   });
 
+  it('legacy items as array defaults to an unknown rest tuple when additionalItems is absent', () => {
+    expect(
+      jsonSchemaToTypeScript({
+        type: 'array',
+        items: [{ type: 'string' }, { type: 'number' }],
+      }),
+    ).toBe('[string, number, ...unknown[]]');
+  });
+
   it('array with no items keyword emits Array<unknown>', () => {
     expect(jsonSchemaToTypeScript({ type: 'array' })).toBe('Array<unknown>');
+  });
+
+  it('items: false emits an empty tuple', () => {
+    expect(jsonSchemaToTypeScript({ type: 'array', items: false })).toBe('[]');
   });
 
   it('infers array shape when `type` is absent but `items` is present', () => {

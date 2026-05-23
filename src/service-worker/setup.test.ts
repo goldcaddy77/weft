@@ -172,6 +172,37 @@ describe('setupServiceWorker', () => {
     });
   });
 
+  it('reuses the provided engine and matching storage instance', async () => {
+    const scope = createFakeServiceWorkerScope();
+    await withFakeSelf(scope, async () => {
+      const storage = new MemoryStorage();
+      const engine = new Engine({ storage });
+
+      try {
+        const setup = await setupServiceWorker({ engine, storage });
+        expect(setup.engine).toBe(engine);
+        expect(setup.storage).toBe(storage);
+      } finally {
+        engine[Symbol.dispose]();
+      }
+    });
+  });
+
+  it('rejects outside a service worker scope', async () => {
+    const previous = (globalThis as { self?: unknown }).self;
+    delete (globalThis as { self?: unknown }).self;
+
+    try {
+      await expect(setupServiceWorker({ storage: new MemoryStorage() })).rejects.toThrow(
+        /not running inside a Service Worker scope/,
+      );
+    } finally {
+      if (previous !== undefined) {
+        (globalThis as { self?: unknown }).self = previous;
+      }
+    }
+  });
+
   it('routes a matching fetch through the engine after registration completes', async () => {
     const scope = createFakeServiceWorkerScope();
     await withFakeSelf(scope, async () => {
@@ -363,6 +394,20 @@ describe('setupServiceWorker', () => {
         rejected = error;
       }
       expect((rejected as Error | undefined)?.message).toMatch(/register-explodes/);
+    });
+  });
+
+  it('clears the current scope when the registry reset runs without an explicit scope', async () => {
+    const scope = createFakeServiceWorkerScope();
+    await withFakeSelf(scope, async () => {
+      const first = await setupServiceWorker({ storage: new MemoryStorage() });
+      resetSetupServiceWorkerRegistry();
+      const second = await setupServiceWorker({ storage: new MemoryStorage() });
+
+      expect(second).not.toBe(first);
+
+      first.engine[Symbol.dispose]();
+      second.engine[Symbol.dispose]();
     });
   });
 });
