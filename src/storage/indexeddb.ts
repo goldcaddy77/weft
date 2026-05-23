@@ -103,15 +103,17 @@ function createCursorRequestAwaiter<TCursor extends IDBCursor | IDBCursorWithVal
  * @example
  * ```ts
  * import { IndexedDBStorage } from 'weft/storage/indexeddb';
- * import { Engine, type WorkflowContext } from 'weft';
+ * import { workflow, Engine, type WorkflowContext } from 'weft';
  *
  * // Opens (or re-opens) the default 'weft' IndexedDB database
  * await using storage = new IndexedDBStorage();
  * await using engine = new Engine({ storage });
  *
- * engine.register('greet', async function* (ctx: WorkflowContext, input: { name: string }) {
- *   return `Hello, ${input.name}!`;
- * });
+ * engine.register(
+ *   workflow({ name: 'greet' }).execute(async function* (ctx: WorkflowContext, input: { name: string }) {
+ *     return `Hello, ${input.name}!`;
+ *   }),
+ * );
  *
  * const handle = await engine.start('greet', { name: 'World' });
  * console.log(await handle.result()); // 'Hello, World!'

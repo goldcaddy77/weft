@@ -217,13 +217,13 @@ export class ScopedStorage implements Storage {
  *
  * @example
  * ```ts
- * import { Engine, MemoryStorage, scopedStorage } from 'weft';
+ * import { workflow, Engine, MemoryStorage, scopedStorage } from 'weft';
  *
  * await using raw = new MemoryStorage();
  *
  * // Give each engine its own key namespace in the same backing store
  * await using engine = new Engine({ storage: scopedStorage(raw, 'eng:v1') });
- * engine.register('ping', async function* () { return 'pong'; });
+ * engine.register(workflow({ name: 'ping' }).execute(async function* () { return 'pong'; }));
  *
  * const handle = await engine.start('ping', null);
  * console.log(await handle.result()); // 'pong'

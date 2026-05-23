@@ -1,11 +1,8 @@
 import type { HumanReviewOptions, HumanReviewResult } from '../review/index.ts';
 import { normalizeSessionStateLocals } from '../session-state.ts';
 import type {
-  ActivityArguments,
   ActivityCallable,
   ActivityCallOptions,
-  ActivityResult,
-  ActivityTypes,
   ChildWorkflowOptions,
   ChildWorkflowTarget,
   Duration,
@@ -15,7 +12,6 @@ import type {
   SearchAttributeHandle,
   SearchAttributeValue,
   SignalDefinition,
-  UnknownActivityNameWhenRegistryIsEmpty,
   UpdateDefinition,
   WorkflowContext,
   WorkflowMapOptions,
@@ -161,16 +157,11 @@ export class Context implements WorkflowContext {
   get state(): WorkflowStateNamespace {
     return stateNamespaceHelpers.createStateNamespace(this, getInternals(this));
   }
-  run<TName extends Extract<keyof ActivityTypes, string>>(
-    name: TName,
-    ...rest: ActivityArguments<ActivityTypes, TName>
-  ): Generator<ContextOperationRequest, ActivityResult<ActivityTypes, TName>, unknown>;
-  run<TName extends Extract<keyof ActivityTypes, string>>(
-    name: TName,
-    ...rest: [...ActivityArguments<ActivityTypes, TName>, ActivityCallOptions]
-  ): Generator<ContextOperationRequest, ActivityResult<ActivityTypes, TName>, unknown>;
+  // Permissive string-name fallback. The concrete Context class is the
+  // runtime engine view, so any registered workflow can be dispatched by
+  // name; inputs are `unknown` at this boundary.
   run<TName extends string>(
-    name: UnknownActivityNameWhenRegistryIsEmpty<TName>,
+    name: TName,
     input?: unknown,
     options?: ActivityCallOptions,
   ): Generator<ContextOperationRequest, unknown, unknown>;

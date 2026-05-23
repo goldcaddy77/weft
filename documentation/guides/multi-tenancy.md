@@ -9,7 +9,7 @@ The tenant context is not a security product by itself. It gives Weft a consiste
 The common case is a workflow input field that carries the tenant id.
 
 ```typescript partial
-import { Engine, tenantFromInputField } from 'weft';
+import { Engine, tenantFromInputField, workflow } from 'weft';
 import { SQLiteStorage } from 'weft/storage/sqlite';
 
 const engine = new Engine({
@@ -17,12 +17,14 @@ const engine = new Engine({
   tenantResolver: tenantFromInputField('customerId'),
 });
 
-engine.register('sync-customer', async function* (ctx, input: { customerId: string }) {
-  return {
-    customerId: input.customerId,
-    tenantId: ctx.tenant?.id,
-  };
-});
+engine.register(
+  workflow({ name: 'sync-customer' }).execute(async function* (ctx, input: { customerId: string }) {
+    return {
+      customerId: input.customerId,
+      tenantId: ctx.tenant?.id,
+    };
+  }),
+);
 ```
 
 `tenantFromInputField(field)` reads a string or finite number from the workflow input and returns `{ id: String(value) }`. Missing, empty, or unsupported values return `undefined`, which means the workflow runs without tenant context.
@@ -72,21 +74,26 @@ Resolver errors fail `engine.start()` before the first checkpoint is written. Th
 `ctx.tenant` is persisted on workflow state, so it survives recovery. Use it for decisions that belong in orchestration: choosing a queue, adding search attributes, routing human reviews, or including tenant identity in activity input.
 
 ```typescript partial
-engine.register('provision-account', async function* (ctx, input: { accountId: string }) {
-  const tenantId = ctx.tenant?.id;
-  if (!tenantId) {
-    throw new Error('provision-account requires a tenant');
-  }
+engine.register(
+  workflow({ name: 'provision-account' }).execute(async function* (
+    ctx,
+    input: { accountId: string },
+  ) {
+    const tenantId = ctx.tenant?.id;
+    if (!tenantId) {
+      throw new Error('provision-account requires a tenant');
+    }
 
-  ctx.setAttribute('tenantId', tenantId);
+    ctx.setAttribute('tenantId', tenantId);
 
-  yield* ctx.run(createTenantResources, {
-    tenantId,
-    accountId: input.accountId,
-  });
+    yield* ctx.run(createTenantResources, {
+      tenantId,
+      accountId: input.accountId,
+    });
 
-  return { tenantId, accountId: input.accountId, status: 'ready' };
-});
+    return { tenantId, accountId: input.accountId, status: 'ready' };
+  }),
+);
 ```
 
 Activities do not automatically receive `ctx.tenant` as a second context argument. If an activity needs the tenant id, pass it in the activity input or propagate it through workflow and activity interceptors. Passing it explicitly is the easiest option and keeps remote workers honest because the serialized task payload contains everything the worker needs.
@@ -140,21 +147,26 @@ When JWT authentication is enabled, the quota endpoint limits tenant-scoped call
 Use `ctx.tenant` inside the workflow body to choose queues, review routing, or activity input:
 
 ```typescript partial
-engine.register('support-workflow', async function* (ctx, input: { ticketId: string }) {
-  const tenantId = ctx.tenant?.id;
-  if (!tenantId) {
-    throw new Error('support-workflow requires a tenant');
-  }
+engine.register(
+  workflow({ name: 'support-workflow' }).execute(async function* (
+    ctx,
+    input: { ticketId: string },
+  ) {
+    const tenantId = ctx.tenant?.id;
+    if (!tenantId) {
+      throw new Error('support-workflow requires a tenant');
+    }
 
-  const ticket = yield* ctx.run(loadTicket, { tenantId, ticketId: input.ticketId });
-  const decision = yield* ctx.review({
-    artifact: ticket,
-    reviewType: 'support-escalation',
-    reviewers: [`support-leads:${tenantId}`],
-  });
+    const ticket = yield* ctx.run(loadTicket, { tenantId, ticketId: input.ticketId });
+    const decision = yield* ctx.review({
+      artifact: ticket,
+      reviewType: 'support-escalation',
+      reviewers: [`support-leads:${tenantId}`],
+    });
 
-  return yield* ctx.run(applySupportDecision, { tenantId, ticketId: input.ticketId, decision });
-});
+    return yield* ctx.run(applySupportDecision, { tenantId, ticketId: input.ticketId, decision });
+  }),
+);
 ```
 
 ## Remote workers and interceptors

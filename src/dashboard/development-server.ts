@@ -8,8 +8,9 @@
  */
 
 import { Engine } from '../core/engine.ts';
-import { runtimeWorkflowEngine } from '../core/runtime-workflow-engine.ts';
-import type { StepWorkflowContext } from '../core/types.ts';
+import { registerOnRuntimeEngine, runtimeWorkflowEngine } from '../core/runtime-workflow-engine.ts';
+import { compileStepWorkflow } from '../core/step-context.ts';
+import { workflow, type StepWorkflowContext } from '../core/types.ts';
 import { serve } from '../server/index.ts';
 
 const dashboardModule = await import('./index.html');
@@ -18,10 +19,15 @@ const dashboard: unknown = dashboardModule.default;
 const engine = new Engine();
 
 // Register a sample step-based workflow for development
-runtimeWorkflowEngine(engine).register('example', async (context: StepWorkflowContext) => {
-  const greeting = await context.step('greet', () => 'Hello from the example workflow!');
-  return { message: greeting };
-});
+registerOnRuntimeEngine(
+  runtimeWorkflowEngine(engine),
+  workflow({ name: 'example' }).execute(
+    compileStepWorkflow(async (context: StepWorkflowContext) => {
+      const greeting = await context.step('greet', () => 'Hello from the example workflow!');
+      return { message: greeting };
+    }),
+  ),
+);
 
 const server = serve({
   engine,

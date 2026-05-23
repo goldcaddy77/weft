@@ -18,13 +18,15 @@ import { scopedStorage } from './scoped-storage';
  *
  * @example Run an engine with in-memory storage
  * ```ts
- * import { Engine, MemoryStorage } from 'weft';
+ * import { workflow, Engine, MemoryStorage } from 'weft';
  *
  * await using storage = new MemoryStorage();
  * await using engine = new Engine({ storage });
- * engine.register('noop', async function* () {
- *   return 'done';
- * });
+ * engine.register(
+ *   workflow({ name: 'noop' }).execute(async function* () {
+ *     return 'done';
+ *   }),
+ * );
  *
  * const handle = await engine.start('noop', null);
  * const result = await handle.result();

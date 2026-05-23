@@ -137,14 +137,14 @@ import { SQLiteStorage } from 'weft/storage/sqlite';
 
 const release = signal<{ message: string }>('release');
 
-const waiter = workflow({
-  name: 'recoveryDemoWaiter',
-  handler: async function* waiter(ctx: WorkflowContext, input: { id: string }) {
-    console.log(`[workflow ${input.id}] suspending on signal`);
-    const payload = yield* ctx.waitForSignal(release);
-    console.log(`[workflow ${input.id}] released with: ${payload.message}`);
-    return { id: input.id, message: payload.message };
-  },
+const waiter = workflow({ name: 'recoveryDemoWaiter' }).execute(async function* (
+  ctx: WorkflowContext,
+  input: { id: string },
+) {
+  console.log(`[workflow ${input.id}] suspending on signal`);
+  const payload = yield* ctx.waitForSignal(release);
+  console.log(`[workflow ${input.id}] released with: ${payload.message}`);
+  return { id: input.id, message: payload.message };
 });
 
 const engine = await Engine.create({

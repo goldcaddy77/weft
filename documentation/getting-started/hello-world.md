@@ -67,10 +67,10 @@ That's a durable workflow with persistent storage and an explicit recovery path.
 
 ### Step-based alternative
 
-If generators are unfamiliar, you can write the same workflow with plain `async`/`await`:
+If generators are unfamiliar, you can write the same workflow with plain `async`/`await` and compile it with `compileStepWorkflow(...)` before passing it to `.execute(...)`:
 
 ```typescript partial
-import { Engine } from 'weft';
+import { Engine, workflow, compileStepWorkflow, type StepWorkflowContext } from 'weft';
 import { SQLiteStorage } from 'weft/storage/sqlite';
 
 const engine = new Engine({ storage: new SQLiteStorage('./weft.db') });
@@ -83,11 +83,15 @@ async function notify(message: string) {
   return `Notified: ${message}`;
 }
 
-engine.register('helloWorldWelcome', async (ctx, input: { name: string }) => {
-  const greeting = await ctx.step('greet', () => greet(input.name));
-  await ctx.step('notify', () => notify(greeting));
-  return { greeting, notified: true };
-});
+engine.register(
+  workflow({ name: 'helloWorldWelcome' }).execute(
+    compileStepWorkflow(async (ctx: StepWorkflowContext, input: { name: string }) => {
+      const greeting = await ctx.step('greet', () => greet(input.name));
+      await ctx.step('notify', () => notify(greeting));
+      return { greeting, notified: true };
+    }),
+  ),
+);
 
 const workflowInput = { name: 'World' };
 const handle = await engine.start('helloWorldWelcome', workflowInput, {
@@ -98,7 +102,7 @@ console.log(result);
 // { greeting: "Hello, World!", notified: true }
 ```
 
-Each `ctx.step()` call is a checkpoint boundary. The engine converts this to the generator form at registration time. When you need features like durable timers, signals, or parallel execution, switch to the chained builder form shown above. The string-name `engine.register('name', handler)` shape used above is deprecated and will be removed in an upcoming release; prefer `engine.register(workflow(...).execute(...))` or `engine.registerWorkflows({ ... })` for new code.
+Each `ctx.step()` call is a checkpoint boundary. `compileStepWorkflow(...)` compiles the step-based function into the generator shape the engine runs internally. When you need features like durable timers, signals, or parallel execution, switch to the chained builder form shown above. Use `engine.register(workflow(...).execute(...))` or `engine.registerWorkflows({ ... })` to wire workflows into the engine.
 
 ## How It Works
 
@@ -122,12 +126,14 @@ If you'd rather wire registration up yourself — useful for tests, multi-tenant
 Durable sleeps are one of the things that make this interesting. A normal `setTimeout` dies with the process. A Weft sleep survives restarts.
 
 ```typescript partial
-engine.register('onboarding', async function* (ctx, input: { name: string }) {
-  const greeting = yield* ctx.run(helloWorldFormatGreeting, { name: input.name });
-  yield* ctx.sleep('1h');
-  yield* ctx.run(helloWorldSendNotification, { message: `${input.name} completed onboarding` });
-  return { greeting, onboarded: true };
-});
+engine.register(
+  workflow({ name: 'onboarding' }).execute(async function* (ctx, input: { name: string }) {
+    const greeting = yield* ctx.run(helloWorldFormatGreeting, { name: input.name });
+    yield* ctx.sleep('1h');
+    yield* ctx.run(helloWorldSendNotification, { message: `${input.name} completed onboarding` });
+    return { greeting, onboarded: true };
+  }),
+);
 ```
 
 `yield* ctx.sleep('1h')` pauses the workflow for an hour. The engine persists a timer, and when it fires the workflow resumes. You can use compact duration strings like `'30s'`, `'5m'`, or `'2d'`, or pass milliseconds directly.
@@ -139,10 +145,12 @@ Workflows often need to wait for something external---a user clicking "approve,"
 ```typescript partial
 const approvalSignal = signal<{ approved: boolean }>('approval');
 
-engine.register('approval', async function* (ctx, input: { orderId: string }) {
-  const approval = yield* ctx.waitForSignal(approvalSignal);
-  return { orderId: input.orderId, approved: approval.approved };
-});
+engine.register(
+  workflow({ name: 'approval' }).execute(async function* (ctx, input: { orderId: string }) {
+    const approval = yield* ctx.waitForSignal(approvalSignal);
+    return { orderId: input.orderId, approved: approval.approved };
+  }),
+);
 
 const handle = await engine.start('approval', { orderId: 'order-1' });
 
@@ -176,10 +184,12 @@ const triple = activity({
 engine.register(double);
 engine.register(triple);
 
-engine.register('parallel', async function* (ctx, input: number) {
-  const [doubled, tripled] = yield* ctx.all([ctx.run(double, input), ctx.run(triple, input)]);
-  return { doubled, tripled };
-});
+engine.register(
+  workflow({ name: 'parallel' }).execute(async function* (ctx, input: number) {
+    const [doubled, tripled] = yield* ctx.all([ctx.run(double, input), ctx.run(triple, input)]);
+    return { doubled, tripled };
+  }),
+);
 
 const handle = await engine.start('parallel', 5);
 const result = await handle.result();

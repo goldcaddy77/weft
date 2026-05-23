@@ -75,16 +75,18 @@ export interface ActivityContext {
  *
  * @example
  * ```ts
- * import { activity, Engine, type ActivityCallOptions, type WorkflowContext } from 'weft';
+ * import { workflow, activity, Engine, type ActivityCallOptions, type WorkflowContext } from 'weft';
  *
  * const slowTask = activity({ name: 'slowTask', execute: async (i: unknown) => i });
  * const engine = new Engine();
  *
- * engine.register('example', async function* (ctx: WorkflowContext, input: unknown) {
- *   const options: ActivityCallOptions = { timeout: '5m', queue: 'heavy' };
- *   const result = yield* ctx.run(slowTask, input, options);
- *   return result;
- * });
+ * engine.register(
+ *   workflow({ name: 'example' }).execute(async function* (ctx: WorkflowContext, input: unknown) {
+ *     const options: ActivityCallOptions = { timeout: '5m', queue: 'heavy' };
+ *     const result = yield* ctx.run(slowTask, input, options);
+ *     return result;
+ *   }),
+ * );
  * void engine;
  * ```
  */

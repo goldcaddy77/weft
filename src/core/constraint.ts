@@ -51,13 +51,14 @@ export interface ConstraintCheckState {
 
 /**
  * Domain invariant evaluated at every workflow checkpoint commit. Build via
- * the {@link constraint} factory function and register on a workflow via
- * {@link WorkflowRegistration.constraints}. When `check` returns `false` the
- * engine reacts per `onViolation` and emits a {@link ConstraintViolatedEvent}.
+ * the {@link constraint} factory function and attach to a workflow with the
+ * builder's `.constraints(...)` step (or via `WorkflowDefinition.constraints`
+ * on a hand-rolled definition). When `check` returns `false` the engine reacts
+ * per `onViolation` and emits a {@link ConstraintViolatedEvent}.
  *
  * @example
  * ```ts
- * import { constraint, Engine, type ConstraintDefinition } from 'weft';
+ * import { constraint, Engine, workflow, type ConstraintDefinition } from 'weft';
  *
  * let balance = 0;
  * const positiveBalance: ConstraintDefinition = constraint({
@@ -67,18 +68,18 @@ export interface ConstraintCheckState {
  *   onViolation: 'compensate',
  * });
  *
+ * const transfer = workflow({ name: 'transfer', constraints: [positiveBalance] })
+ *   .execute(async function* () { return 'done'; });
+ *
  * const engine = new Engine();
- * engine.register('transfer', {
- *   handler: async function* () { return 'done'; },
- *   constraints: [positiveBalance],
- * });
+ * engine.register(transfer);
  * void engine;
  * ```
  *
- * **Worker execution caveat**: constraints attached via
- * `WorkflowRegistration.constraints` are only evaluated under the inline
- * execution strategy. When `EngineOptions.workerExecution` is configured,
- * constraint evaluation is silently skipped.
+ * **Worker execution caveat**: constraints attached to a workflow are only
+ * evaluated under the inline execution strategy. When
+ * `EngineOptions.workerExecution` is configured, constraint evaluation is
+ * silently skipped.
  */
 export interface ConstraintDefinition {
   name: string;

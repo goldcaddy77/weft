@@ -160,9 +160,11 @@ describe('engine.aggregate', () => {
   it('marks truncated when there are more groups than the requested limit', async () => {
     const engine = new Engine();
     for (const typeName of ['t-a', 't-b', 't-c', 't-d']) {
-      engine.register(typeName, async function* () {
-        return 'ok';
-      });
+      engine.register(
+        workflow({ name: typeName }).execute(async function* () {
+          return 'ok';
+        }),
+      );
       await startAndComplete(engine, typeName, `${typeName}-1`);
     }
 

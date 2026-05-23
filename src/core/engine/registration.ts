@@ -1,13 +1,9 @@
 import { ActivityRegistry } from '../activity-registry.ts';
-import { compileStepWorkflow, isAsyncGeneratorFunction } from '../step-context.ts';
 import {
   activity,
   validateDefinitionSchemaMetadata,
   type ActivityDefinition,
-  type StepWorkflowFunction,
   type WorkflowDefinition,
-  type WorkflowFunction,
-  type WorkflowRegistration,
 } from '../types.ts';
 import { clonePlain } from '../types/clone-plain.ts';
 import type { EngineInternals } from './internals.ts';
@@ -28,14 +24,10 @@ function isWorkflowDefinition(value: unknown): value is WorkflowDefinition {
   return typeof value === 'object' && value !== null && 'name' in value && 'handler' in value;
 }
 
-function isWorkflowRegistration(value: unknown): value is WorkflowRegistration {
-  return typeof value === 'object' && value !== null && 'handler' in value;
-}
-
 function assertConstraintsSupported(
   internals: EngineInternals,
   name: string,
-  registration: WorkflowRegistration,
+  registration: WorkflowDefinition,
 ): void {
   if (!registration.constraints || registration.constraints.length === 0) {
     return;
@@ -58,7 +50,7 @@ function assertConstraintsSupported(
 
 function buildBaseRegistrationEntry(
   name: string,
-  registration: WorkflowRegistration,
+  registration: WorkflowDefinition,
 ): RegistrationEntry {
   const tags = copiedTags(registration.tags);
   const normalizedRetention = normalizeRetentionPolicy(
@@ -92,7 +84,7 @@ function buildBaseRegistrationEntry(
 
 function applyOptionalRegistrationFields(
   entry: RegistrationEntry,
-  registration: WorkflowRegistration,
+  registration: WorkflowDefinition,
 ): void {
   if (registration.migrate) {
     entry.migrate = registration.migrate;
@@ -105,52 +97,23 @@ function applyOptionalRegistrationFields(
   }
 }
 
-function buildRegistrationEntry(
-  name: string,
-  registration: WorkflowRegistration,
-): RegistrationEntry {
+function buildRegistrationEntry(name: string, registration: WorkflowDefinition): RegistrationEntry {
   const entry = buildBaseRegistrationEntry(name, registration);
   applyOptionalRegistrationFields(entry, registration);
   return entry;
 }
 
-function registerWorkflowRegistration(
+function commitWorkflowDefinition(
   internals: EngineInternals,
-  name: string,
-  registration: WorkflowRegistration,
+  definition: WorkflowDefinition,
   callbacks: RegistrationCallbacks,
 ): void {
-  assertConstraintsSupported(internals, name, registration);
-  const entry = buildRegistrationEntry(name, registration);
+  const name = definition.name;
+  assertConstraintsSupported(internals, name, definition);
+  const entry = buildRegistrationEntry(name, definition);
   internals.registrations.set(name, entry);
   callbacks.ensureRetentionSweepInterval();
-  internals.workflowTypesByHandler.set(registration.handler, name);
-}
-
-function registerBareHandler(
-  internals: EngineInternals,
-  name: string,
-  handler: WorkflowFunction | StepWorkflowFunction,
-  callbacks: RegistrationCallbacks,
-): void {
-  // Auto-detect step-based (non-generator) workflow functions and compile them
-  const originalHandler = handler;
-  let resolvedHandler: WorkflowFunction | StepWorkflowFunction = handler;
-  if (typeof resolvedHandler === 'function' && !isAsyncGeneratorFunction(resolvedHandler)) {
-    resolvedHandler = compileStepWorkflow(resolvedHandler as StepWorkflowFunction);
-  }
-
-  internals.registrations.set(name, {
-    handler: resolvedHandler as WorkflowFunction,
-    version: '1',
-  });
-  callbacks.ensureRetentionSweepInterval();
-  if (typeof originalHandler === 'function') {
-    internals.workflowTypesByHandler.set(originalHandler, name);
-  }
-  if (typeof resolvedHandler === 'function') {
-    internals.workflowTypesByHandler.set(resolvedHandler, name);
-  }
+  internals.workflowTypesByHandler.set(definition.handler, name);
 }
 
 /**
@@ -246,45 +209,35 @@ function checkWorkflowCollision(
 
 export function register(
   internals: EngineInternals,
-  nameOrDefinition: unknown,
-  handlerOrRegistrationOrOptions: unknown,
+  definition: unknown,
   callbacks: RegistrationCallbacks,
 ): void {
-  if (isWorkflowDefinition(nameOrDefinition)) {
-    const definition = nameOrDefinition;
-    if (isBuilderWorkflowDefinition(definition)) {
-      const decision = checkWorkflowCollision(internals, definition.name, definition);
-      if (decision.kind === 'idempotent') return;
-      // Build the per-workflow ActivityRegistry before any commits so an
-      // activity-metadata failure leaves zero state behind. Commit both maps
-      // (workflowDefinitionsByName + activityRegistriesByWorkflow) together
-      // after every fallible step has succeeded — if `register()` throws on
-      // the recursive call below, neither commit happens and a retry sees the
-      // workflow as still unregistered.
-      const perWorkflowRegistry = buildPerWorkflowActivityRegistry(definition.activities);
-      register(internals, definition.name, definition, callbacks);
-      internals.workflowDefinitionsByName.set(definition.name, definition);
-      internals.activityRegistriesByWorkflow.set(definition.name, perWorkflowRegistry);
-      return;
-    }
-    // Legacy object-literal `WorkflowDefinition` — Phase 5 removes this path.
-    // No collision guard: legacy callers historically re-register names freely.
-    register(internals, definition.name, definition, callbacks);
+  if (!isWorkflowDefinition(definition)) {
+    throw new TypeError(
+      'engine.register() expects a WorkflowDefinition (produced by `workflow({ name }).execute(fn)`) or an ActivityDefinition.',
+    );
+  }
+  if (isBuilderWorkflowDefinition(definition)) {
+    const decision = checkWorkflowCollision(internals, definition.name, definition);
+    if (decision.kind === 'idempotent') return;
+    // Build the per-workflow ActivityRegistry before any commits so an
+    // activity-metadata failure leaves zero state behind. Commit both maps
+    // (workflowDefinitionsByName + activityRegistriesByWorkflow) together
+    // after every fallible step has succeeded — if `commitWorkflowDefinition`
+    // throws below, neither commit happens and a retry sees the workflow as
+    // still unregistered.
+    const perWorkflowRegistry = buildPerWorkflowActivityRegistry(definition.activities);
+    commitWorkflowDefinition(internals, definition, callbacks);
+    internals.workflowDefinitionsByName.set(definition.name, definition);
+    internals.activityRegistriesByWorkflow.set(definition.name, perWorkflowRegistry);
     return;
   }
-
-  const name = nameOrDefinition as string;
-  const handlerOrRegistration = handlerOrRegistrationOrOptions as
-    | WorkflowFunction
-    | StepWorkflowFunction
-    | WorkflowRegistration;
-
-  if (isWorkflowRegistration(handlerOrRegistration)) {
-    registerWorkflowRegistration(internals, name, handlerOrRegistration, callbacks);
-    return;
-  }
-
-  registerBareHandler(internals, name, handlerOrRegistration, callbacks);
+  // Plain `WorkflowDefinition` (the runtime shape returned by the builder
+  // before `.activities()` / `.signals()` / etc. populate the per-workflow
+  // maps). The builder always populates those maps to empty objects, so this
+  // branch only fires for hand-rolled `WorkflowDefinition` literals — which
+  // are still valid because the public type is structural.
+  commitWorkflowDefinition(internals, definition, callbacks);
 }
 
 export function resolveWorkflowTypeTarget(

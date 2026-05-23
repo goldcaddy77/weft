@@ -64,10 +64,10 @@ interface WorkflowContext {
     fn: (...arguments_: TArguments) => Promise<TResult> | TResult,
     ...rest: TArguments
   ): WorkflowOperation<TResult>;
-  run<TName extends keyof ActivityTypes & string>(
+  run<TName extends keyof TActivities & string>(
     name: TName,
-    ...rest: ActivityArguments<ActivityTypes, TName>
-  ): WorkflowOperation<ActivityResult<ActivityTypes, TName>>;
+    ...rest: ActivityArgsFor<TActivities[TName]>
+  ): WorkflowOperation<ActivityResultFor<TActivities[TName]>>;
   sleep(duration: Duration): WorkflowOperation<void>;
   waitForSignal<T = unknown>(name: string): WorkflowOperation<T>;
   waitForUpdate<T = unknown>(
@@ -269,13 +269,14 @@ interface RegisteredWorkflowDefinition<TInput = unknown, TOutput = unknown> {
 }
 ```
 
-### `WorkflowRegistry` and `ActivityTypes`
+### `WorkflowRegistry`
 
-Module-augmentation interfaces for typed workflow starts and activity runs. `ActivityTypes` is the augmentation target for activities; `ActivityRegistry` remains the runtime registration class.
+Module-augmentation interface for typed workflow starts. Downstream projects augment `WorkflowRegistry` to make `engine.start('name', ...)` type-check the input. `weft codegen` emits this augmentation from a live server's registry snapshot.
+
+Activity names are no longer typed via a global module-augmentation interface — they live on the workflow builder's `.activities({...})` step, scoped to a single workflow definition. The runtime registration surface remains `ActivityRegistry`.
 
 ```ts partial
 interface WorkflowRegistry {}
-interface ActivityTypes {}
 ```
 
 ```ts
@@ -289,19 +290,26 @@ interface TypedWelcomeOutput {
   greeting: string;
 }
 
-interface TypedFormatGreetingInput {
-  name: string;
-}
-
 declare module 'weft' {
   interface WorkflowRegistry {
     typedWelcome: { input: TypedWelcomeInput; output: TypedWelcomeOutput };
   }
-
-  interface ActivityTypes {
-    typedFormatGreeting: (input: TypedFormatGreetingInput) => Promise<string>;
-  }
 }
+```
+
+To type an activity name, build the workflow with the chained builder and add the activity in `.activities({...})`:
+
+```ts
+import { workflow } from 'weft';
+
+const welcome = workflow({ name: 'typedWelcome' })
+  .activities({
+    typedFormatGreeting: async (input: { name: string }) => `Hello, ${input.name}`,
+  })
+  .execute(async function* (ctx, input: { name: string }) {
+    return { greeting: yield* ctx.run('typedFormatGreeting', input) };
+  });
+void welcome;
 ```
 
 ### `ReviewStatus`

@@ -17,11 +17,8 @@ import type { EngineConstructorOptions } from './engine-internal-types.ts';
  * import { activity, Engine, workflow, type EngineCreateOptions } from 'weft';
  *
  * const greet = activity({ name: 'greet', execute: async (name: string) => `Hello, ${name}` });
- * const welcome = workflow({
- *   name: 'welcome',
- *   handler: async function* (ctx, input: string) {
- *     return yield* ctx.run(greet, input);
- *   },
+ * const welcome = workflow({ name: 'welcome' }).execute(async function* (ctx, input: string) {
+ *   return yield* ctx.run(greet, input);
  * });
  *
  * const options = {

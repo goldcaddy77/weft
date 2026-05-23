@@ -476,7 +476,10 @@ describe('createEngineEventFeedBackend — tokens selector', () => {
     name: string,
     chunks: ReadonlyArray<unknown>,
   ): void {
-    engine.register(name, async function* (ctx: WorkflowContext, _input: unknown) {
+    const definition = workflow({ name }).execute(async function* (
+      ctx: WorkflowContext,
+      _input: unknown,
+    ) {
       const context = ctx;
       yield* context.waitForSignal<string>('start');
       yield* context.stream('tokens', async function* () {
@@ -487,6 +490,9 @@ describe('createEngineEventFeedBackend — tokens selector', () => {
       yield* context.waitForSignal<string>('finish');
       return 'done';
     });
+    // Bypass the parameter-position collision brand — dynamic names from test
+    // helpers always trip it.
+    (engine.register as (workflow: typeof definition) => unknown)(definition);
   }
 
   it('delivers live stream chunks to listeners', async () => {

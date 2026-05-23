@@ -52,7 +52,7 @@ const exportedJsonCodec = jsonCodec;
  *
  * @example
  * ```ts
- * import { KEYS } from 'weft/storage';
+ * import { workflow, KEYS } from 'weft/storage';
  * const key = KEYS.workflow('wf-1');
  * void key;
  * ```

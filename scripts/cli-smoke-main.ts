@@ -3,7 +3,6 @@
 import { helloWorldWorkflow } from '../examples/hello-world.ts';
 import { createStorage } from '../src/cli/index.ts';
 import { Engine } from '../src/core/engine.ts';
-import type { WorkflowFunction } from '../src/core/types.ts';
 import { serve } from '../src/server/index.ts';
 
 const portArgument = Bun.argv.find((argument) => argument.startsWith('--port='));
@@ -16,10 +15,7 @@ if (!Number.isInteger(parsedPort) || parsedPort < 0 || parsedPort > 65_535) {
 const storage = await createStorage('memory', ':memory:');
 const engine = new Engine({ storage });
 
-// The example handler is typed as <string | undefined, { greeting: string }>;
-// Engine.register's overload is invariant on its input type under
-// exactOptionalPropertyTypes, so widen explicitly.
-engine.register('helloWorld', helloWorldWorkflow.handler as WorkflowFunction);
+engine.register(helloWorldWorkflow);
 
 // Bind to loopback only — the smoke harness is a local subprocess, not a
 // public server. Pinning to 127.0.0.1 keeps it off the wildcard interface.

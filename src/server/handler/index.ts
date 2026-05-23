@@ -112,10 +112,10 @@ async function dispatchDirectRoute(
  *
  * @example
  * ```ts
- * import { Engine, MemoryStorage, handleRequest } from 'weft';
+ * import { workflow, Engine, MemoryStorage, handleRequest } from 'weft';
  *
  * await using engine = new Engine({ storage: new MemoryStorage() });
- * engine.register('ping', async function* () { return 'pong'; });
+ * engine.register(workflow({ name: 'ping' }).execute(async function* () { return 'pong'; }));
  *
  * const request = new Request('http://localhost/v1/health');
  * const response = await handleRequest(request, engine);

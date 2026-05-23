@@ -29,12 +29,14 @@ import type { TenantQuotaOptions } from './tenants.ts';
  *
  * @example Start a delayed workflow with tags and search attributes
  * ```ts
- * import { Engine, type StartOptions } from 'weft';
+ * import { workflow, Engine, type StartOptions } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('greet', async function* () {
- *   return 'hi';
- * });
+ * engine.register(
+ *   workflow({ name: 'greet' }).execute(async function* () {
+ *     return 'hi';
+ *   }),
+ * );
  *
  * const options: StartOptions = {
  *   id: 'greeting-2026-04-29',
@@ -62,10 +64,10 @@ export interface StartOptions {
  *
  * @example
  * ```ts
- * import { Engine, type ForkOptions } from 'weft';
+ * import { workflow, Engine, type ForkOptions } from 'weft';
  *
  * const engine = new Engine();
- * engine.register('process', async function* () { return 'done'; });
+ * engine.register(workflow({ name: 'process' }).execute(async function* () { return 'done'; }));
  *
  * const original = await engine.start('process', null);
  * await original.result();

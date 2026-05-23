@@ -1,12 +1,12 @@
-import { activity, type WorkflowRegistration } from 'weft';
+import { activity, workflow } from 'weft';
 
 const formatGreetingActivity = activity({
   name: 'formatGreeting',
   execute: async (subject: string) => ({ greeting: `hello ${subject.trim()}` }),
 });
 
-export const helloWorldWorkflow: WorkflowRegistration<string, { greeting: string }> = {
-  handler: async function* (context, subject) {
+export const helloWorldWorkflow = workflow({ name: 'helloWorld' }).execute(
+  async function* (context, subject: string): AsyncGenerator<unknown, { greeting: string }> {
     return yield* context.run(formatGreetingActivity, subject);
   },
-};
+);

@@ -9,10 +9,11 @@
  */
 
 import { decode } from '../core/codec.ts';
-import type { WorkflowRegistration, WorkflowState } from '../core/types.ts';
+import type { WorkflowState } from '../core/types.ts';
 import { DEFAULT_WORKFLOW_VERSION, checkVersionCompatibility } from '../core/versioning.ts';
 import type { Storage } from '../storage/interface.ts';
 import type { VersionCheckReport, WorkflowTypeReport } from './types.ts';
+import type { WorkflowRegistration } from './validate.ts';
 
 interface WorkflowTypeGroup {
   count: number;
@@ -99,15 +100,13 @@ function computeOverallVerdict(
  *
  * @example
  * ```ts
- * import { MemoryStorage, runVersionCheck } from 'weft';
- * import type { WorkflowRegistration } from 'weft';
+ * import { MemoryStorage, runVersionCheck, workflow } from 'weft';
  *
  * await using storage = new MemoryStorage();
  *
- * const registrations: Record<string, WorkflowRegistration> = {
- *   ping: { version: '1.0.0', handler: async function* () { return 'pong'; } },
- * };
- * const report = await runVersionCheck(storage, registrations);
+ * const ping = workflow({ name: 'ping', version: '1.0.0' })
+ *   .execute(async function* () { return 'pong'; });
+ * const report = await runVersionCheck(storage, { ping });
  * console.log(report.overallVerdict); // 'safe'
  * ```
  */

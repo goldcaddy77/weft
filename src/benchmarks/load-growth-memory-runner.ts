@@ -1,9 +1,11 @@
 import { Engine } from '../core/engine.ts';
 import {
+  registerOnRuntimeEngine,
   runtimeWorkflowEngine,
   type RuntimeWorkflowEngine,
 } from '../core/runtime-workflow-engine.ts';
-import type { StepWorkflowContext } from '../core/types.ts';
+import { compileStepWorkflow } from '../core/step-context.ts';
+import { workflow, type StepWorkflowContext } from '../core/types.ts';
 import type { MemorySample } from '../diagnostics/memory-profiler.ts';
 import { MemoryProfiler, linearRegression } from '../diagnostics/memory-profiler.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
@@ -228,9 +230,14 @@ export async function measureLoadGrowthMemory(
   );
 
   try {
-    engine.register('noop', async (_context: StepWorkflowContext, input: unknown) => {
-      return input;
-    });
+    registerOnRuntimeEngine(
+      engine,
+      workflow({ name: 'noop' }).execute(
+        compileStepWorkflow(async (_context: StepWorkflowContext, input: unknown) => {
+          return input;
+        }),
+      ),
+    );
 
     await runWarmup(engine);
 

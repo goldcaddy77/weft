@@ -12,7 +12,6 @@ import {
   type WorkflowContext,
   type WorkflowDefinition,
   type WorkflowHandle,
-  type WorkflowRegistration,
 } from '../index.ts';
 
 interface WelcomeInput {
@@ -29,12 +28,12 @@ interface FormatGreetingInput {
 
 declare module '../index.ts' {
   interface WorkflowRegistry {
-    welcome: { input: WelcomeInput; output: WelcomeOutput };
-    registered: { input: WelcomeInput; output: WelcomeOutput };
-  }
-
-  interface ActivityTypes {
-    formatGreeting: (input: FormatGreetingInput) => Promise<string>;
+    // Module-augmented workflow name covers the case where a downstream
+    // project augments `WorkflowRegistry` via `weft codegen` output. The
+    // engine that exercises this name is constructed at module scope below
+    // — we use a name distinct from any `engine.register(...)` call so the
+    // builder's `WorkflowAlreadyRegistered` brand does not intersect.
+    moduleAugmentedWelcome: { input: WelcomeInput; output: WelcomeOutput };
   }
 }
 
@@ -78,98 +77,87 @@ void workflowContextDriftGuard;
 const concreteContextContractGuard: Context extends WorkflowContext ? true : never = true;
 void concreteContextContractGuard;
 
-const engine = new Engine();
 const approvalSignal = signal<{ approved: boolean }>('approval');
 const setNameUpdate = update<{ name: string }, string>('set-name');
 
-engine.register('welcome', async function* (ctx: WorkflowContext, input: WelcomeInput) {
-  const greeting = yield* ctx.run('formatGreeting', { name: input.name });
-  // @ts-expect-error string-name activities must match their augmented input type.
-  yield* ctx.run('formatGreeting', { id: 'wrong' });
-  // @ts-expect-error string-name activities must be present in the augmented registry.
-  yield* ctx.run('runtimeFormatGreeting', { name: input.name });
-  const signalPayload = yield* ctx.waitForSignal<{ approved: boolean }>('approval');
-  const typedSignalPayload: { approved: boolean } = yield* ctx.waitForSignal(approvalSignal);
-  const updatePayload = yield* ctx.waitForUpdate<{ suffix: string }>('rename');
-  ctx.onUpdate(setNameUpdate, (payload) => payload.name);
-  ctx.onQuery('greeting', () => greeting);
-  ctx.expose({ greeting: () => greeting });
-  ctx.setAttribute('customer', input.name);
-  const customer = ctx.getAttribute<string>('customer');
-  const attributes = ctx.getAttributes();
-  const child = yield* ctx.startChild<WelcomeOutput>('registered', input);
-  // @ts-expect-error child workflow options are closed to fields the engine reads.
-  yield* ctx.startChild<WelcomeOutput>('registered', input, { unknownOption: true });
-  const parallel = yield* ctx.all([ctx.run('formatGreeting', input), ctx.sleep(1)]);
-  const typedParallel: [string, void] = parallel;
-  const raced = yield* ctx.race([ctx.run('formatGreeting', input)]);
-  const typedRace: string | number = yield* ctx.race([
-    ctx.run('formatGreeting', input),
-    ctx.run(async () => 42),
-  ]);
-  const offloadReference = yield* ctx.offload('welcome-output', async () => child);
-  const loaded = yield* ctx.load<WelcomeOutput>(offloadReference);
-  yield* ctx.archive('welcome-output', loaded);
-  const streamReference = yield* ctx.stream('welcome-stream', async function* () {});
-  const streamUrl = ctx.streamUrl(streamReference);
-  const mapped = yield* ctx.map([input], 'registered');
-  const reduced = yield* ctx.reduce([input], 'registered', { greeting: '' });
-  const memoized = yield* ctx.memo('memo-key', () => input.name);
-  const runAllResult = yield* ctx.runAll({
-    formatGreeting: [async (value: WelcomeInput) => value.name, input],
-    count: [async () => 42],
+// Activity names are now typed per-workflow via the builder's `.activities()`
+// step. This replaces the global `ActivityTypes` module augmentation that the
+// pre-builder era relied on.
+const welcomeBuilder = workflow({ name: 'localWelcome' })
+  .activities({
+    formatGreeting: async (input: FormatGreetingInput) => `Hello, ${input.name}`,
+  })
+  .execute(async function* (ctx, input: WelcomeInput) {
+    const greeting = yield* ctx.run('formatGreeting', { name: input.name });
+    // @ts-expect-error builder-typed activities must match their declared input type.
+    yield* ctx.run('formatGreeting', { id: 'wrong' });
+    // @ts-expect-error builder-typed activity names must be present in `.activities()`.
+    yield* ctx.run('runtimeFormatGreeting', { name: input.name });
+    const signalPayload = yield* ctx.waitForSignal<{ approved: boolean }>('approval');
+    const typedSignalPayload: { approved: boolean } = yield* ctx.waitForSignal(approvalSignal);
+    const updatePayload = yield* ctx.waitForUpdate<{ suffix: string }>('rename');
+    ctx.onUpdate(setNameUpdate, (payload) => payload.name);
+    ctx.onQuery('greeting', () => greeting);
+    ctx.expose({ greeting: () => greeting });
+    ctx.setAttribute('customer', input.name);
+    const customer = ctx.getAttribute<string>('customer');
+    const attributes = ctx.getAttributes();
+    const child = yield* ctx.startChild<WelcomeOutput>('registered', input);
+    // @ts-expect-error child workflow options are closed to fields the engine reads.
+    yield* ctx.startChild<WelcomeOutput>('registered', input, { unknownOption: true });
+    const parallel = yield* ctx.all([ctx.run('formatGreeting', input), ctx.sleep(1)]);
+    const typedParallel: [string, void] = parallel;
+    const raced = yield* ctx.race([ctx.run('formatGreeting', input)]);
+    const typedRace: string | number = yield* ctx.race([
+      ctx.run('formatGreeting', input),
+      ctx.run(async () => 42),
+    ]);
+    const offloadReference = yield* ctx.offload('welcome-output', async () => child);
+    const loaded = yield* ctx.load<WelcomeOutput>(offloadReference);
+    yield* ctx.archive('welcome-output', loaded);
+    const streamReference = yield* ctx.stream('welcome-stream', async function* () {});
+    const streamUrl = ctx.streamUrl(streamReference);
+    const mapped = yield* ctx.map([input], 'registered');
+    const reduced = yield* ctx.reduce([input], 'registered', { greeting: '' });
+    const memoized = yield* ctx.memo('memo-key', () => input.name);
+    const runAllResult = yield* ctx.runAll({
+      formatGreeting: [async (value: WelcomeInput) => value.name, input],
+      count: [async () => 42],
+    });
+    const typedRunAllResult: { formatGreeting: string; count: number } = runAllResult;
+    const sagaResult = yield* ctx.saga<WelcomeOutput>([]);
+    const session = ctx.state.session('name', { initial: input.name });
+
+    void signalPayload;
+    void typedSignalPayload;
+    void updatePayload;
+    void customer;
+    void attributes;
+    void typedParallel;
+    void raced;
+    void typedRace;
+    void streamUrl;
+    void mapped;
+    void reduced;
+    void memoized;
+    void typedRunAllResult;
+    void sagaResult;
+    void session;
+
+    return { greeting };
   });
-  const typedRunAllResult: { formatGreeting: string; count: number } = runAllResult;
-  const sagaResult = yield* ctx.saga<WelcomeOutput>([]);
-  const session = ctx.state.session('name', { initial: input.name });
 
-  void signalPayload;
-  void typedSignalPayload;
-  void updatePayload;
-  void customer;
-  void attributes;
-  void typedParallel;
-  void raced;
-  void typedRace;
-  void streamUrl;
-  void mapped;
-  void reduced;
-  void memoized;
-  void typedRunAllResult;
-  void sagaResult;
-  void session;
-
-  return { greeting };
+const registered = workflow({ name: 'registered' }).execute(async function* (
+  ctx: WorkflowContext,
+  input: WelcomeInput,
+) {
+  return yield* ctx.run(async (value: WelcomeInput) => ({ greeting: value.name }), input);
 });
 
-const registration: WorkflowRegistration<WelcomeInput, WelcomeOutput> = {
-  handler: async function* (ctx: WorkflowContext, input: WelcomeInput) {
-    return yield* ctx.run(async (value: WelcomeInput) => ({ greeting: value.name }), input);
-  },
-};
-engine.register('registered', registration);
-
-engine.register(
-  activity({
-    name: 'formatGreeting',
-    execute: async (input: FormatGreetingInput) => {
-      return `Hello, ${input.name}`;
-    },
-  }),
-);
-
-engine.register(
-  // @ts-expect-error registered activities must match their augmented input type.
-  activity({ name: 'formatGreeting', execute: async (input: { id: string }) => input.id }),
-);
-
-// @ts-expect-error registered activity names must be present in the augmented registry.
-engine.registerActivity('runtimeFormatGreeting', async (input: FormatGreetingInput) => {
-  return `Hello, ${input.name}`;
-});
+const engine = new Engine().register(welcomeBuilder).register(registered);
 
 async function verifyHandleTyping(): Promise<void> {
-  const handle = await engine.start('welcome', { name: 'Steve' });
+  const handle = await engine.start('localWelcome', { name: 'Steve' });
   const typedHandle: WorkflowHandle<WelcomeOutput> = handle;
   const output = await handle.result();
   output.greeting.toUpperCase();
@@ -177,43 +165,51 @@ async function verifyHandleTyping(): Promise<void> {
 }
 void verifyHandleTyping;
 
-// @ts-expect-error start input must match the augmented workflow input type.
-void engine.start('welcome', { id: 'wrong' });
+// Module-augmented workflow names typecheck on `start` even when no
+// `register(...)` call was made — the augmentation is the source of truth.
+async function verifyModuleAugmentedStart(): Promise<void> {
+  // @ts-expect-error start input must match the module-augmented input type.
+  void engine.start('moduleAugmentedWelcome', { id: 'wrong' });
+  const handle = await engine.start('moduleAugmentedWelcome', { name: 'Grace' });
+  void handle;
+}
+void verifyModuleAugmentedStart;
 
-// @ts-expect-error workflow names must be present in the augmented registry.
+// @ts-expect-error workflow names must be present in the augmented registry or registered.
 void engine.start('runtime-discovered', { id: 'dynamic' });
 
-// @ts-expect-error workflow registration names must be present in the augmented registry.
-engine.register('runtime-discovered', async () => {
-  return 'dynamic';
-});
+// Activity name brand-rejection at the `engine.register` boundary was
+// intentionally removed when the global `ActivityTypes` augmentation went
+// away: activity-name typing now lives on the per-workflow builder's
+// `.activities()` step (see the `// @ts-expect-error builder-typed activity
+// names must be present in `.activities()`.` assertion above). There is no
+// equivalent engine-level rejection to test; the builder-level rejection
+// covers the same architectural goal.
 
-const localGreet = workflow({
-  name: 'localGreet',
-  handler: async function* (_ctx: WorkflowContext, input: string) {
-    yield;
-    return `Hello, ${input}`;
-  },
+const localGreet = workflow({ name: 'localGreet' }).execute(async function* (
+  _ctx: WorkflowContext,
+  input: string,
+) {
+  yield;
+  return `Hello, ${input}`;
 });
 
 const schemaDefinedWorkflow = workflow({
   name: 'schemaDefinedWorkflow',
   inputSchema: z.object({ id: z.string() }),
   outputSchema: z.object({ ok: z.boolean() }),
-  handler: async function* (_ctx, input) {
-    const _inputCheck: Equals<typeof input, { id: string }> = true;
-    void _inputCheck;
-    yield;
-    return { ok: true };
-  },
+}).execute(async function* (_ctx, input: { id: string }) {
+  const _inputCheck: Equals<typeof input, { id: string }> = true;
+  void _inputCheck;
+  yield;
+  return { ok: true };
 });
 
 const concreteWorkflow: WorkflowDefinition<string, string, 'concreteWorkflow'> = workflow({
   name: 'concreteWorkflow',
-  handler: async function* (_ctx: WorkflowContext, input: string) {
-    yield;
-    return input.toUpperCase();
-  },
+}).execute(async function* (_ctx: WorkflowContext, input: string) {
+  yield;
+  return input.toUpperCase();
 });
 
 const sendEmail = activity({
@@ -231,11 +227,6 @@ const zeroInputActivity = activity({
 const explicitEmptyEngine = new Engine<{}, {}>();
 // @ts-expect-error explicit empty workflow registries reject unknown workflow starts.
 void explicitEmptyEngine.start('notRegistered', null);
-// @ts-expect-error explicit empty workflow registries reject name-based workflow registration.
-explicitEmptyEngine.register('notRegistered', async function* () {
-  yield;
-  return 'not registered';
-});
 // @ts-expect-error explicit empty activity registries reject name-based activity registration.
 explicitEmptyEngine.registerActivity('notRegisteredActivity', async () => 'not registered');
 
@@ -261,10 +252,12 @@ void zeroInputCallable();
 void zeroInputCallable('unexpected');
 
 async function verifyEngineCreateInference(): Promise<void> {
-  // No definition maps: the engine uses the module-augmented
-  // WorkflowRegistry / ActivityTypes, without the old dynamic-name fallback.
+  // No definition maps: the engine carries the module-augmented
+  // `WorkflowRegistry` for workflow names but starts with an empty activity
+  // map. Activity names enter the type system only via builder
+  // `.activities({...})` calls or `Engine.create({ activities })`.
   const neither = await Engine.create({ recover: false });
-  void neither.start('welcome', { name: 'Steve' });
+  void neither.start('moduleAugmentedWelcome', { name: 'Steve' });
   // @ts-expect-error no definition maps means only module-augmented workflows are available.
   void neither.start('localGreet', 'Steve');
   await Engine.create({ recover: true, acknowledgeUnknownWorkflowTypes: true });
@@ -274,7 +267,7 @@ async function verifyEngineCreateInference(): Promise<void> {
   await Engine.create({ recover: false, acknowledgeUnknownWorkflowTypes: true });
 
   // workflows-only narrows TWorkflows to the inferred map keys; activities
-  // fall back to the module-augmented registry.
+  // stay empty until added explicitly.
   const workflowsOnly = await Engine.create({
     workflows: { localGreet },
     recover: false,
@@ -284,13 +277,12 @@ async function verifyEngineCreateInference(): Promise<void> {
   void workflowsOnly.start('missingFromWorkflowMap', 'Steve');
 
   // activities-only mirrors workflows-only: TWorkflows keeps the
-  // module-augmented registry,
-  // TActivities narrows to the inferred map.
+  // module-augmented registry, TActivities narrows to the inferred map.
   const activitiesOnly = await Engine.create({
     activities: { sendEmail },
     recover: false,
   });
-  void activitiesOnly.start('welcome', { name: 'Steve' });
+  void activitiesOnly.start('moduleAugmentedWelcome', { name: 'Steve' });
   // @ts-expect-error activity maps do not add workflow names.
   void activitiesOnly.start('localGreet', 'Steve');
 
@@ -336,10 +328,9 @@ engine.withActivity(sendEmail);
 // today because `AnyWorkflowDefinition` uses `never` in the input position.
 const _narrowInputWorkflowGuard: AnyWorkflowDefinition = workflow({
   name: 'narrowInputGuard',
-  handler: async function* (_ctx, _input: { strict: true }) {
-    yield;
-    return 1;
-  },
+}).execute(async function* (_ctx, _input: { strict: true }) {
+  yield;
+  return 1;
 });
 void _narrowInputWorkflowGuard;
 

@@ -5,7 +5,7 @@ Declare `await using engine = new Engine(...)` and shutdown is automatic on scop
 ## The pattern
 
 ```typescript partial
-import { Engine } from 'weft';
+import { Engine, workflow } from 'weft';
 import { SQLiteStorage } from 'weft/storage/sqlite';
 
 declare const orderWorkflow: never; // your registered workflow
@@ -13,7 +13,7 @@ declare const orderWorkflow: never; // your registered workflow
 {
   await using engine = new Engine({ storage: new SQLiteStorage('./weft.db') });
 
-  engine.register('order', orderWorkflow);
+  engine.register(workflow({ name: 'order' }).execute(orderWorkflow));
   const handle = await engine.start('order', { orderId: 'abc' });
   await handle.result();
 } // engine[Symbol.asyncDispose]() called automatically
@@ -76,7 +76,7 @@ async function runServer(port: number) {
 
   stack.defer(() => console.log('Server shut down cleanly'));
 
-  engine.register('order', orderWorkflow);
+  engine.register(workflow({ name: 'order' }).execute(orderWorkflow));
 
   console.log(`Weft running on port ${port}`);
   await new Promise((resolve) => {

@@ -51,10 +51,12 @@ export interface RunNOptions {
  *
  * @example
  * ```ts
+ * import { workflow } from 'weft';
  * import { TestEngine, type RunNResult } from 'weft/testing';
  *
+ * const ping = workflow({ name: 'ping' }).execute(async function* () { return 'pong'; });
  * const engine = new TestEngine();
- * engine.register('ping', async function* () { return 'pong'; });
+ * engine.register(ping);
  * const result: RunNResult = await engine.runN('ping', null, { runs: 10 });
  * console.log(result.passRate);    // 1 (all passed)
  * console.log(result.consistency); // 1 (all identical)
@@ -89,7 +91,7 @@ export interface RunNResult {
  *
  * @example
  * ```ts
- * import type { WorkflowContext } from 'weft';
+ * import { workflow, type WorkflowContext } from 'weft';
  * import { TestEngine } from 'weft/testing';
  *
  * const engine = new TestEngine();
@@ -99,9 +101,12 @@ export interface RunNResult {
  * }
  *
  * const mock = engine.mock(fetchPrice, async (_ticker: unknown) => 42);
- * engine.register('price-check', async function* (ctx: WorkflowContext, input: unknown) {
- *   return 42; // simplified test example
- * });
+ * const priceCheck = workflow({ name: 'price-check' }).execute(
+ *   async function* (_ctx: WorkflowContext, _input: unknown) {
+ *     return 42; // simplified test example
+ *   },
+ * );
+ * engine.register(priceCheck);
  *
  * const handle = await engine.start('price-check', 'ACME');
  * console.log(await handle.result()); // 42

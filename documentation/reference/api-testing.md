@@ -318,6 +318,7 @@ A single recorded call to a mocked activity.
 
 ```ts partial
 import { describe, it, expect } from 'bun:test';
+import { workflow } from 'weft';
 import { TestEngine } from 'weft/testing';
 
 // Activities
@@ -344,7 +345,7 @@ async function* priceAlertWorkflow(context, symbol: string) {
 describe('priceAlertWorkflow', () => {
   it('sends an alert when price exceeds threshold', async () => {
     const engine = new TestEngine({ startTime: 0 });
-    engine.register('price-alert', priceAlertWorkflow);
+    engine.register(workflow({ name: 'price-alert' }).execute(priceAlertWorkflow));
 
     const fetchMock = engine.mock(fetchPrice, async () => 150);
     const alertMock = engine.mock(sendAlert, async () => {});

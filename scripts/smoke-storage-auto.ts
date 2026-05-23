@@ -13,7 +13,7 @@ import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { Engine } from '../dist/index.js';
+import { compileStepWorkflow, Engine, workflow } from '../dist/index.js';
 import { resolveDefaultStorage } from '../dist/storage/auto.js';
 
 const tempDir = join(tmpdir(), `weft-smoke-${Date.now()}`);
@@ -42,7 +42,7 @@ try {
   if (!(engine instanceof Engine)) {
     throw new Error('smoke-storage-auto: new Engine did not return an Engine instance');
   }
-  engine.register('hello', async () => 'world');
+  engine.register(workflow({ name: 'hello' }).execute(compileStepWorkflow(async () => 'world')));
   const handle = await engine.start('hello');
   const result = await handle.result();
   if (result !== 'world') {

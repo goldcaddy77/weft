@@ -1356,7 +1356,7 @@ describe('executeValidate', () => {
       await Bun.write(
         entryPath,
         [
-          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          'import type { WorkflowRegistration } from "./src/diagnostics/validate.ts";',
           'export const myWorkflow: WorkflowRegistration = {',
           '  handler: async function* () { return "done"; },',
           '};',
@@ -1408,7 +1408,7 @@ describe('executeValidate', () => {
       await Bun.write(
         entryPath,
         [
-          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          'import type { WorkflowRegistration } from "./src/diagnostics/validate.ts";',
           'export const myWorkflow: WorkflowRegistration = {',
           '  handler: async function* () { return "done"; },',
           '};',
@@ -1447,7 +1447,7 @@ describe('executeValidate', () => {
       await Bun.write(
         firstEntryPath,
         [
-          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          'import type { WorkflowRegistration } from "./src/diagnostics/validate.ts";',
           'export const firstWorkflow: WorkflowRegistration = {',
           '  handler: async function* () { return "first"; },',
           '};',
@@ -1456,7 +1456,7 @@ describe('executeValidate', () => {
       await Bun.write(
         secondEntryPath,
         [
-          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          'import type { WorkflowRegistration } from "./src/diagnostics/validate.ts";',
           'export const secondWorkflow: WorkflowRegistration = {',
           '  handler: async function* () { return "second"; },',
           '};',
@@ -1689,7 +1689,7 @@ describe('executeValidate', () => {
       await Bun.write(
         cleanEntryPath,
         [
-          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          'import type { WorkflowRegistration } from "./src/diagnostics/validate.ts";',
           'export const cleanWorkflow: WorkflowRegistration = {',
           '  handler: async function* () { return "clean"; },',
           '};',
@@ -1721,7 +1721,7 @@ describe('executeValidate', () => {
       await Bun.write(
         cleanEntryPath,
         [
-          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          'import type { WorkflowRegistration } from "./src/diagnostics/validate.ts";',
           'export const cleanWorkflow: WorkflowRegistration = {',
           '  handler: async function* () { return "clean"; },',
           '};',
@@ -1730,7 +1730,7 @@ describe('executeValidate', () => {
       await Bun.write(
         invalidEntryPath,
         [
-          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          'import type { WorkflowRegistration } from "./src/diagnostics/validate.ts";',
           `import { activity } from "${publicEntryPointUrl}";`,
           'export const sendEmail = activity({',
           '  name: "sendEmail",',
@@ -1768,7 +1768,7 @@ describe('executeValidate', () => {
       await Bun.write(
         invalidEntryPath,
         [
-          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          'import type { WorkflowRegistration } from "./src/diagnostics/validate.ts";',
           `import { activity } from "${publicEntryPointUrl}";`,
           'export const sendEmail = activity({',
           '  name: "sendEmail",',
@@ -2377,7 +2377,7 @@ describe('loadRegistrationsFromModule', () => {
       await Bun.write(
         entryPath,
         [
-          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          'import type { WorkflowRegistration } from "./src/diagnostics/validate.ts";',
           'export const myWorkflow: WorkflowRegistration = {',
           '  handler: async function* () { return "done"; },',
           '};',

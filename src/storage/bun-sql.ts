@@ -43,15 +43,17 @@ export { BunSQLiteStorage as SQLiteStorage };
  * @example
  * ```ts
  * import { BunSQLiteStorage } from 'weft/storage/sqlite/bun';
- * import { Engine, type WorkflowContext } from 'weft';
+ * import { workflow, Engine, type WorkflowContext } from 'weft';
  *
  * // Durable on-disk storage
  * await using storage = new BunSQLiteStorage('./weft.db');
  * await using engine = new Engine({ storage });
  *
- * engine.register('echo', async function* (ctx: WorkflowContext, input: unknown) {
- *   return input;
- * });
+ * engine.register(
+ *   workflow({ name: 'echo' }).execute(async function* (ctx: WorkflowContext, input: unknown) {
+ *     return input;
+ *   }),
+ * );
  *
  * const handle = await engine.start('echo', { msg: 'hi' });
  * console.log(await handle.result()); // { msg: 'hi' }

@@ -62,7 +62,7 @@ The minimal worker entry:
 ```typescript partial
 /// <reference lib="webworker" />
 
-import { activity } from 'weft';
+import { activity, workflow } from 'weft';
 import { setupServiceWorker } from 'weft/service-worker';
 
 const formatGreeting = activity({
@@ -74,11 +74,13 @@ const setup = await setupServiceWorker({
   pathPrefix: '/weft/',
   async register(engine) {
     engine.register(formatGreeting);
-    engine.register('welcome', async function* (ctx, input: { name: string }) {
-      const greeting = yield* ctx.run(formatGreeting, { name: input.name });
-      yield* ctx.sleep('5s');
-      return { greeting };
-    });
+    engine.register(
+      workflow({ name: 'welcome' }).execute(async function* (ctx, input: { name: string }) {
+        const greeting = yield* ctx.run(formatGreeting, { name: input.name });
+        yield* ctx.sleep('5s');
+        return { greeting };
+      }),
+    );
 
     // Resume any workflows that were running when the previous worker was terminated.
     await engine.recoverAll();
@@ -258,7 +260,7 @@ When you need synchronous workflow registration before any `await`, an existing 
 ```typescript partial
 /// <reference lib="webworker" />
 
-import { Engine, activity } from 'weft';
+import { Engine, activity, workflow } from 'weft';
 import { IndexedDBStorage } from 'weft/storage/indexeddb';
 import {
   createFetchHandler,
@@ -278,11 +280,13 @@ const formatGreeting = activity({
 
 engine.register(formatGreeting);
 
-engine.register('welcome', async function* (ctx, input: { name: string }) {
-  const greeting = yield* ctx.run(formatGreeting, { name: input.name });
-  yield* ctx.sleep('5s');
-  return { greeting };
-});
+engine.register(
+  workflow({ name: 'welcome' }).execute(async function* (ctx, input: { name: string }) {
+    const greeting = yield* ctx.run(formatGreeting, { name: input.name });
+    yield* ctx.sleep('5s');
+    return { greeting };
+  }),
+);
 
 await engine.recoverAll();
 

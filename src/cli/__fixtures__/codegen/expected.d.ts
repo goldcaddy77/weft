@@ -5,11 +5,6 @@ declare module 'weft' {
   interface WorkflowRegistry {
     "welcome": { input: { "name": string; }; output: { "greeting": string; } };
   }
-
-  interface ActivityTypes {
-    "formatGreeting": (input: { "name": string; }) => Promise<string>;
-    "ping": () => Promise<string>;
-  }
 }
 
 export {};

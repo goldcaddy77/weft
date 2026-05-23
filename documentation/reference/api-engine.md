@@ -46,29 +46,34 @@ const engine = new Engine({
 ### `register()`
 
 ```ts partial
-register(name: string, handler: WorkflowFunction | StepWorkflowFunction): void
-register(name: string, registration: WorkflowRegistration): void
+register(definition: WorkflowDefinition | ActivityDefinition): void
 ```
 
-Register a workflow by name. The simple form accepts a generator or step-based workflow function directly. The registration form accepts a `WorkflowRegistration` object with execution metadata (`version`, `migrate`, retention) and catalog-neutral definition metadata (`description`, `tags`, `inputSchema`, `outputSchema`).
+Register a workflow or activity definition built with the chained builder API. Workflow definitions are produced by `workflow({...}).execute(handler)` and can carry execution metadata (`version`, `migrate`, retention) and catalog-neutral definition metadata (`description`, `tags`, `inputSchema`, `outputSchema`) as builder options, plus `.searchAttributes(...)` as a chained method.
 
 The schema fields are introspection metadata. Core workflow registration validates their Standard Schema metadata shape, but workflow execution does not validate input or output from these fields unless an adapter explicitly opts into that validation.
 
 ```ts partial
-engine.register('send-email', async function* (context, input) {
-  const result = yield* context.run(sendEmail, { to: input.to, body: input.body });
-  return result;
-});
+import { workflow } from 'weft';
+
+engine.register(
+  workflow({ name: 'send-email' }).execute(async function* (context, input) {
+    const result = yield* context.run(sendEmail, { to: input.to, body: input.body });
+    return result;
+  }),
+);
 
 // Or with version metadata:
-engine.register('send-email', {
-  version: '2',
-  description: 'Send a transactional email',
-  tags: ['email'],
-  handler: async function* (context, input) {
+engine.register(
+  workflow({
+    name: 'send-email',
+    version: '2',
+    description: 'Send a transactional email',
+    tags: ['email'],
+  }).execute(async function* (context, input) {
     /* ... */
-  },
-});
+  }),
+);
 ```
 
 ### `getWorkflowDefinition()`
@@ -77,7 +82,7 @@ engine.register('send-email', {
 getWorkflowDefinition(type: string): RegisteredWorkflowDefinition | undefined
 ```
 
-Return read-only metadata for one registered workflow type. Simple `register(name, handler)` registrations return version `1`, empty tags, and no schemas.
+Return read-only metadata for one registered workflow type. Workflows registered without explicit version, tags, or schemas default to version `1`, empty tags, and no schemas.
 
 ### `listWorkflowDefinitions()`
 

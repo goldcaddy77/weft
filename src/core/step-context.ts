@@ -111,7 +111,7 @@ export class StepContext implements StepWorkflowContext {
  *
  * @example
  * ```ts
- * import { Engine, compileStepWorkflow, type StepWorkflowContext } from 'weft';
+ * import { workflow, Engine, compileStepWorkflow, type StepWorkflowContext } from 'weft';
  *
  * async function process(ctx: StepWorkflowContext, input: unknown) {
  *   const upper = await ctx.step('uppercase', () =>
@@ -121,7 +121,7 @@ export class StepContext implements StepWorkflowContext {
  * }
  *
  * const engine = new Engine();
- * engine.register('process', compileStepWorkflow(process));
+ * engine.register(workflow({ name: 'process' }).execute(compileStepWorkflow(process)));
  * const result = await (await engine.start('process', 'hello')).result();
  * console.log(result); // 'HELLO'
  * ```

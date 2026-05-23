@@ -1,6 +1,7 @@
 import type { Engine } from '../core/engine.ts';
-import { runtimeWorkflowEngine } from '../core/runtime-workflow-engine.ts';
-import type { WorkflowRegistration } from '../core/types.ts';
+import { registerOnRuntimeEngine, runtimeWorkflowEngine } from '../core/runtime-workflow-engine.ts';
+import type { WorkflowDefinition } from '../core/types.ts';
+import type { WorkflowRegistration } from '../diagnostics/validate.ts';
 import { createStorage } from './storage-factory.ts';
 import type {
   CommandOutput,
@@ -91,7 +92,11 @@ async function registerScheduleWorkflows(
 ): Promise<void> {
   const loaded = await loadRegistrationsFromModule(workflowsPath);
   for (const [workflowType, registration] of Object.entries(loaded.registrations)) {
-    runtimeWorkflowEngine(engine).register(workflowType, registration);
+    // Loaded modules historically export bare `{ handler, ... }` objects keyed
+    // by workflow name. Promote the export key into the definition's `name`
+    // field so `engine.register` can accept it as a `WorkflowDefinition`.
+    const definition: WorkflowDefinition = { ...registration, name: workflowType };
+    registerOnRuntimeEngine(runtimeWorkflowEngine(engine), definition);
   }
 }
 

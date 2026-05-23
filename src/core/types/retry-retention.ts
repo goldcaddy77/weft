@@ -36,7 +36,7 @@ export type Duration = number | string;
  * retention sweep deletes them. All fields are optional {@link Duration}
  * values (milliseconds or strings like `'7d'`). Pass via
  * {@link EngineOptions.retention} for engine-wide defaults, or per-workflow
- * in {@link WorkflowRegistration.retention}.
+ * via the builder's `retention` option (or `WorkflowDefinition.retention`).
  *
  * @example
  * ```ts
@@ -121,10 +121,10 @@ export interface RetryPolicy {
  *
  * @example
  * ```ts
- * import { Engine, type WorkflowTypeRetentionPolicy } from 'weft';
+ * import { workflow, Engine, type WorkflowTypeRetentionPolicy } from 'weft';
  *
  * const engine = new Engine({ retention: { completed: '7d' } });
- * engine.register('ping', async function* () { return 'pong'; });
+ * engine.register(workflow({ name: 'ping' }).execute(async function* () { return 'pong'; }));
  * const overview = await engine.getRetentionOverview();
  * const policy: WorkflowTypeRetentionPolicy = overview.workflowTypes[0]!;
  * console.log(policy.source); // 'engine'

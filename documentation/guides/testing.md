@@ -7,11 +7,12 @@ Durable workflows are inherently hard to test. They span time---sleeps, retries,
 `TestEngine` is a subclass of `Engine` backed by in-memory storage and a virtual clock. Everything behaves like the real engine, but you control time and can mock activities.
 
 ```typescript partial
+import { workflow } from 'weft';
 import { TestEngine } from 'weft/testing';
 
 const engine = new TestEngine();
 
-engine.register('order', orderWorkflow);
+engine.register(workflow({ name: 'order' }).execute(orderWorkflow));
 
 const handle = await engine.start('order', { items: ['widget'], total: 99 });
 ```
@@ -28,10 +29,12 @@ The killer feature. `advanceTime()` moves the virtual clock forward, firing any 
 
 ```typescript partial
 // Workflow sleeps for 1 hour
-engine.register('delayed', async function* (ctx) {
-  yield* ctx.sleep('1 hour');
-  return 'done';
-});
+engine.register(
+  workflow({ name: 'delayed' }).execute(async function* (ctx) {
+    yield* ctx.sleep('1 hour');
+    return 'done';
+  }),
+);
 
 const handle = await engine.start('delayed', null);
 
@@ -107,15 +110,17 @@ One-shots are consumed in order; once exhausted, the base implementation runs. S
 `TestEngine.recover()` creates a new engine backed by a copy of the current engine's storage, simulating a process restart. The new engine sees all persisted state but has fresh in-memory structures.
 
 ```typescript partial
-engine.register('resilient', async function* (ctx) {
-  const step1 = yield* ctx.run(doFirstThing);
+engine.register(
+  workflow({ name: 'resilient' }).execute(async function* (ctx) {
+    const step1 = yield* ctx.run(doFirstThing);
 
-  // Simulate crash here
-  // step1 is checkpointed, so recovery picks up after it
+    // Simulate crash here
+    // step1 is checkpointed, so recovery picks up after it
 
-  const step2 = yield* ctx.run(doSecondThing, step1);
-  return step2;
-});
+    const step2 = yield* ctx.run(doSecondThing, step1);
+    return step2;
+  }),
+);
 
 const handle = await engine.start('resilient', null);
 // Wait for step1 to complete and checkpoint
@@ -123,7 +128,7 @@ await Bun.sleep(10);
 
 // Simulate crash and recovery
 const recovered = engine.recover();
-recovered.register('resilient', resilientWorkflow);
+recovered.register(workflow({ name: 'resilient' }).execute(resilientWorkflow));
 
 // The workflow resumes from the checkpoint---step1 doesn't re-execute
 ```
@@ -136,6 +141,7 @@ Here's a complete test combining everything:
 
 ```typescript partial
 import { describe, expect, it } from 'bun:test';
+import { workflow } from 'weft';
 import { TestEngine } from 'weft/testing';
 
 describe('order workflow', () => {
@@ -151,7 +157,7 @@ describe('order workflow', () => {
       tracking: 'TRACK-001',
     }));
 
-    engine.register('order', orderWorkflow);
+    engine.register(workflow({ name: 'order' }).execute(orderWorkflow));
 
     const handle = await engine.start('order', {
       items: ['widget'],
@@ -173,7 +179,7 @@ describe('order workflow', () => {
       throw new Error('Card declined');
     });
 
-    engine.register('order', orderWorkflow);
+    engine.register(workflow({ name: 'order' }).execute(orderWorkflow));
     const handle = await engine.start('order', { total: 100 });
 
     await expect(handle.result()).rejects.toThrow('Card declined');

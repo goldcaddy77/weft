@@ -5,14 +5,14 @@
  *
  * @example
  * ```ts
- * import { Engine, WorkflowStartedEvent } from 'weft';
+ * import { workflow, Engine, WorkflowStartedEvent } from 'weft';
  *
  * const engine = new Engine();
  * engine.addEventListener('workflow:started', (e: Event) => {
  *   const ev = e as WorkflowStartedEvent;
  *   console.log('started', ev.workflowId, ev.workflowType);
  * });
- * engine.register('ping', async function* () { return 'pong'; });
+ * engine.register(workflow({ name: 'ping' }).execute(async function* () { return 'pong'; }));
  * await engine.start('ping', null);
  * ```
  */
@@ -37,14 +37,14 @@ export class WorkflowStartedEvent extends Event {
  *
  * @example
  * ```ts
- * import { Engine, WorkflowCompletedEvent } from 'weft';
+ * import { workflow, Engine, WorkflowCompletedEvent } from 'weft';
  *
  * const engine = new Engine();
  * engine.addEventListener('workflow:completed', (e: Event) => {
  *   const ev = e as WorkflowCompletedEvent;
  *   console.log('completed in', ev.duration, 'ms, result:', ev.result);
  * });
- * engine.register('ping', async function* () { return 'pong'; });
+ * engine.register(workflow({ name: 'ping' }).execute(async function* () { return 'pong'; }));
  * await (await engine.start('ping', null)).result();
  * ```
  */
@@ -69,14 +69,14 @@ export class WorkflowCompletedEvent extends Event {
  *
  * @example
  * ```ts
- * import { Engine, WorkflowFailedEvent } from 'weft';
+ * import { workflow, Engine, WorkflowFailedEvent } from 'weft';
  *
  * const engine = new Engine();
  * engine.addEventListener('workflow:failed', (e: Event) => {
  *   const ev = e as WorkflowFailedEvent;
  *   console.error('workflow', ev.workflowId, 'failed:', ev.error.message);
  * });
- * engine.register('boom', async function* () { throw new Error('oops'); });
+ * engine.register(workflow({ name: 'boom' }).execute(async function* () { throw new Error('oops'); }));
  * await engine.start('boom', null).then(h => h.result()).catch(() => undefined);
  * ```
  */
@@ -99,16 +99,21 @@ export class WorkflowFailedEvent extends Event {
  *
  * @example
  * ```ts
- * import { Engine, WorkflowCancelledEvent } from 'weft';
+ * import { Engine, workflow, WorkflowCancelledEvent } from 'weft';
  *
  * const engine = new Engine();
  * engine.addEventListener('workflow:cancelled', (e: Event) => {
  *   const ev = e as WorkflowCancelledEvent;
  *   console.log('cancelled', ev.workflowId);
  * });
- * engine.register('slow', async function* (_ctx: import('weft').WorkflowContext, _input: unknown) {
- *   await new Promise(() => {}); // never resolves
- * });
+ * engine.register(
+ *   workflow({ name: 'slow' }).execute(async function* (
+ *     _ctx: import('weft').WorkflowContext,
+ *     _input: unknown,
+ *   ) {
+ *     await new Promise(() => {}); // never resolves
+ *   }),
+ * );
  * const handle = await engine.start('slow', null);
  * await handle.cancel();
  * ```

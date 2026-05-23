@@ -55,17 +55,14 @@ import {
   type SearchAttributeValue,
   type SignalDefinition,
   type StartOptions,
-  type StepWorkflowFunction,
   type SubmitReviewOptions,
   type TenantQuotaUsage,
   type TypedListFilter,
   type UpdateDefinition,
   type WorkerOutboundMessage,
   type WorkflowEvent,
-  type WorkflowFunction,
   type WorkflowInput,
   type WorkflowOutput,
-  type WorkflowRegistration,
   type WorkflowReplay,
   type WorkflowState,
   type WorkflowSummary,
@@ -377,16 +374,18 @@ export async function assertCompatiblePersistedDataVersion(
  *
  * @example Run a workflow with an activity
  * ```ts
- * import { activity, Engine, type Context, type WorkflowContext } from 'weft';
+ * import { workflow, activity, Engine, type Context, type WorkflowContext } from 'weft';
  * const fetchUser = activity({
  *   name: 'fetchUser',
  *   execute: async (input: unknown) => ({ name: 'Alice' }),
  * });
  * const engine = new Engine();
- * engine.register('greet', async function* (ctx: WorkflowContext, input: unknown) {
- *   const user = yield* ctx.run(fetchUser, input);
- *   return `Hello, ${user.name}`;
- * });
+ * engine.register(
+ *   workflow({ name: 'greet' }).execute(async function* (ctx: WorkflowContext, input: unknown) {
+ *     const user = yield* ctx.run(fetchUser, input);
+ *     return `Hello, ${user.name}`;
+ *   }),
+ * );
  * const handle = await engine.start('greet', 'user-1');
  * void handle;
  * ```
@@ -418,11 +417,8 @@ export class Engine<
    * import { activity, Engine, workflow } from 'weft';
    *
    * const greet = activity({ name: 'greet', execute: async (name: string) => `Hi ${name}` });
-   * const welcome = workflow({
-   *   name: 'welcome',
-   *   handler: async function* (ctx, input: string) {
-   *     return yield* ctx.run(greet, input);
-   *   },
+   * const welcome = workflow({ name: 'welcome' }).execute(async function* (ctx, input: string) {
+   *   return yield* ctx.run(greet, input);
    * });
    *
    * const engine = await Engine.create({
@@ -720,12 +716,14 @@ export class Engine<
    *
    * @example
    * ```ts
-   * import { Engine, type WorkflowContext } from 'weft';
+   * import { Engine, workflow, type WorkflowContext } from 'weft';
    *
    * const engine = new Engine();
-   * engine.register('hello', async function* (_ctx: WorkflowContext, name: string) {
-   *   return `Hello, ${name}`;
-   * });
+   * engine.register(
+   *   workflow({ name: 'hello' }).execute(async function* (_ctx: WorkflowContext, name: string) {
+   *     return `Hello, ${name}`;
+   *   }),
+   * );
    * ```
    */
   /**
@@ -768,39 +766,13 @@ export class Engine<
       ? never
       : TDefinition,
   ): Engine<TWorkflows, TActivities & InferActivityEntry<TDefinition>>;
-  register<TName extends KnownWorkflowNames<TWorkflows>>(
-    name: TName,
-    handler:
-      | WorkflowFunction<WorkflowInput<TWorkflows, TName>, WorkflowOutput<TWorkflows, TName>>
-      | StepWorkflowFunction<WorkflowInput<TWorkflows, TName>, WorkflowOutput<TWorkflows, TName>>,
-  ): this;
-  register<TName extends KnownWorkflowNames<TWorkflows>>(
-    name: TName,
-    registration: WorkflowRegistration<
-      WorkflowInput<TWorkflows, TName>,
-      WorkflowOutput<TWorkflows, TName>
-    >,
-  ): this;
-  register<TName extends string, TInput = unknown, TOutput = unknown>(
-    name: UnknownWorkflowNameWhenDefaultRegistryIsEmpty<TWorkflows, TName>,
-    handler: WorkflowFunction<TInput, TOutput> | StepWorkflowFunction<TInput, TOutput>,
-  ): this;
-  register<TName extends string, TInput = unknown, TOutput = unknown>(
-    name: UnknownWorkflowNameWhenDefaultRegistryIsEmpty<TWorkflows, TName>,
-    registration: WorkflowRegistration<TInput, TOutput>,
-  ): this;
-  register(nameOrDefinition: unknown, handlerOrRegistrationOrOptions?: unknown): unknown {
-    if (isActivityDefinition(nameOrDefinition) && handlerOrRegistrationOrOptions === undefined) {
-      this.#registerActivityDefinition(nameOrDefinition);
+  register(definition: unknown): unknown {
+    if (isActivityDefinition(definition)) {
+      this.#registerActivityDefinition(definition);
       return typedEngineView<TWorkflows, TActivities>(this);
     }
 
-    registerWorkflow(
-      getInternals(this),
-      nameOrDefinition,
-      handlerOrRegistrationOrOptions,
-      this.#createRegistrationCallbacks(),
-    );
+    registerWorkflow(getInternals(this), definition, this.#createRegistrationCallbacks());
     return typedEngineView<TWorkflows, TActivities>(this);
   }
   /**

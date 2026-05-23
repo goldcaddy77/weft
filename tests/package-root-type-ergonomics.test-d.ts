@@ -2,11 +2,10 @@ import {
   BulkDeleteRequiresTerminalWorkflowsError,
   BulkOperationConfirmationError,
   Engine,
-  activity,
   signal,
+  workflow,
   type BulkOperationDryRunResult,
   type BulkSignalResult,
-  type WorkflowContext,
   type WorkflowHandle,
 } from 'weft';
 
@@ -24,43 +23,26 @@ interface PackageRootFormatGreetingInput {
 
 declare module 'weft' {
   interface WorkflowRegistry {
-    packageRootWelcome: {
+    // Module-augmented workflow name, distinct from any `engine.register(...)`
+    // call site below so the builder's `WorkflowAlreadyRegistered` brand does
+    // not intersect.
+    packageRootModuleAugmented: {
       input: PackageRootWelcomeInput;
       output: PackageRootWelcomeOutput;
     };
   }
-
-  interface ActivityTypes {
-    packageRootFormatGreeting: (input: PackageRootFormatGreetingInput) => Promise<string>;
-  }
 }
 
-const engine = new Engine();
 const packageRootApprovalSignal = signal<{ approved: boolean }>('packageRootApproval');
 
-engine.register(
-  activity({
-    name: 'packageRootFormatGreeting',
-    execute: async (input: PackageRootFormatGreetingInput) => `Hello, ${input.name}`,
-  }),
-);
-
-engine.register(
-  // @ts-expect-error registered activities must match the public package-root augmentation.
-  activity({
-    name: 'packageRootFormatGreeting',
-    execute: async (input: { id: string }) => input.id,
-  }),
-);
-
-// @ts-expect-error registered activity names must match the public package-root augmentation.
-engine.registerActivity('packageRootRuntimeFormatGreeting', async (input: { name: string }) => {
-  return `Hello, ${input.name}`;
-});
-
-engine.register(
-  'packageRootWelcome',
-  async function* (ctx: WorkflowContext, input: PackageRootWelcomeInput) {
+// Activity names are typed per-workflow via the builder's `.activities()`
+// step. The pre-builder global `ActivityTypes` augmentation no longer exists.
+const packageRootWelcome = workflow({ name: 'packageRootWelcome' })
+  .activities({
+    packageRootFormatGreeting: async (input: PackageRootFormatGreetingInput) =>
+      `Hello, ${input.name}`,
+  })
+  .execute(async function* (ctx, input: PackageRootWelcomeInput) {
     const greeting = yield* ctx.run('packageRootFormatGreeting', { name: input.name });
     const approval = yield* ctx.waitForSignal(packageRootApprovalSignal);
     const parallel = yield* ctx.all([
@@ -78,9 +60,9 @@ engine.register(
       count: [async () => 42],
     });
     const typedRunAllResult: { greeting: string; count: number } = runAllResult;
-    // @ts-expect-error string-name activity arguments must match the package-root augmentation.
+    // @ts-expect-error builder-typed activity arguments must match the declared input type.
     yield* ctx.run('packageRootFormatGreeting', { id: 'wrong' });
-    // @ts-expect-error string-name activities must match the package-root augmentation.
+    // @ts-expect-error builder-typed activities must be present in the workflow's `.activities()`.
     yield* ctx.run('packageRootRuntimeFormatGreeting', { name: input.name });
     // @ts-expect-error child workflow options are closed to fields the engine reads.
     yield* ctx.startChild('packageRootWelcome', input, { unknownOption: true });
@@ -89,8 +71,9 @@ engine.register(
     void typedRace;
     void typedRunAllResult;
     return { greeting };
-  },
-);
+  });
+
+const engine = new Engine().register(packageRootWelcome);
 
 async function verifyPackageRootWorkflowTyping(): Promise<void> {
   const handle = await engine.start('packageRootWelcome', { name: 'Steve' });

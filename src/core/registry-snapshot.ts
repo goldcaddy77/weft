@@ -49,8 +49,9 @@ export type RegistryWorkflowEntry = {
  * metadata for documentation/observability surfaces and don't appear on a
  * function type. Workflows include tags because the workflow registry
  * augmentation point (`WorkflowRegistry`) is an interface where extra
- * metadata can be attached structurally; the activity augmentation point
- * (`ActivityTypes`) is a function map and has no place for tags.
+ * metadata can be attached structurally; activity names are now typed
+ * per-workflow via the builder's `.activities({...})` step, so there is no
+ * global activity-type registry to attach metadata to.
  */
 export type RegistryActivityEntry = {
   inputSchema?: Record<string, unknown>;

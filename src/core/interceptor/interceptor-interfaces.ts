@@ -20,7 +20,7 @@ import type {
  *
  * @example
  * ```ts
- * import { Engine, type WorkflowInterceptor } from 'weft';
+ * import { workflow, Engine, type WorkflowInterceptor } from 'weft';
  *
  * const tracer: WorkflowInterceptor = {
  *   *activity(ctx, next) {
@@ -32,7 +32,7 @@ import type {
  * };
  *
  * const engine = new Engine();
- * engine.register('ping', async function* () { return 'pong'; });
+ * engine.register(workflow({ name: 'ping' }).execute(async function* () { return 'pong'; }));
  * void engine;
  * void tracer;
  * ```

@@ -8,13 +8,15 @@
 
 import type { Context } from '../src/core/context.ts';
 import { Engine } from '../src/core/engine.ts';
-import type {
-  ActivityDefinition,
-  StepWorkflowContext,
-  WorkflowContext,
-  WorkflowEvent,
-  WorkflowState,
-  WorkflowTimelineEntry,
+import { compileStepWorkflow } from '../src/core/step-context.ts';
+import {
+  workflow,
+  type ActivityDefinition,
+  type StepWorkflowContext,
+  type WorkflowContext,
+  type WorkflowEvent,
+  type WorkflowState,
+  type WorkflowTimelineEntry,
 } from '../src/core/types.ts';
 import { MemoryStorage } from '../src/storage/memory.ts';
 import { TestEngine } from '../src/testing/test-engine.ts';
@@ -185,13 +187,18 @@ async function findExistingFixtureFiles(): Promise<string[]> {
 async function runSimpleSequential(): Promise<ScenarioRun> {
   const engine = new TestEngine({ startTime: 0 });
 
-  engine.register('simple-sequential', async function* (ctx: WorkflowContext, input: unknown) {
-    const result = yield* (ctx as Context).run(
-      async (value: unknown) => `processed:${String(value)}`,
-      input,
-    );
-    return result;
-  });
+  engine.register(
+    workflow({ name: 'simple-sequential' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
+      const result = yield* (ctx as Context).run(
+        async (value: unknown) => `processed:${String(value)}`,
+        input,
+      );
+      return result;
+    }),
+  );
 
   const handle = await engine.start('simple-sequential', 'hello', {
     id: 'wf-simple-sequential',
@@ -204,15 +211,20 @@ async function runSimpleSequential(): Promise<ScenarioRun> {
 async function runTwoParallel(): Promise<ScenarioRun> {
   const engine = new TestEngine({ startTime: 0 });
 
-  engine.register('two-parallel', async function* (ctx: WorkflowContext, input: unknown) {
-    const context = ctx as Context;
-    const [left, right] = yield* context.all([
-      context.run(async (value: unknown) => `left:${String(value)}`, input),
-      context.run(async (value: unknown) => `right:${String(value)}`, input),
-    ]);
+  engine.register(
+    workflow({ name: 'two-parallel' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
+      const context = ctx as Context;
+      const [left, right] = yield* context.all([
+        context.run(async (value: unknown) => `left:${String(value)}`, input),
+        context.run(async (value: unknown) => `right:${String(value)}`, input),
+      ]);
 
-    return { a: left, b: right };
-  });
+      return { a: left, b: right };
+    }),
+  );
 
   const handle = await engine.start('two-parallel', 'data', { id: 'wf-two-parallel' });
   await handle.result();
@@ -223,18 +235,20 @@ async function runTwoParallel(): Promise<ScenarioRun> {
 async function runRaceTakesFirst(): Promise<ScenarioRun> {
   const engine = new TestEngine({ startTime: 0 });
 
-  engine.register('race-takes-first', async function* (ctx: WorkflowContext) {
-    const context = ctx as Context;
-    const result = yield* context.race([
-      context.run(async () => 'fast'),
-      context.run(async () => {
-        await Bun.sleep(50);
-        return 'slow';
-      }),
-    ]);
+  engine.register(
+    workflow({ name: 'race-takes-first' }).execute(async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      const result = yield* context.race([
+        context.run(async () => 'fast'),
+        context.run(async () => {
+          await Bun.sleep(50);
+          return 'slow';
+        }),
+      ]);
 
-    return result;
-  });
+      return result;
+    }),
+  );
 
   const handle = await engine.start('race-takes-first', null, { id: 'wf-race-takes-first' });
   await handle.result();
@@ -245,10 +259,12 @@ async function runRaceTakesFirst(): Promise<ScenarioRun> {
 async function runSignalAndWait(): Promise<ScenarioRun> {
   const engine = new TestEngine({ startTime: 0 });
 
-  engine.register('signal-and-wait', async function* (ctx: WorkflowContext) {
-    const payload = yield* (ctx as Context).waitForSignal('go');
-    return { received: payload };
-  });
+  engine.register(
+    workflow({ name: 'signal-and-wait' }).execute(async function* (ctx: WorkflowContext) {
+      const payload = yield* (ctx as Context).waitForSignal('go');
+      return { received: payload };
+    }),
+  );
 
   const handle = await engine.start('signal-and-wait', null, { id: 'wf-signal-and-wait' });
   await waitForCheckpoint(engine, handle.id);
@@ -261,10 +277,12 @@ async function runSignalAndWait(): Promise<ScenarioRun> {
 async function runSleepAndResume(): Promise<ScenarioRun> {
   const engine = new TestEngine({ startTime: 0 });
 
-  engine.register('sleep-and-resume', async function* (ctx: WorkflowContext) {
-    yield* (ctx as Context).sleep(100);
-    return 'awake';
-  });
+  engine.register(
+    workflow({ name: 'sleep-and-resume' }).execute(async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).sleep(100);
+      return 'awake';
+    }),
+  );
 
   const handle = await engine.start('sleep-and-resume', null, { id: 'wf-sleep-and-resume' });
   await engine.advanceTime(100);
@@ -277,16 +295,25 @@ async function runChildWorkflow(): Promise<ScenarioRun> {
   const engine = new TestEngine({ startTime: 0 });
 
   engine.register(
-    'child-workflow-child',
-    async function childWorkflowChild(_ctx: StepWorkflowContext, input: unknown) {
-      return `child-result:${String(input)}`;
-    },
+    workflow({ name: 'child-workflow-child' }).execute(
+      compileStepWorkflow(async function childWorkflowChild(
+        _ctx: StepWorkflowContext,
+        input: unknown,
+      ) {
+        return `child-result:${String(input)}`;
+      }),
+    ),
   );
 
-  engine.register('child-workflow', async function* (ctx: WorkflowContext, input: unknown) {
-    const childResult = yield* (ctx as Context).startChild('child-workflow-child', input);
-    return { parent: String(input), child: childResult };
-  });
+  engine.register(
+    workflow({ name: 'child-workflow' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
+      const childResult = yield* (ctx as Context).startChild('child-workflow-child', input);
+      return { parent: String(input), child: childResult };
+    }),
+  );
 
   const handle = await engine.start('child-workflow', 'parent-input', {
     id: 'wf-child-workflow',
@@ -300,31 +327,33 @@ async function runSagaWithCompensation(): Promise<ScenarioRun> {
   const engine = new TestEngine({ startTime: 0 });
   const compensated: string[] = [];
 
-  engine.register('saga-with-compensation', async function* (ctx: WorkflowContext) {
-    const stepOne: ActivityDefinition<unknown, string> = {
-      name: 'step-one',
-      execute: async () => 'output-one',
-      compensate: async (_input: unknown, output: string) => {
-        compensated.push(output);
-      },
-    };
-    const stepTwo: ActivityDefinition<unknown, string> = {
-      name: 'step-two',
-      execute: async () => {
-        throw new Error('step-two-failed');
-      },
-    };
+  engine.register(
+    workflow({ name: 'saga-with-compensation' }).execute(async function* (ctx: WorkflowContext) {
+      const stepOne: ActivityDefinition<unknown, string> = {
+        name: 'step-one',
+        execute: async () => 'output-one',
+        compensate: async (_input: unknown, output: string) => {
+          compensated.push(output);
+        },
+      };
+      const stepTwo: ActivityDefinition<unknown, string> = {
+        name: 'step-two',
+        execute: async () => {
+          throw new Error('step-two-failed');
+        },
+      };
 
-    try {
-      yield* (ctx as Context).saga([
-        { definition: stepOne, input: 'a' },
-        { definition: stepTwo, input: 'b' },
-      ]);
-      return 'no-error';
-    } catch {
-      return `compensated:${compensated.join(',')}`;
-    }
-  });
+      try {
+        yield* (ctx as Context).saga([
+          { definition: stepOne, input: 'a' },
+          { definition: stepTwo, input: 'b' },
+        ]);
+        return 'no-error';
+      } catch {
+        return `compensated:${compensated.join(',')}`;
+      }
+    }),
+  );
 
   const handle = await engine.start('saga-with-compensation', null, {
     id: 'wf-saga-with-compensation',
@@ -337,12 +366,17 @@ async function runSagaWithCompensation(): Promise<ScenarioRun> {
 async function runPipeThreeStages(): Promise<ScenarioRun> {
   const engine = new TestEngine({ startTime: 0 });
 
-  engine.register('pipe-three-stages', async function* (ctx: WorkflowContext, input: unknown) {
-    return yield* ctx.pipe([pipeStageOne, pipeStageTwo, pipeStageThree], input);
-  });
-  engine.register('stage1', pipeStageOne);
-  engine.register('stage2', pipeStageTwo);
-  engine.register('stage3', pipeStageThree);
+  engine.register(
+    workflow({ name: 'pipe-three-stages' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
+      return yield* ctx.pipe(['stage1', 'stage2', 'stage3'], input);
+    }),
+  );
+  engine.register(workflow({ name: 'stage1' }).execute(compileStepWorkflow(pipeStageOne)));
+  engine.register(workflow({ name: 'stage2' }).execute(compileStepWorkflow(pipeStageTwo)));
+  engine.register(workflow({ name: 'stage3' }).execute(compileStepWorkflow(pipeStageThree)));
 
   const handle = await engine.start('pipe-three-stages', 'start', {
     id: 'wf-pipe-three-stages',
@@ -355,12 +389,14 @@ async function runPipeThreeStages(): Promise<ScenarioRun> {
 async function runForkFromCheckpoint(): Promise<ScenarioRun> {
   const engine = new TestEngine({ startTime: 0 });
 
-  engine.register('fork-from-checkpoint', async function* (ctx: WorkflowContext) {
-    const context = ctx as Context;
-    const phaseOne = yield* context.run(async () => 'phase-one');
-    const branch = yield* context.waitForSignal('branch');
-    return `${String(phaseOne)}:${String(branch)}`;
-  });
+  engine.register(
+    workflow({ name: 'fork-from-checkpoint' }).execute(async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      const phaseOne = yield* context.run(async () => 'phase-one');
+      const branch = yield* context.waitForSignal('branch');
+      return `${String(phaseOne)}:${String(branch)}`;
+    }),
+  );
 
   const original = await engine.start('fork-from-checkpoint', null, { id: 'wf-fork-original' });
   await waitForCheckpoint(engine, original.id);

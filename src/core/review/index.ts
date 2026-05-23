@@ -177,18 +177,20 @@ export type EscalationAction =
  *
  * @example Catch a review timeout and escalate
  * ```ts
- * import { ReviewTimeoutError } from 'weft';
+ * import { workflow, ReviewTimeoutError } from 'weft';
  * import type { Context, WorkflowContext } from 'weft';
  * import { TestEngine } from 'weft/testing';
  *
  * const engine = new TestEngine({ startTime: 0 });
- * engine.register('needs-review', async function* (ctx: WorkflowContext) {
- *   return yield* ctx.review({
- *     artifact: 'release plan',
- *     reviewers: ['alice@example.com'],
- *     timeout: 5_000,
- *   });
- * });
+ * engine.register(
+ *   workflow({ name: 'needs-review' }).execute(async function* (ctx: WorkflowContext) {
+ *     return yield* ctx.review({
+ *       artifact: 'release plan',
+ *       reviewers: ['alice@example.com'],
+ *       timeout: 5_000,
+ *     });
+ *   }),
+ * );
  * const handle = await engine.start('needs-review', null);
  * const result = handle.result();
  * await engine.advanceTime(6_000);

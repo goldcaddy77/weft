@@ -54,11 +54,11 @@ import type {
  *
  * @example
  * ```ts
- * import { Engine, MemoryStorage, LocalClient, type WorkflowCompletedEvent } from 'weft';
+ * import { workflow, Engine, MemoryStorage, LocalClient, type WorkflowCompletedEvent } from 'weft';
  * import type { ClientHandle } from 'weft/client';
  *
  * await using engine = new Engine({ storage: new MemoryStorage() });
- * engine.register('ping', async function* () { return 'pong'; });
+ * engine.register(workflow({ name: 'ping' }).execute(async function* () { return 'pong'; }));
  *
  * const client = new LocalClient(engine);
  * const handle: ClientHandle = await client.start('ping', null);
@@ -123,11 +123,11 @@ export interface ClientHandle extends TypedEventTarget<WeftEventMap>, Disposable
  *
  * @example
  * ```ts
- * import { Engine, MemoryStorage, LocalClient } from 'weft';
+ * import { workflow, Engine, MemoryStorage, LocalClient } from 'weft';
  * import type { ClientScheduleHandle } from 'weft/client';
  *
  * await using engine = new Engine({ storage: new MemoryStorage() });
- * engine.register('report', async function* () { return 'sent'; });
+ * engine.register(workflow({ name: 'report' }).execute(async function* () { return 'sent'; }));
  *
  * const client = new LocalClient(engine);
  * const handle: ClientScheduleHandle = await client.schedule('report', {}, '0 9 * * 1');
@@ -175,10 +175,10 @@ export type UpdateResult = {
  *
  * @example
  * ```ts
- * import { Engine, MemoryStorage, LocalClient, type WeftClient } from 'weft';
+ * import { workflow, Engine, MemoryStorage, LocalClient, type WeftClient } from 'weft';
  *
  * await using engine = new Engine({ storage: new MemoryStorage() });
- * engine.register('my-workflow', async function* () { return 42; });
+ * engine.register(workflow({ name: 'my-workflow' }).execute(async function* () { return 42; }));
  * const client: WeftClient = new LocalClient(engine);
  * const handle = await client.start('my-workflow', { input: 42 });
  * const result = await handle.result();

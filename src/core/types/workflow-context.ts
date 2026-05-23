@@ -9,6 +9,7 @@ import type { TenantContext } from '../tenant.ts';
 import type { ActivityCallable, ActivityCallOptions } from './activity.ts';
 import type { WorkflowId } from './identity.ts';
 import type { QueryDefinition, SignalDefinition, UpdateDefinition } from './message-handles.ts';
+import type { UnknownNameWhenRegistryHasNoKnownNames } from './registry-type-helpers.ts';
 import type { Duration } from './retry-retention.ts';
 import type {
   SearchAttributeHandle,
@@ -38,12 +39,6 @@ import type {
   WorkflowReduceInput,
   WorkflowReduceOptions,
 } from './workflow-function.ts';
-import type {
-  ActivityArguments,
-  ActivityResult,
-  ActivityTypes,
-  UnknownActivityNameWhenRegistryIsEmpty,
-} from './workflow-registries.ts';
 
 export type WorkflowOperationResult<TOperation> =
   TOperation extends Generator<unknown, infer TResult, unknown> ? TResult : never;
@@ -83,7 +78,7 @@ export type RunAllResult<TBranches extends Record<string, WorkflowRunAllBranch>>
  *
  * @example
  * ```ts
- * import { Engine, activity, type WorkflowContext } from 'weft';
+ * import { workflow, Engine, activity, type WorkflowContext } from 'weft';
  *
  * interface GreetingInput {
  *   name: string;
@@ -95,10 +90,12 @@ export type RunAllResult<TBranches extends Record<string, WorkflowRunAllBranch>>
  *   execute: async (input: GreetingInput) => `Hello, ${input.name}`,
  * });
  *
- * engine.register('myWorkflow', async function* (ctx: WorkflowContext, input: GreetingInput) {
- *   ctx.setAttribute('customer', input.name);
- *   return yield* ctx.run(greet, input);
- * });
+ * engine.register(
+ *   workflow({ name: 'myWorkflow' }).execute(async function* (ctx: WorkflowContext, input: GreetingInput) {
+ *     ctx.setAttribute('customer', input.name);
+ *     return yield* ctx.run(greet, input);
+ *   }),
+ * );
  * void engine;
  * ```
  */
@@ -131,10 +128,10 @@ export interface WorkflowContext<
   // Workflow-scoped typed-key overloads. These fire first when the workflow
   // was built with the chained builder (`.activities({...})`, `.signals({...})`
   // etc.) and the corresponding map has known keys. When the maps default to
-  // `{}` (legacy bare-`WorkflowContext` callers), `keyof TActivities & string`
-  // collapses to `never`, the overload silently de-prioritises, and TypeScript
-  // falls through to the existing `ActivityTypes`-driven and string-name
-  // overloads below.
+  // `{}` (bare-`WorkflowContext` callers without an activity map), `keyof
+  // TActivities & string` collapses to `never`, the overload silently
+  // de-prioritises, and TypeScript falls through to the empty-registry
+  // helper overload below.
   // ---------------------------------------------------------------------
   run<TName extends keyof TActivities & string>(
     name: TName,
@@ -144,16 +141,13 @@ export interface WorkflowContext<
     name: TName,
     ...rest: [...ActivityArgsFor<TActivities[TName]>, ActivityCallOptions]
   ): WorkflowOperation<ActivityResultFor<TActivities[TName]>>;
-  run<TName extends Extract<keyof ActivityTypes, string>>(
-    name: TName,
-    ...rest: ActivityArguments<ActivityTypes, TName>
-  ): WorkflowOperation<ActivityResult<ActivityTypes, TName>>;
-  run<TName extends Extract<keyof ActivityTypes, string>>(
-    name: TName,
-    ...rest: [...ActivityArguments<ActivityTypes, TName>, ActivityCallOptions]
-  ): WorkflowOperation<ActivityResult<ActivityTypes, TName>>;
+  // String-name fallback for workflows that declare no `.activities()` map.
+  // When `TActivities` is the default `{}`, the typed overloads collapse to
+  // `never` and TypeScript falls through here. Returns `unknown` because the
+  // input/output types are unknown at the type level — runtime registration
+  // is the source of truth.
   run<TName extends string>(
-    name: UnknownActivityNameWhenRegistryIsEmpty<TName>,
+    name: UnknownNameWhenRegistryHasNoKnownNames<TName, keyof TActivities & string>,
     input?: unknown,
     options?: ActivityCallOptions,
   ): WorkflowOperation<unknown>;

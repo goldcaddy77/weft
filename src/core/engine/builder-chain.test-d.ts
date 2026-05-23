@@ -22,11 +22,11 @@ const formatGreeting = activity({
   execute: async (input: { name: string }): Promise<string> => `Hello, ${input.name}`,
 });
 
-const welcome = workflow({
-  name: 'welcome',
-  handler: async function* (ctx, input: { name: string }): AsyncGenerator<unknown, string> {
-    return yield* ctx.run(formatGreeting, input);
-  },
+const welcome = workflow({ name: 'welcome' }).execute(async function* (
+  ctx,
+  input: { name: string },
+): AsyncGenerator<unknown, string> {
+  return yield* ctx.run(formatGreeting, input);
 });
 
 async function assertEngineCreateInfersRegistry(): Promise<void> {

@@ -293,9 +293,10 @@ describe('executeCodegen end-to-end', () => {
     // Boolean roots normalize to `{}` in projection, which the
     // emitter resolves to `unknown`. The output should at least
     // compile (we don't pin the exact type because the normalization
-    // is documented as a coarsening).
+    // is documented as a coarsening). Activity names are no longer
+    // emitted globally — they live on per-workflow builders.
     expect(written).toContain('"permissive"');
-    expect(written).toContain('"wild"');
+    expect(written).not.toContain('"wild"');
   });
 
   it('rejects passing both --server and --from to executeCodegen directly', async () => {

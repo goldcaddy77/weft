@@ -103,13 +103,13 @@ export { NodeSQLiteStorage as SQLiteStorage };
  * @example
  * ```ts
  * import { NodeSQLiteStorage } from 'weft/storage/sqlite/node';
- * import { Engine } from 'weft';
+ * import { workflow, Engine } from 'weft';
  *
  * // Requires: bun add better-sqlite3
  * await using storage = new NodeSQLiteStorage('./weft.db');
  * await using engine = new Engine({ storage });
  *
- * engine.register('ping', async function* () { return 'pong'; });
+ * engine.register(workflow({ name: 'ping' }).execute(async function* () { return 'pong'; }));
  * const handle = await engine.start('ping', null);
  * console.log(await handle.result()); // 'pong'
  * ```
