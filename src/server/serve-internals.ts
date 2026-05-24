@@ -277,6 +277,10 @@ export function registerStackDisposers(
       clearTimeout(timer);
     }
     context.pendingWorkerRequeues.clear();
+    // Tear down the task queue: clears expiration timers and settles any parked
+    // long-poll waiters with null so no timer fires and no poll promise leaks
+    // against a stopped server.
+    context.taskQueue[Symbol.dispose]();
   });
 }
 

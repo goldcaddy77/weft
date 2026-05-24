@@ -27,7 +27,8 @@ import type { WorkerRegistry, WorkerSummary } from '../../worker/registry.ts';
 import { shapeOperationFaultAsJson } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
-import type { SchedulingPolicy, TaskQueue, TaskQueueSummary } from '../task-queue.ts';
+import type { SchedulingPolicy, TaskQueueSummary } from '../task-queue-types.ts';
+import type { TaskQueue } from '../task-queue.ts';
 
 const listTaskQueuesInput = z.object({});
 

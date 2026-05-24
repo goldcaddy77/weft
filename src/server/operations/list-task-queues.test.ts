@@ -26,7 +26,7 @@ import { handleRequest } from '../handler.ts';
 import { createOperationRegistry, executeOperation } from '../operation-catalog.ts';
 import { principalFromApiKey } from '../principal.ts';
 import { createLiveOperationRegistry } from '../rest-bindings.ts';
-import type { PendingTask } from '../task-queue.ts';
+import type { PendingTask } from '../task-queue-types.ts';
 import { TaskQueue } from '../task-queue.ts';
 import {
   createListTaskQueuesOperation,

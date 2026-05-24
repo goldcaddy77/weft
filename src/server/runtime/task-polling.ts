@@ -1,5 +1,5 @@
 import type { ServeOptions } from '../index.ts';
-import type { PendingTask } from '../task-queue.ts';
+import type { PendingTask } from '../task-queue-types.ts';
 import type { InflightRecord } from '../task-state.ts';
 import {
   readInflightRecord,
@@ -176,7 +176,7 @@ export async function handleTaskPollRequest(
       ? Math.min(Math.max(0, Number(rawTimeout)), MAX_POLL_TIMEOUT)
       : DEFAULT_POLL_TIMEOUT;
 
-  const task = await context.taskQueue.poll(queue, activities, timeout);
+  const task = await context.taskQueue.poll(queue, activities, timeout, request.signal);
   if (task !== null) {
     await markTaskClaimedByLongPollWorker(context, options, queue, task);
     return Response.json(task);

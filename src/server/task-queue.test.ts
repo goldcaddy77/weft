@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { restoreRealTimers, sleepForTesting, useFakeTimers } from '../testing/fake-timers.ts';
 
-import type { PendingTask, TaskResult } from './task-queue.ts';
+import type { PendingTask, TaskResult } from './task-queue-types.ts';
 import { TaskQueue } from './task-queue.ts';
 
 // ---------------------------------------------------------------------------
@@ -598,6 +598,82 @@ describe('TaskQueue', () => {
       // Calling complete on an expired task should return false (no callback)
       const found = queue.complete({ operationId: 'ttl-no-cb', status: 'completed' });
       expect(found).toBe(false);
+    });
+  });
+
+  describe('abort and dispose', () => {
+    it('settles a poll promptly when its signal aborts, without dispatching to the gone client', async () => {
+      const queue = new TaskQueue();
+      const controller = new AbortController();
+
+      // Park a long-lived poll; only the abort signal can settle it within the test.
+      const pollPromise = queue.poll('q', ['charge'], 60_000, controller.signal);
+
+      controller.abort();
+
+      // Resolves to null immediately — the 60s timer is never advanced.
+      await expect(pollPromise).resolves.toBeNull();
+      expect(queue.hasWaiter('q', 'charge')).toBe(false);
+
+      // A task enqueued afterwards is queued, not handed to the aborted waiter.
+      const enqueued = queue.enqueue(
+        'q',
+        makeTask({ operationId: 'after-abort', activityName: 'charge' }),
+      );
+      expect(enqueued).toBe(true);
+      expect(queue.pendingCount('q')).toBe(1);
+    });
+
+    it('resolves every outstanding waiter with null on dispose', async () => {
+      const queue = new TaskQueue();
+
+      const first = queue.poll('q', ['x'], 60_000);
+      const second = queue.poll('q', ['y'], 60_000);
+
+      queue[Symbol.dispose]();
+
+      await expect(Promise.all([first, second])).resolves.toEqual([null, null]);
+      expect(queue.hasWaiter('q', 'x')).toBe(false);
+      expect(queue.hasWaiter('q', 'y')).toBe(false);
+    });
+
+    it('is idempotent — a second dispose does not throw or re-settle waiters', async () => {
+      const queue = new TaskQueue();
+      const pollPromise = queue.poll('q', ['charge'], 60_000);
+
+      queue[Symbol.dispose]();
+      expect(() => queue[Symbol.dispose]()).not.toThrow();
+
+      await expect(pollPromise).resolves.toBeNull();
+    });
+
+    describe('with fake timers', () => {
+      beforeEach(() => {
+        useFakeTimers();
+      });
+
+      afterEach(() => {
+        restoreRealTimers();
+      });
+
+      it('clears pending-task expiration timers and drops tasks silently', async () => {
+        const queue = new TaskQueue({ pendingTaskTimeToLive: 1000 });
+        const results: TaskResult[] = [];
+
+        queue.enqueue('default', makeTask({ operationId: 'disposed-ttl' }), (result) =>
+          results.push(result),
+        );
+        expect(queue.totalPendingCount()).toBe(1);
+
+        queue[Symbol.dispose]();
+
+        // Advance well past the TTL: no expiration callback fires and no task remains.
+        await sleepForTesting(5000);
+
+        expect(results).toHaveLength(0);
+        expect(queue.totalPendingCount()).toBe(0);
+        expect(queue.isTracked('disposed-ttl')).toBe(false);
+      });
     });
   });
 
