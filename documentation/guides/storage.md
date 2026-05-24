@@ -62,65 +62,19 @@ await using engine = new Engine({ storage });
 void engine;
 ```
 
-The full configuration union:
+Every variant of the union, the required fields for each, and the `ResolvedStorage<Configuration>` mapping that narrows the return type to the matching adapter live in the [`StorageConfiguration`](../reference/api-storage.md#storageconfiguration) reference.
 
-```ts
-type StorageConfiguration =
-  | { type: 'memory' }
-  | { type: 'sqlite'; path?: string }
-  | { type: 'lmdb'; path: string }
-  | { type: 'turso'; url: string; authToken?: string }
-  | { type: 'indexeddb'; databaseName?: string }
-  | { type: 'web-extension'; area?: 'local' | 'sync' | 'session' | 'managed' }
-  | { type: 'http'; baseUrl: string | URL; headers?: Record<string, string> }
-  | { type: 'auto' };
-```
+Two `auto`-style resolvers exist, and the difference matters:
 
-The return type narrows to the matching adapter via `ResolvedStorage<Configuration>`:
-
-```ts
-import type { HTTPStorageConfiguration, ResolvedStorage } from 'weft/storage/resolve';
-
-type RemoteStorage = ResolvedStorage<HTTPStorageConfiguration>;
-// RemoteStorage is HTTPStorage
-```
-
-`resolveStorage({ type: 'auto' })` is broader than `resolveDefaultStorage()`: it tries Bun, Node, browser extension storage, IndexedDB, then `MemoryStorage`. Use it only when one configuration object must run across several runtimes.
+- `resolveStorage({ type: 'auto' })` falls through Bun → Node → WebExtension → IndexedDB → `MemoryStorage`. Reach for it when one configuration object must run across several runtimes. See [Auto-detection order](../reference/api-storage.md#auto-detection-order) for the exact sequence.
+- `resolveDefaultStorage()` is Bun/Node-only and _throws_ in browser and WebExtension contexts instead of falling through — the thrown error tells you to use `IndexedDBStorage` or `setupServiceWorker()` directly. See [`resolveDefaultStorage()`](../reference/api-storage.md#resolvedefaultstorage).
 
 > [!WARNING]
 > The final `MemoryStorage` fallback is non-durable. Do not use `resolveStorage({ type: 'auto' })` for production recovery unless you also validate that the resolved adapter is persistent for your deployment target.
 
-### Auto-detection order
-
-`resolveDefaultStorage()` from `weft/storage/auto` checks two globals, in order:
-
-1. If `globalThis.Bun` is defined, returns `BunSQLiteStorage`.
-2. Else if `process.versions.node` is a string, returns `NodeSQLiteStorage`.
-3. Else throws with the exact runtime detection it saw.
-
-Browser and WebExtension contexts intentionally throw. The thrown error tells you to use `IndexedDBStorage` or `setupServiceWorker()` directly.
-
-`resolveStorage({ type: 'auto' })` adds two more steps after Bun and Node:
-
-3. If `chrome.storage` or `browser.storage` is defined, returns `WebExtensionStorage`.
-4. Else if `globalThis.indexedDB` is defined, returns `IndexedDBStorage`.
-5. Else returns `MemoryStorage`.
-
 ## The Storage interface
 
-All adapters implement this interface.
-
-```ts partial
-interface Storage extends Disposable {
-  get(key: string): Promise<Uint8Array | null>;
-  put(key: string, value: Uint8Array): Promise<void>;
-  delete(key: string): Promise<void>;
-  scan(prefix: string, options?: ScanOptions): AsyncIterable<[string, Uint8Array]>;
-  batch(operations: BatchOperation[]): Promise<void>;
-}
-```
-
-Everything is `Uint8Array` in and out. Weft handles its own serialization (via a CBOR-like codec) before writing to storage, so adapters never need to understand the data format.
+All adapters implement the same `Storage` interface — `get`, `put`, `delete`, `scan`, and `batch`, plus disposal. Everything is `Uint8Array` in and out; Weft handles its own serialization (via a CBOR-like codec) before writing, so adapters never need to understand the data format. See the [`Storage` interface](../reference/api-storage.md#storage-interface) reference for the full method signatures.
 
 The `scan` method returns an `AsyncIterable` of key-value pairs matching a prefix, with optional bounds and ordering:
 
