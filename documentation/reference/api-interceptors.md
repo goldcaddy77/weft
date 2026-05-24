@@ -4,31 +4,9 @@ Interceptors provide a middleware-like mechanism for cross-cutting concerns in w
 
 ## `WorkflowInterceptor`
 
-```ts
-interface WorkflowInterceptor {
-  activity?(
-    interception: ActivityInterception,
-    next: (interception: ActivityInterception) => Generator<unknown, unknown, unknown>,
-  ): Generator<unknown, unknown, unknown>;
+The workflow-side interceptor exposes seven optional hooks — `activity`, `sleep`, `waitForSignal`, `workflowStart`, `childWorkflow`, `query`, and `signalReceived` — covering the workflow operations you can wrap. See [`WorkflowInterceptor`](types.md#workflowinterceptor) for the full interface and the exact signature of each hook.
 
-  sleep?(
-    interception: SleepInterception,
-    next: (interception: SleepInterception) => Generator<unknown, void, unknown>,
-  ): Generator<unknown, void, unknown>;
-
-  waitForSignal?(
-    interception: SignalInterception,
-    next: (interception: SignalInterception) => Generator<unknown, unknown, unknown>,
-  ): Generator<unknown, unknown, unknown>;
-
-  workflowStart?(
-    interception: WorkflowStartInterception,
-    next: (interception: WorkflowStartInterception) => void,
-  ): void;
-}
-```
-
-All hooks are optional. Implement only the ones you need. Each hook is a generator (except `workflowStart`) that receives the interception context and a `next` function. Call `yield* next(interception)` to delegate to the rest of the chain.
+All hooks are optional. Implement only the ones you need. Each hook is a generator (except `workflowStart` and `signalReceived`, which are plain functions) that receives the interception context and a `next` function. Call `yield* next(interception)` to delegate to the rest of the chain.
 
 ```ts partial
 import type { WorkflowInterceptor, ActivityInterception } from 'weft';
@@ -81,7 +59,9 @@ engine.addInterceptor(timingInterceptor);
 
 ## `Interceptor`
 
-```ts
+```ts partial
+import type { WorkflowInterceptor, ActivityInterceptor } from 'weft';
+
 interface Interceptor extends WorkflowInterceptor, ActivityInterceptor {}
 ```
 

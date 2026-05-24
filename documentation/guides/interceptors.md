@@ -10,7 +10,7 @@ There are two hook categories on one registration surface. **Workflow intercepto
 
 ## Workflow interceptors
 
-The `WorkflowInterceptor` interface has eight optional hooks:
+The `WorkflowInterceptor` interface has seven optional hooks — `activity`, `sleep`, `waitForSignal`, `workflowStart`, `childWorkflow`, `query`, and `signalReceived`. Each wraps the matching workflow operation. The `activity` hook is the one this guide walks through; its shape is representative of the generator-style hooks:
 
 ```typescript partial
 interface WorkflowInterceptor {
@@ -18,40 +18,14 @@ interface WorkflowInterceptor {
     interception: ActivityInterception,
     next: (interception: ActivityInterception) => Generator<unknown, unknown, unknown>,
   ): Generator<unknown, unknown, unknown>;
-
-  sleep?(
-    interception: SleepInterception,
-    next: (interception: SleepInterception) => Generator<unknown, void, unknown>,
-  ): Generator<unknown, void, unknown>;
-
-  waitForSignal?(
-    interception: SignalInterception,
-    next: (interception: SignalInterception) => Generator<unknown, unknown, unknown>,
-  ): Generator<unknown, unknown, unknown>;
-
-  workflowStart?(
-    interception: WorkflowStartInterception,
-    next: (interception: WorkflowStartInterception) => void,
-  ): void;
-
-  childWorkflow?(
-    interception: ChildWorkflowInterception,
-    next: (interception: ChildWorkflowInterception) => Promise<unknown>,
-  ): Promise<unknown>;
-
-  query?(
-    interception: QueryInterception,
-    next: (interception: QueryInterception) => Generator<unknown, unknown, unknown>,
-  ): Generator<unknown, unknown, unknown>;
-
-  signalReceived?(
-    interception: SignalReceivedInterception,
-    next: (interception: SignalReceivedInterception) => void,
-  ): void;
+  // ...and six more: sleep, waitForSignal, workflowStart,
+  // childWorkflow, query, signalReceived
 }
 ```
 
-Notice that `activity`, `sleep`, and `waitForSignal` are generators---they must use `yield*` to delegate to `next()`. This preserves checkpoint semantics. The `workflowStart` hook is a plain function because it runs before the generator starts.
+For the complete interface with every hook signature, see the [Types Reference](../reference/types.md#workflowinterceptor).
+
+Notice that `activity`, `sleep`, `waitForSignal`, `childWorkflow`, and `query` are generators---they must use `yield*` to delegate to `next()`. This preserves checkpoint semantics. The `workflowStart` and `signalReceived` hooks are plain functions because they run outside the durable generator.
 
 ## Activity interceptors
 
