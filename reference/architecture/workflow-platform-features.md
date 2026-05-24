@@ -222,7 +222,7 @@ async function* orderWorkflow(ctx: Context, order: Order) {
 2. **Timeout fires mid-activity.** The scheduler fires the workflow's `AbortController`, which cascades to all in-flight activities via the existing `AbortSignal.any()` compound cancellation pattern. The workflow is marked as `"timed-out"` and a `WorkflowTimedOutEvent` is dispatched.
 3. **Cleanup.** Deadline keys are deleted when a workflow reaches any terminal state.
 
-The `ctx.signal` property exposes the combined timeout + cancellation signal. Activities and agent calls that already accept `{ signal }` automatically respect workflow timeouts with no code changes.
+The `ctx.signal` property exposes the combined timeout + cancellation signal. Activities that already accept `{ signal }` automatically respect workflow timeouts with no code changes.
 
 ### 16. Search Attributes (Advanced Visibility)
 
@@ -476,11 +476,6 @@ interface WorkflowInterceptor {
     next: (input: SignalInterception) => Generator<unknown, unknown>,
   ): Generator<unknown, unknown>;
 
-  agent?(
-    input: AgentInterception,
-    next: (input: AgentInterception) => Generator<unknown, unknown>,
-  ): Generator<unknown, unknown>;
-
   workflowStart?(
     input: WorkflowStartInterception,
     next: (input: WorkflowStartInterception) => Generator<unknown, unknown>,
@@ -523,13 +518,6 @@ interface SleepInterception {
   readonly workflowId: string;
   readonly workflowType: string;
   duration: string | number; // mutable
-}
-
-interface AgentInterception {
-  readonly workflowId: string;
-  readonly workflowType: string;
-  options: AgentOptions; // mutable
-  headers: Map<string, string>;
 }
 
 interface WorkflowStartInterception {
@@ -689,9 +677,8 @@ workflow:order (root span)
 │       └── fetch POST api.stripe.com (child span, from user code)
 ├── sleep (child span)
 ├── signal:wait:approval (child span)
-├── activity:ship (child span)
-│   └── activity:execute:ship (child span, on the worker side)
-└── agent (child span)
+└── activity:ship (child span)
+    └── activity:execute:ship (child span, on the worker side)
 ```
 
 Child workflows use **span links** (not parent-child) because they have independent lifecycle and can outlive their parent.

@@ -2,6 +2,9 @@
 
 > _Weft_ — the cross-threads in weaving that bind the warp together.
 
+> [!NOTE]
+> Weft's built-in agent surface — `ctx.agent()`, `ctx.handoff()`, `ctx.debate()`, `ctx.supervise()`, and the agent types, events, and runtime that backed them — was removed in v0.1.0. Weft does not ship an agent primitive. Build durable agent loops on `ctx.run()` and `ctx.review()`, or run them in an external agent framework. See the [`CHANGELOG`](../../CHANGELOG.md) for the full removed-export list and migration path.
+
 ---
 
 Long-form research now lives in [./research.md](./research.md). This document keeps the overview, problem framing, and architectural context that feed the checklist-first roadmap in [../architecture.md](../architecture.md).
@@ -37,9 +40,7 @@ The design constraints, in priority order:
 
 4. **Runs in the browser.** The core engine (minus the server shell) runs in Web Workers and can use a Service Worker as its persistence and scheduling backbone. Same workflow code, different execution environment.
 
-5. **Agent-native.** The engine is designed around agent workloads: dynamic execution graphs, durable streaming, cost enforcement, human oversight, multi-agent coordination, context window management, and model routing are built into the core — not bolted on as wrappers around generic activities.
-
-6. **Library/server parity.** Every capability exposed by the server's HTTP and WebSocket API is also available through the library's in-process `Engine` API — and vice versa. A developer who starts with `bun add weft` and later moves to the standalone server (or the reverse) should not lose features or change workflow code. The server is a deployment wrapper around the engine, not a superset of it. Track 8 extends that parity model with shared REST/OpenAPI and JSON-RPC/OpenRPC contracts generated from one runtime operation catalog, but those transports remain adapters over the same `Engine`, `EventTarget`, `BroadcastChannel`, and Worker messaging primitives rather than a separate system.
+5. **Library/server parity.** Every capability exposed by the server's HTTP and WebSocket API is also available through the library's in-process `Engine` API — and vice versa. A developer who starts with `bun add weft` and later moves to the standalone server (or the reverse) should not lose features or change workflow code. The server is a deployment wrapper around the engine, not a superset of it. Track 8 extends that parity model with shared REST/OpenAPI and JSON-RPC/OpenRPC contracts generated from one runtime operation catalog, but those transports remain adapters over the same `Engine`, `EventTarget`, `BroadcastChannel`, and Worker messaging primitives rather than a separate system.
 
 ---
 
@@ -49,17 +50,16 @@ Temporal's replay-based architecture creates a cascade of constraints — determ
 
 Here is what a developer must learn to write their first workflow:
 
-| Concept                | Temporal                          | Weft                                               |
-| ---------------------- | --------------------------------- | -------------------------------------------------- |
-| Core mental model      | Replay determinism                | Generators pause and resume                        |
-| Activity invocation    | `proxyActivities()` + type import | `yield* ctx.run(fn, args)`                         |
-| Timer                  | Deterministic `workflow.sleep()`  | `yield* ctx.sleep("1 hour")`                       |
-| Signal                 | `setHandler` + `condition`        | `yield* ctx.waitForSignal(name)`                   |
-| Versioning             | `patched()` / `deprecatePatch()`  | Deploy new code (migration optional)               |
-| Long-running workflows | `continueAsNew()`                 | Nothing (checkpoints are fixed-size)               |
-| Agent declaration      | N/A (build from primitives)       | `weft.agent()` top-level or `ctx.agent()` embedded |
-| Dev environment        | Docker Compose + Temporal server  | `bun add weft`                                     |
-| Bundling               | Webpack for workflow sandbox      | None                                               |
+| Concept                | Temporal                          | Weft                                 |
+| ---------------------- | --------------------------------- | ------------------------------------ |
+| Core mental model      | Replay determinism                | Generators pause and resume          |
+| Activity invocation    | `proxyActivities()` + type import | `yield* ctx.run(fn, args)`           |
+| Timer                  | Deterministic `workflow.sleep()`  | `yield* ctx.sleep("1 hour")`         |
+| Signal                 | `setHandler` + `condition`        | `yield* ctx.waitForSignal(name)`     |
+| Versioning             | `patched()` / `deprecatePatch()`  | Deploy new code (migration optional) |
+| Long-running workflows | `continueAsNew()`                 | Nothing (checkpoints are fixed-size) |
+| Dev environment        | Docker Compose + Temporal server  | `bun add weft`                       |
+| Bundling               | Webpack for workflow sandbox      | None                                 |
 
 ### 1. The Determinism Constraint Is a Developer Experience Nightmare
 
@@ -95,7 +95,7 @@ CheckpointSerializationError: Cannot serialize workflow state at step 2
   at orderWorkflow (./workflows/order.ts:15:3)
 ```
 
-**Going further: stack-trace-preserving errors.** Every context method (`ctx.run`, `ctx.sleep`, `ctx.agent`) captures the caller's stack trace at call time — before the generator yields. When an activity fails after being dispatched to a remote worker and retried three times, the error shown to the developer includes the original call site in their workflow code:
+**Going further: stack-trace-preserving errors.** Every context method (`ctx.run`, `ctx.sleep`, `ctx.review`) captures the caller's stack trace at call time — before the generator yields. When an activity fails after being dispatched to a remote worker and retried three times, the error shown to the developer includes the original call site in their workflow code:
 
 ```
 ActivityFailedError: charge failed after 3 attempts
@@ -499,89 +499,37 @@ const results =
 
 **The Temporal problem.** Teams building AI agent orchestration on Temporal must model agent loops as activities, manually handle token streaming, build their own cost tracking, and figure out human-in-the-loop patterns from scratch. Temporal's primitives were designed for microservice RPC, not multi-turn LLM interactions. The Temporal community calls this the "Lord of the Loop" problem: when integrating third-party agent frameworks (OpenAI Agents SDK, PydanticAI, LangGraph), who controls the execution loop? Temporal or the framework? A community member's extensive analysis argues that current integrations force agents to be "extremely narrow in scope—with only a few tools available." Community members have explicitly requested an "Agent Builder layer over Temporal," and multiple forum threads ask for higher-level orchestration primitives: conversation history management, guardrail hooks, agent task queues. Temporal's response: "We are examining higher level primitives...no roadmap or announcements to share about that yet."
 
-**The Weft answer.** `ctx.agent()` as a first-class primitive with durable tool execution, token streaming, budget enforcement, and human-in-the-loop built in. (See: [Agent-Native Engine](./agent-engine.md#12-agent-native-engine).)
+**The Weft answer.** Weft does not ship a built-in agent primitive. Instead, its generator model makes the durable agent loop something you _build_ — each LLM call and each tool call is a `yield* ctx.run(...)` boundary, independently checkpointed, with `ctx.review()` for the human-in-the-loop step. You own the loop; Weft makes every step in it durable.
 
-**Why this cannot be bolted onto Temporal.** Temporal's determinism constraint means LLM API calls must be activities. But activities are opaque to the workflow — you cannot stream tokens from an activity back to the workflow in real time. You cannot checkpoint mid-tool-call within an activity. Temporal's model forces agent loops into one of two bad choices:
+**Why this is the right boundary.** Temporal's determinism constraint forces LLM API calls into activities, and activities are opaque to the workflow — you cannot checkpoint mid-tool-call, and you cannot stream tokens back through replay. That pushes agent loops into one of two bad choices:
 
 1. **Fully in-activity:** The entire ReAct loop runs as one activity. Tool calls within it are not individually checkpointed. If the process crashes mid-loop, the entire agent conversation restarts from scratch.
 2. **Fully in-workflow:** Each LLM call is a separate activity. But now every LLM response must be deterministically replayable — and LLM APIs are inherently non-deterministic. You need to store and replay every token, defeating the purpose of having a live model.
 
-Weft's generator model avoids this dilemma. Each tool call is a separate `yield*` boundary, independently checkpointed. Token streaming flows through the standard `EventTarget` and `WebSocket` systems. The agent loop is durable _and_ live.
+Weft's generator model avoids this dilemma without a dedicated agent surface. Each tool call you write as a separate `yield*` boundary is independently checkpointed, and token streaming flows through the standard `EventTarget` and `WebSocket` systems. The loop you build is durable _and_ live.
 
-**Going further: multi-agent composition via existing primitives.** Agents are just activities with special configuration. The existing `ctx.run()` / `ctx.all()` / `ctx.race()` composition works naturally:
+**Multi-agent composition via existing primitives.** An agent step is just an activity. The existing `ctx.run()` / `ctx.all()` / `ctx.race()` composition works naturally — sequential pipelines, parallel fan-out, and delegation are all expressed in ordinary workflow code:
 
 ```typescript
 async function* researchWorkflow(ctx: Context, topic: string) {
   // Sequential: researcher → critic → writer
-  const research = yield* ctx.agent({
-    model: 'claude-sonnet-4-20250514',
-    prompt: `Research: ${topic}`,
-    tools: [webSearch],
-  });
-  const critique = yield* ctx.agent({
-    model: 'claude-sonnet-4-20250514',
-    prompt: `Review:\n${research}`,
-    tools: [factCheck],
-  });
-  const report = yield* ctx.agent({
-    model: 'claude-sonnet-4-20250514',
-    prompt: `Write report:\n${research}\n\nAddressing:\n${critique}`,
-  });
+  const research = yield* ctx.run(researchAgent, { topic });
+  const critique = yield* ctx.run(critiqueAgent, { research });
+  const report = yield* ctx.run(writeReportAgent, { research, critique });
 
-  // Parallel: run multiple agents simultaneously
+  // Parallel: run multiple review steps simultaneously
   const [legal, technical] = yield* ctx.all([
-    ctx.agent({ model: 'claude-sonnet-4-20250514', prompt: `Legal review: ${report}` }),
-    ctx.agent({ model: 'claude-sonnet-4-20250514', prompt: `Technical review: ${report}` }),
+    ctx.run(legalReviewAgent, { report }),
+    ctx.run(technicalReviewAgent, { report }),
   ]);
 
   return { report, reviews: { legal, technical } };
 }
 ```
 
-Beyond fan-out, the agent-native engine supports `ctx.handoff()` for delegation with context transfer, `ctx.debate()` for adversarial multi-agent review, and `ctx.state.execution()` for concurrent mutable state. See [Agent-Native Engine: Multi-Agent Coordination](./agent-engine.md#127-multi-agent-coordination) for the full treatment.
+Each `ctx.run(...)` activity wraps whatever agent framework or raw LLM client you prefer; Weft checkpoints the boundary between them. Cost tracking, budget enforcement, and tool-result caching live in those activities (or the framework you run inside them), not in the engine.
 
-**Going further: cost observability with `ctx.setBudget()`.** Budget state is stored in the checkpoint and enforced via `AbortController`. Each `ctx.agent()` call reports token usage back to the budget tracker:
-
-```typescript
-async function* costAwareWorkflow(ctx: Context, input: Input) {
-  ctx.setBudget({
-    maxTokens: 100_000,
-    maxCost: 5.0,
-    models: {
-      'claude-sonnet-4-20250514': { inputCostPer1K: 0.003, outputCostPer1K: 0.015 },
-    },
-  });
-
-  const draft = yield* ctx.agent({
-    model: 'claude-sonnet-4-20250514',
-    prompt: 'Write analysis...',
-  });
-
-  const usage = ctx.budgetRemaining();
-  // { tokensRemaining: 72_000, costRemaining: 3.42, breakdown: [...] }
-
-  if (usage.costRemaining < 1.0) {
-    // Switch to cheaper model
-    return yield* ctx.agent({ model: 'claude-haiku-4-5-20251001', prompt: 'Summarize...' });
-  }
-}
-```
-
-This is just the per-workflow surface. The agent-native engine adds organization-level real-time budget enforcement, cost-aware retry policies, cost projection, and budget events through `EventTarget`. See [Agent-Native Engine: Cost as Execution Constraint](./agent-engine.md#123-cost-as-execution-constraint).
-
-**Going further: tool result caching across agent turns.** When an agent calls the same tool with the same arguments across turns, Weft caches the result:
-
-```typescript
-const analysis =
-  yield *
-  ctx.agent({
-    tools: [fetchCustomerData, queryDatabase],
-    toolCache: true, // Default: true for idempotent tools
-    toolCacheTTL: '5m', // Cache expires after 5 minutes
-  });
-```
-
-On cache hit, the tool is not re-executed and no checkpoint boundary is created. This reduces both latency and cost for agent workflows that repeatedly access the same data. Beyond local function tools, the agent-native engine supports MCP server URLs as tool sources with dynamic discovery and schema validation. See [Agent-Native Engine: MCP-Native Tool Execution](./agent-engine.md#125-mcp-native-tool-execution).
+**Human-in-the-loop with `ctx.review()`.** When an agent step needs human approval, `yield* ctx.review(...)` durably suspends the workflow until a reviewer responds — the same primitive that gates any other approval flow, applied to agent output.
 
 ### 10. Payload Size Sensitivity
 
@@ -667,7 +615,7 @@ Temporal's event history records every activity result. A single GPT-4 response 
 
 The streaming gap is worse. Token-by-token delivery is the primary output mode for LLM applications—users cannot wait 30–60 seconds for a complete response. Every team building AI on Temporal constructs the same workaround: a Redis pub/sub or SSE sidecar that streams tokens from activities to frontends _outside_ Temporal's durability model. A Temporal engineer confirmed in December 2025 that native streaming plans exist but remain in early design, with activity-to-workflow streaming described as "a longer term project." Scale AI confirmed using Redis pub/sub as their production workaround.
 
-**How Weft eliminates this.** Checkpoints store only the current state—not the history of every activity result. A workflow that processed 100 large LLM responses but only keeps the current conversation in a local variable has a checkpoint containing only that conversation. No history bloat, no payload caps, no `continueAsNew`. For streaming, `ctx.agent()` returns a `ReadableStream<string>` that bridges to `EventTarget`, WebSocket observers, and SSE endpoints natively. No Redis sidecar, no infrastructure outside the durability model. (See: [First-Class Streaming](./agent-engine.md#122-first-class-streaming). The earlier `ctx.offload()` and payload-compression examples in this overview show how large intermediate state stays out of the hot checkpoint path.)
+**How Weft eliminates this.** Checkpoints store only the current state—not the history of every activity result. A workflow that processed 100 large LLM responses but only keeps the current conversation in a local variable has a checkpoint containing only that conversation. No history bloat, no payload caps, no `continueAsNew`. For streaming, an activity can return a `ReadableStream<string>` that bridges to `EventTarget`, WebSocket observers, and SSE endpoints natively. No Redis sidecar, no infrastructure outside the durability model. (The earlier `ctx.offload()` and payload-compression examples in this overview show how large intermediate state stays out of the hot checkpoint path.)
 
 ### 2. The Activity Boundary Is Too Coarse for Agent Loop Durability
 
@@ -677,7 +625,7 @@ Today, the agent framework runs inside a Temporal activity. Temporal cannot prov
 
 The alternative—decomposing the agent loop into individual Temporal activities—preserves durability at the right granularity but forces teams to abandon the framework and reimplement the loop in workflow code. A community member authored an extensive analysis of this dilemma ("The Lord of the Loop"), arguing that current integrations force agents to be "extremely narrow in scope—with only a few tools available." Temporal's response was candid: "You would need to find a way of breaking LangGraph up into serializable payloads...Until then, executing your LangGraph agents as one Temporal activity will work."
 
-**How Weft eliminates this.** There is no dilemma because Weft's generator model makes each tool call a `yield*` boundary—independently checkpointed, individually retryable, observable at the right granularity. The agent loop _is_ the workflow. `agent()` provides the durable ReAct loop as a first-class primitive: each LLM turn is a checkpoint, each tool call is a checkpoint, budget enforcement fires at turn boundaries, and token streaming flows through standard `ReadableStream` and `EventTarget`. No framework wrapping, no opaque activities, no forced choice between durability and agent ecosystem compatibility. (See: [Agent-Native Engine](./agent-engine.md#12-agent-native-engine) and [Dynamic Execution Shape](./agent-engine.md#121-dynamic-execution-shape).)
+**How Weft eliminates this.** There is no dilemma because Weft's generator model makes each tool call a `yield*` boundary—independently checkpointed, individually retryable, observable at the right granularity. The agent loop _is_ the workflow: you write each LLM turn and each tool call as a `ctx.run(...)` step, so each turn is a checkpoint, each tool call is a checkpoint, and token streaming flows through standard `ReadableStream` and `EventTarget`. No framework wrapping, no opaque activities, no forced choice between durability and agent ecosystem compatibility.
 
 ### 3. The Python Sandbox Conflicts with Every Major AI/ML Library
 
@@ -697,9 +645,9 @@ Three durable execution platforms explicitly target Temporal's AI workload gaps.
 
 Inngest has the most complete AI-specific feature set among Temporal alternatives. `step.ai.infer()` provides native AI inference as a durable step with automatic token counting. `step.ai.wrap()` wraps any AI SDK with observability. `useAgent` provides a React hook for parts-based streaming from durable workflows to frontends via their Realtime feature. AgentKit provides first-class agent/network/router abstractions. Their observability dashboard offers SQL-queryable token usage and cost analysis.
 
-**Where Inngest leads:** Full serverless suspension during LLM inference waits. When `step.ai.infer()` calls an LLM API, the function doesn't run (or charge) while waiting for the response. Weft can now park inline agent turns on provider resume hints, but worker-mode execution still keeps the per-workflow worker reserved until completion.
+**Where Inngest leads:** Full serverless suspension during LLM inference waits. When `step.ai.infer()` calls an LLM API, the function doesn't run (or charge) while waiting for the response. Inngest also ships AI-specific primitives (`step.ai.infer()`, AgentKit) that Weft leaves to userland. Weft's worker-mode execution keeps the per-workflow worker reserved until completion.
 
-**Where Weft leads:** Durability model. Inngest uses an event-driven step function model, not checkpoint-based recovery. Weft's O(1) checkpoint recovery, constant-size state regardless of history length, and no event/history limits provide stronger durability guarantees for long-running agent workflows. Weft's generator-based agent loop provides finer-grained checkpointing than Inngest's step-level boundaries. Weft also runs as a self-contained library or single binary with embedded storage—no cloud dependency required.
+**Where Weft leads:** Durability model. Inngest uses an event-driven step function model, not checkpoint-based recovery. Weft's O(1) checkpoint recovery, constant-size state regardless of history length, and no event/history limits provide stronger durability guarantees for long-running workflows. A generator-based loop built on `ctx.run()` gets finer-grained checkpointing than Inngest's step-level boundaries. Weft also runs as a self-contained library or single binary with embedded storage—no cloud dependency required.
 
 ### Restate
 
@@ -707,7 +655,7 @@ Restate competes on architecture and latency. Virtual Objects provide session-sc
 
 **Where Restate leads:** Virtual Objects provide built-in session affinity with co-located state—no sticky routing configuration needed. User code suspension during async waits (similar to Inngest) allows processes to be shut down during LLM calls.
 
-**Where Weft leads:** Agent-native primitives. Restate provides durable execution primitives; Weft provides agent-level abstractions (budget enforcement, context window management, model routing, human-in-the-loop, multi-agent coordination) built into the core. Restate requires building these from scratch. Weft's `ctx.state` ladder keeps session state checkpoint-local while execution, workflow, and tenant scopes use durable storage-backed state.
+**Where Weft leads:** Checkpoint granularity and state model. Both engines leave agent-level concerns (budget enforcement, context window management, model routing) to userland; Weft's yield-level checkpointing means an agent loop built on `ctx.run()` recovers at the individual tool-call boundary rather than the journal-replay boundary. Weft's `ctx.state` ladder keeps session state checkpoint-local while execution, workflow, and tenant scopes use durable storage-backed state.
 
 ### Hatchet
 
@@ -715,30 +663,25 @@ Hatchet positions as simpler Temporal with AI-first design. Native result stream
 
 **Where Hatchet leads:** Queue scheduling policies (priority, FIFO, round-robin) are more sophisticated than Weft's current least-loaded routing.
 
-**Where Weft leads:** Weft exceeds Hatchet on streaming (multiplexed ReadableStream with backpressure vs. result streaming), storage flexibility (SQLite, LMDB, Turso, IndexedDB vs. Postgres-only), agent primitives (budgets, model routing, context strategies, MCP integration), and deployment flexibility (library mode, single binary, browser via Service Worker).
+**Where Weft leads:** Weft exceeds Hatchet on streaming (multiplexed ReadableStream with backpressure vs. result streaming), storage flexibility (SQLite, LMDB, Turso, IndexedDB vs. Postgres-only), checkpoint granularity (yield-level vs. step-level), and deployment flexibility (library mode, single binary, browser via Service Worker).
 
 ### Summary
 
-| Capability                | Temporal           | Inngest            | Restate            | Hatchet           | Weft                     |
-| ------------------------- | ------------------ | ------------------ | ------------------ | ----------------- | ------------------------ |
-| Durability model          | Event replay       | Step functions     | Journal replay     | Event-driven      | Checkpoint               |
-| Recovery cost             | O(n) history       | Step-level         | O(n) journal       | Step-level        | O(1) checkpoint          |
-| Native streaming          | No (Redis sidecar) | Realtime + hooks   | No                 | Result streaming  | ReadableStream           |
-| Agent loop durability     | Activity-level     | Step-level         | Context call-level | Step-level        | Yield-level              |
-| AI observability          | External only      | Built-in dashboard | External only      | Basic             | Events + OTel            |
-| Budget enforcement        | DIY                | Token counting     | DIY                | DIY               | Per-agent + org          |
-| Human-in-the-loop         | DIY                | DIY                | DIY                | Built-in eventing | Built-in protocol        |
-| Context window management | DIY                | DIY                | DIY                | DIY               | Pluggable strategies     |
-| Multi-agent coordination  | DIY                | AgentKit           | DIY                | DIY               | Handoff/Debate/Supervise |
-| Model routing             | DIY                | DIY                | DIY                | DIY               | Fallback/Cost-tier/A-B   |
-| Serverless suspension     | No                 | Yes                | Yes                | No                | Inline + worker parking  |
-| Self-hosted single binary | No                 | No                 | Yes                | No (Postgres)     | Yes (SQLite)             |
-| Browser runtime           | No                 | No                 | No                 | No                | Yes (Service Worker)     |
+| Capability                | Temporal           | Inngest            | Restate            | Hatchet          | Weft                 |
+| ------------------------- | ------------------ | ------------------ | ------------------ | ---------------- | -------------------- |
+| Durability model          | Event replay       | Step functions     | Journal replay     | Event-driven     | Checkpoint           |
+| Recovery cost             | O(n) history       | Step-level         | O(n) journal       | Step-level       | O(1) checkpoint      |
+| Checkpoint granularity    | Activity-level     | Step-level         | Context call-level | Step-level       | Yield-level          |
+| Native streaming          | No (Redis sidecar) | Realtime + hooks   | No                 | Result streaming | ReadableStream       |
+| Observability             | External only      | Built-in dashboard | External only      | Basic            | Events + OTel        |
+| Serverless suspension     | No                 | Yes                | Yes                | No               | Worker parking       |
+| Self-hosted single binary | No                 | No                 | Yes                | No (Postgres)    | Yes (SQLite)         |
+| Browser runtime           | No                 | No                 | No                 | No               | Yes (Service Worker) |
 
 ---
 
 ## Honest Gaps
 
-The largest AI-native gaps originally tracked here have narrowed substantially in [the roadmap](../architecture.md): inline agent turns can park on provider resume hints, worker-mode signal suspension releases the active worker slot while the parked generator state remains in that worker process, the dashboard has a dedicated agent detail view, and tenant-aware agent customization is built in. The unchecked roadmap items are now operational performance-verification tasks rather than new AI primitives.
+Weft does not ship AI-native primitives. Agent loops, budget enforcement, context-window management, and model routing all live in userland — built on `ctx.run()` and `ctx.review()` or inside an external agent framework you call from an activity. The unchecked roadmap items in [the roadmap](../architecture.md) are operational performance-verification tasks, not AI primitives.
 
 ---

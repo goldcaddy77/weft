@@ -2,6 +2,9 @@
 
 A synthesis of 30 research papers on durable execution, checkpoint-restore, transactional tool use, rollback, event sourcing, and fault tolerance for AI agents — mapped against the current state of Weft (`/Users/stevekinney/Developer/weft`).
 
+> [!NOTE]
+> This analysis predates v0.1.0, which **removed Weft's built-in agent surface** (`ctx.agent()`, `executeAgentLoop`, `weft.agent()`, `handoff`/`debate`/`supervise`, and the agent types and events). Weft no longer ships an agent primitive; agent loops are built in userland on `ctx.run()` and `ctx.review()` or in an external framework. Some recommendations below have since shipped as engine-level, agent-agnostic primitives — most notably the effect log (`src/core/effect-log/`, exporting `EffectLog`) and workflow versioning (`src/core/versioning.ts`). Where the text says "the agent loop should…," read it as "the userland loop you build on `ctx.run()` should…." See the [`CHANGELOG`](../../CHANGELOG.md) for the removed-export list and migration path.
+
 The goal is not a wishlist. The goal is to point at the specific places where Weft's architecture is ahead of the academic literature, the specific places where it is vulnerable or underspecified, and the specific places where a bounded amount of engineering work would convert a research insight into a durable, verifiable Weft primitive.
 
 ---
@@ -16,7 +19,7 @@ Before talking about gaps, it is worth grounding the analysis in what the resear
 
 **Web-standard foundations age well.** `EventTarget`, `AbortSignal`, `structuredClone`, `Worker`, `BroadcastChannel`, `WeakRef` — research papers are rebuilding these same primitives as bespoke agent runtimes. AIOS (2403.16971) invents a whole "LLM OS kernel"; AI Runtime Infrastructure (2603.00495) invents a "closed-loop control layer"; both are redescribing things Weft gets from the platform for free.
 
-**Agent-native primitives beat bolted-on agents.** Budget tracking (`src/ai/budget.ts`), context window strategies (`src/ai/context-window.ts`), provider health tracking, streaming with reconnection buffers, and first-class multi-agent coordination (`handoff`, `debate`, `supervise`) put Weft meaningfully ahead of AgentScope 1.0 and StateFlow — both of which ship much thinner agent stories in their published versions.
+**Yield-level checkpointing is the right granularity for agent loops.** Because each `yield* ctx.run(...)` is an independently-checkpointed boundary, a userland agent loop built on Weft recovers at the individual tool-call boundary rather than re-running a whole turn. Budget tracking, context-window strategies, provider health, and multi-agent coordination are all expressible on top of that boundary in userland (or an external framework), rather than baked into the engine — which keeps the durable core small while still giving agent workloads finer-grained recovery than the step-level boundaries of AgentScope 1.0 or StateFlow.
 
 Now the gaps.
 
@@ -31,21 +34,21 @@ ACRFence (arXiv 2603.20625) demonstrates that when an LLM agent is restored from
 - **Action Replay**: a crashed checkpoint is restored, the LLM re-emits a `charge` call with slightly different parameters, and the payment runs twice because the downstream idempotency key is derived from LLM output rather than from the checkpoint identity.
 - **Authority Resurrection**: a single-use token was consumed before the crash; the restored agent re-emits a tool call that re-presents the already-consumed token, and any tool that isn't itself strictly tracking token consumption will honor it.
 
-Weft's current model is vulnerable to both. Concretely: `src/core/checkpoint.ts` captures `accumulatedResults` as `Array<[number, unknown]>` keyed by step index, which protects workflow-level memoization of _activity results_ — but the agent loop inside `executeAgentLoop` (`src/ai/agent.ts`) runs LLM-to-tool turns _inside_ a single activity boundary. If the engine crashes mid-turn (e.g., during tool execution after the LLM has committed to a call), the restored agent loop re-runs the LLM, gets a subtly different tool call, and fires it again. The outer workflow checkpoint has no idea this happened.
+A naive checkpoint model is vulnerable to both. Concretely: `src/core/checkpoint.ts` captures `accumulatedResults` keyed by step index, which protects workflow-level memoization of _activity results_ — but an agent loop that runs several LLM-to-tool turns _inside_ a single activity boundary gets no protection. If the engine crashes mid-turn (e.g., during tool execution after the LLM has committed to a call), a restored loop re-runs the LLM, gets a subtly different tool call, and fires it again. The outer workflow checkpoint has no idea this happened.
 
-The fix ACRFence proposes — and the fix Weft should adopt — is an **effect log recorded at the tool-call boundary**, keyed by a semantic-hash of the intent-critical fields of the call. On restore, the agent loop consults this log before executing the tool: if a semantically-equivalent call is already recorded as completed, replay its result; if a semantically-equivalent call is recorded as in-flight with an unknown outcome, fork to human review rather than silently re-executing.
+The fix ACRFence proposes — and the fix Weft adopted — is an **effect log recorded at the effect boundary**, keyed by a semantic hash of the intent-critical fields of the call. On restore, the runner consults this log before executing the effect: if a semantically-equivalent call is already recorded as completed, it replays the result; if a semantically-equivalent call is recorded as in-flight with an unknown outcome, it surfaces a conflict rather than silently re-executing.
 
-Concrete implementation sketch in Weft terms:
+How this landed in Weft (now shipped):
 
-1. Introduce a new storage prefix `fx:{workflowId}:{turnIndex}` for per-tool-call effect records. Record format: `{ toolName, semanticHash, status: 'in-flight'|'committed'|'aborted', resultHash?, startedAt, completedAt }`.
-2. In `src/ai/agent.ts`, wrap tool execution with an "effect transaction" that (a) writes the `in-flight` record before calling the tool, (b) updates to `committed` with result hash after, and (c) on agent restore, checks the log before running any tool.
-3. Expose a `toolIdentity(tool, input): { semanticHash, intentCriticalFields }` hook on `AgentToolDefinition` so tool authors can mark which input fields are intent-critical (the recipient of a transfer) versus idempotent (a retry counter, a timestamp).
-4. Add a `AgentCheckpointResumedEvent` that fires when the agent loop takes a resume path, with a `duplicatesPrevented` count, so observability tooling can flag it.
+1. A per-effect record store keyed by semantic hash. Record format: `{ effectName, semanticHash, status: 'in-flight'|'committed'|'aborted', output?, recordedAt, completedAt }`.
+2. `src/core/effect-log/index.ts` exports `EffectLog` with `record(semanticHash, effectName)` / `lookup(semanticHash)` / `commit(semanticHash, effectName, output)` / `abort(semanticHash, effectName, reason)`: write the `in-flight` record before the effect, update to `committed` after, and on restore check the log before re-running.
+3. An optional `identity: (input) => { semanticHash, intentCriticalFields }` hook lets callers mark which input fields are intent-critical (the recipient of a transfer) versus idempotent (a retry counter, a timestamp).
+4. `EffectReplayConflictError` is thrown when a restored run sees an in-flight record with an unknown outcome, so observability tooling and human-review flows can intervene rather than silently re-executing.
 
-This is not a nice-to-have. If Weft is going to market checkpoint-based recovery for AI agents as its differentiator, semantic rollback attacks are the named failure mode the field expects you to handle.
+This was not a nice-to-have. Because Weft markets checkpoint-based recovery as its differentiator, semantic rollback is the named failure mode the field expects it to handle.
 
 > [!NOTE] Completion signal
-> A test in `src/ai/__tests__/acr-fence.test.ts` that injects a crash mid-tool-call, restores, and asserts the tool was only called once with matching parameters.
+> A test in `src/core/effect-log/index.test.ts` injects a crash mid-effect, restores, and asserts the effect was only run once with matching parameters.
 
 ---
 
@@ -123,7 +126,7 @@ Weft's current model is strictly sequential on the workflow's critical path: eac
 
 The lift here is real but tractable. The shape:
 
-1. Add an optional `verify` hook to activities and agent turns: `verify: (result) => Promise<boolean>`.
+1. Add an optional `verify` hook to activities: `verify: (result) => Promise<boolean>`.
 2. Add `ctx.speculate(fn)` that runs a child workflow _against a copy-on-write view of the checkpoint_ — reusing the existing `WorkerExecutionStrategy` infrastructure — and commits it only when the parent's outstanding verifications drain.
 3. Track a **speculative frontier** per workflow: the highest step that is committed vs. the highest step that has speculatively started. On verification failure, roll back to the last confirmed step and re-run from there.
 4. Reuse Atomix's compensation handlers for rollback. This is why §3 should land first.
@@ -131,7 +134,7 @@ The lift here is real but tractable. The shape:
 Sherlock's counterfactual fault-injection analysis for identifying error-prone nodes is out of scope for the first pass — you can get most of the latency win without it. But once effect logs (§2) and the event log (§4) are in place, you have the data to run that analysis offline and feed results back as metadata on registered workflows.
 
 > [!NOTE] Completion signal
-> A benchmark in `benchmarks/speculation.bench.ts` showing ≥30% latency reduction on a 5-turn agent workflow with 500ms mock tool latency, with zero incorrect results across 100 runs.
+> A benchmark showing ≥30% latency reduction on a multi-step workflow with 500ms mock activity latency, with zero incorrect results across 100 runs.
 
 ---
 
@@ -189,31 +192,27 @@ Pair this with a richer `AgentHooks` interface that exposes an `onDiagnosis(trac
 
 CP-WBFT (2511.10400) tolerates **85.7% Byzantine fault rates** on multi-agent workflows by extracting per-agent confidence scores and weighting votes accordingly. Six Sigma Agent (2601.22290) gets from 78% single-shot accuracy to 94% consensus accuracy with `n=3` sampling and achieves 3.4 DPMO — actual industrial-quality reliability — via atomic task decomposition plus dynamic redundancy sizing (`n=2` for low-risk, `n=5` for high-risk).
 
-Weft's `debate` and `supervise` coordination primitives already implement most of what CP-WBFT and Six Sigma Agent need. What's missing is:
+Weft no longer ships `debate`/`supervise` coordination primitives, so confidence-weighted consensus is now a userland pattern: you fan out `n` agent activities with `ctx.all()`, collect a `confidence: number` from each, and weight the votes yourself. The one engine-level piece worth keeping is:
 
-- **Confidence extraction**: a standard way for an agent to emit a `confidence: number` alongside its answer, and for `supervise` to do confidence-weighted voting rather than naive consensus.
-- **Dynamic n-sizing**: `supervise({ workers, n: (task) => riskOf(task) >= 0.3 ? 5 : 2 })`.
 - **DPMO metric**: a simple counter in the metrics collector that tracks (defects / total operations × 1e6), exposed alongside the existing workflow/activity counters.
 
-This is a small amount of code sitting on top of primitives Weft already has. The research value is high: it lets Weft users quote a real DPMO number to risk/compliance teams, which is a conversation Temporal cannot have at all.
+The confidence-weighted voting and dynamic n-sizing sit entirely in the userland loop on top of `ctx.run()` / `ctx.all()`. The research value is high: it lets Weft users quote a real DPMO number to risk/compliance teams, which is a conversation Temporal cannot have at all.
 
 ---
 
 ## 9. Versioning across workflow, agent, and tool definitions (AgentOrchestra)
 
-AgentOrchestra (2506.12508) argues that **Tool, Environment, and Agent** are all independently versioned components, and that a durable execution system should support rolling each one forward or back without invalidating in-flight workflows. Weft already versions workflows (`src/core/versioning.ts`) with explicit `migrate(checkpoint, fromVersion)` hooks. It does not version:
+AgentOrchestra (2506.12508) argues that **Tool, Environment, and Agent** are all independently versioned components, and that a durable execution system should support rolling each one forward or back without invalidating in-flight workflows. Weft already versions workflows (`src/core/versioning.ts`) with explicit `migrate(checkpoint, fromVersion)` hooks. The remaining gap is tool versioning:
 
-- **Tools**: if a tool's schema changes mid-flight, the agent may produce output incompatible with the new schema. No detection.
-- **Agents**: if the system prompt, tool set, or model changes, currently-running agent workflows just... use the new configuration on the next turn. No migration hook.
-- **Providers**: same story.
+- **Tools**: if the schema of a tool an activity calls changes mid-flight, the workflow may produce output incompatible with the new schema. No detection today.
 
-The fix is mechanical once §4 (event log) is in place: record the version tuple `(workflowVersion, agentVersion, toolVersions[])` in every event, and refuse to resume a workflow whose version tuple is incompatible with the currently-registered versions unless a migration hook exists. This gives you zero-downtime deploys for agent config changes, which is a hole every production AI system hits within six months.
+Now that Weft has no built-in agent or provider surface, "agent versioning" and "provider versioning" are userland concerns — the userland loop pins whatever model and prompt it uses. The engine-level fix is mechanical once §4 (event log) is in place: record the version tuple `(workflowVersion, toolVersions[])` in every event, and refuse to resume a workflow whose version tuple is incompatible with the currently-registered versions unless a migration hook exists. This gives you zero-downtime deploys for tool-schema changes, which is a hole every production system hits within six months.
 
 ---
 
 ## 10. Other things worth stealing, in order of lift-to-value
 
-**AutoDW's stepwise planner with adaptive rollback** (2512.04445) is structurally a simpler Sherlock and could be a good starting point if §5 is too big. **EnCompass's "probabilistic angelic nondeterminism"** (2512.03571) is a programming-model win — `ctx.branchpoint(options)` with automatic backtracking — but needs §3 and §4 as prerequisites. **Helium's templated radix tree for prompt prefix caching** (2603.16104) is a 45–60% latency reduction on repeated patterns; it belongs in `src/ai/` as a separate `PromptCache` module, independent of durable execution. **StateFlow's explicit FSM** (2403.11322) is already structurally present in Weft's generator model; exposing it as a first-class declarative API (`defineStateMachine({ states, transitions })`) is mostly a DX win. **AIR's incident-response DSL** (2602.11749) is interesting but lower priority — it's effectively a higher-level API on top of constraints (§7). **WebRollback** (2504.11788) and **CaveAgent** (2601.01569) are application-layer concerns that Weft's existing `ctx.memo` and `ctx.offload` largely cover. **KubeIntellect's PostgreSQL checkpoint store** (2509.02449) is already matched by `TursoStorage`. **libDSE's benchmark claims** (2412.13314) are the most tempting and most dangerous — do not chase the order-of-magnitude latency win until effect logs and compensators are in place, because DSE's "reactively repair state on failure" story depends on both.
+**AutoDW's stepwise planner with adaptive rollback** (2512.04445) is structurally a simpler Sherlock and could be a good starting point if §5 is too big. **EnCompass's "probabilistic angelic nondeterminism"** (2512.03571) is a programming-model win — `ctx.branchpoint(options)` with automatic backtracking — but needs §3 and §4 as prerequisites. **Helium's templated radix tree for prompt prefix caching** (2603.16104) is a 45–60% latency reduction on repeated patterns; it belongs in the userland agent loop (or a standalone caching module), independent of durable execution. **StateFlow's explicit FSM** (2403.11322) is already structurally present in Weft's generator model; exposing it as a first-class declarative API (`defineStateMachine({ states, transitions })`) is mostly a DX win. **AIR's incident-response DSL** (2602.11749) is interesting but lower priority — it's effectively a higher-level API on top of constraints (§7). **WebRollback** (2504.11788) and **CaveAgent** (2601.01569) are application-layer concerns that Weft's existing `ctx.memo` and `ctx.offload` largely cover. **KubeIntellect's PostgreSQL checkpoint store** (2509.02449) is already matched by `TursoStorage`. **libDSE's benchmark claims** (2412.13314) are the most tempting and most dangerous — do not chase the order-of-magnitude latency win until effect logs and compensators are in place, because DSE's "reactively repair state on failure" story depends on both.
 
 Do not bother with: **AIOS** (kernel abstractions that duplicate what Weft gets from the platform), **Agents Learn Their Runtime** (training-time insight, not a framework feature), **VIGIL's affective memory framing** (the mechanism is good; the vocabulary is not).
 
@@ -242,6 +241,6 @@ If I were sequencing this, I would do it in four tracks that can partially paral
 
 **Track 3 — Latency and throughput:** Speculative execution with verifiers (§5 Sherlock/libDSE). Prompt prefix caching (§10 Helium). Close the measured-vs-spec performance gaps (§11).
 
-**Track 4 — Multi-agent reliability:** Confidence-weighted voting in `supervise` (§8 CP-WBFT). Dynamic n-sizing (§8 Six Sigma). DPMO metric in the collector. Tool/agent/provider versioning (§9 AgentOrchestra).
+**Track 4 — Reliability and versioning:** DPMO metric in the collector (§8 Six Sigma); confidence-weighted voting and dynamic n-sizing are now userland patterns on top of `ctx.run()` / `ctx.all()`. Tool versioning and the workflow version tuple (§9 AgentOrchestra).
 
 The detailed implementation checklist for these tracks lives in [../architecture.md](../architecture.md).

@@ -2,6 +2,9 @@
 
 > _Weft_ — the cross-threads in weaving that bind the warp together.
 
+> [!NOTE]
+> Weft's built-in agent surface — `ctx.agent()`, `ctx.handoff()`, `ctx.debate()`, `ctx.supervise()`, and the agent types, events, and runtime that backed them — was removed in v0.1.0. Weft does not ship an agent primitive. Build durable agent loops on `ctx.run()` and `ctx.review()`, or run them in an external agent framework. See the [`CHANGELOG`](../CHANGELOG.md) for the full removed-export list and migration path.
+
 ---
 
 ## Before We Start: What Problem Are We Solving?
@@ -35,9 +38,7 @@ The design constraints, in priority order:
 
 4. **Runs in the browser.** The core engine (minus the server shell) runs in Web Workers and can use a Service Worker as its persistence and scheduling backbone. Same workflow code, different execution environment.
 
-5. **Agent-native.** The engine is designed around agent workloads: dynamic execution graphs, durable streaming, cost enforcement, human oversight, multi-agent coordination, context window management, and model routing are built into the core — not bolted on as wrappers around generic activities.
-
-6. **Library/server parity.** Every capability exposed by the server's HTTP and WebSocket API is also available through the library's in-process `Engine` API — and vice versa. A developer who starts with `bun add weft` and later moves to the standalone server (or the reverse) should not lose features or change workflow code. The server is a deployment wrapper around the engine, not a superset of it.
+5. **Library/server parity.** Every capability exposed by the server's HTTP and WebSocket API is also available through the library's in-process `Engine` API — and vice versa. A developer who starts with `bun add weft` and later moves to the standalone server (or the reverse) should not lose features or change workflow code. The server is a deployment wrapper around the engine, not a superset of it.
 
 ---
 
@@ -47,17 +48,16 @@ Temporal's replay-based architecture creates a cascade of constraints — determ
 
 Here is what a developer must learn to write their first workflow:
 
-| Concept                | Temporal                          | Weft                                               |
-| ---------------------- | --------------------------------- | -------------------------------------------------- |
-| Core mental model      | Replay determinism                | Generators pause and resume                        |
-| Activity invocation    | `proxyActivities()` + type import | `yield* ctx.run(fn, args)`                         |
-| Timer                  | Deterministic `workflow.sleep()`  | `yield* ctx.sleep("1 hour")`                       |
-| Signal                 | `setHandler` + `condition`        | `yield* ctx.waitForSignal(name)`                   |
-| Versioning             | `patched()` / `deprecatePatch()`  | Deploy new code (migration optional)               |
-| Long-running workflows | `continueAsNew()`                 | Nothing (checkpoints are fixed-size)               |
-| Agent declaration      | N/A (build from primitives)       | `weft.agent()` top-level or `ctx.agent()` embedded |
-| Dev environment        | Docker Compose + Temporal server  | `bun add weft`                                     |
-| Bundling               | Webpack for workflow sandbox      | None                                               |
+| Concept                | Temporal                          | Weft                                 |
+| ---------------------- | --------------------------------- | ------------------------------------ |
+| Core mental model      | Replay determinism                | Generators pause and resume          |
+| Activity invocation    | `proxyActivities()` + type import | `yield* ctx.run(fn, args)`           |
+| Timer                  | Deterministic `workflow.sleep()`  | `yield* ctx.sleep("1 hour")`         |
+| Signal                 | `setHandler` + `condition`        | `yield* ctx.waitForSignal(name)`     |
+| Versioning             | `patched()` / `deprecatePatch()`  | Deploy new code (migration optional) |
+| Long-running workflows | `continueAsNew()`                 | Nothing (checkpoints are fixed-size) |
+| Dev environment        | Docker Compose + Temporal server  | `bun add weft`                       |
+| Bundling               | Webpack for workflow sandbox      | None                                 |
 
 ### 1. The Determinism Constraint Is a Developer Experience Nightmare
 
@@ -93,7 +93,7 @@ CheckpointSerializationError: Cannot serialize workflow state at step 2
   at orderWorkflow (./workflows/order.ts:15:3)
 ```
 
-**Going further: stack-trace-preserving errors.** Every context method (`ctx.run`, `ctx.sleep`, `ctx.agent`) captures the caller's stack trace at call time — before the generator yields. When an activity fails after being dispatched to a remote worker and retried three times, the error shown to the developer includes the original call site in their workflow code:
+**Going further: stack-trace-preserving errors.** Every context method (`ctx.run`, `ctx.sleep`, `ctx.review`) captures the caller's stack trace at call time — before the generator yields. When an activity fails after being dispatched to a remote worker and retried three times, the error shown to the developer includes the original call site in their workflow code:
 
 ```
 ActivityFailedError: charge failed after 3 attempts
@@ -109,7 +109,7 @@ ActivityFailedError: charge failed after 3 attempts
 
 **The Temporal problem.** Changing workflow code while workflows are in-flight requires either the `patched()` / `deprecatePatch()` API — which litters your code with version branches that never go away — or Worker Versioning, a whole deployment orchestration system. The Temporal docs themselves acknowledge this is complex enough that they deprecated their first versioning approach and replaced it in 2025. Developers routinely report confusion about which changes are safe versus which break replay.
 
-**The Weft answer.** Checkpointing means code before the current checkpoint never re-executes. Changing steps after the current checkpoint is inherently safe. Versioning only matters for the step you are currently on — and even then, the migration path is a pure data transformation on the checkpoint, not code-path branching. (See: [Workflow Versioning](#14-workflow-versioning).)
+**The Weft answer.** Checkpointing means code before the current checkpoint never re-executes. Changing steps after the current checkpoint is inherently safe. Versioning only matters for the step you are currently on — and even then, the migration path is a pure data transformation on the checkpoint, not code-path branching. (See: [Workflow Versioning](#13-workflow-versioning).)
 
 ```typescript
 // Temporal: version branches that accumulate forever
@@ -497,89 +497,37 @@ const results =
 
 **The Temporal problem.** Teams building AI agent orchestration on Temporal must model agent loops as activities, manually handle token streaming, build their own cost tracking, and figure out human-in-the-loop patterns from scratch. Temporal's primitives were designed for microservice RPC, not multi-turn LLM interactions. The Temporal community calls this the "Lord of the Loop" problem: when integrating third-party agent frameworks (OpenAI Agents SDK, PydanticAI, LangGraph), who controls the execution loop? Temporal or the framework? A community member's extensive analysis argues that current integrations force agents to be "extremely narrow in scope—with only a few tools available." Community members have explicitly requested an "Agent Builder layer over Temporal," and multiple forum threads ask for higher-level orchestration primitives: conversation history management, guardrail hooks, agent task queues. Temporal's response: "We are examining higher level primitives...no roadmap or announcements to share about that yet."
 
-**The Weft answer.** `ctx.agent()` as a first-class primitive with durable tool execution, token streaming, budget enforcement, and human-in-the-loop built in. (See: [Agent-Native Engine](#12-agent-native-engine).)
+**The Weft answer.** Weft does not ship a built-in agent primitive. Instead, its generator model makes the durable agent loop something you _build_ — each LLM call and each tool call is a `yield* ctx.run(...)` boundary, independently checkpointed, with `ctx.review()` for the human-in-the-loop step. You own the loop; Weft makes every step in it durable.
 
-**Why this cannot be bolted onto Temporal.** Temporal's determinism constraint means LLM API calls must be activities. But activities are opaque to the workflow — you cannot stream tokens from an activity back to the workflow in real time. You cannot checkpoint mid-tool-call within an activity. Temporal's model forces agent loops into one of two bad choices:
+**Why this is the right boundary.** Temporal's determinism constraint forces LLM API calls into activities, and activities are opaque to the workflow — you cannot checkpoint mid-tool-call, and you cannot stream tokens back through replay. That pushes agent loops into one of two bad choices:
 
 1. **Fully in-activity:** The entire ReAct loop runs as one activity. Tool calls within it are not individually checkpointed. If the process crashes mid-loop, the entire agent conversation restarts from scratch.
 2. **Fully in-workflow:** Each LLM call is a separate activity. But now every LLM response must be deterministically replayable — and LLM APIs are inherently non-deterministic. You need to store and replay every token, defeating the purpose of having a live model.
 
-Weft's generator model avoids this dilemma. Each tool call is a separate `yield*` boundary, independently checkpointed. Token streaming flows through the standard `EventTarget` and `WebSocket` systems. The agent loop is durable _and_ live.
+Weft's generator model avoids this dilemma without a dedicated agent surface. Each tool call you write as a separate `yield*` boundary is independently checkpointed, and token streaming flows through the standard `EventTarget` and `WebSocket` systems. The loop you build is durable _and_ live.
 
-**Going further: multi-agent composition via existing primitives.** Agents are just activities with special configuration. The existing `ctx.run()` / `ctx.all()` / `ctx.race()` composition works naturally:
+**Multi-agent composition via existing primitives.** An agent step is just an activity. The existing `ctx.run()` / `ctx.all()` / `ctx.race()` composition works naturally — sequential pipelines, parallel fan-out, and delegation are all expressed in ordinary workflow code:
 
 ```typescript
 async function* researchWorkflow(ctx: Context, topic: string) {
   // Sequential: researcher → critic → writer
-  const research = yield* ctx.agent({
-    model: 'claude-sonnet-4-20250514',
-    prompt: `Research: ${topic}`,
-    tools: [webSearch],
-  });
-  const critique = yield* ctx.agent({
-    model: 'claude-sonnet-4-20250514',
-    prompt: `Review:\n${research}`,
-    tools: [factCheck],
-  });
-  const report = yield* ctx.agent({
-    model: 'claude-sonnet-4-20250514',
-    prompt: `Write report:\n${research}\n\nAddressing:\n${critique}`,
-  });
+  const research = yield* ctx.run(researchAgent, { topic });
+  const critique = yield* ctx.run(critiqueAgent, { research });
+  const report = yield* ctx.run(writeReportAgent, { research, critique });
 
-  // Parallel: run multiple agents simultaneously
+  // Parallel: run multiple review steps simultaneously
   const [legal, technical] = yield* ctx.all([
-    ctx.agent({ model: 'claude-sonnet-4-20250514', prompt: `Legal review: ${report}` }),
-    ctx.agent({ model: 'claude-sonnet-4-20250514', prompt: `Technical review: ${report}` }),
+    ctx.run(legalReviewAgent, { report }),
+    ctx.run(technicalReviewAgent, { report }),
   ]);
 
   return { report, reviews: { legal, technical } };
 }
 ```
 
-Beyond fan-out, the agent-native engine supports `ctx.handoff()` for delegation with context transfer, `ctx.debate()` for adversarial multi-agent review, and `ctx.state.execution()` for concurrent mutable state. See [Agent-Native Engine: Multi-Agent Coordination](#127-multi-agent-coordination) for the full treatment.
+Each `ctx.run(...)` activity wraps whatever agent framework or raw LLM client you prefer; Weft checkpoints the boundary between them. Cost tracking, budget enforcement, and tool-result caching live in those activities (or the framework you run inside them), not in the engine.
 
-**Going further: cost observability with `ctx.setBudget()`.** Budget state is stored in the checkpoint and enforced via `AbortController`. Each `ctx.agent()` call reports token usage back to the budget tracker:
-
-```typescript
-async function* costAwareWorkflow(ctx: Context, input: Input) {
-  ctx.setBudget({
-    maxTokens: 100_000,
-    maxCost: 5.0,
-    models: {
-      'claude-sonnet-4-20250514': { inputCostPer1K: 0.003, outputCostPer1K: 0.015 },
-    },
-  });
-
-  const draft = yield* ctx.agent({
-    model: 'claude-sonnet-4-20250514',
-    prompt: 'Write analysis...',
-  });
-
-  const usage = ctx.budgetRemaining();
-  // { tokensRemaining: 72_000, costRemaining: 3.42, breakdown: [...] }
-
-  if (usage.costRemaining < 1.0) {
-    // Switch to cheaper model
-    return yield* ctx.agent({ model: 'claude-haiku-4-5-20251001', prompt: 'Summarize...' });
-  }
-}
-```
-
-This is just the per-workflow surface. The agent-native engine adds organization-level real-time budget enforcement, cost-aware retry policies, cost projection, and budget events through `EventTarget`. See [Agent-Native Engine: Cost as Execution Constraint](#123-cost-as-execution-constraint).
-
-**Going further: tool result caching across agent turns.** When an agent calls the same tool with the same arguments across turns, Weft caches the result:
-
-```typescript
-const analysis =
-  yield *
-  ctx.agent({
-    tools: [fetchCustomerData, queryDatabase],
-    toolCache: true, // Default: true for idempotent tools
-    toolCacheTTL: '5m', // Cache expires after 5 minutes
-  });
-```
-
-On cache hit, the tool is not re-executed and no checkpoint boundary is created. This reduces both latency and cost for agent workflows that repeatedly access the same data. Beyond local function tools, the agent-native engine supports MCP server URLs as tool sources with dynamic discovery and schema validation. See [Agent-Native Engine: MCP-Native Tool Execution](#125-mcp-native-tool-execution).
+**Human-in-the-loop with `ctx.review()`.** When an agent step needs human approval, `yield* ctx.review(...)` durably suspends the workflow until a reviewer responds — the same primitive that gates any other approval flow, applied to agent output.
 
 ### 10. Payload Size Sensitivity
 
@@ -665,7 +613,7 @@ Temporal's event history records every activity result. A single GPT-4 response 
 
 The streaming gap is worse. Token-by-token delivery is the primary output mode for LLM applications—users cannot wait 30–60 seconds for a complete response. Every team building AI on Temporal constructs the same workaround: a Redis pub/sub or SSE sidecar that streams tokens from activities to frontends _outside_ Temporal's durability model. A Temporal engineer confirmed in December 2025 that native streaming plans exist but remain in early design, with activity-to-workflow streaming described as "a longer term project." Scale AI confirmed using Redis pub/sub as their production workaround.
 
-**How Weft eliminates this.** Checkpoints store only the current state—not the history of every activity result. A workflow that processed 100 large LLM responses but only keeps the current conversation in a local variable has a checkpoint containing only that conversation. No history bloat, no payload caps, no `continueAsNew`. For streaming, `ctx.agent()` returns a `ReadableStream<string>` that bridges to `EventTarget`, WebSocket observers, and SSE endpoints natively. No Redis sidecar, no infrastructure outside the durability model. (See: [First-Class Streaming](#agent-native-engine-first-class-streaming), [ctx.offload()](#5-performance-issues-out-of-the-box), [Payload Compression](#10-payload-size-sensitivity).)
+**How Weft eliminates this.** Checkpoints store only the current state—not the history of every activity result. A workflow that processed 100 large LLM responses but only keeps the current conversation in a local variable has a checkpoint containing only that conversation. No history bloat, no payload caps, no `continueAsNew`. For streaming, an activity can return a `ReadableStream<string>` that bridges to `EventTarget`, WebSocket observers, and SSE endpoints natively. No Redis sidecar, no infrastructure outside the durability model. (See: [ctx.offload()](#5-performance-issues-out-of-the-box), [Payload Compression](#10-payload-size-sensitivity).)
 
 ### 2. The Activity Boundary Is Too Coarse for Agent Loop Durability
 
@@ -675,7 +623,7 @@ Today, the agent framework runs inside a Temporal activity. Temporal cannot prov
 
 The alternative—decomposing the agent loop into individual Temporal activities—preserves durability at the right granularity but forces teams to abandon the framework and reimplement the loop in workflow code. A community member authored an extensive analysis of this dilemma ("The Lord of the Loop"), arguing that current integrations force agents to be "extremely narrow in scope—with only a few tools available." Temporal's response was candid: "You would need to find a way of breaking LangGraph up into serializable payloads...Until then, executing your LangGraph agents as one Temporal activity will work."
 
-**How Weft eliminates this.** There is no dilemma because Weft's generator model makes each tool call a `yield*` boundary—independently checkpointed, individually retryable, observable at the right granularity. The agent loop _is_ the workflow. `agent()` provides the durable ReAct loop as a first-class primitive: each LLM turn is a checkpoint, each tool call is a checkpoint, budget enforcement fires at turn boundaries, and token streaming flows through standard `ReadableStream` and `EventTarget`. No framework wrapping, no opaque activities, no forced choice between durability and agent ecosystem compatibility. (See: [Agent-Native Engine](#12-agent-native-engine), [Dynamic Execution Shape](#agent-native-engine-dynamic-execution-shape).)
+**How Weft eliminates this.** There is no dilemma because Weft's generator model makes each tool call a `yield*` boundary—independently checkpointed, individually retryable, observable at the right granularity. The agent loop _is_ the workflow: you write each LLM turn and each tool call as a `ctx.run(...)` step, so each turn is a checkpoint, each tool call is a checkpoint, and token streaming flows through standard `ReadableStream` and `EventTarget`. No framework wrapping, no opaque activities, no forced choice between durability and agent ecosystem compatibility. (See: [Checkpoint, Don't Replay](#1-checkpoint-dont-replay).)
 
 ### 3. The Python Sandbox Conflicts with Every Major AI/ML Library
 
@@ -695,9 +643,9 @@ Three durable execution platforms explicitly target Temporal's AI workload gaps.
 
 Inngest has the most complete AI-specific feature set among Temporal alternatives. `step.ai.infer()` provides native AI inference as a durable step with automatic token counting. `step.ai.wrap()` wraps any AI SDK with observability. `useAgent` provides a React hook for parts-based streaming from durable workflows to frontends via their Realtime feature. AgentKit provides first-class agent/network/router abstractions. Their observability dashboard offers SQL-queryable token usage and cost analysis.
 
-**Where Inngest leads:** Full serverless suspension during LLM inference waits. When `step.ai.infer()` calls an LLM API, the function doesn't run (or charge) while waiting for the response. Weft can now park inline agent turns on provider resume hints, but worker-mode execution still keeps the per-workflow worker reserved until completion.
+**Where Inngest leads:** Full serverless suspension during LLM inference waits. When `step.ai.infer()` calls an LLM API, the function doesn't run (or charge) while waiting for the response. Inngest also ships AI-specific primitives (`step.ai.infer()`, AgentKit) that Weft leaves to userland. Weft's worker-mode execution keeps the per-workflow worker reserved until completion.
 
-**Where Weft leads:** Durability model. Inngest uses an event-driven step function model, not checkpoint-based recovery. Weft's O(1) checkpoint recovery, constant-size state regardless of history length, and no event/history limits provide stronger durability guarantees for long-running agent workflows. Weft's generator-based agent loop provides finer-grained checkpointing than Inngest's step-level boundaries. Weft also runs as a self-contained library or single binary with embedded storage—no cloud dependency required.
+**Where Weft leads:** Durability model. Inngest uses an event-driven step function model, not checkpoint-based recovery. Weft's O(1) checkpoint recovery, constant-size state regardless of history length, and no event/history limits provide stronger durability guarantees for long-running workflows. A generator-based loop built on `ctx.run()` gets finer-grained checkpointing than Inngest's step-level boundaries. Weft also runs as a self-contained library or single binary with embedded storage—no cloud dependency required.
 
 ### Restate
 
@@ -705,7 +653,7 @@ Restate competes on architecture and latency. Virtual Objects provide session-sc
 
 **Where Restate leads:** Virtual Objects provide built-in session affinity with co-located state—no sticky routing configuration needed. User code suspension during async waits (similar to Inngest) allows processes to be shut down during LLM calls.
 
-**Where Weft leads:** Agent-native primitives. Restate provides durable execution primitives; Weft provides agent-level abstractions (budget enforcement, context window management, model routing, human-in-the-loop, multi-agent coordination) built into the core. Restate requires building these from scratch. Weft's `ctx.state` ladder keeps session state checkpoint-local while execution, workflow, and tenant scopes use durable storage-backed state.
+**Where Weft leads:** Checkpoint granularity and state model. Both engines leave agent-level concerns (budget enforcement, context window management, model routing) to userland; Weft's yield-level checkpointing means an agent loop built on `ctx.run()` recovers at the individual tool-call boundary rather than the journal-replay boundary. Weft's `ctx.state` ladder keeps session state checkpoint-local while execution, workflow, and tenant scopes use durable storage-backed state.
 
 ### Hatchet
 
@@ -713,31 +661,26 @@ Hatchet positions as simpler Temporal with AI-first design. Native result stream
 
 **Where Hatchet leads:** Queue scheduling policies (priority, FIFO, round-robin) are more sophisticated than Weft's current least-loaded routing.
 
-**Where Weft leads:** Weft exceeds Hatchet on streaming (multiplexed ReadableStream with backpressure vs. result streaming), storage flexibility (SQLite, LMDB, Turso, IndexedDB vs. Postgres-only), agent primitives (budgets, model routing, context strategies, MCP integration), and deployment flexibility (library mode, single binary, browser via Service Worker).
+**Where Weft leads:** Weft exceeds Hatchet on streaming (multiplexed ReadableStream with backpressure vs. result streaming), storage flexibility (SQLite, LMDB, Turso, IndexedDB vs. Postgres-only), checkpoint granularity (yield-level vs. step-level), and deployment flexibility (library mode, single binary, browser via Service Worker).
 
 ### Summary
 
-| Capability                | Temporal           | Inngest            | Restate            | Hatchet           | Weft                     |
-| ------------------------- | ------------------ | ------------------ | ------------------ | ----------------- | ------------------------ |
-| Durability model          | Event replay       | Step functions     | Journal replay     | Event-driven      | Checkpoint               |
-| Recovery cost             | O(n) history       | Step-level         | O(n) journal       | Step-level        | O(1) checkpoint          |
-| Native streaming          | No (Redis sidecar) | Realtime + hooks   | No                 | Result streaming  | ReadableStream           |
-| Agent loop durability     | Activity-level     | Step-level         | Context call-level | Step-level        | Yield-level              |
-| AI observability          | External only      | Built-in dashboard | External only      | Basic             | Events + OTel            |
-| Budget enforcement        | DIY                | Token counting     | DIY                | DIY               | Per-agent + org          |
-| Human-in-the-loop         | DIY                | DIY                | DIY                | Built-in eventing | Built-in protocol        |
-| Context window management | DIY                | DIY                | DIY                | DIY               | Pluggable strategies     |
-| Multi-agent coordination  | DIY                | AgentKit           | DIY                | DIY               | Handoff/Debate/Supervise |
-| Model routing             | DIY                | DIY                | DIY                | DIY               | Fallback/Cost-tier/A-B   |
-| Serverless suspension     | No                 | Yes                | Yes                | No                | Inline + worker parking  |
-| Self-hosted single binary | No                 | No                 | Yes                | No (Postgres)     | Yes (SQLite)             |
-| Browser runtime           | No                 | No                 | No                 | No                | Yes (Service Worker)     |
+| Capability                | Temporal           | Inngest            | Restate            | Hatchet          | Weft                 |
+| ------------------------- | ------------------ | ------------------ | ------------------ | ---------------- | -------------------- |
+| Durability model          | Event replay       | Step functions     | Journal replay     | Event-driven     | Checkpoint           |
+| Recovery cost             | O(n) history       | Step-level         | O(n) journal       | Step-level       | O(1) checkpoint      |
+| Checkpoint granularity    | Activity-level     | Step-level         | Context call-level | Step-level       | Yield-level          |
+| Native streaming          | No (Redis sidecar) | Realtime + hooks   | No                 | Result streaming | ReadableStream       |
+| Observability             | External only      | Built-in dashboard | External only      | Basic            | Events + OTel        |
+| Serverless suspension     | No                 | Yes                | Yes                | No               | Worker parking       |
+| Self-hosted single binary | No                 | No                 | Yes                | No (Postgres)    | Yes (SQLite)         |
+| Browser runtime           | No                 | No                 | No                 | No               | Yes (Service Worker) |
 
 ---
 
 ## Honest Gaps
 
-The largest AI-native gaps originally tracked here have narrowed substantially: inline agent turns can park on provider resume hints, worker-mode signal suspension releases the active worker slot while the parked generator state remains in that worker process, the dashboard has a dedicated agent detail view, and tenant-aware agent customization is built in. The unchecked roadmap items are now operational performance-verification tasks rather than new AI primitives.
+Weft does not ship AI-native primitives. Agent loops, budget enforcement, context-window management, and model routing all live in userland — built on `ctx.run()` and `ctx.review()` or inside an external agent framework you call from an activity. The unchecked roadmap items are operational performance-verification tasks, not AI primitives.
 
 ---
 
@@ -784,17 +727,9 @@ Weft eliminates every userland pattern that has a platform-native equivalent:
 
 **Execution Timeout:** Maximum wall-clock time for an entire workflow. Measured from start to terminal completion.
 
-**Agent:** A durable LLM-powered execution loop (ReAct pattern) that calls tools, manages context, and respects budgets and human review. Registered via `weft.agent()` as a standalone workflow or invoked via `ctx.agent()` as a step within a larger workflow.
-
-**Turn:** A single iteration of an agent loop: one LLM call and its resulting tool calls. Each turn is a checkpoint boundary.
-
-**Model Router:** A pluggable component that selects which LLM model to use for each turn based on conversation state, cost constraints, and quality requirements.
-
-**Context Strategy:** A pluggable component that manages conversation history within the LLM's context window using techniques like sliding window, summarization, or RAG.
-
 **MCP (Model Context Protocol):** A standard protocol for discovering and invoking LLM tools from external servers. Supports stdio and HTTP+SSE transports.
 
-**Shared State:** A CAS-backed durable mutable state primitive that multiple concurrent agents can read from and write to without clobbering each other's writes.
+**Shared State:** A CAS-backed durable mutable state primitive that multiple concurrent workflows or activities can read from and write to without clobbering each other's writes.
 
 **Human Review:** A structured interaction protocol for human-in-the-loop workflows, supporting approval, rejection, conversation threading, escalation, and partial approval.
 
@@ -1179,282 +1114,9 @@ export class UpdateCompletedEvent extends Event {
   }
 }
 
-// ─── Agent Event Definitions ───
-
-export class AgentTurnStartedEvent extends Event {
-  static readonly type = 'agent:turn:started' as const;
+export class ReviewRequestedEvent extends Event {
+  static readonly type = 'human-review:requested' as const;
   readonly workflowId: string;
-  readonly agentId: string;
-  readonly turnIndex: number;
-  readonly model: string;
-  readonly inputTokenEstimate: number;
-  readonly conversationLength: number;
-
-  constructor(
-    workflowId: string,
-    agentId: string,
-    turnIndex: number,
-    model: string,
-    inputTokenEstimate: number,
-    conversationLength: number,
-  ) {
-    super(AgentTurnStartedEvent.type);
-    this.workflowId = workflowId;
-    this.agentId = agentId;
-    this.turnIndex = turnIndex;
-    this.model = model;
-    this.inputTokenEstimate = inputTokenEstimate;
-    this.conversationLength = conversationLength;
-  }
-}
-
-export class AgentTurnCompletedEvent extends Event {
-  static readonly type = 'agent:turn:completed' as const;
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly turnIndex: number;
-  readonly model: string;
-  readonly selectedModel: string;
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-  readonly cost: number;
-  readonly cumulativeCost: number;
-  readonly duration: number;
-  readonly toolCallCount: number;
-  readonly fallbackAttempts: number;
-  readonly reasoningTrace: string | undefined;
-
-  constructor(
-    workflowId: string,
-    agentId: string,
-    turnIndex: number,
-    model: string,
-    selectedModel: string,
-    inputTokens: number,
-    outputTokens: number,
-    cost: number,
-    cumulativeCost: number,
-    duration: number,
-    toolCallCount: number,
-    fallbackAttempts: number,
-    reasoningTrace?: string,
-  ) {
-    super(AgentTurnCompletedEvent.type);
-    this.workflowId = workflowId;
-    this.agentId = agentId;
-    this.turnIndex = turnIndex;
-    this.model = model;
-    this.selectedModel = selectedModel;
-    this.inputTokens = inputTokens;
-    this.outputTokens = outputTokens;
-    this.cost = cost;
-    this.cumulativeCost = cumulativeCost;
-    this.duration = duration;
-    this.toolCallCount = toolCallCount;
-    this.fallbackAttempts = fallbackAttempts;
-    this.reasoningTrace = reasoningTrace;
-  }
-}
-
-export class AgentToolCalledEvent extends Event {
-  static readonly type = 'agent:tool:called' as const;
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly turnIndex: number;
-  readonly toolName: string;
-  readonly toolInput: unknown;
-  readonly source: 'local' | 'mcp';
-  readonly operationId: string;
-
-  constructor(
-    workflowId: string,
-    agentId: string,
-    turnIndex: number,
-    toolName: string,
-    toolInput: unknown,
-    source: 'local' | 'mcp',
-    operationId: string,
-  ) {
-    super(AgentToolCalledEvent.type);
-    this.workflowId = workflowId;
-    this.agentId = agentId;
-    this.turnIndex = turnIndex;
-    this.toolName = toolName;
-    this.toolInput = toolInput;
-    this.source = source;
-    this.operationId = operationId;
-  }
-}
-
-export class AgentToolReturnedEvent extends Event {
-  static readonly type = 'agent:tool:returned' as const;
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly turnIndex: number;
-  readonly toolName: string;
-  readonly duration: number;
-  readonly success: boolean;
-  readonly operationId: string;
-
-  constructor(
-    workflowId: string,
-    agentId: string,
-    turnIndex: number,
-    toolName: string,
-    duration: number,
-    success: boolean,
-    operationId: string,
-  ) {
-    super(AgentToolReturnedEvent.type);
-    this.workflowId = workflowId;
-    this.agentId = agentId;
-    this.turnIndex = turnIndex;
-    this.toolName = toolName;
-    this.duration = duration;
-    this.success = success;
-    this.operationId = operationId;
-  }
-}
-
-export class AgentBudgetWarningEvent extends Event {
-  static readonly type = 'agent:budget:warning' as const;
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly budgetUsedPercent: number;
-  readonly tokensRemaining: number;
-  readonly costRemaining: number;
-  readonly threshold: number;
-
-  constructor(
-    workflowId: string,
-    agentId: string,
-    budgetUsedPercent: number,
-    tokensRemaining: number,
-    costRemaining: number,
-    threshold: number,
-  ) {
-    super(AgentBudgetWarningEvent.type);
-    this.workflowId = workflowId;
-    this.agentId = agentId;
-    this.budgetUsedPercent = budgetUsedPercent;
-    this.tokensRemaining = tokensRemaining;
-    this.costRemaining = costRemaining;
-    this.threshold = threshold;
-  }
-}
-
-export class AgentBudgetExceededEvent extends Event {
-  static readonly type = 'agent:budget:exceeded' as const;
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly tokensUsed: number;
-  readonly costUsed: number;
-  readonly tokenBudget: number;
-  readonly maxCost: number;
-
-  constructor(
-    workflowId: string,
-    agentId: string,
-    tokensUsed: number,
-    costUsed: number,
-    tokenBudget: number,
-    maxCost: number,
-  ) {
-    super(AgentBudgetExceededEvent.type);
-    this.workflowId = workflowId;
-    this.agentId = agentId;
-    this.tokensUsed = tokensUsed;
-    this.costUsed = costUsed;
-    this.tokenBudget = tokenBudget;
-    this.maxCost = maxCost;
-  }
-}
-
-export class AgentContextCompactedEvent extends Event {
-  static readonly type = 'agent:context:compacted' as const;
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly strategy: string;
-  readonly tokensBefore: number;
-  readonly tokensAfter: number;
-  readonly messagesDropped: number;
-
-  constructor(
-    workflowId: string,
-    agentId: string,
-    strategy: string,
-    tokensBefore: number,
-    tokensAfter: number,
-    messagesDropped: number,
-  ) {
-    super(AgentContextCompactedEvent.type);
-    this.workflowId = workflowId;
-    this.agentId = agentId;
-    this.strategy = strategy;
-    this.tokensBefore = tokensBefore;
-    this.tokensAfter = tokensAfter;
-    this.messagesDropped = messagesDropped;
-  }
-}
-
-export class AgentModelFallbackEvent extends Event {
-  static readonly type = 'agent:model:fallback' as const;
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly turnIndex: number;
-  readonly failedModel: string;
-  readonly failedReason: string;
-  readonly nextModel: string;
-  readonly attemptIndex: number;
-
-  constructor(
-    workflowId: string,
-    agentId: string,
-    turnIndex: number,
-    failedModel: string,
-    failedReason: string,
-    nextModel: string,
-    attemptIndex: number,
-  ) {
-    super(AgentModelFallbackEvent.type);
-    this.workflowId = workflowId;
-    this.agentId = agentId;
-    this.turnIndex = turnIndex;
-    this.failedModel = failedModel;
-    this.failedReason = failedReason;
-    this.nextModel = nextModel;
-    this.attemptIndex = attemptIndex;
-  }
-}
-
-export class AgentProviderCircuitOpenEvent extends Event {
-  static readonly type = 'agent:provider:circuit-open' as const;
-  readonly provider: string;
-  readonly errorRate: number;
-  readonly threshold: number;
-  readonly windowDuration: number;
-  readonly cooldownDuration: number;
-
-  constructor(
-    provider: string,
-    errorRate: number,
-    threshold: number,
-    windowDuration: number,
-    cooldownDuration: number,
-  ) {
-    super(AgentProviderCircuitOpenEvent.type);
-    this.provider = provider;
-    this.errorRate = errorRate;
-    this.threshold = threshold;
-    this.windowDuration = windowDuration;
-    this.cooldownDuration = cooldownDuration;
-  }
-}
-
-export class HumanReviewRequestedEvent extends Event {
-  static readonly type = 'human:review:requested' as const;
-  readonly workflowId: string;
-  readonly agentId: string | undefined;
   readonly reviewId: string;
   readonly reviewType: string;
   readonly reviewers: string[];
@@ -1462,15 +1124,13 @@ export class HumanReviewRequestedEvent extends Event {
 
   constructor(
     workflowId: string,
-    agentId: string | undefined,
     reviewId: string,
     reviewType: string,
     reviewers: string[],
     timeout?: string,
   ) {
-    super(HumanReviewRequestedEvent.type);
+    super(ReviewRequestedEvent.type);
     this.workflowId = workflowId;
-    this.agentId = agentId;
     this.reviewId = reviewId;
     this.reviewType = reviewType;
     this.reviewers = reviewers;
@@ -1478,8 +1138,8 @@ export class HumanReviewRequestedEvent extends Event {
   }
 }
 
-export class HumanReviewCompletedEvent extends Event {
-  static readonly type = 'human:review:completed' as const;
+export class ReviewCompletedEvent extends Event {
+  static readonly type = 'human-review:completed' as const;
   readonly workflowId: string;
   readonly reviewId: string;
   readonly decision: 'approved' | 'rejected' | 'partial';
@@ -1495,7 +1155,7 @@ export class HumanReviewCompletedEvent extends Event {
     duration: number,
     feedback?: string,
   ) {
-    super(HumanReviewCompletedEvent.type);
+    super(ReviewCompletedEvent.type);
     this.workflowId = workflowId;
     this.reviewId = reviewId;
     this.decision = decision;
@@ -1518,17 +1178,8 @@ export interface WeftEventMap {
   [AttributesChangedEvent.type]: AttributesChangedEvent;
   [UpdateReceivedEvent.type]: UpdateReceivedEvent;
   [UpdateCompletedEvent.type]: UpdateCompletedEvent;
-  [AgentTurnStartedEvent.type]: AgentTurnStartedEvent;
-  [AgentTurnCompletedEvent.type]: AgentTurnCompletedEvent;
-  [AgentToolCalledEvent.type]: AgentToolCalledEvent;
-  [AgentToolReturnedEvent.type]: AgentToolReturnedEvent;
-  [AgentBudgetWarningEvent.type]: AgentBudgetWarningEvent;
-  [AgentBudgetExceededEvent.type]: AgentBudgetExceededEvent;
-  [AgentContextCompactedEvent.type]: AgentContextCompactedEvent;
-  [AgentModelFallbackEvent.type]: AgentModelFallbackEvent;
-  [AgentProviderCircuitOpenEvent.type]: AgentProviderCircuitOpenEvent;
-  [HumanReviewRequestedEvent.type]: HumanReviewRequestedEvent;
-  [HumanReviewCompletedEvent.type]: HumanReviewCompletedEvent;
+  [ReviewRequestedEvent.type]: ReviewRequestedEvent;
+  [ReviewCompletedEvent.type]: ReviewCompletedEvent;
 }
 ```
 
@@ -2641,21 +2292,6 @@ const server = serve({
       return Response.json(result);
     },
 
-    // Agent-Specific Endpoints
-    'GET /v1/workflows/:id/conversation': async (req) => {
-      const agentConversation = query<void, AgentConversation>('agentConversation');
-      const conversation = await engine.query(req.params.id, agentConversation);
-      if (!conversation) return new Response('Not found', { status: 404 });
-      return Response.json(conversation);
-    },
-
-    'GET /v1/workflows/:id/cost': async (req) => {
-      const agentCostWaterfall = query<void, AgentCostWaterfall>('agentCostWaterfall');
-      const cost = await engine.query(req.params.id, agentCostWaterfall);
-      if (!cost) return new Response('Not found', { status: 404 });
-      return Response.json(cost);
-    },
-
     'GET /v1/reviews': async (req) => {
       const reviews = await engine.listReviews({
         status: req.query.status,
@@ -2718,12 +2354,6 @@ const server = serve({
       if (server.upgrade(req, { data: { type: 'tokens', workflowId: id } })) return;
     }
 
-    // Agent-specific streaming (turns + tokens + tool calls)
-    if (url.pathname.match(/^\/v1\/workflows\/[\w-]+\/agent-stream$/)) {
-      const id = url.pathname.split('/')[3];
-      if (server.upgrade(req, { data: { type: 'agent', workflowId: id } })) return;
-    }
-
     return new Response('Not Found', { status: 404 });
   },
 
@@ -2733,7 +2363,6 @@ const server = serve({
       if (type === 'worker') ws.subscribe(`tasks:${ws.data.queue}`);
       if (type === 'watch') ws.subscribe(`events:${ws.data.workflowId}`);
       if (type === 'tokens') ws.subscribe(`tokens:${ws.data.workflowId}`);
-      if (type === 'agent') ws.subscribe(`agent:${ws.data.workflowId}`);
     },
     message(ws, msg) {
       /* task completion from workers */
@@ -3150,938 +2779,7 @@ async function longPollWorker(
 
 The long-poll client is intentionally simple — it can run in Deno, Cloudflare Workers, Node.js, or even a browser. The tradeoff versus WebSocket is higher latency (up to the poll timeout) and no server-push cancellation. For most use cases, WebSocket is preferred; long-poll is the compatibility escape hatch.
 
-### 12. Agent-Native Engine
-
-The current `ctx.agent()` could be mistaken for "a durable LLM API call with some options." That is agent-_compatible_, not agent-_native_. Agent execution has a fundamentally different shape (dynamic loops, not static DAGs), a different output mode (streams, not values), a different cost model (tokens, not compute), a different interaction model (human conversation, not fire-and-forget), and a different coordination model (handoff and debate, not just fan-out/fan-in). This section describes how each of these differences is reflected in the engine's primitives, storage model, event system, and observability layer.
-
-#### Why AI Agents Cannot Be Bolted Onto Temporal
-
-Temporal's determinism constraint creates a fundamental tension with LLM-based agent loops. LLM API calls must be activities (since they are non-deterministic network calls). But activities are opaque to the workflow — the workflow dispatches an activity and waits for the result. This forces agent loops into one of two bad choices:
-
-1. **Fully in-activity.** The entire ReAct loop (LLM call → tool selection → tool execution → LLM call) runs as a single activity. Tool calls within it are not individually checkpointed. If the process crashes mid-loop after executing 5 of 10 tool calls, the entire agent conversation restarts from scratch — including re-executing all tool calls with their side effects.
-
-2. **Fully in-workflow.** Each LLM call is a separate activity. But Temporal's replay model requires every activity result to be deterministically reproducible from the event history. LLM APIs are inherently non-deterministic — the same prompt can produce different outputs. Storing and replaying every LLM response defeats the purpose of having a live model and creates enormous event histories.
-
-Weft's generator model avoids this dilemma entirely. Each tool call within an agent loop is a separate `yield*` checkpoint boundary. Token streaming flows through the standard `EventTarget` and `WebSocket` systems in real time. The agent loop is simultaneously durable (each tool call is individually checkpointed) and live (tokens stream as they arrive). No other durable execution engine offers this combination.
-
----
-
-#### 12.1 Dynamic Execution Shape
-
-Traditional workflows are **static DAGs** — you know the steps at compile time. "Charge card, reserve inventory, send email." The graph is fixed. Temporal was designed for this: you define the sequence, it executes it durably.
-
-Agent loops are **dynamic, emergent graphs**. The LLM decides what to do next based on what it learned from the last step. You don't know at workflow-definition time whether the agent will make 3 tool calls or 30. You don't know which tools it will call. The "workflow" is a loop where the control flow is determined at runtime by a probabilistic model.
-
-Weft's generator model handles this naturally. A `while` loop with `yield*` inside it creates checkpoints at each tool call without declaring the graph shape upfront:
-
-```typescript
-async function* researchAgent(ctx: Context, topic: string) {
-  let findings: string[] = [];
-  let confidence = 0;
-
-  // The loop runs until the agent is confident enough.
-  // We don't know how many iterations this will take.
-  while (confidence < 0.8) {
-    const result = yield* ctx.agent({
-      model: 'claude-sonnet-4-20250514',
-      prompt: `Research "${topic}". Current findings:\n${findings.join('\n')}`,
-      tools: [webSearch, readDocument, analyzeData],
-      maxTurns: 5,
-    });
-
-    findings.push(result.summary);
-    confidence = result.confidence;
-
-    // Each iteration creates checkpoints at every tool call.
-    // If we crash after 7 iterations, we resume at iteration 7 — not restart from 0.
-    // The checkpoint contains only: { findings, confidence } — bounded size.
-  }
-
-  return { findings, confidence };
-}
-```
-
-**Storage implications.** The checkpoint stores only the current state — `wf:{id}:ckpt` is a single key containing the generator's local variables at the pause point. Whether the agent executed 3 tool calls or 300, the checkpoint size depends only on what's in scope, not on execution history. The step index is a monotonic counter that increments with each `yield*` regardless of origin — no step-count pre-declaration required.
-
-This is the fundamental advantage over static DAG engines (Airflow, Prefect, Step Functions) where the graph shape must be known at declaration time. Agent workloads are inherently dynamic, and the engine must embrace that dynamism rather than forcing agents into a fixed structure.
-
-**Going further: bounded checkpoint growth.** Even though checkpoint size is independent of step count, the conversation history accumulated by an agent loop grows linearly with turns. The engine monitors this: `CheckpointSizeWarningEvent` fires when an agent's checkpoint exceeds a configurable threshold (default: 64KB). The [Context Window Management](#126-context-window-management) strategy determines how old conversation history is compacted or archived. `ctx.offload()` and `ctx.archive()` let the workflow explicitly move large intermediate state out of the checkpoint.
-
----
-
-#### 12.2 First-Class Streaming
-
-In traditional workflows, the result is a structured object returned at the end. In agent workflows, the result is **a stream of tokens being generated in real-time**, and users need to see them as they're generated. This is not "nice to have" — it is the core UX. An interface that waits 45 seconds for a complete response and then dumps it all at once is unusable.
-
-The engine treats `ReadableStream` as a first-class data type — not just a convenience bridge to WebSocket observers.
-
-**Stream multiplexer.** A single LLM response stream fans out to multiple consumers without duplicating the API call:
-
-```typescript
-// Inside the engine's agent runner:
-// One LLM API call, multiple consumers.
-const llmStream = await provider.stream(messages, { signal });
-
-// Fan out to: checkpoint accumulator, EventTarget, all WebSocket subscribers
-const [checkpointStream, observerStream] = llmStream.tee();
-
-// Checkpoint accumulator: builds up the turn's text for crash recovery
-const turnText = await accumulateStream(checkpointStream);
-
-// Observer stream: bridges to EventTarget and WebSocket
-observerStream.pipeTo(
-  new WritableStream({
-    write(token) {
-      // Dispatch to EventTarget (local listeners)
-      handle.dispatchEvent(new TokenEvent(workflowId, token, model));
-      // Publish to WebSocket subscribers (remote observers)
-      server.publish(`workflow:${workflowId}:stream`, JSON.stringify({ type: 'token', token }));
-    },
-  }),
-);
-```
-
-**Crash recovery mid-stream.** When a process crashes while tokens are streaming, the engine resumes from the last completed tool call or turn boundary — not the beginning of the agent loop. The partial token output from the interrupted turn is discarded, and the LLM call is re-issued for that turn only. Clients reconnect and receive the accumulated output from prior turns:
-
-```typescript
-// Client reconnection protocol:
-// 1. Client connects to WS /v1/workflows/:id/stream
-// 2. Server sends accumulated output from completed turns (replay buffer)
-// 3. Server streams live tokens from the current turn
-
-ws.addEventListener('message', (event) => {
-  const msg = JSON.parse(event.data);
-  switch (msg.type) {
-    case 'replay':
-      // Accumulated output from turns completed before the crash/reconnect
-      appendToUI(msg.content);
-      break;
-    case 'token':
-      // Live token from the current turn
-      appendToUI(msg.token);
-      break;
-    case 'turn:completed':
-      // A full turn finished — tool calls, results, everything
-      updateTurnUI(msg.turn);
-      break;
-  }
-});
-```
-
-**Backpressure.** `ReadableStream`'s built-in backpressure mechanism propagates from slow consumers. If a WebSocket client cannot keep up, the stream's `desiredSize` on the controller drops to zero, signaling the producer to slow down. The engine buffers up to a configurable limit (default: 64KB). If the buffer fills, the slow client is disconnected with a `stream:backpressure` close frame rather than allowing unbounded memory growth:
-
-```typescript
-const engine = new Engine({
-  streaming: {
-    maxBufferSize: 64 * 1024, // 64KB per client
-    replayBufferTurns: 5, // Keep last 5 turns for reconnecting clients
-  },
-});
-```
-
-**SSE fallback.** For environments where WebSocket is unavailable, `GET /v1/workflows/:id/stream` with `Accept: text/event-stream` returns a Server-Sent Events stream. Same multiplexer, different transport. The SSE stream supports `Last-Event-ID` for reconnection.
-
-**Going further: accumulated turn text in checkpoint.** The text generated so far in the current turn is included in the checkpoint state. On recovery, the engine knows exactly what has been streamed to clients, enabling seamless replay without re-requesting completed content from the LLM.
-
----
-
-#### 12.3 Cost as Execution Constraint
-
-In traditional workflows, "cost" is compute time — linear, predictable, and cheap. In agent workflows, cost is **token consumption**: non-linear (a single bad tool call can trigger a 50,000-token context window), unpredictable (the LLM decides how many turns to take), expensive (a single agent run can cost $5–50), and per-model (different models in the same workflow have different pricing).
-
-Cost is not a metric to observe after the fact. It is an **execution constraint** enforced in the hot path of every LLM call.
-
-**Workflow-level budgets** span all agent calls within a single workflow execution, including child workflows:
-
-```typescript
-async function* analysisWorkflow(ctx: Context, input: Input) {
-  // Budget spans ALL agent calls in this workflow
-  ctx.setBudget({
-    maxTokens: 200_000,
-    maxCost: 10.0,
-    warningThreshold: 0.8, // AgentBudgetWarningEvent at 80%
-    models: {
-      'claude-sonnet-4-20250514': { inputCostPer1K: 0.003, outputCostPer1K: 0.015 },
-      'claude-haiku-4-5-20251001': { inputCostPer1K: 0.0008, outputCostPer1K: 0.004 },
-    },
-  });
-
-  const research = yield* ctx.agent({
-    model: 'claude-sonnet-4-20250514',
-    prompt: 'Research the market...',
-    tools: [webSearch],
-  });
-
-  // Check remaining budget before expensive analysis
-  const remaining = ctx.budgetRemaining();
-  // { tokensRemaining: 142_000, costRemaining: 7.31, breakdown: [...] }
-
-  if (remaining.costRemaining < 2.0) {
-    // Switch to cheaper model for remaining work
-    return yield* ctx.agent({
-      model: 'claude-haiku-4-5-20251001',
-      prompt: `Summarize: ${research}`,
-    });
-  }
-
-  return yield* ctx.agent({
-    model: 'claude-sonnet-4-20250514',
-    prompt: `Deep analysis: ${research}`,
-    tools: [dataQuery, chartGenerator],
-  });
-}
-```
-
-**Organization-level budgets** enforce daily and monthly limits per namespace across all workflows:
-
-```typescript
-engine.setBudgetPolicy({
-  namespace: 'production',
-  daily: { maxCost: 500.0 }, // $500/day across all workflows
-  monthly: { maxCost: 10_000.0 }, // $10K/month cap
-  enforcement: 'real-time', // Checked on every LLM call, not just on agent start
-});
-```
-
-Organization budget counters are stored at `budget:{namespace}:daily:{YYYY-MM-DD}` and `budget:{namespace}:monthly:{YYYY-MM}`. They are kept in memory for fast enforcement and flushed to storage atomically with each agent turn checkpoint via `batch()`. Exceeding the limit rejects new `ctx.agent()` calls with `OrganizationBudgetExceededError` before the LLM API call is made.
-
-**Cost-aware retry.** Retry policies include cost constraints alongside attempt limits:
-
-```typescript
-const analysis =
-  yield *
-  ctx.agent({
-    model: 'claude-sonnet-4-20250514',
-    prompt: 'Analyze...',
-    retry: {
-      maxAttempts: 3,
-      maxCost: 2.0, // Stop retrying if cumulative retry cost exceeds $2
-      backoff: 'exponential',
-    },
-  });
-```
-
-Before retrying a failed agent call, the engine checks `ctx.budgetRemaining()`. If the estimated retry cost (based on the previous turn's token count) exceeds the remaining budget, the retry is skipped and `BudgetExceededError` is thrown instead.
-
-**Cost events** flow through the standard `EventTarget` system:
-
-```typescript
-engine.addEventListener(AgentBudgetWarningEvent.type, (event) => {
-  console.warn(
-    `Budget warning: workflow ${event.workflowId} at ${event.budgetUsedPercent}%`,
-    `($${event.costRemaining} remaining)`,
-  );
-});
-
-engine.addEventListener(AgentBudgetExceededEvent.type, (event) => {
-  console.error(
-    `Budget exceeded: workflow ${event.workflowId}`,
-    `spent $${event.costUsed} (limit: $${event.maxCost})`,
-  );
-});
-```
-
-**Cost projection.** `ctx.budgetProjection()` estimates remaining capacity based on the current burn rate:
-
-```typescript
-const projection = ctx.budgetProjection();
-// {
-//   estimatedTurnsRemaining: 12,
-//   estimatedCostAtCompletion: 8.50,
-//   averageCostPerTurn: 0.42,
-//   burnRate: { tokensPerMinute: 3200, costPerMinute: 0.14 },
-// }
-```
-
-**Cost as search attribute.** Each `ctx.agent()` call automatically updates a `weft:tokenCost` search attribute with cumulative USD cost, enabling cross-workflow cost queries: `engine.list({ filter: "weft:tokenCost > 5.0" })`.
-
-**Going further: cost tracking uses AbortController for budget enforcement.** The same `AbortController` pattern used for workflow cancellation and timeouts enforces budgets:
-
-```typescript
-// Inside ctx.agent() implementation:
-const budgetController = new AbortController();
-
-onTokenUsage((usage) => {
-  if (usage.totalTokens > options.tokenBudget) {
-    budgetController.abort(new BudgetExceededError(usage));
-  }
-});
-
-// Compose with workflow cancellation and timeout signals
-const combined = AbortSignal.any([
-  budgetController.signal,
-  workflowCancellation.signal,
-  AbortSignal.timeout(options.turnTimeout),
-]);
-
-const response = await fetch('https://api.anthropic.com/v1/messages', {
-  signal: combined, // Web standard cancellation!
-  // ...
-});
-```
-
----
-
-#### 12.4 Human-in-the-Loop Interaction Protocol
-
-The current plan models human review as `ctx.waitForSignal("human_review")`. That is the right _primitive_ but the wrong _abstraction level_. Real human-in-the-loop in agent workflows involves structured approval UIs, multi-turn conversation, escalation, and partial approval. `ctx.humanReview()` is a higher-level primitive built on signals and updates that provides all of this.
-
-**Structured review requests:**
-
-```typescript
-const decision =
-  yield *
-  ctx.humanReview({
-    // What the human is reviewing
-    artifact: {
-      type: 'report',
-      content: agentOutput,
-      sections: ['executive-summary', 'methodology', 'findings', 'recommendations'],
-    },
-
-    // Who reviews and how they're notified
-    reviewers: ['legal-team'],
-    notify: {
-      webhook: 'https://slack.com/api/chat.postMessage',
-      payload: { channel: '#reviews', text: `Review needed: ${topic}` },
-    },
-
-    // Escalation chain with timeouts
-    escalation: [
-      { after: '4 hours', to: 'manager-queue' },
-      { after: '24 hours', action: 'auto-approve', auditReason: 'timeout' },
-    ],
-
-    // Allow partial approval (per section)
-    allowPartial: true,
-  });
-```
-
-The return type is richly structured:
-
-```typescript
-interface ReviewDecision {
-  decision: 'approved' | 'rejected' | 'partial';
-  reviewer: string;
-  timestamp: Date;
-  // Per-section decisions when allowPartial: true
-  sections?: Record<
-    string,
-    {
-      decision: 'approved' | 'rejected';
-      feedback?: string;
-    }
-  >;
-  // Overall feedback
-  feedback?: string;
-}
-```
-
-**Multi-turn conversation threading.** A reviewer might reject the agent's output with feedback, the agent revises, the reviewer reviews again. This is modeled as a series of updates within the review wait period:
-
-```typescript
-const decision =
-  yield *
-  ctx.humanReview({
-    artifact: report,
-    reviewers: ['editor'],
-    conversation: true, // Enable multi-turn review
-
-    // Called when the reviewer sends a message during review
-    *onMessage(ctx, message) {
-      // The agent can respond to reviewer questions
-      const response = yield* ctx.agent({
-        model: 'claude-sonnet-4-20250514',
-        prompt: `The reviewer asks: "${message.text}"\n\nContext: ${report}`,
-      });
-      return { text: response }; // Sent back to the reviewer
-    },
-  });
-```
-
-**Review state is durable.** The review request is stored at `review:{workflowId}:{reviewId}` in storage. If the process crashes while waiting for human review, recovery loads the pending review and continues waiting. The reviewer's partial conversation history is preserved in the checkpoint.
-
-**Dashboard integration.** Pending reviews are listed at `GET /v1/reviews?status=pending` and displayed in the built-in dashboard. Reviewers can approve, reject, comment, or provide section-level feedback directly from the UI. The `POST /v1/reviews/:reviewId/decision` endpoint accepts the review decision.
-
-**Going further: review notifications.** The `notify` field supports webhooks (Slack, PagerDuty, any HTTP endpoint) and email. Notifications are fire-and-forget `fetch()` calls with configurable retry. The engine does not depend on notification delivery — the review is always accessible via the dashboard and API regardless of whether the notification was received.
-
----
-
-#### 12.5 MCP-Native Tool Execution
-
-The ecosystem has converged on **MCP (Model Context Protocol)** as the standard for tool integration. Tools should not be hardcoded function arrays — they should be discoverable from MCP server URLs.
-
-**MCP server URLs as tool sources.** `ctx.agent()` accepts a mix of local functions and MCP server URLs:
-
-```typescript
-const analysis =
-  yield *
-  ctx.agent({
-    model: 'claude-sonnet-4-20250514',
-    prompt: 'Analyze the codebase...',
-    tools: [
-      { mcp: 'http://localhost:3000/mcp' }, // Local MCP server: filesystem tools
-      { mcp: 'https://api.example.com/mcp', auth: { type: 'bearer', token: apiKey } }, // Remote MCP server
-      localSearchTool, // Local function — same as before
-    ],
-  });
-```
-
-**Dynamic tool discovery.** At agent start, the engine calls `tools/list` on each MCP server to discover available tools. The tool definitions (name, description, input schema) are fetched once and cached for the duration of the agent loop. New tools added to an MCP server are available on the next `ctx.agent()` call without code changes.
-
-**Tool schema validation at the engine level.** MCP tool input schemas (JSON Schema) are validated before dispatching tool calls. If the LLM produces invalid tool arguments, the error is caught before the tool call executes:
-
-```typescript
-// The engine validates BEFORE sending to the MCP server:
-ToolSchemaValidationError: Invalid arguments for tool "readFile"
-
-  Schema expects: { path: string, encoding?: string }
-  Received:       { filename: "/etc/hosts" }
-
-  Missing required field: "path"
-  Unknown field: "filename" (did you mean "path"?)
-```
-
-**Checkpoint at MCP call boundary.** Each MCP tool invocation is a `yield*` checkpoint boundary — identical durability to local tool calls. If the process crashes after the MCP server processes the tool call but before the agent sees the result, recovery loads the result from the checkpoint. MCP tool results are annotated with `source: "mcp"` in the conversation history and in `AgentToolCalledEvent`.
-
-**Tool registry merges local and MCP sources.** The engine builds a unified tool list from all sources. Name collisions between local functions and MCP server tools produce a `ToolNameConflictError` at agent initialization — not at the first conflicting call.
-
-**Going further: MCP server health checking.** Before starting the agent loop, the engine pings each MCP server. Unreachable servers produce `MCPServerUnavailableError` immediately rather than failing silently on the first tool call. Individual MCP tool calls respect a configurable timeout (default: 30 seconds) enforced via `AbortSignal.timeout()`.
-
-**Going further: MCP transports.** The MCP client supports both transports defined by the protocol: stdio (for local process tools like language servers) and HTTP+SSE (for remote servers). The transport is inferred from the URL scheme or explicitly configured:
-
-```typescript
-tools: [
-  { mcp: 'stdio:///usr/local/bin/mcp-filesystem' }, // Local process via stdio
-  { mcp: 'https://tools.example.com/mcp' }, // Remote server via HTTP (default)
-  { mcp: 'https://tools.example.com/mcp', transport: 'sse' }, // Remote server via HTTP+SSE
-];
-```
-
----
-
-#### 12.6 Context Window Management
-
-LLMs have finite context windows. A 10-turn agent loop with verbose tool results will exceed the context window. Today, developers handle this themselves — truncating old messages, summarizing history, using RAG. This is complex, error-prone, and repeated by every team. An agent-native engine handles it transparently.
-
-**Automatic token tracking.** The engine counts tokens in the conversation history before each LLM call using the provider's tokenizer. The count is recorded in `AgentTurnStartedEvent` and used to determine whether the context strategy needs to trigger.
-
-**Pluggable context strategies.** The `ContextStrategy` interface has a single method:
-
-```typescript
-interface ContextStrategy {
-  compact(
-    messages: Message[],
-    options: {
-      tokenBudget: number; // How many tokens the compacted result should fit within
-      systemMessage: Message; // Always preserved (never compacted)
-      model: string; // Current model (affects tokenizer)
-    },
-  ): AsyncGenerator<Message[]>; // Generator because strategies like "summarize" need yield*
-}
-```
-
-Three built-in strategies:
-
-```typescript
-// Sliding window: drop oldest messages to fit within budget.
-// System prompt and most recent N messages are always preserved.
-const agent = weft.agent({
-  contextStrategy: slidingWindow({
-    preserveRecent: 10, // Always keep last 10 messages
-    compactAt: 0.85, // Trigger when context reaches 85% of window
-  }),
-});
-
-// Summarize: call a cheaper model to compress older messages.
-// The summarization call is itself a checkpointed durable operation.
-const agent = weft.agent({
-  contextStrategy: summarize({
-    summarizeModel: 'claude-haiku-4-5-20251001',
-    preserveRecent: 5,
-    compactAt: 0.8,
-    summaryPrompt: 'Summarize this conversation, preserving key facts and decisions.',
-  }),
-});
-
-// RAG: move older messages to a vector store, retrieve relevant ones per turn.
-const agent = weft.agent({
-  contextStrategy: rag({
-    vectorStore: pineconeStore,
-    retrievalCount: 10,
-    preserveRecent: 3,
-  }),
-});
-```
-
-**Context state is part of the checkpoint.** The current conversation history — after strategy application — is stored in the checkpoint. On recovery, the compacted context is restored directly. The engine does not re-run the context strategy on recovery; the result is already persisted.
-
-**`AgentContextCompactedEvent`** is dispatched when any strategy triggers, including the strategy name, tokens before and after, and messages dropped. This flows through the standard `EventTarget` system.
-
-**Going further: composable strategies.** Strategies can be composed: `compose(slidingWindow({ preserveRecent: 20 }), summarize({ compactAt: 0.9 }))` applies the sliding window first, then summarizes if still over budget. Each strategy in the chain is a generator, so intermediate checkpoints are created between strategy applications.
-
----
-
-#### 12.7 Multi-Agent Coordination
-
-Real agent systems involve multiple agents collaborating, competing, or delegating. The existing `ctx.all()` handles parallel fan-out, but agent workloads require additional coordination primitives.
-
-**`ctx.handoff()` — sequential delegation with context transfer.** One agent decides it needs another agent's expertise and transfers the task, including relevant context:
-
-```typescript
-async function* researchPipeline(ctx: Context, topic: string) {
-  // Researcher gathers raw data
-  const rawData = yield* ctx.agent({
-    model: 'claude-sonnet-4-20250514',
-    prompt: `Gather comprehensive data on: ${topic}`,
-    tools: [webSearch, documentLookup, dataQuery],
-  });
-
-  // Hand off to analyst with selective context forwarding
-  const analysis = yield* ctx.handoff({
-    agent: 'analyst',
-    input: { topic, data: rawData },
-    forwardContext: 'summary', // Send a summary of the researcher's conversation, not the full history
-  });
-
-  // Hand off to writer for the final report
-  const report = yield* ctx.handoff({
-    agent: 'writer',
-    input: { topic, analysis },
-    forwardContext: 'none', // Writer only needs the structured analysis, not the full conversation
-  });
-
-  return report;
-}
-```
-
-The delegating agent pauses at the `yield*` boundary. A child workflow runs the target agent. The result returns when the child completes. OpenTelemetry span links connect the parent and child traces.
-
-**`ctx.debate()` — adversarial review.** Two agents argue opposing positions for N rounds, then a judge decides:
-
-```typescript
-const review =
-  yield *
-  ctx.debate({
-    agents: [
-      { name: 'advocate', system: 'Argue for the proposal...' },
-      { name: 'critic', system: 'Find weaknesses in the proposal...' },
-    ],
-    judge: { name: 'editor', system: 'Evaluate both arguments and decide...' },
-    rounds: 3,
-    topic: proposedStrategy,
-  });
-// review.verdict: the judge's decision
-// review.transcript: full debate history (all rounds)
-```
-
-Each round is a checkpoint boundary. If the process crashes mid-debate, recovery resumes from the last completed round.
-
-**`ctx.supervise()` — supervisor pattern.** A supervisor agent manages a pool of worker agents, routing tasks based on capability:
-
-```typescript
-const results =
-  yield *
-  ctx.supervise({
-    workers: [
-      weft.agent({ name: 'legal-reviewer', tools: [legalDatabase] }),
-      weft.agent({ name: 'technical-reviewer', tools: [codeAnalyzer] }),
-      weft.agent({ name: 'financial-reviewer', tools: [financialModels] }),
-    ],
-    strategy: 'consensus', // All workers must agree. Alternatives: 'best-of-n', 'merge'
-    input: documentToReview,
-  });
-```
-
-**Execution state — concurrent mutable state.** When multiple agents run in parallel via `ctx.all()`, they may need shared, mutable state. `ctx.state.execution()` provides a CAS (compare-and-swap) primitive backed by storage:
-
-```typescript
-async function* collaborativeResearch(ctx: Context, topics: string[]) {
-  // Execution state for concurrent agents in this execution tree.
-  const findings = ctx.state.execution('research-findings', {
-    initial: { articles: [], totalCost: 0 },
-  });
-
-  // Multiple agents run in parallel, writing to shared state
-  yield* ctx.all(
-    topics.map((topic) =>
-      ctx.agent({
-        model: 'claude-sonnet-4-20250514',
-        prompt: `Research: ${topic}`,
-        tools: [webSearch],
-        hooks: {
-          async *afterToolCall(ctx, tool, result) {
-            if (tool.name === 'webSearch') {
-              // CAS update: read-modify-write with automatic retry on conflict
-              yield* findings.update((state) => ({
-                ...state,
-                articles: [...state.articles, ...result.articles],
-              }));
-            }
-          },
-        },
-      }),
-    ),
-  );
-
-  return yield* findings.get();
-}
-```
-
-Execution state writes are serialized via optimistic concurrency control. On conflict (another agent wrote between read and write), the update function is retried with the latest state. Writes are committed through a conditional storage batch.
-
-**Agent-to-agent messaging.** Agents running in parallel can communicate through their workflow handles via `ctx.signal()`. A supervisor agent can signal a worker to change strategy mid-execution.
-
-**Budget across parallel agents.** Multi-agent fan-out via `ctx.all()` respects the workflow-level budget. The total token cost across all parallel branches counts against the budget set by `ctx.setBudget()`. If any branch exhausts the shared budget, all branches receive the abort signal via `AbortSignal.any()`.
-
----
-
-#### 12.8 Agent-Specific Observability
-
-A traditional workflow dashboard shows: "step 1 completed, step 2 running, step 3 pending." An agent-native dashboard needs to show the agent's reasoning trace, token usage per turn as a cost waterfall, tool call results in context, the full conversation history, and real-time streaming output.
-
-**Agent-specific event types.** All agent events extend the standard `Event` class and are registered in `WeftEventMap` for typed `addEventListener`:
-
-```typescript
-// Listen to individual agent turns
-handle.addEventListener(AgentTurnCompletedEvent.type, (event) => {
-  console.log(
-    `Turn ${event.turnIndex}: ${event.inputTokens}in + ${event.outputTokens}out`,
-    `= $${event.cost.toFixed(4)} (cumulative: $${event.cumulativeCost.toFixed(4)})`,
-    `[${event.toolCallCount} tool calls, ${event.duration}ms]`,
-  );
-});
-
-// Listen to tool calls
-handle.addEventListener(AgentToolCalledEvent.type, (event) => {
-  console.log(`Tool: ${event.toolName} (${event.source}) — op:${event.operationId}`);
-});
-
-// Listen to budget warnings
-engine.addEventListener(AgentBudgetWarningEvent.type, (event) => {
-  console.warn(`Budget ${event.budgetUsedPercent}% used for workflow ${event.workflowId}`);
-});
-```
-
-The full event taxonomy:
-
-| Event                           | Type String                   | When                                              |
-| ------------------------------- | ----------------------------- | ------------------------------------------------- |
-| `AgentTurnStartedEvent`         | `agent:turn:started`          | Before each LLM call                              |
-| `AgentTurnCompletedEvent`       | `agent:turn:completed`        | After each LLM response + tool calls              |
-| `AgentToolCalledEvent`          | `agent:tool:called`           | Before each tool invocation                       |
-| `AgentToolReturnedEvent`        | `agent:tool:returned`         | After each tool returns                           |
-| `AgentBudgetWarningEvent`       | `agent:budget:warning`        | At configurable threshold (default 80%)           |
-| `AgentBudgetExceededEvent`      | `agent:budget:exceeded`       | When budget is exhausted                          |
-| `AgentContextCompactedEvent`    | `agent:context:compacted`     | When context strategy triggers                    |
-| `AgentModelFallbackEvent`       | `agent:model:fallback`        | When a model fails and the next in chain is tried |
-| `AgentProviderCircuitOpenEvent` | `agent:provider:circuit-open` | When a provider is temporarily excluded           |
-| `HumanReviewRequestedEvent`     | `human:review:requested`      | When `ctx.humanReview()` creates a review         |
-| `HumanReviewCompletedEvent`     | `human:review:completed`      | When a reviewer submits a decision                |
-
-**Reasoning trace.** When the model returns `thinking` blocks (extended thinking), they are stored in the checkpoint alongside the conversation history and included in `AgentTurnCompletedEvent` as `reasoningTrace`. The dashboard renders reasoning traces in an expandable accordion per turn.
-
-**Queryable data.** Agent-specific state is queryable via workflow handles:
-
-```typescript
-const agentCostWaterfall = query<void, AgentCostWaterfall>('agentCostWaterfall');
-const agentConversation = query<void, AgentConversation>('agentConversation');
-const agentCostProjection = query<void, AgentCostProjection>('agentCostProjection');
-
-// Cost waterfall: per-turn cost breakdown
-const costWaterfall = await handle.query(agentCostWaterfall);
-// [{ turn: 0, inputTokens: 1200, outputTokens: 450, cost: 0.0103, model: "claude-sonnet-4-20250514", tools: ["webSearch"] }, ...]
-
-// Full conversation history
-const conversation = await handle.query(agentConversation);
-// [{ role: "system", content: "..." }, { role: "user", content: "..." }, { role: "assistant", content: "...", toolCalls: [...] }, ...]
-
-// Cost projection
-const projection = await handle.query(agentCostProjection);
-// { estimatedTurnsRemaining: 8, estimatedTotalCost: 4.20, confidence: 0.7 }
-```
-
-**OTel span hierarchy.** The observability interceptor creates spans for agent execution:
-
-```
-workflow:research (root span)
-├── agent (agent span)
-│   ├── agent:turn:0 (turn span)
-│   │   ├── agent:tool:webSearch (tool span)
-│   │   └── agent:tool:readDocument (tool span)
-│   ├── agent:turn:1 (turn span)
-│   │   └── agent:tool:analyzeData (tool span)
-│   └── agent:turn:2 (turn span)
-└── sleep:1h (sleep span)
-```
-
-Each span includes attributes: `weft.agent.model`, `weft.agent.turn_index`, `weft.agent.input_tokens`, `weft.agent.output_tokens`, `weft.agent.cost`, `weft.agent.tool_count`.
-
-**Dashboard agent view.** The built-in dashboard at `/ui` includes an agent-specific panel showing: conversation timeline with tool calls highlighted inline, token usage per turn as a bar chart, cumulative cost curve, budget remaining gauge, reasoning trace accordion, and real-time streaming output.
-
----
-
-#### 12.9 Model Routing and Fallback
-
-In production agent workflows, you do not always want the same model for every turn. You want: the best model for complex reasoning, a cheaper model for summarization, automatic fallback when a provider is down, and A/B testing for quality comparison.
-
-**`ModelRouter` interface.** A pluggable component that selects the model for each turn:
-
-```typescript
-interface ModelRouter {
-  select(context: RoutingContext): ModelSelection;
-}
-
-interface RoutingContext {
-  turnIndex: number;
-  conversationLength: number;
-  toolCallsThisTurn: number;
-  budgetRemaining: { tokens: number; cost: number };
-  previousTurns: TurnSummary[];
-  metadata: Record<string, unknown>;
-}
-
-interface ModelSelection {
-  model: string;
-  fallback?: string[]; // Ordered fallback chain
-  reason?: string; // For observability
-}
-```
-
-**Static fallback chain.** The simplest configuration — try the primary model, fall back on failure:
-
-```typescript
-const agent = weft.agent({
-  model: 'claude-sonnet-4-20250514',
-  fallback: ['gpt-4o', 'claude-haiku-4-5-20251001'],
-  // If Claude Sonnet fails (rate limit, timeout, outage), try GPT-4o.
-  // If GPT-4o also fails, try Haiku.
-  // Each fallback attempt is a separate checkpoint boundary.
-});
-```
-
-**Dynamic model routing based on turn characteristics:**
-
-```typescript
-const smartRouter: ModelRouter = {
-  select(context) {
-    // Complex reasoning turns → best model
-    if (context.toolCallsThisTurn > 3 || context.conversationLength > 50) {
-      return { model: 'claude-sonnet-4-20250514', reason: 'complex-reasoning' };
-    }
-    // Low budget remaining → cheapest model
-    if (context.budgetRemaining.cost < 1.0) {
-      return { model: 'claude-haiku-4-5-20251001', reason: 'budget-conservation' };
-    }
-    // Default with fallback
-    return {
-      model: 'claude-sonnet-4-20250514',
-      fallback: ['gpt-4o'],
-      reason: 'default',
-    };
-  },
-};
-
-const agent = weft.agent({
-  modelRouter: smartRouter,
-});
-```
-
-**Cost-tier routing.** Declare cost tiers and the engine selects the cheapest adequate model:
-
-```typescript
-const agent = weft.agent({
-  modelRouter: costTierRouter({
-    tiers: {
-      premium: 'claude-sonnet-4-20250514',
-      standard: 'gpt-4o-mini',
-      economy: 'claude-haiku-4-5-20251001',
-    },
-    // Start with premium, switch to economy when 70% of budget is consumed
-    budgetThresholds: { standard: 0.5, economy: 0.7 },
-  }),
-});
-```
-
-**A/B testing.** Route a percentage of agent invocations to different models for quality comparison:
-
-```typescript
-const agent = weft.agent({
-  modelRouter: abTestRouter({
-    control: { model: 'claude-sonnet-4-20250514', weight: 0.8 },
-    variant: { model: 'gpt-4o', weight: 0.2 },
-    // Selection is deterministic per workflow ID (seeded hash) for reproducibility
-    // Results tagged with model attribution in AgentTurnCompletedEvent.selectedModel
-  }),
-});
-```
-
-**Provider health tracking.** The engine tracks error rates per provider over a sliding window. Providers exceeding a configurable error threshold are temporarily excluded (circuit breaker):
-
-```typescript
-engine.configure({
-  providerHealth: {
-    windowDuration: 60_000, // 60-second sliding window
-    errorThreshold: 0.5, // 50% error rate triggers circuit open
-    cooldownDuration: 300_000, // 5-minute cooldown before retrying
-  },
-});
-```
-
-When a circuit opens, `AgentProviderCircuitOpenEvent` is dispatched. When it closes (after cooldown), agents resume routing to that provider.
-
-**Model selection is checkpointed.** The model chosen for each turn is recorded in the checkpoint. On recovery, the same model is used for the retried turn — no re-routing. This ensures deterministic retry behavior even when the model router would now select a different model due to changed conditions.
-
----
-
-#### 12.10 Agent-First Workflow Declaration
-
-This is the most fundamental shift. In the current architecture, `ctx.agent()` is something a workflow _calls_ — it is a step in a workflow. But for many workloads, the agent loop IS the entire workflow. There is no "step 1: agent, step 2: something else." The whole thing is an agent.
-
-`weft.agent()` is a top-level declaration that says: this workflow is an agent.
-
-```typescript
-const researchAgent = weft.agent({
-  name: 'research',
-  model: 'claude-sonnet-4-20250514',
-  system:
-    'You are a research analyst. Gather comprehensive data, verify facts, and produce actionable insights.',
-  tools: [
-    { mcp: 'http://localhost:3000/mcp' }, // MCP server: filesystem tools
-    webSearch,
-    factCheck,
-    dataQuery,
-  ],
-  maxTurns: 50,
-
-  // Context window management
-  contextStrategy: summarize({
-    summarizeModel: 'claude-haiku-4-5-20251001',
-    preserveRecent: 10,
-    compactAt: 0.85,
-  }),
-
-  // Model routing
-  modelRouter: costTierRouter({
-    tiers: { premium: 'claude-sonnet-4-20250514', economy: 'claude-haiku-4-5-20251001' },
-    budgetThresholds: { economy: 0.8 },
-  }),
-
-  // Cost constraints
-  budget: {
-    maxCost: 10.0,
-    warningThreshold: 0.8,
-  },
-
-  // Durable lifecycle hooks — these run at checkpoint boundaries
-  hooks: {
-    *beforeTurn(ctx, turn) {
-      // Inject real-time context before each LLM call
-      ctx.setAttribute('agent:turn', turn.index);
-      if (turn.index > 10) {
-        yield* ctx.waitForSignal('continue_approval', { timeout: '1 hour' });
-      }
-    },
-
-    *afterToolCall(ctx, toolCall) {
-      // Audit dangerous tool calls
-      if (toolCall.name === 'executeCode') {
-        yield* ctx.humanReview({
-          artifact: { tool: toolCall.name, input: toolCall.input, result: toolCall.result },
-          reviewers: ['security-team'],
-          escalation: [{ after: '30 minutes', action: 'auto-reject' }],
-        });
-      }
-    },
-
-    onBudgetWarning(ctx, remaining) {
-      // Switch to cheaper model when budget is running low
-      ctx.setModelRouter(
-        costTierRouter({
-          tiers: { economy: 'claude-haiku-4-5-20251001' },
-          budgetThresholds: {},
-        }),
-      );
-    },
-  },
-});
-```
-
-**Registering and starting an agent workflow:**
-
-```typescript
-engine.register(researchAgent);
-
-// Start it like any workflow
-const handle = await engine.start('research', {
-  prompt: 'Analyze the competitive landscape for durable execution engines in 2026.',
-});
-
-// Observe it like any workflow
-for await (const event of handle) {
-  if (event instanceof AgentTurnCompletedEvent) {
-    console.log(`Turn ${event.turnIndex}: $${event.cost.toFixed(4)}`);
-  }
-}
-
-const result = await handle.result();
-```
-
-**Relationship to `ctx.agent()`.** `weft.agent()` is the standalone form — the agent IS the workflow. `ctx.agent()` is the embedded form — the agent is a step inside a larger workflow. They share the same underlying implementation. A `weft.agent()` definition can be used as either:
-
-```typescript
-// As a standalone workflow
-engine.register(researchAgent);
-await engine.start('research', { prompt: '...' });
-
-// As a step in a larger workflow
-async function* pipeline(ctx: Context, input: Input) {
-  const research = yield* ctx.agent(researchAgent, { prompt: input.topic });
-  const report = yield* ctx.agent(writerAgent, { data: research });
-  return report;
-}
-```
-
-**Type-safe agent registry.** Agent definitions carry their input and output types:
-
-```typescript
-const researcher = weft.agent<{ prompt: string }, ResearchResult>({
-  name: 'research',
-  // ...
-});
-
-// Compile-time type checking on start
-const handle = await engine.start('research', { prompt: 'topic' }); // OK
-const handle = await engine.start('research', { wrong: 'field' }); // Type error
-
-// Compile-time type checking on result
-const result: ResearchResult = await handle.result();
-```
-
-**Engine optimization.** When the engine detects an agent-typed workflow (registered via `weft.agent()`), it applies optimizations specific to conversation-shaped data: pre-warming LLM provider connections, larger checkpoint buffers for conversation history, and priority queuing for tool call execution. These optimizations are transparent — they do not change behavior, only performance.
-
----
-
-#### 12.11 Storage Key Patterns for Agent-Native Features
-
-The following storage key patterns support the agent-native engine. All follow the existing `prefix:{id}:suffix` convention:
-
-```
-review:{workflowId}:{reviewId}           → Pending human review request (JSON: artifact, reviewers, escalation)
-review-resp:{reviewId}                    → Human review response (JSON: decision, reviewer, feedback)
-budget:{namespace}:daily:{YYYY-MM-DD}    → Organization daily budget counter (number: cumulative cost)
-budget:{namespace}:monthly:{YYYY-MM}     → Organization monthly budget counter (number: cumulative cost)
-state:execution:{ownerWorkflowId}:{key}  → Execution state data (MessagePack: current state)
-state:execution:{ownerWorkflowId}:{key}:version → Execution state version counter (number: CAS version)
-state:workflow:{tenantId}:{workflowType}:{key} → Workflow-scoped state data (MessagePack: current state)
-state:tenant:{tenantId}:{key}            → Tenant-scoped state data (MessagePack: current state)
-mcp-tools:{serverUrl}:{cacheKey}         → Cached MCP tool definitions (JSON: tool schemas, TTL)
-provider-health:{provider}:{window}      → Provider error rate tracking (JSON: error count, request count, window start)
-```
-
-Review requests and execution-scoped state entries are cleaned up when the owning workflow reaches a terminal state. Workflow- and tenant-scoped state persists until explicitly deleted. Organization budget counters are retained for billing and audit. MCP tool caches expire based on their configured TTL.
-
-### 13. Additional Platform Patterns
+### 12. Additional Platform Patterns
 
 #### Promise.withResolvers() Throughout
 
@@ -4178,7 +2876,7 @@ class Engine extends EventTarget implements Disposable {
 }
 ```
 
-### 14. Workflow Versioning
+### 13. Workflow Versioning
 
 When you deploy new workflow code while workflows are in-flight, you need to answer: which version of the code runs when a checkpointed workflow resumes?
 
@@ -4252,7 +2950,7 @@ engine.register('order', {
 });
 ```
 
-### 15. Workflow-Level Timeouts
+### 14. Workflow-Level Timeouts
 
 Activity timeouts exist but there is no mechanism to cap the total wall-clock time of an entire workflow execution. This is critical for SLA enforcement, runaway workflow detection, and resource budgeting.
 
@@ -4301,9 +2999,9 @@ async function* orderWorkflow(ctx: Context, order: Order) {
 2. **Timeout fires mid-activity.** The scheduler fires the workflow's `AbortController`, which cascades to all in-flight activities via the existing `AbortSignal.any()` compound cancellation pattern. The workflow is marked as `"timed-out"` and a `WorkflowTimedOutEvent` is dispatched.
 3. **Cleanup.** Deadline keys are deleted when a workflow reaches any terminal state.
 
-The `ctx.signal` property exposes the combined timeout + cancellation signal. Activities and agent calls that already accept `{ signal }` automatically respect workflow timeouts with no code changes.
+The `ctx.signal` property exposes the combined timeout + cancellation signal. Activities that already accept `{ signal }` automatically respect workflow timeouts with no code changes.
 
-### 16. Search Attributes (Advanced Visibility)
+### 15. Search Attributes (Advanced Visibility)
 
 Search attributes let workflows set custom indexed metadata that's queryable from the list API. The design uses KV-based secondary indexes that work identically on SQLite, LMDB, and IndexedDB — no SQL required.
 
@@ -4431,7 +3129,7 @@ function encodeAttributeValue(value: AttributeValue): string {
 
 **External mutation:** `handle.setAttributes()` and `PATCH /v1/workflows/:id/attributes` allow setting attributes from outside the workflow. Index updates happen atomically.
 
-### 17. Synchronous Updates
+### 16. Synchronous Updates
 
 Signals are fire-and-forget — the caller sends a message and doesn't wait for the workflow to process it. Updates are **request-response** — the caller blocks until the workflow processes the message and returns a result.
 
@@ -4524,7 +3222,7 @@ if (result.valid) {
 
 **Response cleanup:** `upr:*` entries are deleted after a configurable TTL (default 5 minutes) to prevent unbounded storage growth.
 
-### 18. Interceptors / Middleware
+### 17. Interceptors / Middleware
 
 Interceptors are composable hooks that wrap workflow context operations for cross-cutting concerns. They are the foundation for observability (section 20), and can be used independently for validation, encryption, auth propagation, and more.
 
@@ -4553,11 +3251,6 @@ interface WorkflowInterceptor {
   waitForSignal?(
     input: SignalInterception,
     next: (input: SignalInterception) => Generator<unknown, unknown>,
-  ): Generator<unknown, unknown>;
-
-  agent?(
-    input: AgentInterception,
-    next: (input: AgentInterception) => Generator<unknown, unknown>,
   ): Generator<unknown, unknown>;
 
   workflowStart?(
@@ -4602,13 +3295,6 @@ interface SleepInterception {
   readonly workflowId: string;
   readonly workflowType: string;
   duration: string | number; // mutable
-}
-
-interface AgentInterception {
-  readonly workflowId: string;
-  readonly workflowType: string;
-  options: AgentOptions; // mutable
-  headers: Map<string, string>;
 }
 
 interface WorkflowStartInterception {
@@ -4708,7 +3394,7 @@ These systems are complementary:
 - **EventTarget** is for _observation_. Listeners receive events after things happen. They cannot modify inputs, outputs, or control flow.
 - **Interceptors** are for _interception_. They wrap execution, can modify inputs/outputs, can skip or retry operations, and participate in the control flow.
 
-### 19. Observability (OpenTelemetry Integration)
+### 18. Observability (OpenTelemetry Integration)
 
 Observability is implemented as a pre-built interceptor pair. It uses standard OpenTelemetry APIs (`@opentelemetry/api`) and propagates context through the interceptor `headers` mechanism.
 
@@ -4768,9 +3454,8 @@ workflow:order (root span)
 │       └── fetch POST api.stripe.com (child span, from user code)
 ├── sleep (child span)
 ├── signal:wait:approval (child span)
-├── activity:ship (child span)
-│   └── activity:execute:ship (child span, on the worker side)
-└── agent (child span)
+└── activity:ship (child span)
+    └── activity:execute:ship (child span, on the worker side)
 ```
 
 Child workflows use **span links** (not parent-child) because they have independent lifecycle and can outlive their parent.
@@ -4868,10 +3553,9 @@ engine.addInterceptor(encryptionInterceptor); // 4. Encrypt before sending to wo
 weft/
 ├── core/                  # ZERO platform dependencies (web standards only)
 │   ├── engine.ts          # Workflow lifecycle, state machine
-│   ├── context.ts         # ctx.run, ctx.sleep, ctx.signal, ctx.agent, ctx.all,
+│   ├── context.ts         # ctx.run, ctx.sleep, ctx.signal, ctx.all,
 │   │                      # ctx.setAttribute, ctx.onUpdate, ctx.waitForUpdate,
-│   │                      # ctx.humanReview, ctx.handoff, ctx.debate, ctx.supervise,
-│   │                      # ctx.state, ctx.setBudget, ctx.budgetRemaining
+│   │                      # ctx.review, ctx.state
 │   ├── checkpoint.ts      # Generator serialization via structuredClone
 │   ├── scheduler.ts       # Timer/retry scheduling logic (no I/O)
 │   ├── interceptor.ts     # WorkflowInterceptor, ActivityInterceptor interfaces + chain composition
@@ -4909,33 +3593,6 @@ weft/
 │   ├── long-poll.ts       # HTTP long-poll worker (fallback)
 │   ├── heartbeat.ts       # Visibility timeout keepalive
 │   └── registry.ts        # Server-side worker tracking and routing
-│
-├── ai/                        # Agent-native engine primitives
-│   ├── agent.ts               # Durable ReAct loop, ctx.agent() implementation
-│   ├── declaration.ts         # weft.agent() top-level declaration, lifecycle hooks
-│   ├── streaming.ts           # ReadableStream token bridge, stream multiplexer, reconnection buffer
-│   ├── budget.ts              # Token/cost tracking, AbortController enforcement, org-level budgets
-│   ├── context-window.ts      # Token counting, ContextStrategy interface, compaction lifecycle
-│   ├── context-strategies/    # Pluggable context window strategies
-│   │   ├── sliding-window.ts  # Drop oldest messages within token budget
-│   │   ├── summarize.ts       # Compress old messages via secondary LLM call
-│   │   └── rag.ts             # Replace history with vector-retrieved context
-│   ├── human-review.ts        # ctx.humanReview() protocol, review storage, escalation chains
-│   ├── model-router.ts        # Per-turn model selection, fallback chains, A/B weighted routing
-│   ├── provider-health.ts     # Provider error rate tracking, circuit breaker logic
-│   ├── coordination.ts        # ctx.handoff(), ctx.debate(), ctx.supervise() multi-agent primitives
-│   ├── hooks.ts               # Durable hook interfaces: beforeTurn, afterToolCall, onBudgetWarning
-│   ├── mcp/                   # Model Context Protocol integration
-│   │   ├── client.ts          # MCP client: server connection, tools/list discovery, tool invocation
-│   │   ├── registry.ts        # Unified tool registry merging local functions + MCP server tools
-│   │   ├── schema-validator.ts# JSON Schema validation for MCP tool inputs
-│   │   └── authentication.ts  # Bearer token, API key, OAuth2 for MCP servers
-│   ├── events.ts              # All agent-specific Event subclasses and WeftAgentEventMap
-│   └── providers/             # LLM adapters (Anthropic, OpenAI, etc.)
-│       ├── interface.ts       # LLMProvider interface: chat, stream, countTokens
-│       ├── anthropic.ts       # Anthropic Messages API adapter
-│       ├── openai.ts          # OpenAI Chat Completions API adapter
-│       └── types.ts           # Shared provider types: Message, ToolDefinition, TokenUsage
 │
 ├── observability/          # Opt-in OpenTelemetry integration
 │   ├── index.ts           # createObservabilityInterceptors() factory
@@ -5185,7 +3842,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`client/local.ts` and `client/index.ts` export the same interface.** Switching from library to server mode is a constructor change, not an API change.
 - [x] **Workflow code is identical across modes.** The same `async function*` runs in library mode, server mode, and browser/Service Worker mode without modification.
 - [x] **Event observation works in both modes.** Library mode uses `EventTarget` directly; server mode bridges events over WebSocket. Same event types, same semantics.
-- [x] **Agent features (streaming, budget, human review) work in both modes.** No agent capability is server-only or library-only.
+- [x] **Human review works in both modes.** `ctx.review()` and its review-resolution endpoints behave identically in library, server, and browser modes.
 
 ### Remote Workers
 
@@ -5224,141 +3881,6 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **IndexedDB storage passes all storage interface tests.** Same test suite as SQLite.
 - [x] **Client library works with both remote server and local Service Worker.** Same `fetch()` calls, different routing.
 - [x] **Service Worker handles Periodic Background Sync for timers.** (Where browser supports it.)
-
-### Agent-Native Engine: Dynamic Execution Shape
-
-- [x] **Agent loops support dynamic step counts.** A `while` loop with `yield*` creates checkpoints at each tool call without declaring the graph shape upfront.
-- [x] **Checkpoint size is constant regardless of turn count.** Only the current conversation state and local variables are in the checkpoint, not the full execution history.
-- [x] **Step index is a monotonic counter, not a fixed schema position.** Increments with each `yield*` regardless of origin. No step-count pre-declaration required.
-- [x] **Agent conversation history accumulates in checkpoint locals.** The message array grows across turns and is captured by `structuredClone` at each boundary. Verified: restoring a checkpoint after 15 turns produces the same conversation array as live execution.
-- [x] **Storage scan performance is independent of per-workflow step count.** `scan("wf:{id}")` returns a constant number of keys regardless of how many tool calls the agent executed.
-- [x] **Agent loop termination handles all four exit paths.** Final answer (no tool calls), `maxTurns` reached, `tokenBudget` exhausted via `AbortController`, and workflow cancellation all produce a clean checkpoint at the exit boundary.
-- [x] **Checkpoint size warning fires for large conversation histories.** `AgentCheckpointSizeWarningEvent` dispatched when an agent's accumulated conversation state exceeds the configurable threshold (default: 64KB).
-
-### Agent-Native Engine: First-Class Streaming
-
-- [x] **`ctx.agent()` returns a `ReadableStream<string>` when `streamTo: "output"` is set.** Standard `ReadableStream` usable with `for await...of`, `.pipeTo()`, and `.pipeThrough()`.
-- [x] **Token stream bridges to workflow `EventTarget`.** `TokenEvent` dispatched for each token on both `WorkflowHandle` and `Engine`.
-- [x] **Token stream bridges to WebSocket observers.** Connected clients on `WS /v1/workflows/:id/stream` receive tokens in real time via Bun's `server.publish()`.
-- [x] **Stream multiplexer fans out single LLM call to multiple consumers.** No duplicate LLM requests. Implemented via custom `StreamMultiplexer` fan-out.
-- [x] **Crash recovery mid-stream replays from last completed turn.** Partial token output from interrupted turn is discarded. LLM call re-issued for that turn only.
-- [x] **Backpressure propagates from slow consumers via `ReadableStream`.** Configurable buffer limit (default: 64KB). Slow clients disconnected with warning rather than unbounded memory growth. (Note: backpressure tracking is enqueue-only — see IMPORTANT.md.)
-- [x] **Client reconnection resumes with partial output.** Server sends accumulated output from completed turns via `ReconnectionBuffer` before streaming new tokens.
-- [x] **SSE fallback for non-WebSocket environments.** `GET /v1/workflows/:id/sse` returns Server-Sent Events via `createSSEStream()`.
-- [x] **Stream cancellation via `AbortController`.** Aborting the workflow or exceeding budget closes the stream, terminates WebSocket with close frame, and ends SSE connection cleanly.
-
-### Agent-Native Engine: Cost Enforcement
-
-- [x] **`ctx.setBudget()` configures workflow-level cost constraints.** Accepts `maxTokens`, `maxCost` (USD), `warningThreshold`, and per-model pricing. Budget state persists in checkpoint and survives restarts.
-- [x] **`ctx.budgetRemaining()` returns current budget state.** Returns `tokensRemaining`, `costRemaining`, `tokensUsed`, `costUsed`, and per-model `breakdown`.
-- [x] **`tokenBudget` on `ctx.agent()` enforced via `AbortController`.** `budgetController.abort(new BudgetExceededError(usage))` fires when cumulative usage exceeds budget. Signal propagates to in-flight `fetch()`.
-- [x] **`engine.setBudgetPolicy()` sets organization-level budgets.** Daily and monthly limits per namespace. Stored at `budget:{namespace}:daily:{date}` and `budget:{namespace}:monthly:{month}`.
-- [x] **Organization budget enforcement is real-time.** Token usage written to budget counter atomically with agent turn checkpoint via `batch()`. Exceeding rejects new `ctx.agent()` calls with `OrganizationBudgetExceededError`.
-- [x] **Cost-aware retry skips retries when budget insufficient.** Before retrying, engine checks `ctx.budgetRemaining()`. If estimated retry cost exceeds remaining budget, `BudgetExceededError` thrown instead.
-- [x] **Cost queryable via `handle.query(tokenUsageQuery)`.** Returns cumulative token usage breakdown per agent call and per model.
-- [x] **`AgentBudgetWarningEvent` dispatched at configurable threshold.** Default: 80% of budget consumed. Dispatched on both `WorkflowHandle` and `Engine`.
-- [x] **`AgentBudgetExceededEvent` dispatched when budget exhausted.** Includes breakdown by model and turn.
-- [x] **Cost observable as search attribute.** `ctx.agent()` automatically updates `weft:tokenCost` search attribute with cumulative USD cost.
-- [x] **Per-turn cost recorded in `AgentTurnCompletedEvent`.** Includes `inputTokens`, `outputTokens`, `cost`, and `cumulativeCost`.
-- [x] **`ctx.budgetProjection()` estimates remaining capacity.** Based on average per-turn cost and burn rate.
-
-### Agent-Native Engine: Human-in-the-Loop Protocol
-
-- [x] **`ctx.humanReview()` pauses workflow with structured review request.** Accepts artifact, reviewers, notification config, escalation chain, and `allowPartial` flag. Returns `ReviewDecision` with decision, reviewer, feedback, and per-section decisions.
-- [x] **Review request stored durably.** Written to `review:{workflowId}:{reviewId}` in storage. Survives process restarts. Queryable via `GET /v1/workflows/:id/review/:reviewId`.
-- [x] **Multi-turn conversation within a review.** `conversation: true` option enables reviewer to ask questions. Each exchange is a signal round-trip via `onMessage` handler. Conversation history persists in checkpoint.
-- [x] **Escalation with configurable timeout chains.** `escalation: [{ after: "4 hours", to: "manager-queue" }, { after: "24 hours", action: "auto-approve", auditReason: "timeout" }]`.
-- [x] **Partial approval for multi-section output.** `allowPartial: true` enables per-section approve/reject decisions. Workflow receives structured per-section feedback.
-- [x] **Webhook notification on review wait.** `notify: { webhook: "..." }` dispatches `fetch()` POST. Fire-and-forget with `.catch()` logging.
-- [x] **Review dashboard integration.** Pending reviews listed at `GET /v1/reviews?status=pending`. Reviewers can approve, reject, or comment from the built-in dashboard.
-- [x] **Review timeout produces `ReviewTimeoutError`.** If no reviewer responds within timeout and no escalation configured, workflow receives error with review ID and elapsed duration.
-- [x] **`HumanReviewRequestedEvent` dispatched when review wait begins.** Includes `workflowId`, `reviewId`, `reviewType`, `reviewers`. Dispatched on both `WorkflowHandle` and `Engine`.
-- [x] **`HumanReviewCompletedEvent` dispatched when review submitted.** Includes `workflowId`, `reviewId`, `decision`, `reviewer`, `duration`.
-- [x] **Review state cleanup on workflow completion.** `review:*` entries deleted when parent workflow reaches terminal state via `cleanupOperations()`.
-
-### Agent-Native Engine: MCP-Native Tools
-
-- [x] **MCP server URLs accepted as tool sources in `ctx.agent()`.** `tools: [{ mcp: "https://..." }, localFunction]` connects to MCP server and discovers available tools.
-- [x] **Dynamic tool discovery via MCP `tools/list`.** Tool definitions fetched at agent start and cached for the duration of the agent loop. New server-side tools available on next `ctx.agent()` call without code changes.
-- [x] **Tool schema validation at engine level.** MCP tool input schemas (JSON Schema) validated before dispatching. `ToolSchemaValidationError` includes tool name, expected schema, and actual input.
-- [x] **Checkpoint at MCP tool call boundary.** Each MCP invocation preceded by `yield*` checkpoint. Identical durability to local tool calls.
-- [x] **MCP tool results flow through same durable pipeline as local tools.** Results annotated with `source: "mcp"` in conversation history and events.
-- [x] **Tool registry merges local functions and MCP server tools.** Name collisions produce `ToolNameConflictError` at agent initialization, not at first conflicting call.
-- [x] **MCP server authentication.** Supports bearer token, API key, and OAuth2 client credentials via `createOAuth2TokenManager()` with thread-safe token caching and refresh.
-- [x] **MCP server health checking at agent start.** Unreachable servers produce `MCPServerUnavailableError` immediately.
-- [x] **MCP tool call timeout.** Each invocation respects configurable timeout (default: 30s) via `AbortController` + `setTimeout`. Timeout fires `MCPToolTimeoutError`.
-- [x] **`AgentToolCalledEvent` includes `source` field.** Distinguishes `"local"` from `"mcp"` in observability events.
-- [x] **MCP stdio and HTTP+SSE transports supported.** Transport inferred from URL scheme (`stdio://` → `StdioTransport`, `http(s)://` → `HttpTransport` or `HttpSseTransport`). Explicit override via `transport: 'sse'` on `MCPToolSource`.
-
-### Agent-Native Engine: Context Window Management
-
-- [x] **Automatic token counting before each LLM call.** Engine counts tokens using provider's tokenizer (heuristic: ~4 chars/token). Count recorded in `AgentTurnStartedEvent`.
-- [x] **Configurable context window budget.** `contextWindow: { maxTokens, reservedForOutput }` sets maximum input token count and reserves space for response.
-- [x] **Pluggable `ContextStrategy` interface.** Single method: `compact(messages, options): AsyncGenerator<Message[]>`. Generator because strategies like "summarize" need `yield*` for durable operations.
-- [x] **Sliding-window strategy drops oldest messages.** Preserves system prompt and most recent N messages.
-- [x] **Summarize strategy compresses old messages via secondary LLM call.** Summarization call is itself a checkpointed durable operation.
-- [x] **RAG strategy replaces full history with vector-retrieved context.** Pluggable vector store interface.
-- [x] **Context state is part of the checkpoint.** After strategy application, compacted context restored directly on recovery. No re-running the strategy.
-- [x] **Configurable buffer percentage for early compaction.** `compactAt: 0.85` triggers compaction at 85% of `maxTokens`.
-- [x] **`AgentContextCompactedEvent` dispatched when strategy triggers.** Includes strategy name, `tokensBefore`, `tokensAfter`, `messagesDropped`.
-- [x] **Default strategy is no-op pass-through.** Full conversation history sent to LLM. `CheckpointSizeWarningEvent` emitted if conversation exceeds size threshold.
-- [x] **Composable strategies.** `composeStrategies(slidingWindow(...), summarize(...))` applies strategies in sequence with checkpoints between.
-
-### Agent-Native Engine: Multi-Agent Coordination
-
-- [x] **`ctx.handoff()` transfers execution to another agent with context.** Starts a child workflow running the target agent. Returns the child's result. Delegator pauses at `yield*` boundary.
-- [x] **Selective context forwarding in handoff.** `forwardContext: "summary"` sends compressed history. `forwardContext: "none"` sends only structured input.
-- [x] **`ctx.debate()` runs adversarial multi-agent review.** Alternates between agents for N rounds. Each round is a checkpoint. Judge agent resolves. Returns verdict plus full transcript.
-- [x] **`ctx.supervise()` runs multiple agents with synthesis strategy.** Strategies: `"consensus"` (all agree), `"best-of-n"` (supervisor picks), `"merge"` (combine outputs).
-- [x] **Execution state primitive with durable CAS operations.** `ctx.state.execution(name, { initial })` returns a handle for concurrent read/write. Optimistic concurrency control with automatic retry on conflict.
-- [x] **Execution state uses conditional batches for atomic updates.** Writes commit through storage compare-and-swap.
-- [x] **`ctx.handoff()` preserves OpenTelemetry trace context.** Child workflow spans link back to parent agent's span. `createChildHeaders()` utility in coordination module; engine injects parent headers into handoff options.
-- [x] **`ctx.all()` with agent-typed branches.** Parallel agents with independent checkpointing, token budgets, and context windows. Each branch's cost tracked independently.
-- [x] **Agent-to-agent message passing via signals.** Agents within same workflow communicate via `ctx.signal()` on child handles.
-- [x] **Multi-agent fan-out respects workflow-level budget.** Shared `BudgetTracker` passed through `handoff()`, `debate()`, and `supervise()`. `supervise()` wires budget to `AbortController` for parallel branch enforcement.
-
-### Agent-Native Engine: Observability
-
-- [x] **`AgentTurnStartedEvent` dispatched at start of each turn.** Includes `workflowId`, `agentId`, `turnIndex`, `model`, `inputTokenEstimate`, `conversationLength`.
-- [x] **`AgentTurnCompletedEvent` dispatched at end of each turn.** Includes `turnIndex`, `model`, `selectedModel`, `inputTokens`, `outputTokens`, `cost`, `cumulativeCost`, `duration`, `toolCallCount`, `fallbackAttempts`, `reasoningTrace`.
-- [x] **`AgentToolCalledEvent` dispatched on tool invocation.** Includes `toolName`, `toolInput`, `source` (`"local"` | `"mcp"`), `operationId`.
-- [x] **`AgentToolReturnedEvent` dispatched on tool completion.** Includes `toolName`, `duration`, `success`, `operationId`.
-- [x] **`AgentBudgetWarningEvent` dispatched at configurable threshold.** Default: 80%. Includes `budgetUsedPercent`, `tokensRemaining`, `costRemaining`.
-- [x] **`AgentBudgetExceededEvent` dispatched when budget exhausted.** Includes `tokensUsed`, `costUsed`, `tokenBudget`, `maxCost`.
-- [x] **Reasoning trace captured per turn.** Model `thinking` blocks stored in checkpoint and included in `AgentTurnCompletedEvent`.
-- [x] **Cost waterfall per turn queryable.** `handle.query(agentCostWaterfall)` returns per-turn array: `[{ turn, inputTokens, outputTokens, cost, model, tools }]`.
-- [x] **Conversation history queryable.** `handle.query(agentConversation)` returns full message array including system prompt, user messages, assistant responses, and tool results.
-- [x] **Cost projection based on burn rate.** `handle.query(agentCostProjection)` estimates total cost at completion based on average per-turn cost.
-- [x] **Dashboard agent view.** Built-in dashboard includes: conversation timeline, tool calls with inputs/outputs, token usage per turn, cumulative cost curve, budget remaining gauge, reasoning trace accordion, real-time streaming output.
-- [x] **`AgentContextCompactedEvent` dispatched on context strategy trigger.** Includes `strategy`, `tokensBefore`, `tokensAfter`, `messagesDropped`.
-- [x] **`HumanReviewRequestedEvent` and `HumanReviewCompletedEvent` dispatched.** Includes `workflowId`, `reviewId`, `type`/`decision`, `reviewer`, `duration`.
-- [x] **All agent events are typed `Event` subclasses in `WeftEventMap`.** Typed `addEventListener` works for all agent events.
-- [x] **OTel span hierarchy includes agent turns.** `agent` span > `agent:turn:N` spans > `agent:tool:call` spans. Attributes: `weft.agent.model`, `weft.agent.turn_index`, `weft.agent.cost`.
-
-### Agent-Native Engine: Model Routing
-
-- [x] **Per-turn model selection via `modelRouter` option.** `ModelRouter` interface: `select(context: RoutingContext) → ModelSelection`. Receives turn index, budget remaining, conversation length.
-- [x] **Static fallback chain.** `staticFallbackRouter(["gpt-4o", "claude-haiku-4-5-20251001"])` — next model tried on failure (rate limit, timeout, outage). Each fallback attempt dispatches `AgentModelFallbackEvent`.
-- [x] **Dynamic model routing based on turn characteristics.** Routing function receives conversation state and returns model + reason.
-- [x] **A/B testing via weighted model selection.** `abTestRouter()` uses FNV-1a hash for deterministic per-workflow-ID distribution. Results tagged with model attribution in `AgentTurnCompletedEvent.selectedModel`.
-- [x] **Cost-tier routing based on budget remaining.** `costTierRouter()` declares tiers and thresholds. Engine switches to cheaper model when budget drops below threshold.
-- [x] **Engine-level default model router.** Router passed as option to `executeAgentLoop()`. Per-call overrides available.
-- [x] **Fallback attempts recorded in observability events.** `AgentTurnCompletedEvent` includes `fallbackAttempts`. `AgentModelFallbackEvent` dispatched on each fallback.
-- [x] **Provider health tracking with circuit breaker.** `ProviderHealthTracker` implements sliding window error rate tracking with closed→open→half-open circuit breaker. `AgentProviderCircuitOpenEvent` dispatched.
-- [x] **Model selection checkpointed for deterministic recovery.** `previousModels` array accumulated per turn for recovery.
-
-### Agent-Native Engine: Agent-First Declaration
-
-- [x] **`agent()` top-level declaration API.** Declares a reusable agent definition passable to `engine.register()`, `ctx.agent()`, `ctx.handoff()`, and `ctx.debate()`.
-- [x] **Durable hooks: `beforeTurn`.** Runs before each LLM call within checkpoint boundary. Can modify messages, inject context, or skip turn.
-- [x] **Durable hooks: `afterToolCall`.** Runs after each tool call. Can modify tool result, trigger human review.
-- [x] **Durable hooks: `onBudgetWarning`.** Invoked in the agent loop when budget usage crosses 80% threshold. Fires once per agent execution.
-- [x] **Context strategy declared on agent definition.** Applies to all invocations. Per-call override via `ctx.agent({ contextStrategy })`.
-- [x] **Model router declared on agent definition.** Applies to all invocations. Per-call override available.
-- [x] **Engine optimizes for agent-shaped workflows.** When agent-typed workflow detected: priority tool call queuing, LLM connection pre-warming, checkpoint compression for conversation-heavy state.
-- [x] **Type-safe agent definitions.** `agent<InputType, OutputType>({ ... })` — compile-time type checking on `engine.start()` and `handle.result()`.
-- [x] **Agent definitions compose with workflow registration.** `engine.register(researchAgent)` registers as standalone workflow. Same definition usable as embedded step via `ctx.agent(researchAgent, input)`.
-- [x] **`agent()` and `ctx.agent()` share implementation.** Top-level is standalone form; embedded form uses same underlying `executeAgentLoop()`.
 
 ### Workflow Versioning
 
@@ -5433,7 +3955,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 
 ### Interceptors
 
-- [x] **`WorkflowInterceptor` interface defined with typed hooks.** Hooks: `activity`, `sleep`, `waitForSignal`, `agent`, `workflowStart`, `signalReceived`, `query`.
+- [x] **`WorkflowInterceptor` interface defined with typed hooks.** Hooks: `activity`, `sleep`, `waitForSignal`, `workflowStart`, `signalReceived`, `query`.
 - [x] **`ActivityInterceptor` interface defined.** Hook: `execute`.
 - [x] **All interceptor hooks are optional.** An interceptor can implement only the hooks it cares about.
 - [x] **`engine.addInterceptor(interceptor)` registers workflow interceptors.** Multiple registrations compose in order.
@@ -5460,7 +3982,6 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Each `ctx.run()` creates a child span.** Named `activity:{activityName}`. Attributes: `weft.activity.operation_id`, `weft.activity.attempt`, `weft.activity.queue`.
 - [x] **Each `ctx.sleep()` creates a child span.** Named `sleep`. Attributes: `weft.sleep.duration`.
 - [x] **Each `ctx.waitForSignal()` creates a child span.** Named `signal:wait:{signalName}`.
-- [x] **Each `ctx.agent()` creates a child span.** Named `agent`. Attributes: `weft.agent.model`, `weft.agent.token_budget`.
 - [x] **Trace context propagates to local Activity Workers via `postMessage`.** W3C `traceparent` in the `headers` map.
 - [x] **Trace context propagates to remote Activity Workers via WebSocket.** `headers` field in the `task` message. Validated by `remote-propagation.test.ts`.
 - [x] **Activity-side interceptor extracts trace context and creates a child span.** Named `activity:execute:{activityName}`.
@@ -5469,7 +3990,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`maxPayloadSize` truncates recorded payloads.** Prevents unbounded attribute sizes.
 - [x] **`attributeExtractor` allows custom span attributes.** User-provided function receives interception context via `ObservabilityOptions`.
 - [x] **Error spans record exception details.** `span.recordException()` called. `span.setStatus({ code: ERROR })` set.
-- [x] **Span hierarchy is correct.** Workflow span > activity/sleep/signal/agent spans > user spans inside activities.
+- [x] **Span hierarchy is correct.** Workflow span > activity/sleep/signal spans > user spans inside activities.
 - [x] **OpenTelemetry metrics defined.** `weft.workflow.duration`, `weft.activity.duration`, `weft.activity.attempts`, `weft.workflow.active`.
 - [x] **Metrics exportable to Prometheus via standard OTel exporter.** `/v1/metrics` backed by OTel metrics.
 - [x] **Remote worker example in documentation.** Shows `interceptors: [activity]` on remote worker constructor. (See `documentation/guides/remote-workers.md`; search for `const { activity } = createObservabilityInterceptors()` and the nearby `new RemoteWorker({ … interceptors: [activity] })` example.)
@@ -5506,8 +4027,6 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Checkpoint history (last N).** Configurable number of retained checkpoints per workflow for time-travel debugging.
 - [x] **`activity()` helper with colocated configuration.** Retry, timeout, queue, and idempotency declared on the activity definition.
 - [x] **`ctx.runAll()` with named concurrent branches.** Per-branch error handling policies (`onError: "continue"`).
-- [x] **`ctx.setBudget()` / `ctx.budgetRemaining()` for agent cost tracking.** Budget state stored in checkpoint, enforced via `AbortController`.
-- [x] **Tool result caching across agent turns.** Cache keyed by tool name + serialized arguments via `buildCacheKey`, configurable TTL.
 - [x] **`ctx.stream()` for large payloads.** Writes data to storage as chunks via `ReadableStream`, leaves lightweight reference in checkpoint.
 - [x] **Automatic payload compression.** Transparent gzip/brotli compression above configurable threshold.
 - [x] **Pluggable serialization.** `Serializer` interface in `src/core/types.ts` with `serialize`/`deserialize` methods, passable to Engine options.
@@ -5517,15 +4036,11 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 The Temporal-derived pain points above are architecturally solved. This section tracks the remaining gaps versus the newer AI-native alternatives documented in the "Competitive Landscape" and "Honest Gaps" sections earlier in this document. Each item is a binary acceptance criterion, flipped to `[x]` when implemented and verified.
 
 - [x] **Serverless suspension primitive.** `ctx.suspendUntil(resumeToken)` in `src/core/context.ts` yields to `waitForSignal(resumeToken)`, persisting a checkpoint so the engine can drop the in-memory workflow until the resume signal arrives. Resume is via the existing `POST /v1/workflows/:id/signal/:token` endpoint (or `engine.signal(workflowId, resumeToken, payload)`). See tests in `src/core/suspend.test.ts` for multi-suspension flows. Worker execution also releases its active worker on a durable `wait-signal` checkpoint, letting the same worker process another workflow while the parked generator state stays in that worker process.
-- [x] **Agent-loop suspension integration.** When `EngineOptions.suspendOnLlmWait` is `true` and the provider exposes `createChatResumeHint()`, inline `ctx.agent()` turns persist their loop state, park before the blocking `chat()` / `stream()` fetch begins, and resume the same turn when a matching signal arrives. The shared resume-aware provider wrapper is used by both `src/ai/agent.ts` and `src/ai/streaming-agent.ts`, replaying the resumed call with `options.resumeContext` populated. Worker execution uses the same signal-resume path: `WorkerExecutionStrategy` releases the worker after the wait-signal checkpoint, attempts to reacquire the same worker on resume, and cleans parked mappings on cancellation or disposal.
 - [x] **Multi-tenant context.** `TenantResolver` interface in `src/core/tenant.ts`; engine option `tenantResolver` populates `ctx.tenant: TenantContext | undefined` at workflow start and persists it on `WorkflowState.tenant` so it survives recovery. `tenantFromInputField(name)` is a convenience resolver for the common case.
-- [x] **Per-tenant agent customization.** `agent()` accepts `toolsForTenant?: (tenant) => AgentToolDefinition[]` and `validateInput?: (input, tenant) => void`. The engine's generated workflow handler calls `validateInput` before the agent loop and substitutes `toolsForTenant(ctx.tenant)` for the static tool set.
-- [x] **Tenant context in worker-execution mode.** `WorkerInboundMessage.run` carries an optional `tenant` field across `postMessage`; `WorkerExecutionStrategy.startWorkflow` forwards the resolved tenant; and `src/workers/workflow-runner.ts` builds a worker-side `WorkerWorkflowContext` (`workflowId`, `tenant`, `signal`, `startedAt`) that is passed as the first argument to registered handlers. The constructor stop-gap is gone — `workerExecution` and `tenantResolver` can be combined. Engine-side fields like `executionTimeRemaining` are stub values inside the worker because the worker has no clock authority; user code that needs them should stay on inline mode. Regression test in `src/ai/agent-worker-tenant-isolation.test.ts` runs three workflows through a real `Worker` and asserts that `tenant-a` sees `toolA`, `tenant-b` sees `toolB`, and an unexpected tenant fails via `validateInput`.
+- [x] **Tenant context in worker-execution mode.** `WorkerInboundMessage.run` carries an optional `tenant` field across `postMessage`; `WorkerExecutionStrategy.startWorkflow` forwards the resolved tenant; and `src/workers/workflow-runner.ts` builds a worker-side `WorkerWorkflowContext` (`workflowId`, `tenant`, `signal`, `startedAt`) that is passed as the first argument to registered handlers. The constructor stop-gap is gone — `workerExecution` and `tenantResolver` can be combined. Engine-side fields like `executionTimeRemaining` are stub values inside the worker because the worker has no clock authority; user code that needs them should stay on inline mode. A regression test runs three workflows through a real `Worker` and asserts each tenant sees only its own resolved configuration and an unexpected tenant is rejected.
 - [x] **Routing policies.** `RoutingPolicy = 'least-loaded' | 'round-robin' | 'fair-share'` in `src/worker/registry.ts`. `WorkerRegistry` constructor accepts `{ policy }`; `findWorker(activity, { fairShareKey })` consults per-worker per-key counts. All three policies are plumbed end-to-end: `TaskDispatch.fairShareKey` is threaded through `dispatchTaskImpl` → `findWorker` → `assignTask` in `src/server/index.ts`, and a server-level integration test asserts fair-share distributes across keys when dispatched via `serve()`.
 - [x] **Task queue scheduling policies.** `TaskQueueOptions.schedulingPolicy: 'priority' | 'fifo' | 'lifo'` in `src/server/task-queue.ts`, default `'priority'` (current behavior). Plumbed through `serve({ schedulingPolicy })`.
 - [x] **Virtual-Object-style session state.** `ctx.state.session(key)` co-located with the sticky worker. Builds on existing `workerAffinity` in `src/server/index.ts`; session state survives worker restart via checkpoint.
-- [x] **AI dashboard detail view (core).** `src/dashboard/views/workflow-detail-agent.svelte` composes `AgentTurn`, `AgentBudgetGauge`, `EventTimeline`, `JsonViewer`, and `ExecutionDeadline` into a dedicated agent workflow detail page. Reachable via `/ui/workflows/:id/agent` (router entry in `src/dashboard/router.svelte.ts`). Per-turn model, token counts, cost, and tool-call results are already rendered; live token streaming shows current output.
-- [x] **AI dashboard detail view (enhancements).** Three new fragments now ship alongside the existing agent detail view: `src/dashboard/fragments/agent-cost-waterfall.svelte` renders a per-turn cost bar chart normalized against the max-cost turn; `src/dashboard/fragments/agent-conversation.svelte` renders the rolling conversation history grouped by turn with collapsible system/tool blocks and truncation badges; `src/dashboard/fragments/agent-reasoning-trace.svelte` renders an accordion of provider reasoning traces. Each fragment pairs with a pure `.ts` helper (`computeWaterfallBars`, `groupConversationMessages`, `buildReasoningEntries`) unit-tested via `bun:test`. Backing event plumbing: `AgentTurnCompletedEvent` carries a `messages` snapshot produced by `src/ai/event-message-snapshot.ts` (caps at 8KB per message, 4KB per tool result, 200 messages per snapshot) and the existing `reasoningTrace` field is now consumed by the dashboard.
 - [x] **OTel standard Prometheus exporter.** `PrometheusExporter` interface in `src/observability/metrics.ts` with a default `createMetricsCollectorExporter(collector)` implementation. `/v1/metrics` delegates to the single `prometheusExporter` server option when provided, letting projects plug in `@opentelemetry/exporter-prometheus` (or any OTel reader) without forcing it as a runtime dependency. When omitted, `serve()` uses a server-owned collector for runtime diagnostics and the default text exposition.
 - [x] **Index scan benchmark.** `src/benchmarks/search-attributes-scan.test.ts` seeds 100K workflows with a `customerId` attribute against `BunSQLiteStorage`; median latency measured at ~0.14ms (p95 ~0.2ms). Implementation fix: `engine.list()` now loads constrained IDs directly from storage instead of full-scanning `wf:*`, turning the operation from O(total workflows) into O(matches).
 - [x] **JSDoc examples on public API.** Every public export carries hover-visible JSDoc, verified mechanically by the manifest-backed gates in `scripts/check-declaration-jsdoc.ts` and `scripts/audit-jsdoc-manifest.ts`. The manifest is built fresh in-memory at the start of each gate run by `scripts/lib/jsdoc-manifest.ts` (no on-disk artifact — see "Why no committed manifest" below). It classifies entries into three buckets: `example-required` entries (user-facing values, argument/return types, event classes, error classes) carry both prose AND at least one `@example` block; `prose-only` entries (engine-returned shapes users observe but don't construct, e.g. `WorkflowState`, `BulkCancelResult`, `ScheduleSummary`) carry prose JSDoc, with `@example` optional; `not-public` entries are out of scope for this requirement. The prose-only bucket is determined by a single regex (`PROSE_ONLY_NAME_PATTERN` in `scripts/lib/jsdoc-manifest.ts`) — edit that regex when reclassifying a type. Every example block is compiled by `scripts/extract-doctests.ts` + `bunx tsc --noEmit` against the package's source `paths`, so snippets that drift from the real API fail the gate. Coverage status: 482 public-face triples across 21 entry points satisfy their classification rule.
@@ -5560,10 +4075,10 @@ The roadmap below carries forward the implementation work derived from that rese
 
 ### Track 1 — Foundations
 
-- [x] `src/ai/tool-effect-log.ts` exists, exports `ToolEffectLog` with `record(semanticHash, toolName)`, `lookup(semanticHash)`, `commit(semanticHash, toolName, output)`, `abort(semanticHash, toolName, reason)`. (Note: file named for behavior, not paper acronym; `computeSemanticHash` and `ToolCallReplayConflictError` also exported.)
-- [x] `AgentToolDefinition` in `src/ai/declaration.ts` has an optional `identity: (input) => { semanticHash: string; intentCriticalFields: string[] }` field.
-- [x] `executeAgentLoop` in `src/ai/agent.ts` consults the effect log before every tool call and short-circuits on `committed` matches.
-- [x] `bun test src/ai/tool-effect-log.test.ts` passes tests that crash mid-tool-call, restore, and assert the tool ran exactly once (mock call count verified).
+- [x] `src/core/effect-log/index.ts` exists, exports `EffectLog` with `record(semanticHash, effectName)`, `lookup(semanticHash)`, `commit(semanticHash, effectName, output)`, `abort(semanticHash, effectName, reason)`. (Note: named for behavior, not a paper acronym; `computeSemanticHash` and `EffectReplayConflictError` also exported.)
+- [x] An effect can supply an optional `identity: (input) => { semanticHash: string; intentCriticalFields: string[] }` to key its effect-log record.
+- [x] The effect runner consults the effect log before every effect and short-circuits on `committed` matches, so a crash-and-restore replays the effect at most once.
+- [x] `bun test src/core/effect-log/index.test.ts` passes tests that crash mid-effect, restore, and assert the effect ran exactly once (mock call count verified).
 - [x] `src/core/event-log.ts` exists, exports `EventLog` with `append(event)`, `scan(workflowId)`, `replay(workflowId, toStep)`.
 - [x] Event log entries are written in the same `storage.batch()` call as the checkpoint they correspond to (assertable by reading the storage backend's write log).
 - [x] Each event entry contains `prevHash: string` chained from the previous entry; `EventLog.verify(workflowId)` returns `{ valid: boolean; firstInvalidSequence?: number }` and detects tampered logs.
@@ -5587,27 +4102,19 @@ The roadmap below carries forward the implementation work derived from that rese
 
 ### Track 3 — Latency and throughput
 
-- [x] `Activity` and `AgentToolDefinition` support an optional `verify: (result) => Promise<boolean>` hook.
+- [x] `Activity` definitions support an optional `verify: (result) => Promise<boolean>` hook.
 - [x] `ctx.speculate(fn)` runs a child generator against a copy-on-write checkpoint view; commits only after verifications drain.
 - [x] On verification failure, the speculative branch is discarded and compensators (Track 1) run for any externalized effects.
-- [x] `benchmarks/speculation.bench.ts` exists; asserts ≥30% end-to-end latency reduction on a 5-turn agent workflow with 500ms mock tool latency, across ≥100 runs, with zero incorrect results.
-- [x] `src/ai/prompt-cache.ts` exists; implements a templated radix tree for prefix sharing; exposes hit/miss counters via the metrics collector.
-- [x] `src/benchmarks/prompt-cache.test.ts` shows ≥49% hit rate on a realistic workload and <1ms per-call overhead.
 - [x] Activity completions benchmark: `src/benchmarks/activity-completions.test.ts` reports a stable ≥13K/sec regression floor under benchmark-suite concurrency and high-18K/sec isolated direct runs (up from ~9K/sec; spec is >30K/sec).
 - [x] Memory per workflow: `src/benchmarks/memory-per-workflow.test.ts` reports ~0.13KB current checkpoint blobs and ~0.73KB total durable footprint on 100K parked workflows (spec is ≤2KB).
 - [x] `bun run typecheck` and `bun test` both exit 0 after Track 3 lands.
 
-### Track 4 — Multi-agent reliability
+### Track 4 — Reliability and versioning
 
-- [x] `AgentResult` includes an optional `confidence: number` field in [0, 1].
-- [x] `supervise({ ..., voting: 'confidence-weighted' })` computes consensus using vote weights proportional to confidence scores.
-- [x] `supervise({ ..., n: (task) => number })` supports dynamic n-sizing.
 - [x] `src/observability/metrics.ts` exposes `weft.dpmo.defects` and `weft.dpmo.operations`, with a derived `weft_dpmo` gauge exported via the existing Prometheus path.
-- [x] `bun test src/ai/__tests__/bft.test.ts` passes a test with 3 byzantine agents vs 2 honest agents where confidence-weighted voting produces the correct answer and naive voting does not.
-- [x] `AgentDefinition` and `AgentToolDefinition` expose a `version: string` field.
-- [x] Event log entries (Track 1) record `(workflowVersion, agentVersion, toolVersions[])` on every event.
+- [x] Event log entries (Track 1) record `(workflowVersion, toolVersions[])` on every event.
 - [x] Resuming a workflow whose recorded version tuple is incompatible with the currently-registered versions, with no migration hook provided, throws `VersionMismatchError` with a structured breakdown of which component mismatched.
-- [x] `bun test src/core/__tests__/workflow-version-resume.test.ts` passes a test that resumes a mid-flight workflow across a tool-schema version bump, with and without a migration hook.
+- [x] `bun test` passes a test that resumes a mid-flight workflow across a tool-schema version bump, with and without a migration hook.
 
 ### Track 6 — Storage ergonomics
 
