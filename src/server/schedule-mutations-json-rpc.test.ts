@@ -102,25 +102,53 @@ describe('schedule mutations forward JWT tenant scope over JSON-RPC', () => {
     );
   });
 
-  it('masks cross-tenant mutation as NotFound and leaves the schedule unmutated', async () => {
+  it('masks cross-tenant mutation as NotFound, indistinguishable from a missing schedule, and never mutates', async () => {
     engine = createTenantAwareEngine();
-    await engine.schedule('echo', { tenantId: 'globex' }, '0 * * * *', { id: 'schedule-globex' });
+    // A dedicated globex schedule per method so each denied call is checked in
+    // isolation — a broken impl that round-trips pause→resume back to `active`
+    // cannot hide behind a single end-of-test assertion.
+    await engine.schedule('echo', { tenantId: 'globex' }, '0 * * * *', {
+      id: 'globex-pause',
+    });
+    await engine.schedule('echo', { tenantId: 'globex' }, '0 * * * *', {
+      id: 'globex-resume',
+    });
+    await engine.pauseSchedule('globex-resume', { tenantId: 'globex' });
+    await engine.schedule('echo', { tenantId: 'globex' }, '0 * * * *', {
+      id: 'globex-cancel',
+    });
 
-    for (const method of [
-      'weft.schedules.pause',
-      'weft.schedules.resume',
-      'weft.schedules.cancel',
-    ]) {
-      const result = await call(engine, method, 'schedule-globex', 'acme');
+    const cases = [
+      { method: 'weft.schedules.pause', id: 'globex-pause', remains: 'active' },
+      { method: 'weft.schedules.resume', id: 'globex-resume', remains: 'paused' },
+      { method: 'weft.schedules.cancel', id: 'globex-cancel', remains: 'active' },
+    ] as const;
+
+    for (const { method, id, remains } of cases) {
+      const result = await call(engine, method, id, 'acme');
       if (result.kind !== 'single' || !('error' in result.response)) {
         throw new Error(`expected error response for ${method}`);
       }
       expect(result.response.error.code).toBe(NOT_FOUND_CODE);
+      // Cross-tenant denial is masked with the same message a genuinely-missing
+      // schedule would produce — no message/data oracle distinguishing
+      // "exists but not yours" from "does not exist".
+      expect(result.response.error.message).toBe(`Schedule "${id}" not found`);
+
+      // Assert the denied call did not mutate the schedule before moving on.
+      expect(await engine.getSchedule(id, { tenantId: 'globex' })).toEqual(
+        expect.objectContaining({ status: remains, cronExpression: '0 * * * *' }),
+      );
     }
 
-    expect(await engine.getSchedule('schedule-globex', { tenantId: 'globex' })).toEqual(
-      expect.objectContaining({ status: 'active', cronExpression: '0 * * * *' }),
-    );
+    // A genuinely-missing id returns the identical NotFound code + message
+    // shape, confirming there is no existence oracle over JSON-RPC.
+    const missing = await call(engine, 'weft.schedules.pause', 'globex-nonexistent', 'acme');
+    if (missing.kind !== 'single' || !('error' in missing.response)) {
+      throw new Error('expected error response for missing schedule');
+    }
+    expect(missing.response.error.code).toBe(NOT_FOUND_CODE);
+    expect(missing.response.error.message).toBe('Schedule "globex-nonexistent" not found');
   });
 
   it('rejects a JWT principal missing the tenant claim as Forbidden', async () => {
