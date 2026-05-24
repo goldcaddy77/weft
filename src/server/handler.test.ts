@@ -519,7 +519,82 @@ describe('handleRequest', () => {
       });
     });
 
-    it('Wave B schedule mutation routes do not yet forward JWT tenant scope into the operation pipeline', async () => {
+    it('Wave B schedule mutation routes forward JWT tenant scope into the operation pipeline', async () => {
+      engine = createTenantAwareEngine();
+      await engine.schedule('echo', { tenantId: 'acme' }, '0 * * * *', { id: 'schedule-acme' });
+      await engine.schedule('echo', { tenantId: 'acme' }, '0 * * * *', {
+        id: 'schedule-acme-cancel',
+      });
+      await engine.schedule('echo', { tenantId: 'globex' }, '0 * * * *', {
+        id: 'schedule-globex',
+      });
+
+      const authOptions = {
+        authContext: {
+          method: 'jwt' as const,
+          claims: { tenantId: 'acme' },
+        },
+      };
+
+      // Own-tenant pause now succeeds: the JWT tenant scope is threaded into the
+      // engine call, so the owner's claim matches the schedule's tenant.
+      const pauseOwnResponse = await handleRequest(
+        request('POST', '/v1/schedules/schedule-acme/pause'),
+        engine,
+        authOptions,
+      );
+      expect(pauseOwnResponse.status).toBe(204);
+      expect(await engine.getSchedule('schedule-acme', { tenantId: 'acme' })).toEqual(
+        expect.objectContaining({ id: 'schedule-acme', status: 'paused' }),
+      );
+
+      // Own-tenant resume of the just-paused schedule.
+      const resumeOwnResponse = await handleRequest(
+        request('POST', '/v1/schedules/schedule-acme/resume'),
+        engine,
+        authOptions,
+      );
+      expect(resumeOwnResponse.status).toBe(204);
+      expect(await engine.getSchedule('schedule-acme', { tenantId: 'acme' })).toEqual(
+        expect.objectContaining({ id: 'schedule-acme', status: 'active' }),
+      );
+
+      // Own-tenant update.
+      const updateOwnResponse = await handleRequest(
+        request('PATCH', '/v1/schedules/schedule-acme', { cronExpression: '30 * * * *' }),
+        engine,
+        authOptions,
+      );
+      expect(updateOwnResponse.status).toBe(204);
+      expect(await engine.getSchedule('schedule-acme', { tenantId: 'acme' })).toEqual(
+        expect.objectContaining({ id: 'schedule-acme', cronExpression: '30 * * * *' }),
+      );
+
+      // Own-tenant cancel (terminal) against a dedicated acme schedule. A
+      // cross-tenant 404 alone would NOT prove cancel forwards scope, since the
+      // old `undefined` access option already produced 404 for any tenanted
+      // schedule — so this own-tenant 204 + cancelled assertion is required.
+      const cancelOwnResponse = await handleRequest(
+        request('DELETE', '/v1/schedules/schedule-acme-cancel'),
+        engine,
+        authOptions,
+      );
+      expect(cancelOwnResponse.status).toBe(204);
+      expect(await engine.getSchedule('schedule-acme-cancel', { tenantId: 'acme' })).toEqual(
+        expect.objectContaining({ id: 'schedule-acme-cancel', status: 'cancelled' }),
+      );
+
+      // The other tenant's schedule is untouched throughout.
+      expect(await engine.getSchedule('schedule-globex', { tenantId: 'globex' })).toEqual(
+        expect.objectContaining({
+          id: 'schedule-globex',
+          status: 'active',
+          cronExpression: '0 * * * *',
+        }),
+      );
+    });
+
+    it('schedule mutation routes reject cross-tenant access with 404', async () => {
       engine = createTenantAwareEngine();
       await engine.schedule('echo', { tenantId: 'acme' }, '0 * * * *', { id: 'schedule-acme' });
       await engine.schedule('echo', { tenantId: 'globex' }, '0 * * * *', {
@@ -533,49 +608,50 @@ describe('handleRequest', () => {
         },
       };
 
-      const pauseOwnResponse = await handleRequest(
-        request('POST', '/v1/schedules/schedule-acme/pause'),
-        engine,
-        authOptions,
-      );
-      expect(pauseOwnResponse.status).toBe(404);
-
-      const resumeOwnResponse = await handleRequest(
-        request('POST', '/v1/schedules/schedule-acme/resume'),
-        engine,
-        authOptions,
-      );
-      expect(resumeOwnResponse.status).toBe(404);
-
-      const pauseOtherTenantResponse = await handleRequest(
+      const pauseOther = await handleRequest(
         request('POST', '/v1/schedules/schedule-globex/pause'),
         engine,
         authOptions,
       );
-      expect(pauseOtherTenantResponse.status).toBe(404);
+      expect(pauseOther.status).toBe(404);
+      expect(await json(pauseOther)).toEqual({ error: 'Schedule "schedule-globex" not found' });
 
-      const updateOtherTenantResponse = await handleRequest(
+      const resumeOther = await handleRequest(
+        request('POST', '/v1/schedules/schedule-globex/resume'),
+        engine,
+        authOptions,
+      );
+      expect(resumeOther.status).toBe(404);
+      expect(await json(resumeOther)).toEqual({ error: 'Schedule "schedule-globex" not found' });
+
+      const updateOther = await handleRequest(
         request('PATCH', '/v1/schedules/schedule-globex', { cronExpression: '30 * * * *' }),
         engine,
         authOptions,
       );
-      expect(updateOtherTenantResponse.status).toBe(404);
+      expect(updateOther.status).toBe(404);
+      expect(await json(updateOther)).toEqual({ error: 'Schedule "schedule-globex" not found' });
 
-      const cancelOtherTenantResponse = await handleRequest(
+      const cancelOther = await handleRequest(
         request('DELETE', '/v1/schedules/schedule-globex'),
         engine,
         authOptions,
       );
-      expect(cancelOtherTenantResponse.status).toBe(404);
+      expect(cancelOther.status).toBe(404);
+      expect(await json(cancelOther)).toEqual({ error: 'Schedule "schedule-globex" not found' });
 
-      expect(await engine.getSchedule('schedule-acme', { tenantId: 'acme' })).toEqual(
-        expect.objectContaining({
-          id: 'schedule-acme',
-          status: 'active',
-          cronExpression: '0 * * * *',
-        }),
+      // A genuinely-missing id returns the identical 404 + body shape, so a
+      // cross-tenant schedule is indistinguishable from a nonexistent one (no
+      // existence oracle).
+      const missing = await handleRequest(
+        request('POST', '/v1/schedules/schedule-nonexistent/pause'),
+        engine,
+        authOptions,
       );
+      expect(missing.status).toBe(404);
+      expect(await json(missing)).toEqual({ error: 'Schedule "schedule-nonexistent" not found' });
 
+      // Tenant A could not mutate tenant B's schedule.
       expect(await engine.getSchedule('schedule-globex', { tenantId: 'globex' })).toEqual(
         expect.objectContaining({
           id: 'schedule-globex',
