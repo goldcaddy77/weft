@@ -272,6 +272,44 @@ describe('HTTPStorage', () => {
     }
   });
 
+  it('derives has/keys/count/deletePrefix from scan and batch end to end', async () => {
+    const rawStorage = new MemoryStorage();
+    const engine = new Engine({ storage: rawStorage });
+    const restoreFetch = installFetch((input, init) =>
+      handleRequest(new Request(input, init), engine, adminStorageOptions()),
+    );
+    try {
+      const storage = new HTTPStorage({ baseUrl: 'http://localhost' });
+
+      await storage.batch([
+        { type: 'put', key: 'wf:a', value: encode('a') },
+        { type: 'put', key: 'wf:b', value: encode('b') },
+        { type: 'put', key: 'wfx', value: encode('adjacent') },
+        { type: 'put', key: 'other', value: encode('c') },
+      ]);
+
+      expect(await storage.has('wf:a')).toBe(true);
+      expect(await storage.has('wf:missing')).toBe(false);
+
+      expect(await collect(storage.keys('wf:'))).toEqual(['wf:a', 'wf:b']);
+      expect(await collect(storage.keys('wf:', { reverse: true }))).toEqual(['wf:b', 'wf:a']);
+      expect(await collect(storage.keys('wf:', { limit: 1 }))).toEqual(['wf:a']);
+
+      expect(await storage.count('wf:')).toBe(2);
+      expect(await storage.count('missing:')).toBe(0);
+
+      // deletePrefix removes exactly the matching keys; nearby keys survive.
+      expect(await storage.deletePrefix('wf:')).toBe(2);
+      expect(await storage.get('wf:a')).toBeNull();
+      expect(await storage.get('wf:b')).toBeNull();
+      expect(decode(await storage.get('wfx'))).toBe('adjacent');
+      expect(decode(await storage.get('other'))).toBe('c');
+      expect(await storage.deletePrefix('missing:')).toBe(0);
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it('talks to tenant-scoped REST handlers end to end', async () => {
     const rawStorage = new MemoryStorage();
     await rawStorage.put('wf:raw', encode('raw'));

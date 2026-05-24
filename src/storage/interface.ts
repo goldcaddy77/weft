@@ -1,3 +1,10 @@
+import {
+  storageCountCore,
+  storageDeletePrefixCore,
+  storageHasCore,
+  storageKeysCore,
+} from './derived-operations.ts';
+
 /**
  * A single KV operation in a batch.
  *
@@ -185,7 +192,7 @@ export async function storageHas(storage: Storage, key: string): Promise<boolean
     return storage.has(key);
   }
 
-  return (await storage.get(key)) !== null;
+  return storageHasCore(storage, key);
 }
 
 /**
@@ -212,11 +219,7 @@ export function storageKeys(
     return storage.keys(prefix, options);
   }
 
-  return (async function* (): AsyncIterable<string> {
-    for await (const [key] of storage.scan(prefix, options)) {
-      yield key;
-    }
-  })();
+  return storageKeysCore(storage, prefix, options);
 }
 
 /**
@@ -238,11 +241,7 @@ export async function storageCount(storage: Storage, prefix: string): Promise<nu
     return storage.count(prefix);
   }
 
-  let count = 0;
-  for await (const _key of storageKeys(storage, prefix)) {
-    count++;
-  }
-  return count;
+  return storageCountCore(storage, prefix);
 }
 
 /**
@@ -265,18 +264,7 @@ export async function storageDeletePrefix(storage: Storage, prefix: string): Pro
     return storage.deletePrefix(prefix);
   }
 
-  const operations: BatchOperation[] = [];
-
-  for await (const key of storageKeys(storage, prefix)) {
-    operations.push({ type: 'delete', key });
-  }
-
-  if (operations.length === 0) {
-    return 0;
-  }
-
-  await storage.batch(operations);
-  return operations.length;
+  return storageDeletePrefixCore(storage, prefix);
 }
 
 /**

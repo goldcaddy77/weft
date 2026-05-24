@@ -1,5 +1,11 @@
 import { decodeBase64ToBytes, encodeBytesToBase64, isRecord } from './byte-encoding.ts';
 import {
+  storageCountCore,
+  storageDeletePrefixCore,
+  storageHasCore,
+  storageKeysCore,
+} from './derived-operations.ts';
+import {
   type BatchOperation,
   type ConditionalBatchCondition,
   type ScanOptions,
@@ -269,32 +275,20 @@ export class HTTPStorage implements Storage {
     return parseConditionalBatchResponse(await response.json());
   }
 
-  async has(key: string): Promise<boolean> {
-    return (await this.get(key)) !== null;
+  has(key: string): Promise<boolean> {
+    return storageHasCore(this, key);
   }
 
   async *keys(prefix: string, options?: ScanOptions): AsyncIterable<string> {
-    for await (const [key] of this.scan(prefix, options)) {
-      yield key;
-    }
+    yield* storageKeysCore(this, prefix, options);
   }
 
-  async count(prefix: string): Promise<number> {
-    let count = 0;
-    for await (const _key of this.keys(prefix)) {
-      count += 1;
-    }
-    return count;
+  count(prefix: string): Promise<number> {
+    return storageCountCore(this, prefix);
   }
 
-  async deletePrefix(prefix: string): Promise<number> {
-    const operations: BatchOperation[] = [];
-    for await (const key of this.keys(prefix)) {
-      operations.push({ type: 'delete', key });
-    }
-    if (operations.length === 0) return 0;
-    await this.batch(operations);
-    return operations.length;
+  deletePrefix(prefix: string): Promise<number> {
+    return storageDeletePrefixCore(this, prefix);
   }
 
   scoped(prefix: string): Storage {
