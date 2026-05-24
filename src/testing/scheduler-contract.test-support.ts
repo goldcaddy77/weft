@@ -13,7 +13,7 @@ import { MemoryStorage } from '../storage/memory.ts';
  * implementations differ structurally (`setInterval` vs `setTimeout` +
  * periodic-sync), so idempotence stays a local case in each suite.
  */
-export interface ContractScheduler extends Disposable {
+export type ContractScheduler = Disposable & {
   schedule(entry: TimerEntry): Promise<void>;
   tick(now?: number): Promise<void>;
   flush(now?: number): Promise<void>;
@@ -23,7 +23,7 @@ export interface ContractScheduler extends Disposable {
    * Shared cases pass a real workflow id, matching existing core tests.
    */
   cancel(id: string, workflowId: string): Promise<void>;
-}
+};
 
 /**
  * Mutable per-case context the factory reads when constructing a scheduler.
@@ -34,7 +34,7 @@ export interface ContractScheduler extends Disposable {
  * arguments, never via wall-clock advancement, so they are agnostic to whether
  * fake timers are installed.
  */
-export interface SchedulerContractContext {
+export type SchedulerContractContext = {
   storage: MemoryStorage;
   firedEntries: TimerEntry[];
   /** Read the current fake time; the factory's `getNow` closure reads this. */
@@ -45,7 +45,7 @@ export interface SchedulerContractContext {
   makeTimer(overrides?: Partial<TimerEntry>): TimerEntry;
   /** Collect every key currently present in {@link storage}. */
   collectStorageKeys(): Promise<string[]>;
-}
+};
 
 /**
  * Construct fresh per-test scheduler-test state. Reused by the shared contract
@@ -87,7 +87,7 @@ export function createSchedulerContractContext(): SchedulerContractContext {
   return context;
 }
 
-export interface SchedulerContractConfig {
+export type SchedulerContractConfig = {
   /** Label included in the describe title, e.g. 'core' or 'service-worker'. */
   name: string;
   /**
@@ -99,7 +99,7 @@ export interface SchedulerContractConfig {
    * second argument.
    */
   createScheduler(context: SchedulerContractContext): ContractScheduler;
-}
+};
 
 /**
  * Register the shared scheduler timer-contract cases for one implementation.
