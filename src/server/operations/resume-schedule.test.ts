@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../../core/engine.ts';
 import { tenantFromInputField } from '../../core/tenant.ts';
@@ -36,8 +36,15 @@ const registry = createOperationRegistry([resumeScheduleOperation]);
 const bindings = [resumeScheduleRestBinding];
 
 describe('weft.schedules.resume', () => {
+  let engine: Engine | undefined;
+
+  afterEach(() => {
+    engine?.[Symbol.dispose]();
+    engine = undefined;
+  });
+
   it('resumes a paused schedule and returns 204', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     await engine.schedule('echo', 'payload', '0 * * * *', { id: 'schedule-resume-success' });
     await engine.pauseSchedule('schedule-resume-success');
 
@@ -59,7 +66,7 @@ describe('weft.schedules.resume', () => {
   });
 
   it('returns 404 when the schedule does not exist', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(
       new Request('http://localhost/v1/schedules/does-not-exist/resume', { method: 'POST' }),
@@ -75,7 +82,7 @@ describe('weft.schedules.resume', () => {
   });
 
   it('returns 403 when a JWT-authenticated request is missing a tenant claim', async () => {
-    const engine = createTenantAwareEngine();
+    engine = createTenantAwareEngine();
     const options: HandlerOptions = {
       authContext: { method: 'jwt', claims: { sub: 'user-123' } },
       operationRegistry: registry,
@@ -95,7 +102,7 @@ describe('weft.schedules.resume', () => {
   });
 
   it('returns 404 when a JWT-authenticated caller resumes another tenant’s schedule', async () => {
-    const engine = createTenantAwareEngine();
+    engine = createTenantAwareEngine();
     await engine.schedule('echo', { tenantId: 'globex' }, '0 * * * *', { id: 'schedule-globex' });
     await engine.pauseSchedule('schedule-globex', { tenantId: 'globex' });
 
@@ -117,7 +124,7 @@ describe('weft.schedules.resume', () => {
   });
 
   it('maps resumability conflicts to 409', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalResumeSchedule = engine.resumeSchedule.bind(engine);
     engine.resumeSchedule = async () => {
       throw new Error('Schedule cannot be resumed after cancellation');
@@ -143,7 +150,7 @@ describe('weft.schedules.resume', () => {
   });
 
   it('masks unexpected engine failures to a 500 generic error body', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalResumeSchedule = engine.resumeSchedule.bind(engine);
     engine.resumeSchedule = async () => {
       throw new Error('exploded');

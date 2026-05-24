@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../core/engine.ts';
 import { StartWorkflowValidationError } from '../core/start-workflow-validation.ts';
@@ -56,8 +56,15 @@ async function json(response: Response): Promise<unknown> {
 }
 
 describe('handleRequest edge coverage', () => {
+  let engine: Engine | undefined;
+
+  afterEach(() => {
+    engine?.[Symbol.dispose]();
+    engine = undefined;
+  });
+
   it('returns 400 when a route parameter cannot be decoded', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(request('GET', '/v1/workflows/%E0%A4%A'), engine);
 
@@ -66,7 +73,7 @@ describe('handleRequest edge coverage', () => {
   });
 
   it('accepts purge body filters with array statuses, numeric bounds, and attribute arrays', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     let capturedFilter: unknown;
     engine.purge = async (filter) => {
       capturedFilter = filter;
@@ -105,7 +112,7 @@ describe('handleRequest edge coverage', () => {
   });
 
   it('rejects invalid purge filters and malformed list tag query parameters', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const invalidBodies = [
       [{ filter: 'bad' }, 'Field "filter" must be an object'],
@@ -144,7 +151,7 @@ describe('handleRequest edge coverage', () => {
   });
 
   it('returns parse errors from every bulk workflow route before dispatching', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     let dispatchCount = 0;
     engine.cancelAll = async () => {
       dispatchCount++;
@@ -187,7 +194,7 @@ describe('handleRequest edge coverage', () => {
   });
 
   it('validates bulk signal and tag mutation bodies before dispatching', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     let dispatchCount = 0;
     engine.signalAll = async () => {
       dispatchCount++;
@@ -283,7 +290,7 @@ describe('handleRequest edge coverage', () => {
   });
 
   it('maps bulk workflow engine failures to 500 responses', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     engine.cancelAll = async () => {
       throw new Error('cancel failed');
@@ -346,7 +353,7 @@ describe('handleRequest edge coverage', () => {
   });
 
   it('maps addTags and removeTags failures to 404, 400, and 500 responses', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     engine.addTags = async () => {
       throw new Error('workflow not found');
@@ -404,7 +411,7 @@ describe('handleRequest edge coverage', () => {
   });
 
   it('accepts a fallback tenant claim when tenant_id is blank and surfaces fork failures distinctly', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const options: HandlerOptions = {
       authContext: {
         method: 'jwt',
@@ -429,7 +436,7 @@ describe('handleRequest edge coverage', () => {
   });
 
   it('covers schedule validation errors and tenant-claim guards across schedule routes', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     let response = await handleRequest(
       request('POST', '/v1/schedules', {
@@ -543,12 +550,17 @@ describe('handleRequest edge coverage', () => {
     // A JWT principal missing the tenant claim is rejected with 403 on the
     // mutation routes too, matching the read path above (now that schedule
     // mutation routes forward JWT tenant scope into the operation pipeline).
+    const missingTenantClaimError = {
+      error: 'JWT-authenticated schedule requests require a tenantId, tenant_id, or tenant claim',
+    };
+
     response = await handleRequest(
       request('POST', '/v1/schedules/schedule-1/pause'),
       engine,
       authOptions,
     );
     expect(response.status).toBe(403);
+    expect(await json(response)).toEqual(missingTenantClaimError);
 
     response = await handleRequest(
       request('POST', '/v1/schedules/schedule-1/resume'),
@@ -556,6 +568,7 @@ describe('handleRequest edge coverage', () => {
       authOptions,
     );
     expect(response.status).toBe(403);
+    expect(await json(response)).toEqual(missingTenantClaimError);
 
     response = await handleRequest(
       request('DELETE', '/v1/schedules/schedule-1'),
@@ -563,6 +576,7 @@ describe('handleRequest edge coverage', () => {
       authOptions,
     );
     expect(response.status).toBe(403);
+    expect(await json(response)).toEqual(missingTenantClaimError);
 
     response = await handleRequest(
       new Request('http://localhost/v1/schedules/schedule-1', {
@@ -599,7 +613,7 @@ describe('handleRequest edge coverage', () => {
   });
 
   it('maps schedule handler engine failures to their HTTP responses', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     engine.schedule = async () => {
       throw new Error('schedule already exists');

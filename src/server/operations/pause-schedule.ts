@@ -30,7 +30,7 @@ export const pauseScheduleOperation = defineOperation<PauseScheduleInput, PauseS
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }): Promise<PauseScheduleOutput> => {
-    const e = engine as Engine;
+    const typedEngine = engine as Engine;
 
     const accessOptions = resolveScheduleAccessOptions(principal);
     if (isOperationFault(accessOptions)) {
@@ -38,7 +38,7 @@ export const pauseScheduleOperation = defineOperation<PauseScheduleInput, PauseS
     }
 
     try {
-      await e.pauseSchedule(input.scheduleId, accessOptions);
+      await typedEngine.pauseSchedule(input.scheduleId, accessOptions);
       return undefined;
     } catch (error) {
       throw mapScheduleErrorToFault(input.scheduleId, error);

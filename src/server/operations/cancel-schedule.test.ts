@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../../core/engine.ts';
 import { tenantFromInputField } from '../../core/tenant.ts';
@@ -36,8 +36,15 @@ const registry = createOperationRegistry([cancelScheduleOperation]);
 const bindings = [cancelScheduleRestBinding];
 
 describe('weft.schedules.cancel', () => {
+  let engine: Engine | undefined;
+
+  afterEach(() => {
+    engine?.[Symbol.dispose]();
+    engine = undefined;
+  });
+
   it('cancels a schedule and returns 204', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     await engine.schedule('echo', 'payload', '0 * * * *', { id: 'schedule-cancel-success' });
 
     const response = await handleRequest(
@@ -58,7 +65,7 @@ describe('weft.schedules.cancel', () => {
   });
 
   it('returns 404 when the schedule does not exist', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(
       new Request('http://localhost/v1/schedules/does-not-exist', { method: 'DELETE' }),
@@ -74,7 +81,7 @@ describe('weft.schedules.cancel', () => {
   });
 
   it('returns 403 when a JWT-authenticated request is missing a tenant claim', async () => {
-    const engine = createTenantAwareEngine();
+    engine = createTenantAwareEngine();
     const options: HandlerOptions = {
       authContext: { method: 'jwt', claims: { sub: 'user-123' } },
       operationRegistry: registry,
@@ -94,7 +101,7 @@ describe('weft.schedules.cancel', () => {
   });
 
   it('returns 404 when a JWT-authenticated caller cancels another tenant’s schedule', async () => {
-    const engine = createTenantAwareEngine();
+    engine = createTenantAwareEngine();
     await engine.schedule('echo', { tenantId: 'globex' }, '0 * * * *', { id: 'schedule-globex' });
 
     const response = await handleRequest(
@@ -115,7 +122,7 @@ describe('weft.schedules.cancel', () => {
   });
 
   it('maps authenticated-tenant errors to 403', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalCancelSchedule = engine.cancelSchedule.bind(engine);
     engine.cancelSchedule = async () => {
       throw new Error('Authenticated tenant cannot access this schedule');
@@ -141,7 +148,7 @@ describe('weft.schedules.cancel', () => {
   });
 
   it('masks unexpected engine failures to a 500 generic error body', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalCancelSchedule = engine.cancelSchedule.bind(engine);
     engine.cancelSchedule = async () => {
       throw new Error('exploded');

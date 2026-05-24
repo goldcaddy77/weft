@@ -30,7 +30,7 @@ export const cancelScheduleOperation = defineOperation<CancelScheduleInput, Canc
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }): Promise<CancelScheduleOutput> => {
-    const e = engine as Engine;
+    const typedEngine = engine as Engine;
 
     const accessOptions = resolveScheduleAccessOptions(principal);
     if (isOperationFault(accessOptions)) {
@@ -38,7 +38,7 @@ export const cancelScheduleOperation = defineOperation<CancelScheduleInput, Canc
     }
 
     try {
-      await e.cancelSchedule(input.scheduleId, accessOptions);
+      await typedEngine.cancelSchedule(input.scheduleId, accessOptions);
       return undefined;
     } catch (error) {
       throw mapScheduleErrorToFault(input.scheduleId, error);
