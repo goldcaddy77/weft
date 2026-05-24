@@ -211,7 +211,10 @@ describe('subprocess server harness', () => {
       `
 ${parseArgumentsSource()}
 console.log('WEFT_SUBPROCESS_READY http://127.0.0.1:' + port);
-setTimeout(() => process.exit(17), 100);
+// Exit well after the parent's post-readiness stabilization window
+// (verifyProcessSurvivedReadiness waits up to 50ms); a short delay races that
+// window under load and trips a spurious "exited after readiness" rejection.
+setTimeout(() => process.exit(17), 1_000);
 `,
     );
     const handle = await spawnServerSubprocess({
