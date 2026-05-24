@@ -263,6 +263,81 @@ describe('WebExtensionStorage', () => {
     }
   });
 
+  it('rejects deletePrefix on managed storage before deleting anything', async () => {
+    const area = new FakeStorageArea();
+    // Pre-seed the raw area directly (bypassing the writable guard) so we can
+    // prove deletePrefix throws before removing matching keys. The non-mutation
+    // assertions inspect the backing map and remove() call count, so the stored
+    // shape is irrelevant here.
+    area.data.set('wf:a', 'a');
+    area.data.set('wf:b', 'b');
+    area.data.set('other', 'c');
+    const restore = installStorageNamespace('browser', area);
+    try {
+      const storage = new WebExtensionStorage({ area: 'managed' });
+
+      await expect(storage.deletePrefix('wf:')).rejects.toThrow(
+        'WebExtensionStorage area "managed" is read-only.',
+      );
+      // An empty prefix is still a write attempt and must be rejected up front.
+      await expect(storage.deletePrefix('missing:')).rejects.toThrow(
+        'WebExtensionStorage area "managed" is read-only.',
+      );
+
+      // No keys were removed and remove() was never invoked.
+      expect(area.data.has('wf:a')).toBe(true);
+      expect(area.data.has('wf:b')).toBe(true);
+      expect(area.data.has('other')).toBe(true);
+      expect(area.removeCallCount).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('deletePrefix removes exactly the matching keys and leaves nearby keys intact', async () => {
+    const area = new FakeStorageArea();
+    const restore = installStorageNamespace('browser', area);
+    try {
+      const storage = new WebExtensionStorage();
+      await storage.put('wf:a', encode('a'));
+      await storage.put('wf:b', encode('b'));
+      await storage.put('wfx', encode('lexically-adjacent-non-match'));
+      await storage.put('other', encode('c'));
+
+      expect(await storage.deletePrefix('wf:')).toBe(2);
+
+      expect(decode(await storage.get('wf:a'))).toBeNull();
+      expect(decode(await storage.get('wf:b'))).toBeNull();
+      expect(decode(await storage.get('wfx'))).toBe('lexically-adjacent-non-match');
+      expect(decode(await storage.get('other'))).toBe('c');
+      expect(await collect(storage.keys(''))).toEqual(['other', 'wfx']);
+    } finally {
+      restore();
+    }
+  });
+
+  it('keys preserves scan ordering, reverse, and limit through the yield* delegation', async () => {
+    const area = new FakeStorageArea();
+    const restore = installStorageNamespace('browser', area);
+    try {
+      const storage = new WebExtensionStorage();
+      for (const suffix of ['a', 'b', 'c', 'd']) {
+        await storage.put(`wf:${suffix}`, encode(suffix));
+      }
+
+      expect(await collect(storage.keys('wf:'))).toEqual(['wf:a', 'wf:b', 'wf:c', 'wf:d']);
+      expect(await collect(storage.keys('wf:', { reverse: true }))).toEqual([
+        'wf:d',
+        'wf:c',
+        'wf:b',
+        'wf:a',
+      ]);
+      expect(await collect(storage.keys('wf:', { limit: 2 }))).toEqual(['wf:a', 'wf:b']);
+    } finally {
+      restore();
+    }
+  });
+
   it('fails fast when a sync item exceeds quota', async () => {
     const area = new FakeStorageArea({ quotaBytes: 256, quotaBytesPerItem: 64 });
     const restore = installStorageNamespace('browser', area);

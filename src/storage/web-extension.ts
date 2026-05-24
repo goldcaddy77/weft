@@ -1,5 +1,11 @@
 import { decodeBase64ToBytes, encodeBytesToBase64, isRecord } from './byte-encoding.ts';
 import {
+  storageCountCore,
+  storageDeletePrefixCore,
+  storageHasCore,
+  storageKeysCore,
+} from './derived-operations.ts';
+import {
   matchesScanOptions,
   type BatchOperation,
   type ScanOptions,
@@ -427,33 +433,26 @@ export class WebExtensionStorage implements Storage {
     });
   }
 
-  async has(key: string): Promise<boolean> {
-    return (await this.get(key)) !== null;
+  has(key: string): Promise<boolean> {
+    return storageHasCore(this, key);
   }
 
   async *keys(prefix: string, options?: ScanOptions): AsyncIterable<string> {
-    for await (const [key] of this.scan(prefix, options)) {
-      yield key;
-    }
+    yield* storageKeysCore(this, prefix, options);
   }
 
-  async count(prefix: string): Promise<number> {
-    let count = 0;
-    for await (const _key of this.keys(prefix)) {
-      count += 1;
-    }
-    return count;
+  count(prefix: string): Promise<number> {
+    return storageCountCore(this, prefix);
   }
 
   async deletePrefix(prefix: string): Promise<number> {
+    // Reject a write attempt on a read-only area before scanning or deleting
+    // anything, even when no keys match — `batch()` would also assert, but only
+    // after a non-empty scan, so the up-front check preserves the contract for
+    // the empty-prefix case. `async` ensures the rejection surfaces as a
+    // rejected promise rather than a synchronous throw.
     this.#assertWritable();
-    const keys: string[] = [];
-    for await (const key of this.keys(prefix)) {
-      keys.push(key);
-    }
-    if (keys.length === 0) return 0;
-    await this.batch(keys.map((key) => ({ type: 'delete', key })));
-    return keys.length;
+    return storageDeletePrefixCore(this, prefix);
   }
 
   scoped(prefix: string): Storage {
