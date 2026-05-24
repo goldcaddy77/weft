@@ -26,9 +26,9 @@ behavior.
 - `documentation/engine-field-init-order.md` — frozen list of the 59 instance
   fields in original declaration order. The constructor body assigns each in
   this order via `getInternals(this).fieldName = expr`.
-- `scripts/check-internals-migration.ts` — verifies no `this.#fieldName`
-  reference remains under `src/core/engine/` for any of the 59 migrated fields.
-  Wired into `bun run lint`.
+- `scripts/check-engine-internals-field-access.ts` — verifies no
+  `this.#fieldName` reference remains under `src/core/engine/` for any of the 59
+  EngineInternals fields. Wired into `bun run lint`.
 - `documentation/internal-imports-allowlist.json` — adds entry for engine
   internals (allowed only from `src/core/engine/**`).
 
@@ -60,7 +60,7 @@ left as a static class member (not part of the WeakMap).
 
 ## Verification
 
-- `bun run lint` clean (includes `check-internals-migration.ts`).
+- `bun run lint` clean (includes `check-engine-internals-field-access.ts`).
 - `bun run typecheck` clean.
 - `bun test src/core/` — 1537 pass, 0 fail.
 - `bun test tests/replay-fixtures/ tests/checkpoint-compat/` — 22 pass, 0 fail

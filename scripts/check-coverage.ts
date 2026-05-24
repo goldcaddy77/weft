@@ -15,7 +15,7 @@ type CoverageAllowance = {
 
 function isGeneratedCoverageArtifact(filePath: string): boolean {
   if (
-    /(?:\.\.\/){6}(?:private\/)?var\/folders\//.test(filePath) &&
+    /(?:\.\.\/){5,6}(?:private\/)?var\/folders\//.test(filePath) &&
     /(?:\/weft-(?:schedule(?:-lmdb)?-(?:workflows|input)|cli-edge-workflows)-[^/]+\.ts$|\/weft-validate-[^/]+\/[^/]+\.ts$|\/weft-validate-(?:json-invalid|mixed-(?:clean|invalid)|multi-[ab])-[^/]+\.ts$)/.test(
       filePath,
     )
@@ -1422,6 +1422,18 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_REFRESH = new Map<string, CoverageAllowanc
     {
       functions: 2,
       lines: new Set([51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 133, 134, 135, 136, 179]),
+    },
+  ],
+  [
+    // Shared WebSocket subscribe helper. Both consumers drive the happy path;
+    // the defensive timeout/parse-guard/early-finish branches mirror the ones
+    // that were uncovered while this logic lived inline in the two `.test.ts`
+    // files (test files are not instrumented). Bun instruments the
+    // `.test-support.ts` extraction, so those same branches surface here.
+    'src/server/jsonrpc-websocket.test-support.ts',
+    {
+      functions: 2,
+      lines: new Set([55, 56, 70, 74, 85, 93, 98, 103, 108]),
     },
   ],
   [

@@ -1,6 +1,7 @@
 /**
  * EngineInternals — the shared mutable state object backing every Engine
- * instance. Established in PR 8 of the oxlint-strict refactor.
+ * instance. Engine state lives here, on a WeakMap-backed object reached via
+ * `getInternals(this)`, rather than on `#private` class fields.
  *
  * Why a WeakMap instead of `private _field`?  TypeScript's `private` modifier
  * is class-private, not module-private — sibling modules under

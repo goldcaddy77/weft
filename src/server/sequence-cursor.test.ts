@@ -6,6 +6,7 @@ import { workflow } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { createEngineEventFeedBackend } from './engine-event-feed-backend.ts';
 import { serve, type WeftServer } from './index.ts';
+import { collectWebSocketDeliveredEnvelopes } from './jsonrpc-websocket.test-support.ts';
 import { parseOptionalSequenceCursor } from './sequence-cursor.ts';
 import { createWorkflowEventFeed, type EventEnvelope } from './workflow-event-feed.ts';
 
@@ -95,7 +96,13 @@ it('All live views share the same sequence and cursor semantics. Replay, resume,
     // Surface 2: WebSocket subscription — should deliver the same replayed
     // envelopes in the same order because both transports project from the
     // shared event feed.
-    const subscribed = await collectWebSocketDeliveredEnvelopes(server, handle.id, replayed.length);
+    const subscribed = await collectWebSocketDeliveredEnvelopes(
+      server,
+      handle.id,
+      replayed.length,
+      SUBSCRIBE_TEST_API_KEY,
+      'sequence-cursor',
+    );
 
     expect(replayed.length).toBeGreaterThan(0);
     expect(subscribed.length).toBe(replayed.length);
@@ -127,103 +134,3 @@ it('All live views share the same sequence and cursor semantics. Replay, resume,
 // `weft.workflows.events` requires `workflows:read`. The test serve()
 // above issues a key with that scope; this connection presents it.
 const SUBSCRIBE_TEST_API_KEY = 'weft_test_sequence_cursor_workflows_read_key_xxxxxxxx';
-
-function openWebSocket(url: string): Promise<WebSocket> {
-  return new Promise((resolve, reject) => {
-    const webSocket = new WebSocket(url, {
-      headers: { authorization: `Bearer ${SUBSCRIBE_TEST_API_KEY}` },
-    } as any);
-    webSocket.addEventListener('open', () => resolve(webSocket));
-    webSocket.addEventListener('error', (event) => reject(event));
-  });
-}
-
-async function collectWebSocketDeliveredEnvelopes(
-  server: WeftServer,
-  workflowId: string,
-  expectedCount: number,
-): Promise<EventEnvelope[]> {
-  const webSocket = await openWebSocket(`${server.url.replace('http://', 'ws://')}/jsonrpc`);
-
-  try {
-    return await new Promise<EventEnvelope[]>((resolve, reject) => {
-      const received: EventEnvelope[] = [];
-      const correlationId = `sequence-cursor-${workflowId}`;
-      let subscriptionId: string | undefined;
-
-      const timer = setTimeout(() => {
-        webSocket.removeEventListener('message', handler);
-        reject(new Error('collectWebSocketDeliveredEnvelopes timed out'));
-      }, 3_000);
-
-      function finish(value: EventEnvelope[]): void {
-        clearTimeout(timer);
-        webSocket.removeEventListener('message', handler);
-        resolve(value);
-      }
-
-      function handler(event: MessageEvent): void {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(String(event.data));
-        } catch {
-          return;
-        }
-        if (typeof parsed !== 'object' || parsed === null) {
-          return;
-        }
-
-        const record = parsed as Record<string, unknown>;
-        if (record['id'] === correlationId) {
-          const result = record['result'];
-          if (typeof result === 'object' && result !== null) {
-            const candidateSubscriptionId = (result as Record<string, unknown>)['subscriptionId'];
-            if (typeof candidateSubscriptionId === 'string') {
-              subscriptionId = candidateSubscriptionId;
-              if (expectedCount === 0) {
-                finish([]);
-              }
-            }
-          }
-          return;
-        }
-
-        if (record['method'] !== 'weft.events.deliver' || subscriptionId === undefined) {
-          return;
-        }
-
-        const params = record['params'];
-        if (typeof params !== 'object' || params === null) {
-          return;
-        }
-
-        const deliverParams = params as Record<string, unknown>;
-        if (deliverParams['subscriptionId'] !== subscriptionId) {
-          return;
-        }
-
-        const envelope = deliverParams['envelope'];
-        if (typeof envelope !== 'object' || envelope === null) {
-          return;
-        }
-
-        received.push(envelope as EventEnvelope);
-        if (received.length >= expectedCount) {
-          finish(received);
-        }
-      }
-
-      webSocket.addEventListener('message', handler);
-      webSocket.send(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: correlationId,
-          method: 'weft.workflows.subscribe',
-          params: { workflowId, selector: 'events' },
-        }),
-      );
-    });
-  } finally {
-    webSocket.close();
-  }
-}

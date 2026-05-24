@@ -48,11 +48,25 @@ const COVERAGE_TARGET_COMPLETIONS_PER_SECOND = isConstrainedCodexRunner()
     : 12_000;
 const runArchitectureBenchmark =
   process.env['WEFT_ACTIVITY_COMPLETION_ARCHITECTURE_BENCHMARK'] === '1' ? it : it.skip;
-const TOTAL_WORKFLOWS = 250;
-const ACTIVITIES_PER_WORKFLOW = 30;
-const MEASUREMENT_ROUNDS = 3;
-const TOTAL_ACTIVITY_COMPLETIONS = TOTAL_WORKFLOWS * ACTIVITIES_PER_WORKFLOW * MEASUREMENT_ROUNDS;
-const START_BATCH_SIZE = 250;
+type ActivityCompletionBenchmarkParameters = {
+  totalWorkflows: number;
+  activitiesPerWorkflow: number;
+  measurementRounds: number;
+  startBatchSize: number;
+};
+
+const BASELINE_BENCHMARK_PARAMETERS: ActivityCompletionBenchmarkParameters = {
+  totalWorkflows: 250,
+  activitiesPerWorkflow: 30,
+  measurementRounds: 3,
+  startBatchSize: 250,
+};
+const COVERAGE_SMOKE_BENCHMARK_PARAMETERS: ActivityCompletionBenchmarkParameters = {
+  totalWorkflows: 50,
+  activitiesPerWorkflow: 10,
+  measurementRounds: 1,
+  startBatchSize: 50,
+};
 
 function percentile(sorted: number[], fraction: number): number {
   if (sorted.length === 0) {
@@ -101,15 +115,30 @@ function getTargetCompletionsPerSecond(): number {
     : BASELINE_TARGET_COMPLETIONS_PER_SECOND;
 }
 
-function collectActivityCompletionSamples(sampleCount: number): number[] {
+function getSmokeBenchmarkParameters(): ActivityCompletionBenchmarkParameters {
+  return isCoverageInstrumentationEnabled()
+    ? COVERAGE_SMOKE_BENCHMARK_PARAMETERS
+    : BASELINE_BENCHMARK_PARAMETERS;
+}
+
+function totalActivityCompletions(parameters: ActivityCompletionBenchmarkParameters): number {
+  return (
+    parameters.totalWorkflows * parameters.activitiesPerWorkflow * parameters.measurementRounds
+  );
+}
+
+function collectActivityCompletionSamples(
+  sampleCount: number,
+  parameters: ActivityCompletionBenchmarkParameters,
+): number[] {
   const samples: number[] = [];
   for (let sample = 0; sample < sampleCount; sample += 1) {
     samples.push(
       runActivityCompletionBenchmark(
-        TOTAL_WORKFLOWS,
-        ACTIVITIES_PER_WORKFLOW,
-        START_BATCH_SIZE,
-        MEASUREMENT_ROUNDS,
+        parameters.totalWorkflows,
+        parameters.activitiesPerWorkflow,
+        parameters.startBatchSize,
+        parameters.measurementRounds,
       ).completionsPerSecond,
     );
   }
@@ -120,17 +149,18 @@ function collectActivityCompletionSamples(sampleCount: number): number[] {
 function logActivityCompletionBenchmark(
   samples: number[],
   targetCompletionsPerSecond: number,
+  parameters: ActivityCompletionBenchmarkParameters,
 ): void {
   const medianCompletionsPerSecond = percentile(samples, 0.5);
 
   console.log(
     [
       `\n  Activity completion throughput benchmark:`,
-      `    Total workflows: ${TOTAL_WORKFLOWS.toLocaleString()}`,
-      `    Activities per workflow: ${ACTIVITIES_PER_WORKFLOW.toLocaleString()}`,
-      `    Measurement rounds: ${MEASUREMENT_ROUNDS.toLocaleString()}`,
-      `    Total completions: ${TOTAL_ACTIVITY_COMPLETIONS.toLocaleString()}`,
-      `    Start batch size: ${START_BATCH_SIZE.toLocaleString()}`,
+      `    Total workflows: ${parameters.totalWorkflows.toLocaleString()}`,
+      `    Activities per workflow: ${parameters.activitiesPerWorkflow.toLocaleString()}`,
+      `    Measurement rounds: ${parameters.measurementRounds.toLocaleString()}`,
+      `    Total completions: ${totalActivityCompletions(parameters).toLocaleString()}`,
+      `    Start batch size: ${parameters.startBatchSize.toLocaleString()}`,
       `    Samples:         ${samples.map((sample) => sample.toLocaleString()).join(', ')}`,
       `    Median/sec:      ${medianCompletionsPerSecond.toLocaleString()}`,
       `    Target:          ${targetCompletionsPerSecond.toLocaleString()}`,
@@ -143,18 +173,19 @@ function logActivityCompletionBenchmark(
 
 describe('Activity completion throughput', () => {
   it('records completion throughput in a non-gating smoke benchmark', async () => {
+    const parameters = getSmokeBenchmarkParameters();
     // Warm the subprocess runner once so the smoke sample measures the engine's
     // steady-state hot path instead of Bun's first-run transpilation/cache setup.
     runActivityCompletionBenchmark(
-      TOTAL_WORKFLOWS,
-      ACTIVITIES_PER_WORKFLOW,
-      START_BATCH_SIZE,
-      MEASUREMENT_ROUNDS,
+      parameters.totalWorkflows,
+      parameters.activitiesPerWorkflow,
+      parameters.startBatchSize,
+      parameters.measurementRounds,
     );
 
-    const samples = collectActivityCompletionSamples(1);
+    const samples = collectActivityCompletionSamples(1, parameters);
 
-    logActivityCompletionBenchmark(samples, getTargetCompletionsPerSecond());
+    logActivityCompletionBenchmark(samples, getTargetCompletionsPerSecond(), parameters);
 
     expect(percentile(samples, 0.5)).toBeGreaterThan(0);
   }, 120_000);
@@ -162,21 +193,22 @@ describe('Activity completion throughput', () => {
   runArchitectureBenchmark(
     `completions exceed ${getTargetCompletionsPerSecond().toLocaleString()}/sec`,
     async () => {
+      const parameters = BASELINE_BENCHMARK_PARAMETERS;
       // Warm the subprocess runner once so the sampled runs measure the engine's
       // steady-state hot path instead of Bun's first-run transpilation/cache
       // setup cost.
       runActivityCompletionBenchmark(
-        TOTAL_WORKFLOWS,
-        ACTIVITIES_PER_WORKFLOW,
-        START_BATCH_SIZE,
-        MEASUREMENT_ROUNDS,
+        parameters.totalWorkflows,
+        parameters.activitiesPerWorkflow,
+        parameters.startBatchSize,
+        parameters.measurementRounds,
       );
 
-      const samples = collectActivityCompletionSamples(SAMPLES);
+      const samples = collectActivityCompletionSamples(SAMPLES, parameters);
       const medianCompletionsPerSecond = percentile(samples, 0.5);
       const targetCompletionsPerSecond = getTargetCompletionsPerSecond();
 
-      logActivityCompletionBenchmark(samples, targetCompletionsPerSecond);
+      logActivityCompletionBenchmark(samples, targetCompletionsPerSecond, parameters);
 
       expect(medianCompletionsPerSecond).toBeGreaterThanOrEqual(targetCompletionsPerSecond);
     },
