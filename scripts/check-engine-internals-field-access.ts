@@ -1,16 +1,19 @@
 #!/usr/bin/env bun
 /**
- * Verify that no `this.#fieldName` reference remains in `src/core/engine/`
- * for fields that were migrated to `EngineInternals`. Methods stay as
- * `#private` (`this.#methodName(...)`) so those are not flagged.
+ * Engine instance state lives on `EngineInternals` (a WeakMap-backed object
+ * reached via `getInternals(this)`), not on `#private` class fields. This
+ * keeps engine state accessible to the sibling modules that hold the engine's
+ * extracted methods.
  *
- * Used by PR 8 (engine substrate) to prove the field migration is complete.
+ * This check enforces that invariant: no `this.#fieldName` reference may remain
+ * in `src/core/engine/` for any field that belongs to `EngineInternals`.
+ * Methods stay as `#private` (`this.#methodName(...)`) and are intentionally
+ * not flagged.
  *
- * The list of migrated field names is hard-coded below. As future engine PRs
- * (PRs 9–32) extract methods into sibling modules, the script's allowlist
- * stays the same — methods extracted to siblings still call `getInternals(...)`,
- * so no `this.#fieldName` references should exist for any of these names
- * anywhere under `src/core/engine/`.
+ * The field names are listed below. Methods extracted into sibling modules
+ * still reach state through `getInternals(...)`, so no `this.#fieldName`
+ * reference should exist for any of these names anywhere under
+ * `src/core/engine/`.
  */
 
 import { Glob, file } from 'bun';
@@ -18,7 +21,7 @@ import { join } from 'node:path';
 
 const repoRoot = join(import.meta.dir, '..');
 
-const MIGRATED_FIELDS = [
+const ENGINE_INTERNALS_FIELDS = [
   'storage',
   'registrations',
   'workflowTypesByHandler',
@@ -93,7 +96,7 @@ for await (const relPath of glob.scan({ cwd: repoRoot })) {
   const lines = source.split('\n');
 
   for (const [index, lineText] of lines.entries()) {
-    for (const fieldName of MIGRATED_FIELDS) {
+    for (const fieldName of ENGINE_INTERNALS_FIELDS) {
       const regex = new RegExp(`this\\.#${fieldName}(?![a-zA-Z0-9_$])`, 'g');
       if (regex.test(lineText)) {
         violations.push({
@@ -108,7 +111,7 @@ for await (const relPath of glob.scan({ cwd: repoRoot })) {
 }
 
 if (violations.length > 0) {
-  console.error('Found `this.#fieldName` references for migrated fields:');
+  console.error('Found `this.#fieldName` references for EngineInternals fields:');
   for (const v of violations) {
     console.error(
       `  ${v.file}:${v.line}  this.#${v.field}  →  should be getInternals(this).${v.field}`,
@@ -116,9 +119,11 @@ if (violations.length > 0) {
     console.error(`    ${v.text}`);
   }
   console.error(
-    '\nAll formerly-#private fields now live on EngineInternals. Replace `this.#field` with `getInternals(this).field`.',
+    '\nThese fields live on EngineInternals. Replace `this.#field` with `getInternals(this).field`.',
   );
   process.exit(1);
 }
 
-console.log(`OK: no \`this.#fieldName\` references for ${MIGRATED_FIELDS.length} migrated fields.`);
+console.log(
+  `OK: no \`this.#fieldName\` references for ${ENGINE_INTERNALS_FIELDS.length} EngineInternals fields.`,
+);

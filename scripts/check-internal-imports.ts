@@ -5,9 +5,9 @@
  *
  * The allowlist lives at `documentation/internal-imports-allowlist.json`. Each
  * entry pairs an internals module path (relative to repo root) with the glob
- * permitted to import it. PR 0 commits an empty list; PR 7 adds the context
- * entry; PR 8 adds the engine entry. The script trivially passes when the
- * allowlist is empty.
+ * permitted to import it — for example, the engine and context internals
+ * modules are each importable only from their own sibling directory. The
+ * script trivially passes when the allowlist is empty.
  *
  * Triggered as part of `bun run lint`.
  */

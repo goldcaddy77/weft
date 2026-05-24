@@ -83,6 +83,31 @@ describe('weft.workflows.query', () => {
     expect(await response.json()).toEqual({ result: { detail: true } });
   });
 
+  it('passes undefined input for POST query requests with an empty body', async () => {
+    const engine = createEngine();
+    try {
+      const handle = await engine.start('queryable', null, { id: 'query-workflow-empty-input' });
+      await waitForWorkflowStatus(engine, handle.id, 'running');
+
+      const response = await handleRequest(
+        new Request(`http://localhost/v1/workflows/${handle.id}/query/echoInput`, {
+          method: 'POST',
+        }),
+        engine,
+        {
+          operationRegistry: registry,
+          restBindings: bindings,
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toBe('application/json');
+      expect(await response.json()).toEqual({ result: null });
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
   it('returns 400 for malformed POST query JSON', async () => {
     const engine = createEngine();
     const handle = await engine.start('queryable', null, { id: 'query-workflow-malformed-input' });

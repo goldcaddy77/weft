@@ -31,27 +31,34 @@ describe('parseLcov', () => {
       'weft-cli-edge-workflows-example.ts',
       'weft-validate-TA9zHl/conflict.ts',
     ];
+    const generatedPrefixes = [
+      '../../../../../../var/folders/x_/tmp',
+      '../../../../../private/var/folders/x_/T',
+      '../../../../../var/folders/x_/T',
+    ];
 
-    for (const generatedFile of generatedFiles) {
-      const coverage = parseLcov(
-        [
-          `SF:../../../../../../var/folders/x_/tmp/${generatedFile}`,
-          'FNF:1',
-          'FNH:0',
-          'DA:1,0',
-          'end_of_record',
-          'SF:src/example.ts',
-          'FNF:1',
-          'FNH:1',
-          'DA:1,1',
-          'end_of_record',
-        ].join('\n'),
-      );
+    for (const generatedPrefix of generatedPrefixes) {
+      for (const generatedFile of generatedFiles) {
+        const coverage = parseLcov(
+          [
+            `SF:${generatedPrefix}/${generatedFile}`,
+            'FNF:1',
+            'FNH:0',
+            'DA:1,0',
+            'end_of_record',
+            'SF:src/example.ts',
+            'FNF:1',
+            'FNH:1',
+            'DA:1,1',
+            'end_of_record',
+          ].join('\n'),
+        );
 
-      expect(coverage.covered).toBe(true);
-      expect(coverage.lines).toEqual({ total: 1, hit: 1, missed: 0 });
-      expect(coverage.functions).toEqual({ total: 1, hit: 1, missed: 0 });
-      expect(coverage.uncoveredFiles).toEqual([]);
+        expect(coverage.covered).toBe(true);
+        expect(coverage.lines).toEqual({ total: 1, hit: 1, missed: 0 });
+        expect(coverage.functions).toEqual({ total: 1, hit: 1, missed: 0 });
+        expect(coverage.uncoveredFiles).toEqual([]);
+      }
     }
   });
 

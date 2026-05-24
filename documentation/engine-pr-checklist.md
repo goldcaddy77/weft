@@ -23,7 +23,7 @@
 - [ ] `bun run validate` clean
 - [ ] `bun run build` clean; public-API snapshot reviewed
 - [ ] `tests/replay-fixtures/` and `tests/checkpoint-compat/` green
-- [ ] `bun run scripts/check-internals-migration.ts` clean
+- [ ] `bun run scripts/check-engine-internals-field-access.ts` clean
 
 ## Revertability
 

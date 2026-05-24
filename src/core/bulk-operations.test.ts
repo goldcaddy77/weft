@@ -13,6 +13,7 @@ import { BULK_WORKFLOW_FILTER_ERROR_MESSAGE } from './bulk-workflow-filter.ts';
 import { decode, encode } from './codec.ts';
 import { BulkDeleteRequiresTerminalWorkflowsError, Engine } from './engine.ts';
 import { cancelAll } from './engine/bulk-operations.ts';
+import { BULK_OPERATION_BATCH_SIZE } from './engine/listing.ts';
 import type { SearchAttributeValue, WorkflowContext, WorkflowState } from './types.ts';
 import { workflow } from './types.ts';
 
@@ -79,6 +80,60 @@ async function createCompletedWorkflow(
     ...(searchAttributes && { searchAttributes }),
   });
   await handle.result();
+}
+
+async function writePendingWorkflowState(
+  storage: MemoryStorage,
+  workflowId: string,
+  timestamp: number,
+): Promise<void> {
+  await storage.put(
+    KEYS.workflow(workflowId),
+    encode({
+      createdAt: timestamp,
+      id: workflowId,
+      input: null,
+      startedAt: timestamp,
+      status: 'pending',
+      type: 'echo',
+      updatedAt: timestamp,
+      version: '1',
+    } satisfies WorkflowState),
+  );
+}
+
+async function readWorkflowState(
+  storage: MemoryStorage,
+  workflowId: string,
+): Promise<WorkflowState | null> {
+  const workflowStateBytes = await storage.get(KEYS.workflow(workflowId));
+  return workflowStateBytes === null ? null : (decode(workflowStateBytes) as WorkflowState);
+}
+
+function createStorageBackedCancellationInternals(storage: MemoryStorage, timestamp: number) {
+  return {
+    engine: {
+      cancel: async (workflowId: string) => {
+        const workflowState = await readWorkflowState(storage, workflowId);
+        if (workflowState === null) {
+          throw new Error(`Workflow ${workflowId} not found`);
+        }
+
+        await storage.batch([
+          {
+            type: 'put',
+            key: KEYS.workflow(workflowId),
+            value: encode({
+              ...workflowState,
+              status: 'cancelled',
+              updatedAt: timestamp,
+            } satisfies WorkflowState),
+          },
+        ]);
+      },
+    },
+    storage,
+  } as never;
 }
 
 function isTopLevelWorkflowStateKey(key: string): boolean {
@@ -904,31 +959,24 @@ describe('bulk workflow operations', () => {
     async () => {
       const now = 1_000;
       const storage = new BulkWorkflowReorderingScanStorage();
-      const engine = new Engine({
-        storage,
-        getNow: () => now,
-      });
-      const echoWorkflow11 = workflow({ name: 'echo' }).execute(echoWorkflow);
-      engine.register(echoWorkflow11);
+      const workflowCount = BULK_OPERATION_BATCH_SIZE + 1;
 
-      try {
-        for (let index = 0; index < 1_001; index++) {
-          await engine.start('echo', index, {
-            id: `bulk-cancel-scan-${String(index)}`,
-            startAt: now + 60_000,
-          });
-        }
-
-        const result = await engine.cancelAll({ status: 'pending' });
-        const lastWorkflow = await engine.get('bulk-cancel-scan-1000');
-
-        expect(result.cancelled).toBe(1_001);
-        expect(result.failed).toBe(0);
-        expect(result.errors).toEqual([]);
-        expect(lastWorkflow?.status).toBe('cancelled');
-      } finally {
-        await engine[Symbol.asyncDispose]();
+      for (let index = 0; index < workflowCount; index++) {
+        await writePendingWorkflowState(storage, `bulk-cancel-scan-${String(index)}`, now);
       }
+
+      const result = await cancelAll(createStorageBackedCancellationInternals(storage, now), {
+        status: 'pending',
+      });
+      const lastWorkflow = await readWorkflowState(
+        storage,
+        `bulk-cancel-scan-${String(workflowCount - 1)}`,
+      );
+
+      expect(result.cancelled).toBe(workflowCount);
+      expect(result.failed).toBe(0);
+      expect(result.errors).toEqual([]);
+      expect(lastWorkflow?.status).toBe('cancelled');
     },
     { timeout: 15_000 },
   );
@@ -1000,30 +1048,20 @@ describe('bulk workflow operations', () => {
     async () => {
       const now = 1_000;
       const storage = new BulkBatchTrackingStorage();
-      const engine = new Engine({
-        storage,
-        getNow: () => now,
-      });
-      const echoWorkflow13 = workflow({ name: 'echo' }).execute(echoWorkflow);
-      engine.register(echoWorkflow13);
+      const workflowCount = BULK_OPERATION_BATCH_SIZE + 5;
 
-      try {
-        for (let index = 0; index < 1_005; index++) {
-          await engine.start('echo', index, {
-            id: `bulk-batch-${String(index)}`,
-            startAt: now + 60_000,
-          });
-        }
-
-        storage.shouldTrackBulkMutations = true;
-
-        const result = await engine.cancelAll({ status: 'pending' });
-
-        expect(result.cancelled).toBe(1_005);
-        expect(storage.firstMutationSeenAfterScanningCount).toBe(1_005);
-      } finally {
-        await engine[Symbol.asyncDispose]();
+      for (let index = 0; index < workflowCount; index++) {
+        await writePendingWorkflowState(storage, `bulk-batch-${String(index)}`, now);
       }
+
+      storage.shouldTrackBulkMutations = true;
+
+      const result = await cancelAll(createStorageBackedCancellationInternals(storage, now), {
+        status: 'pending',
+      });
+
+      expect(result.cancelled).toBe(workflowCount);
+      expect(storage.firstMutationSeenAfterScanningCount).toBe(workflowCount);
     },
     { timeout: 15_000 },
   );

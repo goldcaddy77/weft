@@ -7,6 +7,10 @@
  * - JWT with tenant claim A accessing tenant B is rejected with Forbidden (403).
  * - JWT without tenant claim is rejected with Forbidden (403).
  * - EngineFailure fault shaper returns 500 with "Internal server error".
+ *
+ * Cross-transport behavior shared by all data-driven operations (registry
+ * membership, transport-neutral authorization, tenant isolation) lives in
+ * `cross-transport-contract.test.ts`.
  */
 
 import { afterEach, describe, expect, it } from 'bun:test';

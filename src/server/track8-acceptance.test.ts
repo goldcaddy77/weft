@@ -11,6 +11,11 @@ import { faultToHttpResponse } from './fault-to-http.ts';
 import { faultToJsonRpcError } from './fault-to-json-rpc.ts';
 import { serve, type WeftServer } from './index.ts';
 import { dispatchJsonRpc } from './json-rpc-dispatch.ts';
+import {
+  collectWebSocketDeliveredEnvelopes,
+  openWebSocket,
+  waitForMessage,
+} from './json-rpc-websocket-client.test-support.ts';
 import { createOperationRegistry } from './operation-catalog.ts';
 import type { OperationFault } from './operation-fault.ts';
 import { defineOperation } from './operation-registry.ts';
@@ -71,38 +76,9 @@ async function collectReplayEvents(engine: Engine, workflowId: string): Promise<
   return events;
 }
 
-function waitForWebSocketMessage(
-  webSocket: WebSocket,
-  predicate: (parsed: unknown) => boolean,
-  timeoutMilliseconds = 3_000,
-): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      webSocket.removeEventListener('message', handler);
-      reject(new Error('waitForWebSocketMessage timed out'));
-    }, timeoutMilliseconds);
-
-    function handler(event: MessageEvent): void {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(String(event.data));
-      } catch {
-        return;
-      }
-      if (predicate(parsed)) {
-        clearTimeout(timer);
-        webSocket.removeEventListener('message', handler);
-        resolve(parsed);
-      }
-    }
-
-    webSocket.addEventListener('message', handler);
-  });
-}
-
 // `weft.workflows.events` requires `workflows:read`. Tests below that drive
-// subscriptions configure `serve({ auth: { apiKeys: [...] } })` and this
-// helper presents the matching key on the WebSocket Authorization header.
+// subscriptions configure `serve({ auth: { apiKeys: [...] } })` and present
+// the matching key on the WebSocket Authorization header.
 const SUBSCRIBE_TEST_API_KEY = 'weft_test_track8_workflows_read_key_xxxxxxxxxxxxxxxx';
 const subscribeServeOptions = {
   port: 0,
@@ -111,107 +87,6 @@ const subscribeServeOptions = {
     defaultApiKeyScopes: ['workflows:read'] as const,
   },
 };
-
-function openWebSocket(url: string): Promise<WebSocket> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url, {
-      headers: { authorization: `Bearer ${SUBSCRIBE_TEST_API_KEY}` },
-    } as any);
-    ws.addEventListener('open', () => resolve(ws));
-    ws.addEventListener('error', (event) => reject(event));
-  });
-}
-
-async function collectWebSocketDeliveredEnvelopes(
-  serverUrl: string,
-  workflowId: string,
-  expectedCount: number,
-): Promise<EventEnvelope[]> {
-  const webSocketUrl = `${serverUrl.replace('http://', 'ws://')}/jsonrpc`;
-  const webSocket = await openWebSocket(webSocketUrl);
-
-  try {
-    return await new Promise<EventEnvelope[]>((resolve, reject) => {
-      const received: EventEnvelope[] = [];
-      const correlationId = `collect-${workflowId}`;
-      let subscriptionId: string | undefined;
-
-      const timer = setTimeout(() => {
-        webSocket.removeEventListener('message', handler);
-        reject(new Error('collectWebSocketDeliveredEnvelopes timed out'));
-      }, 3_000);
-
-      function finish(value: EventEnvelope[]): void {
-        clearTimeout(timer);
-        webSocket.removeEventListener('message', handler);
-        resolve(value);
-      }
-
-      function handler(event: MessageEvent): void {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(String(event.data));
-        } catch {
-          return;
-        }
-        if (typeof parsed !== 'object' || parsed === null) {
-          return;
-        }
-
-        const record = parsed as Record<string, unknown>;
-        if (record['id'] === correlationId) {
-          const result = record['result'];
-          if (typeof result === 'object' && result !== null) {
-            const candidateSubscriptionId = (result as Record<string, unknown>)['subscriptionId'];
-            if (typeof candidateSubscriptionId === 'string') {
-              subscriptionId = candidateSubscriptionId;
-              if (expectedCount === 0) {
-                finish([]);
-              }
-            }
-          }
-          return;
-        }
-
-        if (record['method'] !== 'weft.events.deliver' || subscriptionId === undefined) {
-          return;
-        }
-
-        const params = record['params'];
-        if (typeof params !== 'object' || params === null) {
-          return;
-        }
-
-        const deliverParams = params as Record<string, unknown>;
-        if (deliverParams['subscriptionId'] !== subscriptionId) {
-          return;
-        }
-
-        const envelope = deliverParams['envelope'];
-        if (typeof envelope !== 'object' || envelope === null) {
-          return;
-        }
-
-        received.push(envelope as EventEnvelope);
-        if (received.length >= expectedCount) {
-          finish(received);
-        }
-      }
-
-      webSocket.addEventListener('message', handler);
-      webSocket.send(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: correlationId,
-          method: 'weft.workflows.subscribe',
-          params: { workflowId, selector: 'events' },
-        }),
-      );
-    });
-  } finally {
-    webSocket.close();
-  }
-}
 
 function isRelevantTraceabilityRow(cells: string[]): boolean {
   const category = cells[3] ?? '';
@@ -349,9 +224,10 @@ describe('Track 8 acceptance coverage', () => {
     expect(replayed.length).toBeGreaterThan(0);
     server = serve({ engine, ...subscribeServeOptions });
     const wireEnvelopes = await collectWebSocketDeliveredEnvelopes(
-      server.url,
+      server,
       handle.id,
       replayed.length,
+      SUBSCRIBE_TEST_API_KEY,
     );
 
     expect(wireEnvelopes).toHaveLength(replayed.length);
@@ -483,9 +359,10 @@ describe('Track 8 acceptance coverage', () => {
 
     server = serve({ engine, ...subscribeServeOptions });
     const wireEnvelopes = await collectWebSocketDeliveredEnvelopes(
-      server.url,
+      server,
       handle.id,
       replayed.length,
+      SUBSCRIBE_TEST_API_KEY,
     );
 
     expect(wireEnvelopes).toHaveLength(replayed.length);
@@ -558,8 +435,8 @@ describe('Track 8 acceptance coverage', () => {
 
     // --- Transport 2: WebSocket upgrade on /jsonrpc ---
     const wsUrl = `${server.url.replace('http://', 'ws://')}/jsonrpc`;
-    const ws = await openWebSocket(wsUrl);
-    const wsResponsePromise = waitForWebSocketMessage(
+    const ws = await openWebSocket(wsUrl, SUBSCRIBE_TEST_API_KEY);
+    const wsResponsePromise = waitForMessage(
       ws,
       (p) => typeof p === 'object' && p !== null && (p as Record<string, unknown>)['id'] === 't2',
     );
