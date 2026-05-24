@@ -30,6 +30,11 @@ type WebExtensionTestGlobal = typeof globalThis & {
   chrome?: unknown;
 };
 
+type StorageNamespaceOptions = {
+  onAddListener?: () => void;
+  onRemoveListener?: () => void;
+};
+
 class FakeStorageArea {
   readonly data = new Map<string, unknown>();
   readonly callbackStyle: boolean;
@@ -100,7 +105,15 @@ class FakeStorageArea {
 
 function installStorageNamespace(
   namespace: 'browser' | 'chrome',
-  area: FakeStorageArea,
+  area: {
+    QUOTA_BYTES?: number;
+    QUOTA_BYTES_PER_ITEM?: number;
+    get: FakeStorageArea['get'];
+    set: FakeStorageArea['set'];
+    remove: FakeStorageArea['remove'];
+    getBytesInUse?: FakeStorageArea['getBytesInUse'];
+  },
+  options: StorageNamespaceOptions = {},
 ): () => void {
   const globalObject = globalThis as WebExtensionTestGlobal;
   const previousBrowser = globalObject.browser;
@@ -111,8 +124,12 @@ function installStorageNamespace(
       sync: area,
       managed: area,
       onChanged: {
-        addListener() {},
-        removeListener() {},
+        addListener() {
+          options.onAddListener?.();
+        },
+        removeListener() {
+          options.onRemoveListener?.();
+        },
       },
     },
   };
@@ -155,6 +172,59 @@ describe('WebExtensionStorage', () => {
       const storage = new WebExtensionStorage();
       await storage.put('key', encode('value'));
       expect(decode(await storage.get('key'))).toBe('value');
+    } finally {
+      restore();
+    }
+  });
+
+  it('falls back to promise-style WebExtension methods when callback invocation throws', async () => {
+    const area = new FakeStorageArea();
+    const callbackUnsupportedArea = {
+      QUOTA_BYTES: 512,
+      QUOTA_BYTES_PER_ITEM: 512,
+      get(keys?: string | string[] | null, callback?: (items: Record<string, unknown>) => void) {
+        if (callback) throw new Error('callback get unsupported');
+        return area.get(keys);
+      },
+      set(items: Record<string, unknown>, callback?: () => void) {
+        if (callback) throw new Error('callback set unsupported');
+        return area.set(items);
+      },
+      remove(keys: string | string[], callback?: () => void) {
+        if (callback) throw new Error('callback remove unsupported');
+        return area.remove(keys);
+      },
+      getBytesInUse(keys?: string | string[] | null, callback?: (bytes: number) => void) {
+        if (callback) throw new Error('callback bytes unsupported');
+        return area.getBytesInUse(keys);
+      },
+    };
+    const restore = installStorageNamespace('browser', callbackUnsupportedArea);
+    try {
+      const storage = new WebExtensionStorage({ area: 'sync' });
+      await storage.put('key', encode('value'));
+
+      expect(decode(await storage.get('key'))).toBe('value');
+      expect(await storage.count('k')).toBe(1);
+    } finally {
+      restore();
+    }
+  });
+
+  it('rejects when both callback and promise-style WebExtension writes fail', async () => {
+    const area = new FakeStorageArea();
+    const failingArea = {
+      get: area.get.bind(area),
+      set() {
+        throw new Error('set failed');
+      },
+      remove: area.remove.bind(area),
+      getBytesInUse: area.getBytesInUse.bind(area),
+    };
+    const restore = installStorageNamespace('browser', failingArea);
+    try {
+      const storage = new WebExtensionStorage();
+      await expect(storage.put('key', encode('value'))).rejects.toThrow('set failed');
     } finally {
       restore();
     }
@@ -346,6 +416,92 @@ describe('WebExtensionStorage', () => {
       await expect(storage.put('large', encode('x'.repeat(128)))).rejects.toThrow(
         'WebExtensionStorage sync item quota exceeded',
       );
+    } finally {
+      restore();
+    }
+  });
+
+  it('fails fast when a sync write exceeds total quota via getBytesInUse', async () => {
+    const area = new FakeStorageArea({ quotaBytes: 150, quotaBytesPerItem: 512 });
+    const restore = installStorageNamespace('browser', area);
+    try {
+      const storage = new WebExtensionStorage({ area: 'sync' });
+      await storage.put('small', encode('ok'));
+
+      await expect(storage.put('large', encode('x'.repeat(120)))).rejects.toThrow(
+        'WebExtensionStorage sync total quota exceeded',
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it('falls back to get-all sizing when getBytesInUse is unavailable', async () => {
+    const area = new FakeStorageArea({ quotaBytes: 190, quotaBytesPerItem: 512 });
+    const areaWithoutBytes = {
+      ...(area.QUOTA_BYTES === undefined ? {} : { QUOTA_BYTES: area.QUOTA_BYTES }),
+      ...(area.QUOTA_BYTES_PER_ITEM === undefined
+        ? {}
+        : { QUOTA_BYTES_PER_ITEM: area.QUOTA_BYTES_PER_ITEM }),
+      get: area.get.bind(area),
+      set: area.set.bind(area),
+      remove: area.remove.bind(area),
+    };
+    const restore = installStorageNamespace('browser', areaWithoutBytes);
+    try {
+      const storage = new WebExtensionStorage({ area: 'sync' });
+      await storage.put('small', encode('ok'));
+
+      await expect(storage.put('large', encode('x'.repeat(120)))).rejects.toThrow(
+        'WebExtensionStorage sync total quota exceeded',
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it('deletes existing keys and skips writes for missing keys', async () => {
+    const area = new FakeStorageArea();
+    const restore = installStorageNamespace('browser', area);
+    try {
+      const storage = new WebExtensionStorage();
+      await storage.put('keep', encode('value'));
+      const writesBeforeMissingDelete = area.setCallCount;
+
+      await storage.delete('missing');
+      expect(area.setCallCount).toBe(writesBeforeMissingDelete);
+
+      await storage.delete('keep');
+      expect(await storage.get('keep')).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  it('delegates has, count, scoped, and dispose through the adapter surface', async () => {
+    const area = new FakeStorageArea();
+    let removeListenerCalls = 0;
+    const restore = installStorageNamespace('browser', area, {
+      onRemoveListener: () => {
+        removeListenerCalls += 1;
+      },
+    });
+    try {
+      const storage = new WebExtensionStorage();
+      const scoped = storage.scoped('tenant:');
+      if (scoped.has === undefined || scoped.count === undefined || scoped.keys === undefined) {
+        throw new Error('Scoped storage is missing derived operations.');
+      }
+      await scoped.put('visible', encode('yes'));
+      await storage.put('plain', encode('no'));
+
+      expect(await scoped.has('visible')).toBe(true);
+      expect(await storage.has('tenant:visible')).toBe(true);
+      expect(await scoped.count('')).toBe(1);
+      expect(await collect(scoped.keys(''))).toEqual(['visible']);
+
+      storage[Symbol.dispose]();
+      expect(removeListenerCalls).toBe(1);
     } finally {
       restore();
     }
