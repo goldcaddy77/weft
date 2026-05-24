@@ -25,7 +25,7 @@ interface WorkflowInterceptor {
 
 For the complete interface with every hook signature, see the [Types Reference](../reference/types.md#workflowinterceptor).
 
-Notice that `activity`, `sleep`, `waitForSignal`, `childWorkflow`, and `query` are generators---they must use `yield*` to delegate to `next()`. This preserves checkpoint semantics. The `workflowStart` and `signalReceived` hooks are plain functions because they run outside the durable generator.
+Notice that `activity`, `sleep`, `waitForSignal`, and `query` are generators---they must use `yield*` to delegate to `next()`. This preserves checkpoint semantics. The `childWorkflow` hook is async and returns a `Promise`. The `workflowStart` and `signalReceived` hooks are plain functions because they run outside the durable generator.
 
 ## Activity interceptors
 

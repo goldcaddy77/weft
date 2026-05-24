@@ -6,7 +6,7 @@ Interceptors provide a middleware-like mechanism for cross-cutting concerns in w
 
 The workflow-side interceptor exposes seven optional hooks — `activity`, `sleep`, `waitForSignal`, `workflowStart`, `childWorkflow`, `query`, and `signalReceived` — covering the workflow operations you can wrap. See [`WorkflowInterceptor`](types.md#workflowinterceptor) for the full interface and the exact signature of each hook.
 
-All hooks are optional. Implement only the ones you need. Each hook is a generator (except `workflowStart` and `signalReceived`, which are plain functions) that receives the interception context and a `next` function. Call `yield* next(interception)` to delegate to the rest of the chain.
+All hooks are optional. Implement only the ones you need. The `activity`, `sleep`, `waitForSignal`, and `query` hooks are generators — call `yield* next(interception)` to delegate to the rest of the chain. The `childWorkflow` hook is async and returns a `Promise`. The `workflowStart` and `signalReceived` hooks are plain functions.
 
 ```ts partial
 import type { WorkflowInterceptor, ActivityInterception } from 'weft';
