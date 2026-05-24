@@ -37,9 +37,10 @@ interface Waiter {
   /**
    * The cleanup-aware `settle` closure from {@link TaskQueue.poll} — NOT the
    * raw promise resolver. Calling it clears {@link Waiter.timer} and removes
-   * the abort-signal listener as a side effect. Callers that settle a waiter
-   * out of band (e.g. dispose) may still clear {@link Waiter.timer} themselves
-   * rather than rely on that side effect.
+   * the abort-signal listener (the `signal` passed to that `poll` call) as a
+   * side effect. Callers that settle a waiter out of band (e.g. dispose) may
+   * still clear {@link Waiter.timer} themselves rather than rely on that side
+   * effect.
    */
   resolve: (task: PendingTask | null) => void;
   timer: ReturnType<typeof setTimeout>;

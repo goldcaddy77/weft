@@ -51,7 +51,7 @@ describe('registerStackDisposers', () => {
     // engine during registration, so the stub engine needs addEventListener.
     const options = {
       ...minimalServeOptions(),
-      engine: { addEventListener() {} },
+      engine: { addEventListener() {}, removeEventListener() {} },
     } as unknown as ReturnType<typeof minimalServeOptions>;
 
     const disposeSpy = spyOn(context.taskQueue, Symbol.dispose);
