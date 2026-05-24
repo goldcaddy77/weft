@@ -1,46 +1,81 @@
 /**
- * Shared JSON-RPC-over-WebSocket test helpers.
+ * WebSocket transport helpers shared by the JSON-RPC WebSocket integration
+ * suite and the operation suites that exercise the WebSocket endpoint.
  *
- * The sequence-cursor and acceptance suites both open an authenticated
- * WebSocket against `/jsonrpc`, subscribe to a workflow's event stream, and
- * collect the delivered envelopes in order. This module is the single source
- * of truth for that flow so the two suites stay in lockstep instead of each
- * carrying a near-identical copy.
+ * These set up the transport (open a socket, wait for a matching inbound
+ * frame) only. Each suite keeps its own `ws.send(...)` request bodies,
+ * method names, correlation ids, and assertions inline at the call site.
  *
- * Consumed via deep import and intentionally not re-exported from any package
- * entry point — it is test infrastructure, not public surface. The
- * `.test-support.ts` suffix is excluded by `tsconfig.build.json` so this file
- * never ships in `dist/`.
+ * `collectWebSocketDeliveredEnvelopes` is the one higher-level helper here: it
+ * drives the full subscribe-and-collect flow that the sequence-cursor and
+ * acceptance suites share, so they stay in lockstep instead of each carrying a
+ * near-identical copy.
  */
 
 import type { WeftServer } from './index.ts';
 import type { EventEnvelope } from './workflow-event-feed.ts';
 
 /**
- * Opens a WebSocket to `url`. When `apiKey` is provided it is presented as a
- * Bearer token; otherwise the socket connects without an Authorization header.
- *
- * Bun's WebSocket constructor accepts a `headers` option that the DOM lib type
- * omits, and the package-root typecheck uses the DOM lib. `Reflect.construct`
- * passes the extra option without tripping that narrower constructor type.
+ * Resolve once a parsed inbound message satisfies `predicate`; reject after
+ * `timeoutMs`. Frames that fail to parse as JSON are ignored. Removes its own
+ * listener on settle.
  */
-export function openWebSocket(url: string, apiKey?: string): Promise<WebSocket> {
+export function waitForMessage(
+  ws: WebSocket,
+  predicate: (parsed: unknown) => boolean,
+  timeoutMs = 3_000,
+): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const webSocket: WebSocket =
-      apiKey === undefined
-        ? new WebSocket(url)
-        : Reflect.construct(WebSocket, [url, { headers: { authorization: `Bearer ${apiKey}` } }]);
-    webSocket.addEventListener('open', () => resolve(webSocket));
-    webSocket.addEventListener('error', (event) => reject(event));
+    const timer = setTimeout(() => {
+      ws.removeEventListener('message', handler);
+      reject(new Error('waitForMessage timed out'));
+    }, timeoutMs);
+
+    function handler(event: MessageEvent) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(String(event.data));
+      } catch {
+        return;
+      }
+
+      if (predicate(parsed)) {
+        clearTimeout(timer);
+        ws.removeEventListener('message', handler);
+        resolve(parsed);
+      }
+    }
+
+    ws.addEventListener('message', handler);
   });
 }
 
 /**
- * Subscribes to a workflow's event stream over an authenticated WebSocket and
- * resolves with the delivered envelopes once `expectedCount` have arrived.
+ * Open a WebSocket and resolve on `open`, reject on `error`. When `token` is
+ * given, send it as a Bearer `authorization` header in the upgrade request.
  *
- * `correlationPrefix` distinguishes the subscribe request id so concurrent
- * suites do not collide on the same correlation id.
+ * Bun's WebSocket constructor accepts a `{ headers }` options object, but the
+ * WHATWG type only types the second argument as a subprotocols array, so the
+ * cast matches the existing project pattern.
+ */
+export function openWebSocket(url: string, token?: string): Promise<WebSocket> {
+  return new Promise((resolve, reject) => {
+    const socket =
+      token === undefined
+        ? new WebSocket(url)
+        : new WebSocket(url, { headers: { authorization: `Bearer ${token}` } } as any);
+    socket.addEventListener('open', () => resolve(socket));
+    socket.addEventListener('error', (event: Event) => reject(event));
+  });
+}
+
+/**
+ * Subscribe to a workflow's event stream over an authenticated WebSocket and
+ * resolve with the delivered envelopes once `expectedCount` have arrived.
+ *
+ * `apiKey` is presented as the upgrade Bearer token; `correlationPrefix`
+ * distinguishes the subscribe request id so concurrent suites do not collide
+ * on the same correlation id.
  */
 export async function collectWebSocketDeliveredEnvelopes(
   server: WeftServer,
@@ -133,38 +168,4 @@ export async function collectWebSocketDeliveredEnvelopes(
   } finally {
     webSocket.close();
   }
-}
-
-/**
- * Resolves with the first parsed WebSocket message that satisfies `predicate`,
- * or rejects after `timeoutMs`. Used to await a single JSON-RPC response on a
- * shared socket.
- */
-export function waitForWebSocketMessage(
-  webSocket: WebSocket,
-  predicate: (parsed: unknown) => boolean,
-  timeoutMs = 3_000,
-): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      webSocket.removeEventListener('message', handler);
-      reject(new Error('waitForWebSocketMessage timed out'));
-    }, timeoutMs);
-
-    function handler(event: MessageEvent): void {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(String(event.data));
-      } catch {
-        return;
-      }
-      if (predicate(parsed)) {
-        clearTimeout(timer);
-        webSocket.removeEventListener('message', handler);
-        resolve(parsed);
-      }
-    }
-
-    webSocket.addEventListener('message', handler);
-  });
 }

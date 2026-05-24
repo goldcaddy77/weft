@@ -11,7 +11,11 @@ import { faultToHttpResponse } from './fault-to-http.ts';
 import { faultToJsonRpcError } from './fault-to-json-rpc.ts';
 import { serve, type WeftServer } from './index.ts';
 import { dispatchJsonRpc } from './json-rpc-dispatch.ts';
-import { collectWebSocketDeliveredEnvelopes } from './jsonrpc-websocket.test-support.ts';
+import {
+  collectWebSocketDeliveredEnvelopes,
+  openWebSocket,
+  waitForMessage,
+} from './json-rpc-websocket-client.test-support.ts';
 import { createOperationRegistry } from './operation-catalog.ts';
 import type { OperationFault } from './operation-fault.ts';
 import { defineOperation } from './operation-registry.ts';
@@ -72,38 +76,9 @@ async function collectReplayEvents(engine: Engine, workflowId: string): Promise<
   return events;
 }
 
-function waitForWebSocketMessage(
-  webSocket: WebSocket,
-  predicate: (parsed: unknown) => boolean,
-  timeoutMilliseconds = 3_000,
-): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      webSocket.removeEventListener('message', handler);
-      reject(new Error('waitForWebSocketMessage timed out'));
-    }, timeoutMilliseconds);
-
-    function handler(event: MessageEvent): void {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(String(event.data));
-      } catch {
-        return;
-      }
-      if (predicate(parsed)) {
-        clearTimeout(timer);
-        webSocket.removeEventListener('message', handler);
-        resolve(parsed);
-      }
-    }
-
-    webSocket.addEventListener('message', handler);
-  });
-}
-
 // `weft.workflows.events` requires `workflows:read`. Tests below that drive
-// subscriptions configure `serve({ auth: { apiKeys: [...] } })` and this
-// helper presents the matching key on the WebSocket Authorization header.
+// subscriptions configure `serve({ auth: { apiKeys: [...] } })` and present
+// the matching key on the WebSocket Authorization header.
 const SUBSCRIBE_TEST_API_KEY = 'weft_test_track8_workflows_read_key_xxxxxxxxxxxxxxxx';
 const subscribeServeOptions = {
   port: 0,
@@ -112,16 +87,6 @@ const subscribeServeOptions = {
     defaultApiKeyScopes: ['workflows:read'] as const,
   },
 };
-
-function openWebSocket(url: string): Promise<WebSocket> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url, {
-      headers: { authorization: `Bearer ${SUBSCRIBE_TEST_API_KEY}` },
-    } as any);
-    ws.addEventListener('open', () => resolve(ws));
-    ws.addEventListener('error', (event) => reject(event));
-  });
-}
 
 function isRelevantTraceabilityRow(cells: string[]): boolean {
   const category = cells[3] ?? '';
@@ -470,8 +435,8 @@ describe('Track 8 acceptance coverage', () => {
 
     // --- Transport 2: WebSocket upgrade on /jsonrpc ---
     const wsUrl = `${server.url.replace('http://', 'ws://')}/jsonrpc`;
-    const ws = await openWebSocket(wsUrl);
-    const wsResponsePromise = waitForWebSocketMessage(
+    const ws = await openWebSocket(wsUrl, SUBSCRIBE_TEST_API_KEY);
+    const wsResponsePromise = waitForMessage(
       ws,
       (p) => typeof p === 'object' && p !== null && (p as Record<string, unknown>)['id'] === 't2',
     );

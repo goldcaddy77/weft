@@ -22,7 +22,7 @@ import { workflow } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { signJWT } from '../authentication.ts';
 import { serve, type WeftServer } from '../index.ts';
-import { openWebSocket, waitForWebSocketMessage } from '../jsonrpc-websocket.test-support.ts';
+import { openWebSocket, waitForMessage } from '../json-rpc-websocket-client.test-support.ts';
 import { executeOperation } from '../operation-catalog.ts';
 import { principalFromJwtClaims } from '../principal.ts';
 import { createLiveOperationRegistry } from '../rest-bindings.ts';
@@ -173,7 +173,7 @@ describe('runtime operation cross-transport contract', () => {
     const ws = await openWebSocket(wsUrl, wrongScopeToken);
     try {
       const wsId = crypto.randomUUID();
-      const wsResponsePromise = waitForWebSocketMessage(
+      const wsResponsePromise = waitForMessage(
         ws,
         (parsed) =>
           typeof parsed === 'object' &&
@@ -242,7 +242,7 @@ describe('runtime operation cross-transport contract', () => {
     const wsUrl = `${server.url.replace('http://', 'ws://')}/jsonrpc`;
     const ws = await openWebSocket(wsUrl, tenantAToken);
     try {
-      const wsResponsePromise = waitForWebSocketMessage(
+      const wsResponsePromise = waitForMessage(
         ws,
         (parsed) =>
           typeof parsed === 'object' &&
