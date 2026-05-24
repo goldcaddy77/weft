@@ -1027,7 +1027,7 @@ export class ActivityCompletedEvent extends Event {
 }
 
 export class TokenEvent extends Event {
-  static readonly type = 'agent:token' as const;
+  static readonly type = 'stream:token' as const;
   readonly workflowId: string;
   readonly token: string;
   readonly model: string;
@@ -3774,7 +3774,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`WorkflowHandle` extends `EventTarget`.** Receives events scoped to its workflow.
 - [x] **`WorkflowHandle` implements `Symbol.asyncIterator`.** `for await (const event of handle)` works.
 - [x] **`WorkflowHandle` implements `Symbol.observable`.** RxJS `from(handle)` works without adapters.
-- [x] **Event types defined:** `workflow:started`, `workflow:completed`, `workflow:failed`, `workflow:cancelled`, `workflow:timed-out`, `activity:started`, `activity:completed`, `activity:failed`, `agent:token`, `signal:received`, `signal:delivered`, `attributes:changed`, `update:received`, `update:completed`.
+- [x] **Event types defined:** `workflow:started`, `workflow:completed`, `workflow:failed`, `workflow:cancelled`, `workflow:timed-out`, `activity:started`, `activity:completed`, `activity:failed`, `stream:token`, `signal:received`, `signal:delivered`, `attributes:changed`, `update:received`, `update:completed`.
 
 ### Resource Management
 
@@ -4237,7 +4237,7 @@ Weft streams tokens over WebSocket with a reconnection buffer, but if the buffer
 Track 8 extends the runtime surface without creating a second execution system. Every external transport remains an adapter over the existing `Engine` methods, typed `EventTarget` events, `BroadcastChannel` coordination, and Worker `postMessage` protocols (`WorkerInboundMessage` and `WorkerOutboundMessage`).
 
 - [x] **The runtime API has one transport-neutral operation catalog.** It covers runtime operations only, not authoring APIs. Each entry defines the `Engine` method mapping, JSON Schema for params and result, auth requirement, authorization policy hook, REST route metadata, JSON-RPC method name, and shared error mappings.
-- [x] **Authoring APIs remain intentionally TypeScript-only.** `engine.register()`, workflow/activity/agent declarations, providers, storage adapters, interceptors, and execution-strategy wiring are documented as in-process authoring surfaces rather than transport-parity endpoints.
+- [x] **Authoring APIs remain intentionally TypeScript-only.** `engine.register()`, workflow/activity declarations, providers, storage adapters, interceptors, and execution-strategy wiring are documented as in-process authoring surfaces rather than transport-parity endpoints.
 - [x] **Both `/openapi.json` and `/openrpc.json` are generated from the same operation catalog.** JSON-RPC is not inferred from OpenAPI, and OpenAPI is not treated as a lossy source for JSON-RPC.
 - [x] **`rpc.discover` returns the same OpenRPC document exposed at `/openrpc.json`.** Clients can fetch the machine-readable JSON-RPC contract over JSON-RPC itself without a second documentation pipeline.
 - [x] **`/openapi.json` is a full OpenAPI 3.1 contract for the REST-ish HTTP surface.** It includes path and query parameters, request bodies, response schemas by status code, shared error objects, and security declarations.

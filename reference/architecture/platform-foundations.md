@@ -347,7 +347,7 @@ export class ActivityCompletedEvent extends Event {
 }
 
 export class TokenEvent extends Event {
-  static readonly type = 'agent:token' as const;
+  static readonly type = 'stream:token' as const;
   readonly workflowId: string;
   readonly token: string;
   readonly model: string;
