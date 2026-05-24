@@ -47,17 +47,9 @@ Weft eliminates every userland pattern that has a platform-native equivalent:
 
 **Execution Timeout:** Maximum wall-clock time for an entire workflow. Measured from start to terminal completion.
 
-**Agent:** A durable LLM-powered execution loop (ReAct pattern) that calls tools, manages context, and respects budgets and human review. Registered via `weft.agent()` as a standalone workflow or invoked via `ctx.agent()` as a step within a larger workflow.
-
-**Turn:** A single iteration of an agent loop: one LLM call and its resulting tool calls. Each turn is a checkpoint boundary.
-
-**Model Router:** A pluggable component that selects which LLM model to use for each turn based on conversation state, cost constraints, and quality requirements.
-
-**Context Strategy:** A pluggable component that manages conversation history within the LLM's context window using techniques like sliding window, summarization, or RAG.
-
 **MCP (Model Context Protocol):** A standard protocol for discovering and invoking LLM tools from external servers. Supports stdio and HTTP+SSE transports.
 
-**Shared State:** A CAS-backed durable mutable state primitive that multiple concurrent agents can read from and write to without clobbering each other's writes.
+**Shared State:** A CAS-backed durable mutable state primitive that multiple concurrent workflows or activities can read from and write to without clobbering each other's writes.
 
 **Human Review:** A structured interaction protocol for human-in-the-loop workflows, supporting approval, rejection, conversation threading, escalation, and partial approval.
 
@@ -355,7 +347,7 @@ export class ActivityCompletedEvent extends Event {
 }
 
 export class TokenEvent extends Event {
-  static readonly type = 'agent:token' as const;
+  static readonly type = 'stream:token' as const;
   readonly workflowId: string;
   readonly token: string;
   readonly model: string;
@@ -442,282 +434,9 @@ export class UpdateCompletedEvent extends Event {
   }
 }
 
-// ─── Agent Event Definitions ───
-
-export class AgentTurnStartedEvent extends Event {
-  static readonly type = 'agent:turn:started' as const;
+export class ReviewRequestedEvent extends Event {
+  static readonly type = 'human-review:requested' as const;
   readonly workflowId: string;
-  readonly agentId: string;
-  readonly turnIndex: number;
-  readonly model: string;
-  readonly inputTokenEstimate: number;
-  readonly conversationLength: number;
-
-  constructor(
-    workflowId: string,
-    agentId: string,
-    turnIndex: number,
-    model: string,
-    inputTokenEstimate: number,
-    conversationLength: number,
-  ) {
-    super(AgentTurnStartedEvent.type);
-    this.workflowId = workflowId;
-    this.agentId = agentId;
-    this.turnIndex = turnIndex;
-    this.model = model;
-    this.inputTokenEstimate = inputTokenEstimate;
-    this.conversationLength = conversationLength;
-  }
-}
-
-export class AgentTurnCompletedEvent extends Event {
-  static readonly type = 'agent:turn:completed' as const;
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly turnIndex: number;
-  readonly model: string;
-  readonly selectedModel: string;
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-  readonly cost: number;
-  readonly cumulativeCost: number;
-  readonly duration: number;
-  readonly toolCallCount: number;
-  readonly fallbackAttempts: number;
-  readonly reasoningTrace: string | undefined;
-
-  constructor(
-    workflowId: string,
-    agentId: string,
-    turnIndex: number,
-    model: string,
-    selectedModel: string,
-    inputTokens: number,
-    outputTokens: number,
-    cost: number,
-    cumulativeCost: number,
-    duration: number,
-    toolCallCount: number,
-    fallbackAttempts: number,
-    reasoningTrace?: string,
-  ) {
-    super(AgentTurnCompletedEvent.type);
-    this.workflowId = workflowId;
-    this.agentId = agentId;
-    this.turnIndex = turnIndex;
-    this.model = model;
-    this.selectedModel = selectedModel;
-    this.inputTokens = inputTokens;
-    this.outputTokens = outputTokens;
-    this.cost = cost;
-    this.cumulativeCost = cumulativeCost;
-    this.duration = duration;
-    this.toolCallCount = toolCallCount;
-    this.fallbackAttempts = fallbackAttempts;
-    this.reasoningTrace = reasoningTrace;
-  }
-}
-
-export class AgentToolCalledEvent extends Event {
-  static readonly type = 'agent:tool:called' as const;
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly turnIndex: number;
-  readonly toolName: string;
-  readonly toolInput: unknown;
-  readonly source: 'local' | 'mcp';
-  readonly operationId: string;
-
-  constructor(
-    workflowId: string,
-    agentId: string,
-    turnIndex: number,
-    toolName: string,
-    toolInput: unknown,
-    source: 'local' | 'mcp',
-    operationId: string,
-  ) {
-    super(AgentToolCalledEvent.type);
-    this.workflowId = workflowId;
-    this.agentId = agentId;
-    this.turnIndex = turnIndex;
-    this.toolName = toolName;
-    this.toolInput = toolInput;
-    this.source = source;
-    this.operationId = operationId;
-  }
-}
-
-export class AgentToolReturnedEvent extends Event {
-  static readonly type = 'agent:tool:returned' as const;
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly turnIndex: number;
-  readonly toolName: string;
-  readonly duration: number;
-  readonly success: boolean;
-  readonly operationId: string;
-
-  constructor(
-    workflowId: string,
-    agentId: string,
-    turnIndex: number,
-    toolName: string,
-    duration: number,
-    success: boolean,
-    operationId: string,
-  ) {
-    super(AgentToolReturnedEvent.type);
-    this.workflowId = workflowId;
-    this.agentId = agentId;
-    this.turnIndex = turnIndex;
-    this.toolName = toolName;
-    this.duration = duration;
-    this.success = success;
-    this.operationId = operationId;
-  }
-}
-
-export class AgentBudgetWarningEvent extends Event {
-  static readonly type = 'agent:budget:warning' as const;
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly budgetUsedPercent: number;
-  readonly tokensRemaining: number;
-  readonly costRemaining: number;
-  readonly threshold: number;
-
-  constructor(
-    workflowId: string,
-    agentId: string,
-    budgetUsedPercent: number,
-    tokensRemaining: number,
-    costRemaining: number,
-    threshold: number,
-  ) {
-    super(AgentBudgetWarningEvent.type);
-    this.workflowId = workflowId;
-    this.agentId = agentId;
-    this.budgetUsedPercent = budgetUsedPercent;
-    this.tokensRemaining = tokensRemaining;
-    this.costRemaining = costRemaining;
-    this.threshold = threshold;
-  }
-}
-
-export class AgentBudgetExceededEvent extends Event {
-  static readonly type = 'agent:budget:exceeded' as const;
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly tokensUsed: number;
-  readonly costUsed: number;
-  readonly tokenBudget: number;
-  readonly maxCost: number;
-
-  constructor(
-    workflowId: string,
-    agentId: string,
-    tokensUsed: number,
-    costUsed: number,
-    tokenBudget: number,
-    maxCost: number,
-  ) {
-    super(AgentBudgetExceededEvent.type);
-    this.workflowId = workflowId;
-    this.agentId = agentId;
-    this.tokensUsed = tokensUsed;
-    this.costUsed = costUsed;
-    this.tokenBudget = tokenBudget;
-    this.maxCost = maxCost;
-  }
-}
-
-export class AgentContextCompactedEvent extends Event {
-  static readonly type = 'agent:context:compacted' as const;
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly strategy: string;
-  readonly tokensBefore: number;
-  readonly tokensAfter: number;
-  readonly messagesDropped: number;
-
-  constructor(
-    workflowId: string,
-    agentId: string,
-    strategy: string,
-    tokensBefore: number,
-    tokensAfter: number,
-    messagesDropped: number,
-  ) {
-    super(AgentContextCompactedEvent.type);
-    this.workflowId = workflowId;
-    this.agentId = agentId;
-    this.strategy = strategy;
-    this.tokensBefore = tokensBefore;
-    this.tokensAfter = tokensAfter;
-    this.messagesDropped = messagesDropped;
-  }
-}
-
-export class AgentModelFallbackEvent extends Event {
-  static readonly type = 'agent:model:fallback' as const;
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly turnIndex: number;
-  readonly failedModel: string;
-  readonly failedReason: string;
-  readonly nextModel: string;
-  readonly attemptIndex: number;
-
-  constructor(
-    workflowId: string,
-    agentId: string,
-    turnIndex: number,
-    failedModel: string,
-    failedReason: string,
-    nextModel: string,
-    attemptIndex: number,
-  ) {
-    super(AgentModelFallbackEvent.type);
-    this.workflowId = workflowId;
-    this.agentId = agentId;
-    this.turnIndex = turnIndex;
-    this.failedModel = failedModel;
-    this.failedReason = failedReason;
-    this.nextModel = nextModel;
-    this.attemptIndex = attemptIndex;
-  }
-}
-
-export class AgentProviderCircuitOpenEvent extends Event {
-  static readonly type = 'agent:provider:circuit-open' as const;
-  readonly provider: string;
-  readonly errorRate: number;
-  readonly threshold: number;
-  readonly windowDuration: number;
-  readonly cooldownDuration: number;
-
-  constructor(
-    provider: string,
-    errorRate: number,
-    threshold: number,
-    windowDuration: number,
-    cooldownDuration: number,
-  ) {
-    super(AgentProviderCircuitOpenEvent.type);
-    this.provider = provider;
-    this.errorRate = errorRate;
-    this.threshold = threshold;
-    this.windowDuration = windowDuration;
-    this.cooldownDuration = cooldownDuration;
-  }
-}
-
-export class HumanReviewRequestedEvent extends Event {
-  static readonly type = 'human:review:requested' as const;
-  readonly workflowId: string;
-  readonly agentId: string | undefined;
   readonly reviewId: string;
   readonly reviewType: string;
   readonly reviewers: string[];
@@ -725,15 +444,13 @@ export class HumanReviewRequestedEvent extends Event {
 
   constructor(
     workflowId: string,
-    agentId: string | undefined,
     reviewId: string,
     reviewType: string,
     reviewers: string[],
     timeout?: string,
   ) {
-    super(HumanReviewRequestedEvent.type);
+    super(ReviewRequestedEvent.type);
     this.workflowId = workflowId;
-    this.agentId = agentId;
     this.reviewId = reviewId;
     this.reviewType = reviewType;
     this.reviewers = reviewers;
@@ -741,8 +458,8 @@ export class HumanReviewRequestedEvent extends Event {
   }
 }
 
-export class HumanReviewCompletedEvent extends Event {
-  static readonly type = 'human:review:completed' as const;
+export class ReviewCompletedEvent extends Event {
+  static readonly type = 'human-review:completed' as const;
   readonly workflowId: string;
   readonly reviewId: string;
   readonly decision: 'approved' | 'rejected' | 'partial';
@@ -758,7 +475,7 @@ export class HumanReviewCompletedEvent extends Event {
     duration: number,
     feedback?: string,
   ) {
-    super(HumanReviewCompletedEvent.type);
+    super(ReviewCompletedEvent.type);
     this.workflowId = workflowId;
     this.reviewId = reviewId;
     this.decision = decision;
@@ -781,17 +498,8 @@ export interface WeftEventMap {
   [AttributesChangedEvent.type]: AttributesChangedEvent;
   [UpdateReceivedEvent.type]: UpdateReceivedEvent;
   [UpdateCompletedEvent.type]: UpdateCompletedEvent;
-  [AgentTurnStartedEvent.type]: AgentTurnStartedEvent;
-  [AgentTurnCompletedEvent.type]: AgentTurnCompletedEvent;
-  [AgentToolCalledEvent.type]: AgentToolCalledEvent;
-  [AgentToolReturnedEvent.type]: AgentToolReturnedEvent;
-  [AgentBudgetWarningEvent.type]: AgentBudgetWarningEvent;
-  [AgentBudgetExceededEvent.type]: AgentBudgetExceededEvent;
-  [AgentContextCompactedEvent.type]: AgentContextCompactedEvent;
-  [AgentModelFallbackEvent.type]: AgentModelFallbackEvent;
-  [AgentProviderCircuitOpenEvent.type]: AgentProviderCircuitOpenEvent;
-  [HumanReviewRequestedEvent.type]: HumanReviewRequestedEvent;
-  [HumanReviewCompletedEvent.type]: HumanReviewCompletedEvent;
+  [ReviewRequestedEvent.type]: ReviewRequestedEvent;
+  [ReviewCompletedEvent.type]: ReviewCompletedEvent;
 }
 ```
 

@@ -2,13 +2,11 @@
 
 ## Barrel re-exports for split modules
 
-Six files in this codebase are 1-line re-export barrels:
+Four files in this codebase are 1-line re-export barrels:
 
 - `src/core/engine.ts` → `src/core/engine/`
 - `src/core/types.ts` → `src/core/types/`
 - `src/core/context.ts` → `src/core/context/`
-- `src/ai/agent.ts` → `src/ai/agent/`
-- `src/ai/streaming-agent.ts` → `src/ai/streaming-agent/`
 - `src/server/handler.ts` → `src/server/handler/`
 
 The global `~/.claude/CLAUDE.md` rule forbids "re-export-only files that exist purely to preserve old import paths." This is an explicit project-level exception to that rule. The barrels are kept because:
