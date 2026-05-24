@@ -111,7 +111,7 @@ ActivityFailedError: charge failed after 3 attempts
 
 **The Temporal problem.** Changing workflow code while workflows are in-flight requires either the `patched()` / `deprecatePatch()` API — which litters your code with version branches that never go away — or Worker Versioning, a whole deployment orchestration system. The Temporal docs themselves acknowledge this is complex enough that they deprecated their first versioning approach and replaced it in 2025. Developers routinely report confusion about which changes are safe versus which break replay.
 
-**The Weft answer.** Checkpointing means code before the current checkpoint never re-executes. Changing steps after the current checkpoint is inherently safe. Versioning only matters for the step you are currently on — and even then, the migration path is a pure data transformation on the checkpoint, not code-path branching. (See: [Workflow Versioning](./workflow-platform-features.md#14-workflow-versioning).)
+**The Weft answer.** Checkpointing means code before the current checkpoint never re-executes. Changing steps after the current checkpoint is inherently safe. Versioning only matters for the step you are currently on — and even then, the migration path is a pure data transformation on the checkpoint, not code-path branching. (See: [Workflow Versioning](./workflow-platform-features.md#13-workflow-versioning).)
 
 ```typescript
 // Temporal: version branches that accumulate forever

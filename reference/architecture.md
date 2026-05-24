@@ -3224,7 +3224,7 @@ if (result.valid) {
 
 ### 17. Interceptors / Middleware
 
-Interceptors are composable hooks that wrap workflow context operations for cross-cutting concerns. They are the foundation for observability (section 20), and can be used independently for validation, encryption, auth propagation, and more.
+Interceptors are composable hooks that wrap workflow context operations for cross-cutting concerns. They are the foundation for observability (section 18), and can be used independently for validation, encryption, auth propagation, and more.
 
 #### Design Principles
 

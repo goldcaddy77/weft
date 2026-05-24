@@ -2,7 +2,7 @@
 
 This companion document was split out of [../architecture.md](../architecture.md) so the roadmap can stay checklist-first. It covers the remaining workflow-platform primitives such as versioning, timeouts, search attributes, updates, interceptors, and observability.
 
-### 13. Additional Platform Patterns
+### 12. Additional Platform Patterns
 
 #### Promise.withResolvers() Throughout
 
@@ -99,7 +99,7 @@ class Engine extends EventTarget implements Disposable {
 }
 ```
 
-### 14. Workflow Versioning
+### 13. Workflow Versioning
 
 When you deploy new workflow code while workflows are in-flight, you need to answer: which version of the code runs when a checkpointed workflow resumes?
 
@@ -173,7 +173,7 @@ engine.register('order', {
 });
 ```
 
-### 15. Workflow-Level Timeouts
+### 14. Workflow-Level Timeouts
 
 Activity timeouts exist but there is no mechanism to cap the total wall-clock time of an entire workflow execution. This is critical for SLA enforcement, runaway workflow detection, and resource budgeting.
 
@@ -224,7 +224,7 @@ async function* orderWorkflow(ctx: Context, order: Order) {
 
 The `ctx.signal` property exposes the combined timeout + cancellation signal. Activities that already accept `{ signal }` automatically respect workflow timeouts with no code changes.
 
-### 16. Search Attributes (Advanced Visibility)
+### 15. Search Attributes (Advanced Visibility)
 
 Search attributes let workflows set custom indexed metadata that's queryable from the list API. The design uses KV-based secondary indexes that work identically on SQLite, LMDB, and IndexedDB — no SQL required.
 
@@ -352,7 +352,7 @@ function encodeAttributeValue(value: AttributeValue): string {
 
 **External mutation:** `handle.setAttributes()` and `PATCH /v1/workflows/:id/attributes` allow setting attributes from outside the workflow. Index updates happen atomically.
 
-### 17. Synchronous Updates
+### 16. Synchronous Updates
 
 Signals are fire-and-forget — the caller sends a message and doesn't wait for the workflow to process it. Updates are **request-response** — the caller blocks until the workflow processes the message and returns a result.
 
@@ -445,9 +445,9 @@ if (result.valid) {
 
 **Response cleanup:** `upr:*` entries are deleted after a configurable TTL (default 5 minutes) to prevent unbounded storage growth.
 
-### 18. Interceptors / Middleware
+### 17. Interceptors / Middleware
 
-Interceptors are composable hooks that wrap workflow context operations for cross-cutting concerns. They are the foundation for observability (section 20), and can be used independently for validation, encryption, auth propagation, and more.
+Interceptors are composable hooks that wrap workflow context operations for cross-cutting concerns. They are the foundation for observability (section 18), and can be used independently for validation, encryption, auth propagation, and more.
 
 #### Design Principles
 
@@ -617,7 +617,7 @@ These systems are complementary:
 - **EventTarget** is for _observation_. Listeners receive events after things happen. They cannot modify inputs, outputs, or control flow.
 - **Interceptors** are for _interception_. They wrap execution, can modify inputs/outputs, can skip or retry operations, and participate in the control flow.
 
-### 19. Observability (OpenTelemetry Integration)
+### 18. Observability (OpenTelemetry Integration)
 
 Observability is implemented as a pre-built interceptor pair. It uses standard OpenTelemetry APIs (`@opentelemetry/api`) and propagates context through the interceptor `headers` mechanism.
 
