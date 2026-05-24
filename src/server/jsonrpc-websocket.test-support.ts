@@ -16,14 +16,20 @@
 import type { WeftServer } from './index.ts';
 import type { EventEnvelope } from './workflow-event-feed.ts';
 
-/** Opens a WebSocket to `url`, presenting `apiKey` as a Bearer token. */
-export function openAuthenticatedWebSocket(url: string, apiKey: string): Promise<WebSocket> {
+/**
+ * Opens a WebSocket to `url`. When `apiKey` is provided it is presented as a
+ * Bearer token; otherwise the socket connects without an Authorization header.
+ *
+ * Bun's WebSocket constructor accepts a `headers` option that the DOM lib type
+ * omits, and the package-root typecheck uses the DOM lib. `Reflect.construct`
+ * passes the extra option without tripping that narrower constructor type.
+ */
+export function openWebSocket(url: string, apiKey?: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
-    const webSocket: WebSocket = Reflect.construct(WebSocket, [
-      url,
-      // Bun's WebSocket accepts a headers option that the DOM lib type omits.
-      { headers: { authorization: `Bearer ${apiKey}` } },
-    ]);
+    const webSocket: WebSocket =
+      apiKey === undefined
+        ? new WebSocket(url)
+        : Reflect.construct(WebSocket, [url, { headers: { authorization: `Bearer ${apiKey}` } }]);
     webSocket.addEventListener('open', () => resolve(webSocket));
     webSocket.addEventListener('error', (event) => reject(event));
   });
@@ -44,7 +50,7 @@ export async function collectWebSocketDeliveredEnvelopes(
   correlationPrefix = 'collect',
 ): Promise<EventEnvelope[]> {
   const webSocketUrl = `${server.url.replace('http://', 'ws://')}/jsonrpc`;
-  const webSocket = await openAuthenticatedWebSocket(webSocketUrl, apiKey);
+  const webSocket = await openWebSocket(webSocketUrl, apiKey);
 
   try {
     return await new Promise<EventEnvelope[]>((resolve, reject) => {
@@ -127,4 +133,38 @@ export async function collectWebSocketDeliveredEnvelopes(
   } finally {
     webSocket.close();
   }
+}
+
+/**
+ * Resolves with the first parsed WebSocket message that satisfies `predicate`,
+ * or rejects after `timeoutMs`. Used to await a single JSON-RPC response on a
+ * shared socket.
+ */
+export function waitForWebSocketMessage(
+  webSocket: WebSocket,
+  predicate: (parsed: unknown) => boolean,
+  timeoutMs = 3_000,
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      webSocket.removeEventListener('message', handler);
+      reject(new Error('waitForWebSocketMessage timed out'));
+    }, timeoutMs);
+
+    function handler(event: MessageEvent): void {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(String(event.data));
+      } catch {
+        return;
+      }
+      if (predicate(parsed)) {
+        clearTimeout(timer);
+        webSocket.removeEventListener('message', handler);
+        resolve(parsed);
+      }
+    }
+
+    webSocket.addEventListener('message', handler);
+  });
 }

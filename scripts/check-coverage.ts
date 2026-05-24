@@ -1432,8 +1432,8 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_REFRESH = new Map<string, CoverageAllowanc
     // `.test-support.ts` extraction, so those same branches surface here.
     'src/server/jsonrpc-websocket.test-support.ts',
     {
-      functions: 2,
-      lines: new Set([55, 56, 70, 74, 85, 93, 98, 103, 108]),
+      functions: 3,
+      lines: new Set([64, 65, 79, 83, 94, 102, 107, 112, 117, 152, 153, 161]),
     },
   ],
   [
