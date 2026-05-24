@@ -272,12 +272,16 @@ setInterval(() => {}, 1000);
     });
 
     try {
-      // A blocked port prevents readiness either way: the subprocess may exit
-      // with a bind error ("before readiness"/EADDRINUSE) or hang until the
-      // readiness watcher times out — both confirm the port reuse was fatal.
+      // A subprocess that cannot bind the reused port either exits before
+      // readiness or logs EADDRINUSE — both are causally tied to the port being
+      // occupied. The startup timeout is generous (5s) so that, under test-suite
+      // concurrency, the blocked subprocess has time to actually exit or log the
+      // bind error rather than tripping the readiness-timeout path. Keeping the
+      // assertion to these two messages preserves the test's intent: it must not
+      // pass merely because some unrelated startup delay timed out.
       await expect(
-        startDurableServer(entrypoint, databasePath, handle.port, { startupTimeoutMs: 500 }),
-      ).rejects.toThrow(/before readiness|EADDRINUSE|waiting for subprocess readiness/);
+        startDurableServer(entrypoint, databasePath, handle.port, { startupTimeoutMs: 5000 }),
+      ).rejects.toThrow(/before readiness|EADDRINUSE/);
     } finally {
       portBlocker.stop(true);
     }
