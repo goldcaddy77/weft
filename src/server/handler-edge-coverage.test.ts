@@ -540,26 +540,29 @@ describe('handleRequest edge coverage', () => {
     response = await handleRequest(request('GET', '/v1/schedules/schedule-1'), engine, authOptions);
     expect(response.status).toBe(403);
 
+    // A JWT principal missing the tenant claim is rejected with 403 on the
+    // mutation routes too, matching the read path above (now that schedule
+    // mutation routes forward JWT tenant scope into the operation pipeline).
     response = await handleRequest(
       request('POST', '/v1/schedules/schedule-1/pause'),
       engine,
       authOptions,
     );
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(403);
 
     response = await handleRequest(
       request('POST', '/v1/schedules/schedule-1/resume'),
       engine,
       authOptions,
     );
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(403);
 
     response = await handleRequest(
       request('DELETE', '/v1/schedules/schedule-1'),
       engine,
       authOptions,
     );
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(403);
 
     response = await handleRequest(
       new Request('http://localhost/v1/schedules/schedule-1', {
