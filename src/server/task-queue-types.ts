@@ -33,9 +33,6 @@ export interface TaskResult {
   error?: string | undefined;
 }
 
-/** Callback invoked when a task completes, fails, or expires. */
-export type CompletionCallback = (result: TaskResult) => void;
-
 /**
  * Strategy used by `TaskQueue.enqueue` to place an incoming task in the
  * per-queue pending list. In all strategies, `TaskQueue.poll` dequeues

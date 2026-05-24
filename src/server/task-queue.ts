@@ -5,13 +5,15 @@
 import type { TaskQueueSnapshot } from './task-queue-summary.ts';
 import { buildQueueSummaries } from './task-queue-summary.ts';
 import type {
-  CompletionCallback,
   PendingTask,
   SchedulingPolicy,
   TaskQueueOptions,
   TaskQueueSummary,
   TaskResult,
 } from './task-queue-types.ts';
+
+/** Callback invoked when a task completes, fails, or expires. Implementation-private. */
+type CompletionCallback = (result: TaskResult) => void;
 
 const DEFAULT_PENDING_TASK_TTL = 5 * 60 * 1000; // 5 minutes
 
@@ -32,6 +34,13 @@ export function resetLifoStarvationWarningForTesting(): void {
 
 interface Waiter {
   activities: string[];
+  /**
+   * The cleanup-aware `settle` closure from {@link TaskQueue.poll} — NOT the
+   * raw promise resolver. Calling it clears {@link Waiter.timer} and removes
+   * the abort-signal listener as a side effect. Callers that settle a waiter
+   * out of band (e.g. dispose) may still clear {@link Waiter.timer} themselves
+   * rather than rely on that side effect.
+   */
   resolve: (task: PendingTask | null) => void;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -240,6 +249,10 @@ export class TaskQueue implements Disposable {
     }
     this.#waiters.clear();
     for (const waiter of parked) {
+      // Clear the timer explicitly rather than relying on `settle`'s internal
+      // cleanup, so this path stays correct if `Waiter.resolve` is ever changed
+      // to something other than the cleanup-aware `settle` closure.
+      clearTimeout(waiter.timer);
       waiter.resolve(null);
     }
 

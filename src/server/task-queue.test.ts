@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { restoreRealTimers, sleepForTesting, useFakeTimers } from '../testing/fake-timers.ts';
 
 import type { PendingTask, TaskResult } from './task-queue-types.ts';
@@ -622,19 +622,23 @@ describe('TaskQueue', () => {
       );
       expect(enqueued).toBe(true);
       expect(queue.pendingCount('q')).toBe(1);
+      // It is tracked as pending — not dispatched-then-lost to the gone client.
+      expect(queue.isTracked('after-abort')).toBe(true);
     });
 
     it('resolves every outstanding waiter with null on dispose', async () => {
       const queue = new TaskQueue();
 
-      const first = queue.poll('q', ['x'], 60_000);
-      const second = queue.poll('q', ['y'], 60_000);
+      // Park waiters on two different queues so dispose exercises iteration
+      // across the #waiters map keys, not just a single per-queue array.
+      const first = queue.poll('q1', ['x'], 60_000);
+      const second = queue.poll('q2', ['y'], 60_000);
 
       queue[Symbol.dispose]();
 
       await expect(Promise.all([first, second])).resolves.toEqual([null, null]);
-      expect(queue.hasWaiter('q', 'x')).toBe(false);
-      expect(queue.hasWaiter('q', 'y')).toBe(false);
+      expect(queue.hasWaiter('q1', 'x')).toBe(false);
+      expect(queue.hasWaiter('q2', 'y')).toBe(false);
     });
 
     it('is idempotent — a second dispose does not throw or re-settle waiters', async () => {
@@ -657,22 +661,36 @@ describe('TaskQueue', () => {
       });
 
       it('clears pending-task expiration timers and drops tasks silently', async () => {
-        const queue = new TaskQueue({ pendingTaskTimeToLive: 1000 });
-        const results: TaskResult[] = [];
+        // Spy on clearTimeout so we can assert the expiration timer is actually
+        // cleared. Asserting only that the completion callback stays silent is
+        // insufficient: dispose clears #completionCallbacks too, so a surviving
+        // (uncleared) timer's #expireTask would find no callback and stay quiet
+        // anyway. The spy is what falsifies a regression that drops the
+        // clearTimeout loop from dispose.
+        const clearTimeoutSpy = spyOn(globalThis, 'clearTimeout');
+        try {
+          const queue = new TaskQueue({ pendingTaskTimeToLive: 1000 });
+          const results: TaskResult[] = [];
 
-        queue.enqueue('default', makeTask({ operationId: 'disposed-ttl' }), (result) =>
-          results.push(result),
-        );
-        expect(queue.totalPendingCount()).toBe(1);
+          queue.enqueue('default', makeTask({ operationId: 'disposed-ttl' }), (result) =>
+            results.push(result),
+          );
+          expect(queue.totalPendingCount()).toBe(1);
 
-        queue[Symbol.dispose]();
+          clearTimeoutSpy.mockClear();
+          queue[Symbol.dispose]();
+          // The pending task's expiration timer was cleared by dispose.
+          expect(clearTimeoutSpy).toHaveBeenCalled();
 
-        // Advance well past the TTL: no expiration callback fires and no task remains.
-        await sleepForTesting(5000);
+          // Advance well past the TTL: no expiration callback fires.
+          await sleepForTesting(5000);
 
-        expect(results).toHaveLength(0);
-        expect(queue.totalPendingCount()).toBe(0);
-        expect(queue.isTracked('disposed-ttl')).toBe(false);
+          expect(results).toHaveLength(0);
+          expect(queue.totalPendingCount()).toBe(0);
+          expect(queue.isTracked('disposed-ttl')).toBe(false);
+        } finally {
+          clearTimeoutSpy.mockRestore();
+        }
       });
     });
   });
