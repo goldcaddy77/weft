@@ -1425,15 +1425,15 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_REFRESH = new Map<string, CoverageAllowanc
     },
   ],
   [
-    // Shared WebSocket subscribe helper. Both consumers drive the happy path;
-    // the defensive timeout/parse-guard/early-finish branches mirror the ones
-    // that were uncovered while this logic lived inline in the two `.test.ts`
-    // files (test files are not instrumented). Bun instruments the
-    // `.test-support.ts` extraction, so those same branches surface here.
-    'src/server/jsonrpc-websocket.test-support.ts',
+    // The shared `collectWebSocketDeliveredEnvelopes` helper's consumers all
+    // drive the happy path; its defensive timeout/parse-guard/early-finish
+    // branches mirror the ones that were uncovered while this logic lived
+    // inline in `.test.ts` files (test files are not instrumented). Bun
+    // instruments the `.test-support.ts` module, so those branches surface here.
+    'src/server/json-rpc-websocket-client.test-support.ts',
     {
-      functions: 3,
-      lines: new Set([64, 65, 79, 83, 94, 102, 107, 112, 117, 152, 153, 161]),
+      functions: 2,
+      lines: new Set([96, 97, 111, 115, 126, 134, 139, 144, 149]),
     },
   ],
   [

@@ -169,7 +169,7 @@ describe('runtime operation cross-transport contract', () => {
     expect(jsonRpcBody.error?.data?.httpStatus).toBe(403);
 
     // JSON-RPC WebSocket — Forbidden, principal bound at upgrade
-    const wsUrl = server.url.replace(/^http/, 'ws') + '/jsonrpc';
+    const wsUrl = `${server.url.replace('http://', 'ws://')}/jsonrpc`;
     const ws = await openWebSocket(wsUrl, wrongScopeToken);
     try {
       const wsId = crypto.randomUUID();
