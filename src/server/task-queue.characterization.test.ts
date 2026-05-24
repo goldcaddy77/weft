@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'bun:test';
 import { buildQueueSummaries } from './task-queue-summary.ts';
-import type { PendingTask } from './task-queue.ts';
+import type { PendingTask } from './task-queue-types.ts';
 import { TaskQueue } from './task-queue.ts';
 
 // ---------------------------------------------------------------------------

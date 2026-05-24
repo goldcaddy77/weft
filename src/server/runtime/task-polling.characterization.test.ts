@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import { minimalServeOptions, minimalServerContext } from './server-context.test-support.ts';
-import { handleTaskResultRequest } from './task-polling.ts';
+import { handleTaskPollRequest, handleTaskResultRequest } from './task-polling.ts';
 
 /** handleTaskResultRequest never consults the worker registry, so use a null one. */
 function createMinimalContext() {
@@ -134,5 +134,28 @@ describe('handleTaskResultRequest', () => {
     );
 
     expect(context.deadlineTracker.size).toBe(0);
+  });
+});
+
+describe('handleTaskPollRequest', () => {
+  it('threads request.signal into poll so a disconnected client settles with 204', async () => {
+    const context = minimalServerContext();
+    const options = minimalServeOptions();
+    const controller = new AbortController();
+
+    // Long poll timeout: only the request signal can settle it within the test.
+    const request = new Request('http://localhost/v1/tasks/default?activity=charge&timeout=60000', {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    const url = new URL(request.url);
+
+    const responsePromise = handleTaskPollRequest(context, options, request, url);
+    // Simulate the client disconnecting; the parked waiter must settle with null.
+    controller.abort();
+
+    const response = await responsePromise;
+    // task === null branch: no task claimed, no worker dispatch.
+    expect(response?.status).toBe(204);
   });
 });
