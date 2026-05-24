@@ -39,7 +39,7 @@ const getRegistryInput = z.object({});
 // preserve them. Trusting the builder's TypeScript types (it returns a
 // strongly-typed `RegistrySnapshot`) and pinning the envelope is enough
 // for discovery; codegen consumers separately validate the response with
-// their own Zod schema (Part 2 of ROADMAP §1).
+// their own Zod schema.
 const objectValue = z
   .unknown()
   .refine((value) => typeof value === 'object' && value !== null && !Array.isArray(value), {

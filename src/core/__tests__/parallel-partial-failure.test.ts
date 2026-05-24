@@ -1,6 +1,6 @@
 /**
- * Tests for the `ctx.all` / `ctx.runAll` partial-failure fix described in
- * ROADMAP.md section 2. Before this fix, when one branch in `ctx.all`
+ * Tests for the `ctx.all` / `ctx.runAll` partial-failure fix.
+ * Before this fix, when one branch in `ctx.all`
  * rejected, every successful branch's result was discarded and re-ran on
  * retry — duplicating activity side effects. After the fix, fulfilled
  * branches' values are written into the parent's `accumulatedResults`

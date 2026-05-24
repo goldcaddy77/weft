@@ -18,7 +18,6 @@ const REPOSITORY_ROOT = resolve(import.meta.dir, '..');
 
 export const DOCUMENTATION_ROOTS = [
   'README.md',
-  'ROADMAP.md',
   'BREAKING-CHANGES.md',
   'AGENTS.md',
   'CLAUDE.md',
