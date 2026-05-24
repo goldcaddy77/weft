@@ -47,10 +47,9 @@ This companion document was split out of [../architecture.md](../architecture.md
 weft/
 ├── core/                  # ZERO platform dependencies (web standards only)
 │   ├── engine.ts          # Workflow lifecycle, state machine
-│   ├── context.ts         # ctx.run, ctx.sleep, ctx.signal, ctx.agent, ctx.all,
+│   ├── context.ts         # ctx.run, ctx.sleep, ctx.signal, ctx.all,
 │   │                      # ctx.setAttribute, ctx.onUpdate, ctx.waitForUpdate,
-│   │                      # ctx.humanReview, ctx.handoff, ctx.debate, ctx.supervise,
-│   │                      # ctx.state, ctx.setBudget, ctx.budgetRemaining
+│   │                      # ctx.review, ctx.state
 │   ├── checkpoint.ts      # Generator serialization via structuredClone
 │   ├── scheduler.ts       # Timer/retry scheduling logic (no I/O)
 │   ├── interceptor.ts     # WorkflowInterceptor, ActivityInterceptor interfaces + chain composition
@@ -88,33 +87,6 @@ weft/
 │   ├── long-poll.ts       # HTTP long-poll worker (fallback)
 │   ├── heartbeat.ts       # Visibility timeout keepalive
 │   └── registry.ts        # Server-side worker tracking and routing
-│
-├── ai/                        # Agent-native engine primitives
-│   ├── agent.ts               # Durable ReAct loop, ctx.agent() implementation
-│   ├── declaration.ts         # weft.agent() top-level declaration, lifecycle hooks
-│   ├── streaming.ts           # ReadableStream token bridge, stream multiplexer, reconnection buffer
-│   ├── budget.ts              # Token/cost tracking, AbortController enforcement, org-level budgets
-│   ├── context-window.ts      # Token counting, ContextStrategy interface, compaction lifecycle
-│   ├── context-strategies/    # Pluggable context window strategies
-│   │   ├── sliding-window.ts  # Drop oldest messages within token budget
-│   │   ├── summarize.ts       # Compress old messages via secondary LLM call
-│   │   └── rag.ts             # Replace history with vector-retrieved context
-│   ├── human-review.ts        # ctx.humanReview() protocol, review storage, escalation chains
-│   ├── model-router.ts        # Per-turn model selection, fallback chains, A/B weighted routing
-│   ├── provider-health.ts     # Provider error rate tracking, circuit breaker logic
-│   ├── coordination.ts        # ctx.handoff(), ctx.debate(), ctx.supervise() multi-agent primitives
-│   ├── hooks.ts               # Durable hook interfaces: beforeTurn, afterToolCall, onBudgetWarning
-│   ├── mcp/                   # Model Context Protocol integration
-│   │   ├── client.ts          # MCP client: server connection, tools/list discovery, tool invocation
-│   │   ├── registry.ts        # Unified tool registry merging local functions + MCP server tools
-│   │   ├── schema-validator.ts# JSON Schema validation for MCP tool inputs
-│   │   └── authentication.ts  # Bearer token, API key, OAuth2 for MCP servers
-│   ├── events.ts              # All agent-specific Event subclasses and WeftAgentEventMap
-│   └── providers/             # LLM adapters (Anthropic, OpenAI, etc.)
-│       ├── interface.ts       # LLMProvider interface: chat, stream, countTokens
-│       ├── anthropic.ts       # Anthropic Messages API adapter
-│       ├── openai.ts          # OpenAI Chat Completions API adapter
-│       └── types.ts           # Shared provider types: Message, ToolDefinition, TokenUsage
 │
 ├── observability/          # Opt-in OpenTelemetry integration
 │   ├── index.ts           # createObservabilityInterceptors() factory
