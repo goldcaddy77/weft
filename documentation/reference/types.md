@@ -757,6 +757,21 @@ interface WorkflowInterceptor {
     interception: WorkflowStartInterception,
     next: (interception: WorkflowStartInterception) => void,
   ): void;
+
+  childWorkflow?(
+    interception: ChildWorkflowInterception,
+    next: (interception: ChildWorkflowInterception) => Promise<unknown>,
+  ): Promise<unknown>;
+
+  query?(
+    interception: QueryInterception,
+    next: (interception: QueryInterception) => Generator<unknown, unknown, unknown>,
+  ): Generator<unknown, unknown, unknown>;
+
+  signalReceived?(
+    interception: SignalReceivedInterception,
+    next: (interception: SignalReceivedInterception) => void,
+  ): void;
 }
 ```
 

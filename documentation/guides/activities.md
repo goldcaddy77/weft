@@ -163,29 +163,7 @@ async function* example(ctx: Context) {
 
 ## Running activities in parallel
 
-When activities are independent of each other, run them concurrently with `ctx.all()`.
-
-```typescript partial
-const double = activity({
-  name: 'double',
-  execute: async (input: number) => input * 2,
-});
-
-const triple = activity({
-  name: 'triple',
-  execute: async (input: number) => input * 3,
-});
-
-engine.register(double);
-engine.register(triple);
-
-engine.register(
-  workflow({ name: 'parallel' }).execute(async function* (ctx, input: number) {
-    const [doubled, tripled] = yield* ctx.all([ctx.run(double, input), ctx.run(triple, input)]);
-    return { doubled, tripled };
-  }),
-);
-```
+When activities are independent of each other, run them concurrently with `ctx.all()`, which fans out the activities and resumes once all of them resolve. For a complete runnable example, see [Running Activities in Parallel](../getting-started/hello-world.md#running-activities-in-parallel) in the getting-started tutorial.
 
 For named concurrent branches where each needs its own error handling, use `ctx.runAll()`.
 
