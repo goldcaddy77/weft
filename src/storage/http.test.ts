@@ -112,6 +112,42 @@ describe('HTTPStorage', () => {
     }
   });
 
+  it('writes octet-stream payloads, deletes keys, and scopes prefixes', async () => {
+    const requests: Request[] = [];
+    const restoreFetch = installFetch(async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      if (request.method === 'GET') {
+        const key = decodeURIComponent(new URL(request.url).pathname.split('/').pop() ?? '');
+        return new Response(encode(`value:${key}`), { status: 200 });
+      }
+      return new Response(null, { status: 204 });
+    });
+    try {
+      const storage = new HTTPStorage({ baseUrl: 'https://example.test/root' });
+      await storage.put('plain:key', encode('value'));
+      await storage.delete('plain:key');
+
+      const scoped = storage.scoped('tenant:');
+      await scoped.put('workflow', encode('scoped'));
+      expect(decode(await scoped.get('workflow'))).toBe('value:tenant:workflow');
+
+      expect(requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+        'PUT https://example.test/root/v1/storage/plain%3Akey',
+        'DELETE https://example.test/root/v1/storage/plain%3Akey',
+        'PUT https://example.test/root/v1/storage/tenant%3Aworkflow',
+        'GET https://example.test/root/v1/storage/tenant%3Aworkflow',
+      ]);
+      expect(requests[0]?.headers.get('content-type')).toBe('application/octet-stream');
+      expect(await requests[0]?.text()).toBe('value');
+      expect(await requests[2]?.text()).toBe('scoped');
+
+      storage[Symbol.dispose]();
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it('streams scan results from NDJSON', async () => {
     const restoreFetch = installFetch(
       async () =>
