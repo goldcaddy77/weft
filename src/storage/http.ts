@@ -10,6 +10,7 @@ import {
   type ConditionalBatchCondition,
   type ScanOptions,
   type Storage,
+  type StorageCapabilities,
 } from './interface.ts';
 import { scopedStorage } from './scoped-storage.ts';
 
@@ -176,6 +177,23 @@ export class HTTPStorage implements Storage {
   constructor(options: HTTPStorageOptions) {
     this.#baseUrl = options.baseUrl instanceof URL ? options.baseUrl : new URL(options.baseUrl);
     this.#headers = { ...options.headers };
+  }
+
+  capabilities(): StorageCapabilities {
+    // Remote KV over HTTP. The client offers no session affinity, token
+    // pinning, or documented read-your-writes guarantee, and scans stream
+    // NDJSON pages that can interleave with concurrent writes — so the honest
+    // floor is `eventual` / `best-effort`, independent of any stronger
+    // reference-server behavior. batch()/conditionalBatch() POST to dedicated
+    // endpoints (atomic at the server). deletePrefix uses the derived
+    // scan-and-delete fallback, so boundedRangeDelete is false.
+    return {
+      readAfterWrite: 'eventual',
+      scanConsistency: 'best-effort',
+      atomicBatch: true,
+      conditionalBatch: true,
+      boundedRangeDelete: false,
+    };
   }
 
   #url(path: string): URL {

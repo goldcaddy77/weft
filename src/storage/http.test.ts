@@ -5,6 +5,21 @@ import { handleRequest } from '../server/handler.ts';
 import { principalFromApiKey } from '../server/principal.ts';
 import { HTTPStorage } from './http.ts';
 import { MemoryStorage } from './memory.ts';
+import { assertCapabilitiesShape } from './storage-adapter.test-support.ts';
+
+describe('HTTPStorage capabilities()', () => {
+  it('reports the conservative remote-client floor', () => {
+    const storage = new HTTPStorage({ baseUrl: 'https://example.test/api/' });
+    assertCapabilitiesShape(storage);
+    expect(storage.capabilities()).toEqual({
+      readAfterWrite: 'eventual',
+      scanConsistency: 'best-effort',
+      atomicBatch: true,
+      conditionalBatch: true,
+      boundedRangeDelete: false,
+    });
+  });
+});
 
 function encode(value: string): Uint8Array {
   return new TextEncoder().encode(value);

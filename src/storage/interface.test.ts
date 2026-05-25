@@ -21,6 +21,7 @@ function createCoreStorageAdapter(): Storage {
   const storage = new MemoryStorage();
 
   return {
+    capabilities: storage.capabilities.bind(storage),
     get: storage.get.bind(storage),
     put: storage.put.bind(storage),
     delete: storage.delete.bind(storage),
@@ -135,6 +136,13 @@ describe('storage helper fallbacks', () => {
     let deletePrefixCalls = 0;
 
     const storage: Storage = {
+      capabilities: () => ({
+        readAfterWrite: 'linearizable',
+        scanConsistency: 'snapshot',
+        atomicBatch: true,
+        conditionalBatch: true,
+        boundedRangeDelete: true,
+      }),
       get: async () => {
         throw new Error('storage.get should not be used when has() is available');
       },
