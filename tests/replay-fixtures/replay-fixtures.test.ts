@@ -214,8 +214,13 @@ async function expectReplayToMatchFixture(fixtureFile: string): Promise<void> {
     await expect(engine.getTimeline(workflowId)).resolves.toEqual(fixture.timeline);
     expect(storageAsBase64Record(sortedStorageEntries(engine.storage))).toEqual(fixture.storage);
 
-    for (const additionalState of fixture.replayMetadata?.additionalTerminalStates ?? []) {
-      await expect(engine.get(additionalState.id)).resolves.toEqual(additionalState);
+    if (fixture.replayMetadata !== undefined) {
+      // A present `replayMetadata` must carry at least one additional terminal
+      // state; an empty array would let this assertion block pass vacuously.
+      expect(fixture.replayMetadata.additionalTerminalStates.length).toBeGreaterThan(0);
+      for (const additionalState of fixture.replayMetadata.additionalTerminalStates) {
+        await expect(engine.get(additionalState.id)).resolves.toEqual(additionalState);
+      }
     }
   } finally {
     engine[Symbol.dispose]();
@@ -261,8 +266,11 @@ describe('storage format compatibility', () => {
       // terminal workflows beyond finalState. Without this assertion the suite
       // would only validate the original workflow and silently miss a broken
       // forked terminal state.
-      for (const additionalState of fixture.replayMetadata?.additionalTerminalStates ?? []) {
-        await expect(engine.get(additionalState.id)).resolves.toEqual(additionalState);
+      if (fixture.replayMetadata !== undefined) {
+        expect(fixture.replayMetadata.additionalTerminalStates.length).toBeGreaterThan(0);
+        for (const additionalState of fixture.replayMetadata.additionalTerminalStates) {
+          await expect(engine.get(additionalState.id)).resolves.toEqual(additionalState);
+        }
       }
     });
   }

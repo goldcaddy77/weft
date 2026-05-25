@@ -57,7 +57,9 @@ export type TraceFixture = {
     version: 1;
     /**
      * Terminal workflow states produced beyond `finalState` (for example, the
-     * forked child). Each is compared via `engine.get(state.id)`.
+     * forked child). Each is compared by id via `engine.get(state.id)`, so the
+     * comparison is order-independent: the array order is not asserted. Must be
+     * non-empty when `replayMetadata` is present.
      */
     additionalTerminalStates: WorkflowState[];
   };
