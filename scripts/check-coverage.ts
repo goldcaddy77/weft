@@ -1362,14 +1362,13 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_REFRESH = new Map<string, CoverageAllowanc
     },
   ],
   [
-    // IndexedDB fault-harness support code is consumed only through
-    // indexeddb.test.ts. Bun instruments the helper module itself, so its
-    // synchronous fire* hooks and fake open-lifecycle scaffolding surface as
-    // uncovered support-only branches rather than product gaps.
+    // The IndexedDB fault harness now has direct helper coverage for the
+    // upgrade and completion paths. Bun still reports two unnamed function
+    // misses in this support-only module even though every executable line is
+    // covered by the dedicated harness test plus indexeddb.test.ts.
     'src/storage/indexeddb-fault-harness.test-support.ts',
     {
-      functions: 4,
-      lines: new Set([100, 112]),
+      functions: 2,
     },
   ],
   [

@@ -153,6 +153,11 @@ export async function withFakeIndexedDb(
       } as unknown as IDBOpenDBRequest;
 
       queueMicrotask(() => {
+        const upgradeEvent = Object.assign(new Event('upgradeneeded'), {
+          oldVersion: 0,
+          newVersion: 1,
+        }) as IDBVersionChangeEvent;
+        request.onupgradeneeded?.(upgradeEvent);
         request.onsuccess?.(new Event('success'));
       });
 
