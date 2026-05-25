@@ -232,7 +232,13 @@ describe('weft.workflows.result.get', () => {
       const original = callOriginalGetHandle(workflowId);
       const wrapped = Object.create(Object.getPrototypeOf(original));
       Object.defineProperties(wrapped, Object.getOwnPropertyDescriptors(original));
-      wrapped.result = async () => ({ ok: true });
+      // Define rather than assign in case the real handle's `result` descriptor is
+      // non-writable; a bare assignment would throw under module strict mode.
+      Object.defineProperty(wrapped, 'result', {
+        value: async () => ({ ok: true }),
+        writable: true,
+        configurable: true,
+      });
       return wrapped;
     };
 
