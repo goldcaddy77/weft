@@ -191,15 +191,12 @@ export function runStorageCapabilityConformance(
       }
     });
 
-    if (expected.readAfterWrite === 'linearizable') {
-      it('is observable to a second caller sharing the instance (linearizable)', async () => {
-        using writer = await create();
-        // A separately-issued read against the same instance observes the write.
-        await writer.put('lin:key', bytes('v1'));
-        const reader = writer;
-        expect(new TextDecoder().decode((await reader.get('lin:key'))!)).toBe('v1');
-      });
-    }
+    // Note: distinguishing `linearizable` from `session` requires two truly
+    // concurrent callers, which a single-process in-memory conformance harness
+    // cannot stage. That guarantee is upheld by the engine's use of one shared
+    // storage instance and is not provable here, so there is no separate
+    // linearizable behavioral case — the read-after-write assertion above is the
+    // strongest single-caller proof the harness can make.
 
     if (expected.scanConsistency === 'snapshot') {
       it('does not observe a key inserted after the scan began (snapshot)', async () => {
@@ -221,6 +218,9 @@ export function runStorageCapabilityConformance(
         }
         expect(seen).not.toContain('scan:c');
         expect(seen).toContain('scan:a');
+        // Both pre-existing keys must appear — guards against an adapter that
+        // re-runs the query per step and skips keys ordered before the insert.
+        expect(seen).toContain('scan:b');
       });
     }
 

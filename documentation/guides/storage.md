@@ -125,18 +125,18 @@ The honest profile per built-in adapter:
 | `LMDBStorage`         | `linearizable` | `snapshot`      | yes         | yes              | yes                |
 | `IndexedDBStorage`    | `linearizable` | `best-effort`   | yes         | yes              | yes                |
 | `TursoStorage`        | `session`      | `snapshot`      | yes         | yes              | yes                |
-| `HTTPStorage`         | `eventual`     | `best-effort`   | yes         | yes              | no                 |
+| `HTTPStorage`         | `eventual`     | `best-effort`   | yes         | no (opt-in)      | no                 |
 | `WebExtensionStorage` | `session`      | `best-effort`   | yes         | no               | no                 |
 
 Two kinds of capability, treated differently:
 
-- **`conditionalBatch` is runtime-gated.** A backend may legitimately omit compare-and-swap, so its absence has a clean failure path: the first feature that needs it (`AtomicState` updates, the `storage.conditionalBatch` server operation, CAS-requiring tenant quotas) throws a clear diagnostic naming the feature and the capability. `WebExtensionStorage` and `CompressedStorage` report `false` here.
+- **`conditionalBatch` is runtime-gated.** A backend may legitimately omit compare-and-swap, so its absence has a clean failure path: the first feature that needs it (`AtomicState` updates, the `storage.conditionalBatch` server operation, CAS-requiring tenant quotas) throws a clear diagnostic naming the feature and the capability. `WebExtensionStorage` and `CompressedStorage` report `false` here. `HTTPStorage` reports `false` by default — the client cannot know whether the remote server's backend supports CAS, so a gated feature fails fast locally rather than via a remote `501`; pass `remoteConditionalBatch: true` when you have verified the server supports it.
 - **`atomicBatch`, `readAfterWrite`, and `scanConsistency` are trusted contracts.** The engine reads them but does not verify them at runtime. If an adapter reports `atomicBatch: true` but applies batches non-atomically, the failure mode is checkpoint corruption — so adapter authors must report honestly.
 
 > [!WARNING] Eventual read-after-write
 > `HTTPStorage` reports `readAfterWrite: eventual`: the client offers no read-your-writes guarantee, so a resume immediately after a checkpoint write may read stale state. There is no runtime gate for this. Operators choosing an eventual backend accept that visibility trade-off; the built-in `linearizable` single-process adapters do not have it.
 
-**The opaque-value invariant.** Adapters and decorators must treat stored values as opaque bytes and must not inspect or depend on value contents — values may later be encrypted or compressed. The engine ranges only over keys, never value bytes. This is why `CompressedStorage`, which transforms value bytes, downgrades `conditionalBatch` to `false`: a caller-supplied `expectedValue` can never byte-match the compressed stored value.
+**The opaque-value invariant:** adapters and decorators must treat stored values as opaque bytes and must not inspect or depend on value contents — values may later be encrypted or compressed. The engine ranges only over keys, never value bytes. This is why `CompressedStorage`, which transforms value bytes, downgrades `conditionalBatch` to `false`: a caller-supplied `expectedValue` can never byte-match the compressed stored value.
 
 > [!NOTE] `boundedRangeDelete`
 > `true` means `deletePrefix()` is a single range-scoped delete (one SQL `DELETE`, an `IDBKeyRange` delete, or an LMDB range delete). `false` means the adapter falls back to the derived scan-and-delete loop — `deletePrefix()` still works, it just is not a single bounded operation.

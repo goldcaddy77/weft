@@ -126,7 +126,8 @@ describe('storage REST operations', () => {
 
     expect(response.status).toBe(501);
     const body = (await response.json()) as { error?: string };
-    expect(body.error).toContain('conditionalBatch');
+    expect(body.error).toBeDefined();
+    expect(body.error).toContain('capabilities().conditionalBatch');
   });
 
   it('exposes raw storage operations through REST only', () => {

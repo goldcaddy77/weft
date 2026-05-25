@@ -2,7 +2,22 @@ import { afterEach, describe, expect, it } from 'bun:test';
 
 import { createDiskBackedTestFixture } from '../testing/storage-backends.ts';
 import { LMDBStorage } from './lmdb';
-import { assertCapabilitiesShape } from './storage-adapter.test-support.ts';
+import { runStorageCapabilityConformance } from './storage-adapter.test-support.ts';
+
+runStorageCapabilityConformance('LMDBStorage', {
+  create: () =>
+    new LMDBStorage(createDiskBackedTestFixture({ prefix: 'lmdb-caps', recursive: true }).path),
+  expected: {
+    readAfterWrite: 'linearizable',
+    scanConsistency: 'snapshot',
+    atomicBatch: true,
+    conditionalBatch: true,
+    boundedRangeDelete: true,
+  },
+  // LMDB serializes writers (single write transaction); concurrent CAS contention
+  // is not a supported access pattern, so skip that case. The mismatch case still runs.
+  supportsConcurrentWrites: false,
+});
 
 /** Helper to encode a string as Uint8Array. */
 function encode(value: string): Uint8Array {
@@ -40,37 +55,6 @@ describe('LMDBStorage', () => {
       cleanup();
     }
     fixtureCleanups.length = 0;
-  });
-
-  it('reports its honest capability row', () => {
-    const storage = createStorage();
-    assertCapabilitiesShape(storage);
-    expect(storage.capabilities()).toEqual({
-      readAfterWrite: 'linearizable',
-      scanConsistency: 'snapshot',
-      atomicBatch: true,
-      conditionalBatch: true,
-      boundedRangeDelete: true,
-    });
-    storage[Symbol.dispose]();
-  });
-
-  it('observes its own write (read-after-write) and isolates new keys mid-scan', async () => {
-    const storage = createStorage();
-    await storage.put('scan:a', new Uint8Array([1]));
-    await storage.put('scan:b', new Uint8Array([2]));
-    expect(await storage.get('scan:a')).not.toBeNull();
-
-    const iterator = storage.scan('scan:')[Symbol.asyncIterator]();
-    const first = await iterator.next();
-    await storage.put('scan:c', new Uint8Array([3]));
-    const seen: string[] = [];
-    if (!first.done) seen.push(first.value[0]);
-    for (let next = await iterator.next(); !next.done; next = await iterator.next()) {
-      seen.push(next.value[0]);
-    }
-    expect(seen).not.toContain('scan:c');
-    storage[Symbol.dispose]();
   });
 
   it('get on empty storage returns null', async () => {

@@ -8,16 +8,24 @@ import { MemoryStorage } from './memory.ts';
 import { assertCapabilitiesShape } from './storage-adapter.test-support.ts';
 
 describe('HTTPStorage capabilities()', () => {
-  it('reports the conservative remote-client floor', () => {
+  it('reports the conservative remote-client floor, conditionalBatch false by default', () => {
     const storage = new HTTPStorage({ baseUrl: 'https://example.test/api/' });
     assertCapabilitiesShape(storage);
     expect(storage.capabilities()).toEqual({
       readAfterWrite: 'eventual',
       scanConsistency: 'best-effort',
       atomicBatch: true,
-      conditionalBatch: true,
+      conditionalBatch: false,
       boundedRangeDelete: false,
     });
+  });
+
+  it('opts into conditionalBatch when the operator declares verified remote support', () => {
+    const storage = new HTTPStorage({
+      baseUrl: 'https://example.test/api/',
+      remoteConditionalBatch: true,
+    });
+    expect(storage.capabilities().conditionalBatch).toBe(true);
   });
 });
 

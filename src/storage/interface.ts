@@ -1,4 +1,4 @@
-import type { StorageCapabilities } from './capabilities.ts';
+import { requireStorageCapability, type StorageCapabilities } from './capabilities.ts';
 import {
   storageCountCore,
   storageDeletePrefixCore,
@@ -308,9 +308,13 @@ export async function storageConditionalBatch(
   conditions: ConditionalBatchCondition[],
   operations: BatchOperation[],
 ): Promise<boolean> {
+  // Trust the declared capability, not method presence: an adapter that has the
+  // method but honestly reports conditionalBatch: false (e.g. a remote HTTP
+  // backend known to lack CAS) must not silently execute the swap.
+  requireStorageCapability(storage, 'conditionalBatch', 'storageConditionalBatch');
   if (!storage.conditionalBatch) {
     throw new Error(
-      'This storage backend does not support conditionalBatch(), which is required for this operation.',
+      'This storage backend reports conditionalBatch capability but does not implement the conditionalBatch() method.',
     );
   }
 

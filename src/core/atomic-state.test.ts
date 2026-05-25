@@ -37,7 +37,9 @@ describe('AtomicState capability gate', () => {
       initial: 0,
     });
 
-    await expect(state.delete()).rejects.toThrow('conditionalBatch');
+    await expect(state.delete()).rejects.toThrow(
+      'Feature "AtomicState compare-and-swap" requires storage capability "conditionalBatch", but this storage backend does not provide it.',
+    );
   });
 });
 
