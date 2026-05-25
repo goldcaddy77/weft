@@ -2,7 +2,7 @@
  * `weft.workflows.result.get` operation + REST binding — behavior tests.
  */
 
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 
 import { encode } from '../../core/codec.ts';
 import { Engine } from '../../core/engine.ts';
@@ -211,5 +211,53 @@ describe('weft.workflows.result.get', () => {
     expect(response.status).toBe(500);
     expect(response.headers.get('content-type')).toBe('application/json');
     expect(await response.json()).toEqual({ error: 'Internal server error' });
+  });
+
+  it('clears the race timer on the result win path', async () => {
+    const { engine } = createEngineWithStorage();
+    const handle = await engine.start('hold', null, { id: 'workflow-result-clears-timer' });
+    await waitForWorkflowStatus(engine, handle.id, 'running');
+
+    // The happy path early-returns for `completed` workflows before reaching the
+    // `Promise.race`, so to exercise the race win path the workflow must be `running`
+    // at lookup time with a `result()` that resolves promptly. Clone the real handle
+    // (preserving prototype + descriptors) and override only `result`.
+    const originalGetHandle = engine.getHandle;
+    const callOriginalGetHandle = originalGetHandle.bind(engine);
+    engine.getHandle = (workflowId: string) => {
+      const original = callOriginalGetHandle(workflowId);
+      const wrapped = Object.create(Object.getPrototypeOf(original));
+      Object.defineProperties(wrapped, Object.getOwnPropertyDescriptors(original));
+      wrapped.result = async () => ({ ok: true });
+      return wrapped;
+    };
+
+    const setTimeoutSpy = spyOn(globalThis, 'setTimeout');
+    const clearTimeoutSpy = spyOn(globalThis, 'clearTimeout');
+    try {
+      const response = await handleRequest(
+        new Request(`http://localhost/v1/workflows/${handle.id}/result`, { method: 'GET' }),
+        engine,
+        {
+          operationRegistry: registry,
+          restBindings: bindings,
+        },
+      );
+
+      expect(response.status).toBe(200);
+
+      // Exactly one 30_000-delay timer (the race timer) must have been scheduled, and
+      // it must have been cleared. Matching the specific id proves the race timer was
+      // cleared rather than some unrelated timer.
+      const raceTimerIds = setTimeoutSpy.mock.results.filter(
+        (_result, index) => setTimeoutSpy.mock.calls[index]?.[1] === 30_000,
+      );
+      expect(raceTimerIds).toHaveLength(1);
+      expect(clearTimeoutSpy).toHaveBeenCalledWith(raceTimerIds[0]?.value);
+    } finally {
+      setTimeoutSpy.mockRestore();
+      clearTimeoutSpy.mockRestore();
+      engine.getHandle = originalGetHandle;
+    }
   });
 });
