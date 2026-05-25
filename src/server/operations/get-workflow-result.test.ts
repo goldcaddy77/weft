@@ -220,8 +220,12 @@ describe('weft.workflows.result.get', () => {
 
     // The happy path early-returns for `completed` workflows before reaching the
     // `Promise.race`, so to exercise the race win path the workflow must be `running`
-    // at lookup time with a `result()` that resolves promptly. Clone the real handle
-    // (preserving prototype + descriptors) and override only `result`.
+    // at lookup time with a `result()` that resolves promptly. Return a prototype-
+    // preserving *clone* of the real handle with only `result` overridden, rather than
+    // mutating the real handle in place: the engine retains its own reference to the
+    // real handle, and mutating its `result()` in place changes that shared instance's
+    // timer behavior, which masks the leak the test is meant to catch. The clone keeps
+    // the stub isolated to this request. Restore `getHandle` in `finally`.
     const originalGetHandle = engine.getHandle;
     const callOriginalGetHandle = originalGetHandle.bind(engine);
     engine.getHandle = (workflowId: string) => {
@@ -232,8 +236,57 @@ describe('weft.workflows.result.get', () => {
       return wrapped;
     };
 
-    const setTimeoutSpy = spyOn(globalThis, 'setTimeout');
-    const clearTimeoutSpy = spyOn(globalThis, 'clearTimeout');
+    // Capture the real implementations BEFORE spying so the mock bodies below call
+    // through without recursing into the spy.
+    const realSetTimeout = globalThis.setTimeout;
+    const realClearTimeout = globalThis.clearTimeout;
+
+    // Bun assigns small recycled integer timer ids, so asserting `clearTimeout` was
+    // called with the race timer's *id value* gives a false positive: an unrelated
+    // handler timer can be cleared under a coincidentally-equal recycled id. Instead,
+    // return a unique tagged sentinel object for the 30_000-delay race timer and assert
+    // `clearTimeout` received that exact object by identity. Object identity cannot
+    // collide with recycled integers, so the assertion fails reliably without the fix.
+    const raceTimerTag = Symbol('workflow result race timer');
+    type TimerSentinel = {
+      readonly tag: typeof raceTimerTag;
+      // The wrapped real id is only ever handed back to `realClearTimeout`, whose
+      // parameter is `unknown`-compatible, so the concrete timer type is irrelevant.
+      readonly realTimerId: unknown;
+    };
+    const isTimerSentinel = (value: unknown): value is TimerSentinel =>
+      typeof value === 'object' &&
+      value !== null &&
+      (value as { tag?: unknown }).tag === raceTimerTag;
+
+    let raceTimerSentinel: TimerSentinel | undefined;
+
+    const setTimeoutSpy = spyOn(globalThis, 'setTimeout').mockImplementation(((
+      handler: TimerHandler,
+      timeout?: number,
+      ...args: unknown[]
+    ) => {
+      const realTimerId = realSetTimeout(handler, timeout, ...args);
+      if (timeout === 30_000) {
+        // The race timer's "id" is a sentinel the production code holds only to pass
+        // back to `clearTimeout` (mocked below to unwrap it); the cast is contained to
+        // this round-trip.
+        const sentinel: TimerSentinel = { tag: raceTimerTag, realTimerId };
+        raceTimerSentinel = sentinel;
+        return sentinel;
+      }
+      return realTimerId;
+    }) as typeof globalThis.setTimeout);
+
+    const clearTimeoutSpy = spyOn(globalThis, 'clearTimeout').mockImplementation(((
+      timerId?: ReturnType<typeof globalThis.setTimeout>,
+    ) => {
+      if (isTimerSentinel(timerId)) {
+        return realClearTimeout(timerId.realTimerId as Parameters<typeof realClearTimeout>[0]);
+      }
+      return realClearTimeout(timerId);
+    }) as typeof globalThis.clearTimeout);
+
     try {
       const response = await handleRequest(
         new Request(`http://localhost/v1/workflows/${handle.id}/result`, { method: 'GET' }),
@@ -245,15 +298,12 @@ describe('weft.workflows.result.get', () => {
       );
 
       expect(response.status).toBe(200);
-
-      // Exactly one 30_000-delay timer (the race timer) must have been scheduled, and
-      // it must have been cleared. Matching the specific id proves the race timer was
-      // cleared rather than some unrelated timer.
-      const raceTimerIds = setTimeoutSpy.mock.results.filter(
-        (_result, index) => setTimeoutSpy.mock.calls[index]?.[1] === 30_000,
+      // The race timer must have been scheduled, and `clearTimeout` must have been
+      // called with that exact sentinel — proving the finally cleared the race timer.
+      expect(raceTimerSentinel).toBeDefined();
+      expect(clearTimeoutSpy.mock.calls.some(([timerId]) => timerId === raceTimerSentinel)).toBe(
+        true,
       );
-      expect(raceTimerIds).toHaveLength(1);
-      expect(clearTimeoutSpy).toHaveBeenCalledWith(raceTimerIds[0]?.value);
     } finally {
       setTimeoutSpy.mockRestore();
       clearTimeoutSpy.mockRestore();
