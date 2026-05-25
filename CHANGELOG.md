@@ -144,6 +144,13 @@ enumerates the new valid scopes.
 
 ### Removed (breaking)
 
+The `suspendOnLlmWait` engine option has been removed from `EngineOptions` (and
+therefore from the `new Engine({...})` constructor and `Engine.create({...})`
+option bags). It was never functional: passing `true` threw
+`'suspendOnLlmWait is not yet implemented'` at construction, and passing `false`
+was a no-op. The provider-resume-hint surface it was meant to park work on was
+removed in v0.1.0, so there is nothing left for it to gate.
+
 The `weft/server/handler` subpath no longer exports the internal legacy route
 precedence helpers `countLiteralSegments`, `countPathParameters`, or
 `shouldPreferLegacyRoute`. Direct meta and discovery endpoints are now modeled
