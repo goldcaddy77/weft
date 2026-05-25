@@ -4123,7 +4123,7 @@ worker.postMessage(
 // 1. Workflow-level cancellation
 // 2. Activity-level timeout
 // 3. Engine shutdown
-// 4. Token budget exhaustion
+// 4. Any caller-supplied signal (e.g. a userland budget guard)
 
 async function executeActivity(
   fn: Function,
@@ -4132,7 +4132,7 @@ async function executeActivity(
     workflow: AbortSignal;
     timeout: AbortSignal;
     shutdown: AbortSignal;
-    budget?: AbortSignal;
+    extra?: AbortSignal; // optional caller-supplied signal, not an engine concept
   },
 ): Promise<unknown> {
   // AbortSignal.any() fires when ANY of the signals abort
@@ -4140,7 +4140,7 @@ async function executeActivity(
     signals.workflow,
     signals.timeout,
     signals.shutdown,
-    ...(signals.budget ? [signals.budget] : []),
+    ...(signals.extra ? [signals.extra] : []),
   ]);
 
   return await fn(input, { signal: combined });
