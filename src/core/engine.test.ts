@@ -139,12 +139,6 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
-  it('rejects suspendOnLlmWait until the option has a runtime implementation', () => {
-    expect(() => new Engine({ suspendOnLlmWait: true })).toThrow(
-      'suspendOnLlmWait is not yet implemented',
-    );
-  });
-
   it('creates engine with no args and defaults to MemoryStorage', () => {
     const engine = new Engine();
     expect(engine).toBeInstanceOf(Engine);

@@ -37,7 +37,6 @@ export interface ResolvedOptions {
   checkpointSizeWarningThreshold: number;
   maxNestingDepth: number;
   broadcastEvents: boolean;
-  suspendOnLlmWait: boolean;
   retention: NormalizedRetentionPolicy | null;
   retentionSweepIntervalMs: number;
   retentionSweepBatchSize: number;
