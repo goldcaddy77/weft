@@ -136,13 +136,11 @@ export async function withFakeIndexedDb(
   body: () => Promise<void>,
 ): Promise<void> {
   const originalOpen = indexedDB.open.bind(indexedDB);
+  const database = options.database ? options.database() : createFakeDatabase(options.transaction);
+  let currentVersion = 0;
 
   try {
-    indexedDB.open = (() => {
-      const database = options.database
-        ? options.database()
-        : createFakeDatabase(options.transaction);
-
+    indexedDB.open = ((_name: string, version?: number) => {
       const request = {
         result: database,
         error: null,
@@ -153,11 +151,17 @@ export async function withFakeIndexedDb(
       } as unknown as IDBOpenDBRequest;
 
       queueMicrotask(() => {
-        const upgradeEvent = Object.assign(new Event('upgradeneeded'), {
-          oldVersion: 0,
-          newVersion: 1,
-        }) as IDBVersionChangeEvent;
-        request.onupgradeneeded?.(upgradeEvent);
+        const requestedVersion = version ?? (currentVersion === 0 ? 1 : currentVersion);
+        if (requestedVersion > currentVersion) {
+          const upgradeEvent = {
+            oldVersion: currentVersion,
+            newVersion: requestedVersion,
+            target: request,
+            currentTarget: request,
+          } as unknown as IDBVersionChangeEvent;
+          request.onupgradeneeded?.(upgradeEvent);
+          currentVersion = requestedVersion;
+        }
         request.onsuccess?.(new Event('success'));
       });
 

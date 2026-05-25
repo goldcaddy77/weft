@@ -21,7 +21,7 @@ describe('IndexedDB fault harness support', () => {
     expect(completed).toBe(true);
   });
 
-  it('drives upgrade before success when installing the default fake database', async () => {
+  it('drives upgrade before success only when the requested version advances the fake database', async () => {
     await withFakeIndexedDb(
       {
         transaction: createFakeTransaction({
@@ -29,21 +29,37 @@ describe('IndexedDB fault harness support', () => {
         }),
       },
       async () => {
-        const request = indexedDB.open(`test-${crypto.randomUUID()}`, 1);
-        const lifecycle: string[] = [];
+        const databaseName = `test-${crypto.randomUUID()}`;
+        const firstRequest = indexedDB.open(databaseName, 3);
+        const firstLifecycle: string[] = [];
 
-        request.onupgradeneeded = () => {
-          lifecycle.push('upgrade');
-          expect(request.result.objectStoreNames.contains('kv')).toBe(true);
+        firstRequest.onupgradeneeded = (event) => {
+          firstLifecycle.push('upgrade');
+          expect(event.oldVersion).toBe(0);
+          expect(event.newVersion).toBe(3);
+          expect(firstRequest.result.objectStoreNames.contains('kv')).toBe(true);
         };
 
-        request.onsuccess = () => {
-          lifecycle.push('success');
+        firstRequest.onsuccess = () => {
+          firstLifecycle.push('success');
         };
 
         await Promise.resolve();
+        expect(firstLifecycle).toEqual(['upgrade', 'success']);
 
-        expect(lifecycle).toEqual(['upgrade', 'success']);
+        const secondRequest = indexedDB.open(databaseName, 3);
+        const secondLifecycle: string[] = [];
+
+        secondRequest.onupgradeneeded = () => {
+          secondLifecycle.push('upgrade');
+        };
+
+        secondRequest.onsuccess = () => {
+          secondLifecycle.push('success');
+        };
+
+        await Promise.resolve();
+        expect(secondLifecycle).toEqual(['success']);
       },
     );
   });
