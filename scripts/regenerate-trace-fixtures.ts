@@ -14,29 +14,25 @@ import {
   type ActivityDefinition,
   type StepWorkflowContext,
   type WorkflowContext,
-  type WorkflowEvent,
   type WorkflowState,
-  type WorkflowTimelineEntry,
 } from '../src/core/types.ts';
 import { TestEngine } from '../src/testing/test-engine.ts';
 import {
   sortedStorageEntries,
   storageAsBase64Record,
   withDeterministicRuntime,
+  type TraceFixture,
 } from '../src/testing/trace-fixture-support.test-support.ts';
-
-type TraceFixture = {
-  scenario: string;
-  description: string;
-  events: WorkflowEvent[];
-  timeline: WorkflowTimelineEntry[];
-  finalState: WorkflowState;
-  storage: Record<string, string>;
-};
 
 type ScenarioRun = {
   engine: TestEngine;
   workflowId: string;
+  /**
+   * Terminal workflow ids produced beyond `workflowId` (for example, a forked
+   * child). When present, each is captured into
+   * `TraceFixture.replayMetadata.additionalTerminalStates`.
+   */
+  additionalTerminalWorkflowIds?: string[];
 };
 
 type ScenarioDefinition = {
@@ -352,7 +348,7 @@ async function runForkFromCheckpoint(): Promise<ScenarioRun> {
   await original.result();
   await forked.result();
 
-  return { engine, workflowId: original.id };
+  return { engine, workflowId: original.id, additionalTerminalWorkflowIds: [forked.id] };
 }
 
 async function runRecoveryAfterCrash(): Promise<ScenarioRun> {
@@ -448,7 +444,9 @@ const scenarios: ScenarioDefinition[] = [
 ];
 
 async function writeScenarioFixture(scenario: ScenarioDefinition): Promise<void> {
-  const { engine, workflowId } = await withDeterministicRuntime(scenario.run);
+  const { engine, workflowId, additionalTerminalWorkflowIds } = await withDeterministicRuntime(
+    scenario.run,
+  );
 
   try {
     const finalState = await engine.get(workflowId);
@@ -465,6 +463,20 @@ async function writeScenarioFixture(scenario: ScenarioDefinition): Promise<void>
       finalState,
       storage: storageAsBase64Record(entries),
     };
+
+    if (additionalTerminalWorkflowIds !== undefined) {
+      const additionalTerminalStates: WorkflowState[] = [];
+      for (const additionalId of additionalTerminalWorkflowIds) {
+        const additionalState = await engine.get(additionalId);
+        if (additionalState === null) {
+          throw new Error(
+            `Additional terminal workflow "${additionalId}" was not found after scenario "${scenario.name}"`,
+          );
+        }
+        additionalTerminalStates.push(additionalState);
+      }
+      fixture.replayMetadata = { version: 1, additionalTerminalStates };
+    }
 
     await Bun.write(
       `${replayFixtureDirectory}/${scenario.name}.json`,
