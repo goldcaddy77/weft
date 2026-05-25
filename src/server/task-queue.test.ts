@@ -159,6 +159,36 @@ describe('TaskQueue', () => {
       expect(result).toBeNull();
     });
 
+    it('resolves null immediately when the signal is already aborted (no parked waiter)', async () => {
+      const queue = new TaskQueue();
+      const controller = new AbortController();
+      controller.abort();
+
+      // An already-aborted signal must not park a waiter: AbortSignal does not
+      // re-fire `abort` for late listeners, so a parked waiter would wait out
+      // the full timeout.
+      const result = await queue.poll('default', ['charge'], 60_000, controller.signal);
+
+      expect(result).toBeNull();
+      expect(queue.hasWaiter('default', 'charge')).toBe(false);
+    });
+
+    it('does not hand a pending task to an already-aborted poll; the task stays queued', async () => {
+      const queue = new TaskQueue();
+      const controller = new AbortController();
+      controller.abort();
+
+      queue.enqueue('default', makeTask({ operationId: 'queued', activityName: 'charge' }));
+
+      // The caller has already disconnected — it must not claim the task.
+      const result = await queue.poll('default', ['charge'], 60_000, controller.signal);
+
+      expect(result).toBeNull();
+      // The task remains available for a live worker to claim.
+      expect(queue.pendingCount('default')).toBe(1);
+      expect(queue.isTracked('queued')).toBe(true);
+    });
+
     it('cleans up the waiter after abort', async () => {
       const queue = new TaskQueue();
       const controller = new AbortController();
@@ -184,7 +214,7 @@ describe('TaskQueue', () => {
       let removedAbortListeners = 0;
       const realSignal = controller.signal;
       const countingSignal = new Proxy(realSignal, {
-        get(target, property, receiver) {
+        get(target, property) {
           if (property === 'addEventListener') {
             return (
               type: string,
@@ -205,7 +235,11 @@ describe('TaskQueue', () => {
               target.removeEventListener(type, listener, options);
             };
           }
-          const value = Reflect.get(target, property, receiver);
+          // Read off `target`, not `receiver`: getters like `aborted` are
+          // native AbortSignal accessors that throw when invoked with the
+          // proxy as `this`. `Reflect.get(target, property, target)` runs them
+          // against the real signal.
+          const value = Reflect.get(target, property, target);
           return typeof value === 'function' ? value.bind(target) : value;
         },
       });

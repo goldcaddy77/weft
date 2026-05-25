@@ -149,6 +149,13 @@ export class TaskQueue implements Disposable {
     timeout: number,
     signal?: AbortSignal,
   ): Promise<PendingTask | null> {
+    // Short-circuit an already-aborted signal. An AbortSignal does not re-fire
+    // `abort` for listeners added after it aborted, so the parked-waiter path
+    // below would never settle early and would wait out the full timeout. We
+    // also decline to hand a pending task to a caller that has already gone —
+    // returning null leaves the task queued for a live worker instead.
+    if (signal?.aborted) return Promise.resolve(null);
+
     // Check for an immediately available task
     const tasks = this.#pending.get(queue);
     if (tasks) {
