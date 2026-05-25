@@ -232,14 +232,27 @@ PATCH body: `{ "attributes": { "key": "value" } }`.
 
 ### Schedules
 
-| Method   | Path                        | Description        |
-| -------- | --------------------------- | ------------------ |
-| `POST`   | `/v1/schedules`             | Create a schedule  |
-| `GET`    | `/v1/schedules`             | List schedules     |
-| `GET`    | `/v1/schedules/:id`         | Get schedule state |
-| `DELETE` | `/v1/schedules/:id`         | Delete a schedule  |
-| `POST`   | `/v1/schedules/:id/pause`   | Pause a schedule   |
-| `POST`   | `/v1/schedules/:id/unpause` | Unpause a schedule |
+| Method   | Path                       | Description        |
+| -------- | -------------------------- | ------------------ |
+| `POST`   | `/v1/schedules`            | Create a schedule  |
+| `GET`    | `/v1/schedules`            | List schedules     |
+| `GET`    | `/v1/schedules/:id`        | Get schedule state |
+| `PATCH`  | `/v1/schedules/:id`        | Update a schedule  |
+| `DELETE` | `/v1/schedules/:id`        | Cancel a schedule  |
+| `POST`   | `/v1/schedules/:id/pause`  | Pause a schedule   |
+| `POST`   | `/v1/schedules/:id/resume` | Resume a schedule  |
+
+Use `POST /v1/schedules/:id/resume` to resume a paused schedule. There is no
+`/unpause` alias.
+
+Schedule read and mutation operations are also available over JSON-RPC as
+`weft.schedules.get`, `weft.schedules.update`, `weft.schedules.cancel`,
+`weft.schedules.pause`, and `weft.schedules.resume`. When JWT authentication
+is enabled, the caller's tenant claim is forwarded into the engine access
+check for read, update, pause, resume, and cancel. A JWT-authenticated caller
+missing a tenant claim receives `403 Forbidden`; a cross-tenant schedule ID is
+masked as `404 NotFound` with the same body as a genuinely missing schedule.
+Non-JWT principals follow the engine's normal access policy.
 
 ### Bulk Operations
 
@@ -570,6 +583,13 @@ All errors return JSON with an `error` field:
 | `409`  | Conflict (duplicate workflow ID)                                  |
 | `422`  | Workflow failed or cancelled (result endpoint)                    |
 | `500`  | Internal server error                                             |
+
+REST operation handlers mask unexpected `EngineFailure` faults to
+`{ "error": "Internal server error" }` with status `500`, so raw engine
+messages, storage details, stack traces, and file paths do not cross the HTTP
+boundary. Declared client faults keep their mapped status and public message.
+JSON-RPC transports receive the operation fault object instead of the REST
+body shape.
 
 ---
 

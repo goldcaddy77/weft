@@ -291,6 +291,8 @@ const engine = new Engine({
 
 The [Multi-Tenancy guide](documentation/guides/multi-tenancy.md) covers tenant resolution, quota enforcement, storage isolation, remote workers, and security boundaries.
 
+When server authentication uses JWT tenant claims, schedule reads and mutations enforce the same tenant boundary across REST and JSON-RPC: own-tenant calls succeed, missing tenant claims fail with `403`, and cross-tenant schedule IDs are masked as not found.
+
 ### Observability
 
 Built-in event system (`EventTarget`-based, so it composes with everything), W3C `traceparent` propagation, and OpenTelemetry-compatible metrics. Composable interceptors layer cross-cutting concerns—tracing, validation, encryption—without any of them knowing about each other.
