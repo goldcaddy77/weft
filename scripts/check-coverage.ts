@@ -1362,10 +1362,31 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_REFRESH = new Map<string, CoverageAllowanc
     },
   ],
   [
+    // IndexedDB fault-harness support code is consumed only through
+    // indexeddb.test.ts. Bun instruments the helper module itself, so its
+    // synchronous fire* hooks and fake open-lifecycle scaffolding surface as
+    // uncovered support-only branches rather than product gaps.
+    'src/storage/indexeddb-fault-harness.test-support.ts',
+    {
+      functions: 4,
+      lines: new Set([100, 112]),
+    },
+  ],
+  [
     'src/testing/replay-scenarios.test-support.ts',
     {
       functions: 2,
       lines: new Set([51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 133, 134, 135, 136, 179]),
+    },
+  ],
+  [
+    // The shared scheduler contract defines its test cases inline in this
+    // support module so both scheduler suites reuse the same assertions. Bun
+    // counts several nested test callbacks as uncovered functions even though
+    // the consumer suites execute every assertion and line in the helper.
+    'src/testing/scheduler-contract.test-support.ts',
+    {
+      functions: 7,
     },
   ],
   [
