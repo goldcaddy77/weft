@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
-import type { PendingTask } from './task-queue.ts';
+import type { PendingTask } from './task-queue-types.ts';
 import { resetLifoStarvationWarningForTesting, TaskQueue } from './task-queue.ts';
 
 function makeTask(id: string, priority?: number): PendingTask {

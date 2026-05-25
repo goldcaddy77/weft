@@ -145,13 +145,8 @@ export function resolveEngineOptions(
   options: EngineConstructorOptions | undefined,
   getNow: () => number,
 ): ResolvedOptions {
-  if (options?.suspendOnLlmWait === true) {
-    throw new Error('suspendOnLlmWait is not yet implemented');
-  }
-
   return {
     storage,
-    suspendOnLlmWait: false,
     getNow,
     tenantResolver: options?.tenantResolver,
     ...resolveBooleanDefaults(options),

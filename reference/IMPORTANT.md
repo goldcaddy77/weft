@@ -46,7 +46,4 @@ Action items surfaced by code review. Items here are also tracked in the **"Comp
 ## Resolved Items (2026-04-11)
 
 - [x] **`MetricsCollector` histogram arrays grow without bound** (2026-04-10 → fixed 2026-04-11): Replaced unbounded `number[]` with a `CircularBuffer` backed by `Float64Array`, capped at 10,000 samples per histogram name (~80KB max).
-- [x] **`PromptCache.#evictOldest` creates quadratic intermediate arrays** (2026-04-10 → fixed 2026-04-11): Replaced the `[...ancestors, node]` spread per stack entry with a two-pass approach: Pass 1 finds the oldest terminal with no ancestor arrays. Pass 2 does a targeted path walk from root to target.
-- [x] **`PromptCache` uses FIFO eviction instead of LRU** (2026-04-10 → fixed 2026-04-11): Re-inserting an existing terminal now refreshes `node.sequence` so frequently-used prefixes are retained.
 - [x] **`validateRegistrations` mislabels standalone activities** (2026-04-10 → fixed 2026-04-10): Standalone activities now always labelled `'(standalone)'`.
-- [x] **Shared `BudgetTracker` race in `supervise` finally block** (2026-04-10 → fixed 2026-04-11): The finally block now only detaches the controller if `budget.signal === controller.signal`, preventing concurrent `supervise()` calls from overwriting each other's controllers.

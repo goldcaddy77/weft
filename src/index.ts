@@ -340,7 +340,7 @@ export type {
 } from './core/atomic-state';
 
 export { handleRequest } from './server/handler';
-export type { SchedulingPolicy } from './server/task-queue';
+export type { SchedulingPolicy } from './server/task-queue-types';
 export type { RoutingPolicy } from './worker/registry';
 
 export { createAuthenticator, validateAuthConfig } from './server/authentication';

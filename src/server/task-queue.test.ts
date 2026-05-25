@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { restoreRealTimers, sleepForTesting, useFakeTimers } from '../testing/fake-timers.ts';
 
-import type { PendingTask, TaskResult } from './task-queue.ts';
+import type { PendingTask, TaskResult } from './task-queue-types.ts';
 import { TaskQueue } from './task-queue.ts';
 
 // ---------------------------------------------------------------------------
@@ -159,6 +159,36 @@ describe('TaskQueue', () => {
       expect(result).toBeNull();
     });
 
+    it('resolves null immediately when the signal is already aborted (no parked waiter)', async () => {
+      const queue = new TaskQueue();
+      const controller = new AbortController();
+      controller.abort();
+
+      // An already-aborted signal must not park a waiter: AbortSignal does not
+      // re-fire `abort` for late listeners, so a parked waiter would wait out
+      // the full timeout.
+      const result = await queue.poll('default', ['charge'], 60_000, controller.signal);
+
+      expect(result).toBeNull();
+      expect(queue.hasWaiter('default', 'charge')).toBe(false);
+    });
+
+    it('does not hand a pending task to an already-aborted poll; the task stays queued', async () => {
+      const queue = new TaskQueue();
+      const controller = new AbortController();
+      controller.abort();
+
+      queue.enqueue('default', makeTask({ operationId: 'queued', activityName: 'charge' }));
+
+      // The caller has already disconnected — it must not claim the task.
+      const result = await queue.poll('default', ['charge'], 60_000, controller.signal);
+
+      expect(result).toBeNull();
+      // The task remains available for a live worker to claim.
+      expect(queue.pendingCount('default')).toBe(1);
+      expect(queue.isTracked('queued')).toBe(true);
+    });
+
     it('cleans up the waiter after abort', async () => {
       const queue = new TaskQueue();
       const controller = new AbortController();
@@ -184,7 +214,7 @@ describe('TaskQueue', () => {
       let removedAbortListeners = 0;
       const realSignal = controller.signal;
       const countingSignal = new Proxy(realSignal, {
-        get(target, property, receiver) {
+        get(target, property) {
           if (property === 'addEventListener') {
             return (
               type: string,
@@ -205,7 +235,11 @@ describe('TaskQueue', () => {
               target.removeEventListener(type, listener, options);
             };
           }
-          const value = Reflect.get(target, property, receiver);
+          // Read off `target`, not `receiver`: getters like `aborted` are
+          // native AbortSignal accessors that throw when invoked with the
+          // proxy as `this`. `Reflect.get(target, property, target)` runs them
+          // against the real signal.
+          const value = Reflect.get(target, property, target);
           return typeof value === 'function' ? value.bind(target) : value;
         },
       });
@@ -598,6 +632,100 @@ describe('TaskQueue', () => {
       // Calling complete on an expired task should return false (no callback)
       const found = queue.complete({ operationId: 'ttl-no-cb', status: 'completed' });
       expect(found).toBe(false);
+    });
+  });
+
+  describe('abort and dispose', () => {
+    it('settles a poll promptly when its signal aborts, without dispatching to the gone client', async () => {
+      const queue = new TaskQueue();
+      const controller = new AbortController();
+
+      // Park a long-lived poll; only the abort signal can settle it within the test.
+      const pollPromise = queue.poll('q', ['charge'], 60_000, controller.signal);
+
+      controller.abort();
+
+      // Resolves to null immediately — the 60s timer is never advanced.
+      await expect(pollPromise).resolves.toBeNull();
+      expect(queue.hasWaiter('q', 'charge')).toBe(false);
+
+      // A task enqueued afterwards is queued, not handed to the aborted waiter.
+      const enqueued = queue.enqueue(
+        'q',
+        makeTask({ operationId: 'after-abort', activityName: 'charge' }),
+      );
+      expect(enqueued).toBe(true);
+      expect(queue.pendingCount('q')).toBe(1);
+      // It is tracked as pending — not dispatched-then-lost to the gone client.
+      expect(queue.isTracked('after-abort')).toBe(true);
+    });
+
+    it('resolves every outstanding waiter with null on dispose', async () => {
+      const queue = new TaskQueue();
+
+      // Park waiters on two different queues so dispose exercises iteration
+      // across the #waiters map keys, not just a single per-queue array.
+      const first = queue.poll('q1', ['x'], 60_000);
+      const second = queue.poll('q2', ['y'], 60_000);
+
+      queue[Symbol.dispose]();
+
+      await expect(Promise.all([first, second])).resolves.toEqual([null, null]);
+      expect(queue.hasWaiter('q1', 'x')).toBe(false);
+      expect(queue.hasWaiter('q2', 'y')).toBe(false);
+    });
+
+    it('is idempotent — a second dispose does not throw or re-settle waiters', async () => {
+      const queue = new TaskQueue();
+      const pollPromise = queue.poll('q', ['charge'], 60_000);
+
+      queue[Symbol.dispose]();
+      expect(() => queue[Symbol.dispose]()).not.toThrow();
+
+      await expect(pollPromise).resolves.toBeNull();
+    });
+
+    describe('with fake timers', () => {
+      beforeEach(() => {
+        useFakeTimers();
+      });
+
+      afterEach(() => {
+        restoreRealTimers();
+      });
+
+      it('clears pending-task expiration timers and drops tasks silently', async () => {
+        // Spy on clearTimeout so we can assert the expiration timer is actually
+        // cleared. Asserting only that the completion callback stays silent is
+        // insufficient: dispose clears #completionCallbacks too, so a surviving
+        // (uncleared) timer's #expireTask would find no callback and stay quiet
+        // anyway. The spy is what falsifies a regression that drops the
+        // clearTimeout loop from dispose.
+        const clearTimeoutSpy = spyOn(globalThis, 'clearTimeout');
+        try {
+          const queue = new TaskQueue({ pendingTaskTimeToLive: 1000 });
+          const results: TaskResult[] = [];
+
+          queue.enqueue('default', makeTask({ operationId: 'disposed-ttl' }), (result) =>
+            results.push(result),
+          );
+          expect(queue.totalPendingCount()).toBe(1);
+
+          clearTimeoutSpy.mockClear();
+          queue[Symbol.dispose]();
+          // The pending task's expiration timer was cleared by dispose.
+          expect(clearTimeoutSpy).toHaveBeenCalled();
+
+          // Advance well past the TTL: no expiration callback fires.
+          await sleepForTesting(5000);
+
+          expect(results).toHaveLength(0);
+          expect(queue.totalPendingCount()).toBe(0);
+          expect(queue.isTracked('disposed-ttl')).toBe(false);
+        } finally {
+          clearTimeoutSpy.mockRestore();
+        }
+      });
     });
   });
 

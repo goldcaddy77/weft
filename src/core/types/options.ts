@@ -150,14 +150,6 @@ export interface EngineOptions {
     smol?: boolean;
   };
 
-  /**
-   * When an execution provider exposes async resume hints, park inline work
-   * before the blocking wait begins. Non-parkable contexts fall back to an
-   * in-memory wait. Off by default because only some providers can participate
-   * in asynchronous resume flows.
-   */
-  suspendOnLlmWait?: boolean;
-
   /** Built-in alerting configuration. */
   alerts?: AlertingOptions;
 

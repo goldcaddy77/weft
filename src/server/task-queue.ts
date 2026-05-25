@@ -2,110 +2,18 @@
 // In-memory task queue for HTTP long-poll workers
 // ---------------------------------------------------------------------------
 
-import type { RetryPolicy } from '../core/types.ts';
 import type { TaskQueueSnapshot } from './task-queue-summary.ts';
 import { buildQueueSummaries } from './task-queue-summary.ts';
-import type { TaskLifecycleFields } from './task-state.ts';
+import type {
+  PendingTask,
+  SchedulingPolicy,
+  TaskQueueOptions,
+  TaskQueueSummary,
+  TaskResult,
+} from './task-queue-types.ts';
 
-/** A task waiting to be claimed by a long-poll worker. */
-export interface PendingTask extends TaskLifecycleFields {
-  operationId: string;
-  activityName: string;
-  input: unknown;
-  attempt?: number | undefined;
-  retryPolicy?: RetryPolicy | undefined;
-  visibilityTimeout?: number | undefined;
-  enqueuedAt?: number | undefined;
-  /** Propagated interceptor headers (e.g. W3C trace context, auth tokens). */
-  headers?: Record<string, string> | undefined;
-  /** Workflow that dispatched this activity. Present when the dispatch included a workflowId. */
-  workflowId?: string | undefined;
-  /**
-   * Task priority. Higher values are dequeued first. Tasks with equal priority
-   * maintain FIFO order. Default: 0. Agent workflow tasks use priority 10.
-   */
-  priority?: number | undefined;
-}
-
-/** Result reported by a long-poll worker after executing a task. */
-export interface TaskResult {
-  operationId: string;
-  status: 'completed' | 'failed';
-  value?: unknown;
-  error?: string | undefined;
-}
-
+/** Callback invoked when a task completes, fails, or expires. Implementation-private. */
 type CompletionCallback = (result: TaskResult) => void;
-
-/**
- * Strategy used by {@link TaskQueue.enqueue} to place an incoming task in the
- * per-queue pending list. In all strategies, {@link TaskQueue.poll} dequeues
- * the first task whose activity matches the waiter — so the ordering imposed
- * at enqueue time is what actually gets observed.
- *
- * - `'priority'` (default) inserts by descending `task.priority`. Tasks at the
- *   same priority keep FIFO order. This is the historical behavior.
- * - `'fifo'` ignores priority and appends to the end of the list. Oldest tasks
- *   are dequeued first. Use this when fairness across producers matters more
- *   than urgency.
- * - `'lifo'` prepends to the start of the list. Newest tasks are dequeued
- *   first. Use this for time-sensitive, short-lived work where fresh requests
- *   are more valuable than stale ones (e.g. interactive UI refreshes).
- *
- *   **Starvation warning**: under sustained load, tasks at the bottom of the
- *   LIFO stack may never be dequeued. They sit in the pending list while
- *   newer arrivals jump in front of them, and when {@link TaskQueueOptions.pendingTaskTimeToLive}
- *   is finite (the default is 5 minutes) they eventually expire and fail with
- *   a generic timeout error — the producer gets no signal that LIFO ordering
- *   was responsible. Only choose `'lifo'` for workloads where you actively
- *   want bursty arrivals to displace older work, and consider setting
- *   `pendingTaskTimeToLive` to `Infinity` (or aggressively low) to make the
- *   trade-off explicit.
- */
-export type SchedulingPolicy = 'priority' | 'fifo' | 'lifo';
-
-/**
- * Per-queue snapshot reported by {@link TaskQueue.getQueueSummaries}.
- * Wall-clock-free: `oldestEnqueuedAt` is the raw `enqueuedAt` of the oldest
- * pending task (or `null` when the queue has no pending tasks). Age in
- * milliseconds is derived by the caller against a single per-request `now`.
- */
-export type TaskQueueSummary = {
-  /** Queue name. */
-  queue: string;
-  /** Pending (unclaimed) task count. */
-  backlog: number;
-  /**
-   * Epoch milliseconds when the oldest pending task was enqueued, or `null`
-   * when the queue has no pending tasks (or — defensively — when no pending
-   * task carries an `enqueuedAt`, which should not happen after enqueue
-   * defaults it).
-   */
-  oldestEnqueuedAt: number | null;
-  /** Active long-poll waiters parked on this queue. */
-  waitingPollers: number;
-  /** Scheduling policy in effect for the queue. */
-  schedulingPolicy: SchedulingPolicy;
-};
-
-/** Configuration options for {@link TaskQueue}. */
-export type TaskQueueOptions = {
-  /**
-   * Maximum time (in milliseconds) a task can sit in the pending queue before
-   * it expires. When a task expires its completion callback is invoked with a
-   * `'failed'` result carrying a timeout error, and all associated state is
-   * cleaned up. Set to `0` or `Infinity` to disable expiration.
-   *
-   * @default 300_000 (5 minutes)
-   */
-  pendingTaskTimeToLive?: number;
-  /**
-   * How tasks are ordered within a queue at enqueue time.
-   *
-   * @default 'priority'
-   */
-  schedulingPolicy?: SchedulingPolicy;
-};
 
 const DEFAULT_PENDING_TASK_TTL = 5 * 60 * 1000; // 5 minutes
 
@@ -126,6 +34,14 @@ export function resetLifoStarvationWarningForTesting(): void {
 
 interface Waiter {
   activities: string[];
+  /**
+   * The cleanup-aware `settle` closure from {@link TaskQueue.poll} — NOT the
+   * raw promise resolver. Calling it clears {@link Waiter.timer} and removes
+   * the abort-signal listener (the `signal` passed to that `poll` call) as a
+   * side effect. Callers that settle a waiter out of band (e.g. dispose) may
+   * still clear {@link Waiter.timer} themselves rather than rely on that side
+   * effect.
+   */
   resolve: (task: PendingTask | null) => void;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -140,7 +56,7 @@ interface Waiter {
  * When a poll request arrives and no task is available, the request blocks
  * until a task arrives or the timeout expires.
  */
-export class TaskQueue {
+export class TaskQueue implements Disposable {
   #pending = new Map<string, PendingTask[]>();
   #waiters = new Map<string, Waiter[]>();
   #completionCallbacks = new Map<string, CompletionCallback>();
@@ -233,6 +149,13 @@ export class TaskQueue {
     timeout: number,
     signal?: AbortSignal,
   ): Promise<PendingTask | null> {
+    // Short-circuit an already-aborted signal. An AbortSignal does not re-fire
+    // `abort` for listeners added after it aborted, so the parked-waiter path
+    // below would never settle early and would wait out the full timeout. We
+    // also decline to hand a pending task to a caller that has already gone —
+    // returning null leaves the task queued for a live worker instead.
+    if (signal?.aborted) return Promise.resolve(null);
+
     // Check for an immediately available task
     const tasks = this.#pending.get(queue);
     if (tasks) {
@@ -305,6 +228,45 @@ export class TaskQueue {
       return true;
     }
     return false;
+  }
+
+  /**
+   * Release all queue state on shutdown. Resolves every parked long-poll
+   * waiter with `null` (so no poll promise is left unsettled), clears every
+   * pending-task expiration timer, and drops all pending tasks, completion
+   * callbacks, and dispatch tracking.
+   *
+   * Completion callbacks are intentionally NOT invoked: this is teardown, not
+   * per-task expiration, and firing failure callbacks would push work into an
+   * already-disposed engine/storage. Idempotent — safe to call more than once.
+   */
+  [Symbol.dispose](): void {
+    for (const timer of this.#expirationTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.#expirationTimers.clear();
+
+    // Snapshot waiters before resolving: `settle` (stored as waiter.resolve)
+    // mutates `#waiters` via cleanup() — it splices the per-queue array and may
+    // delete the map key. Flatten first and clear the map up front so each
+    // settle's cleanup is a harmless no-op (indexOf -> -1) and we never iterate
+    // a collection being mutated underneath us.
+    const parked: Waiter[] = [];
+    for (const waiters of this.#waiters.values()) {
+      parked.push(...waiters);
+    }
+    this.#waiters.clear();
+    for (const waiter of parked) {
+      // Clear the timer explicitly rather than relying on `settle`'s internal
+      // cleanup, so this path stays correct if `Waiter.resolve` is ever changed
+      // to something other than the cleanup-aware `settle` closure.
+      clearTimeout(waiter.timer);
+      waiter.resolve(null);
+    }
+
+    this.#pending.clear();
+    this.#completionCallbacks.clear();
+    this.#dispatched.clear();
   }
 
   /** Check whether an operationId is currently tracked (pending or dispatched). */

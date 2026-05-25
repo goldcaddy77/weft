@@ -32,7 +32,8 @@ import {
   resolveNetworkConfig,
   restoreInflightTasks,
 } from './serve-internals.ts';
-import { TaskQueue, type SchedulingPolicy } from './task-queue.ts';
+import type { SchedulingPolicy } from './task-queue-types.ts';
+import { TaskQueue } from './task-queue.ts';
 
 export {
   wireEventBroadcasting,

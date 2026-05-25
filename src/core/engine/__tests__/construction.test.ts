@@ -23,7 +23,6 @@ describe('resolveEngineOptions', () => {
     expect(resolved.checkpointSizeWarningThreshold).toBe(65_536);
     expect(resolved.maxNestingDepth).toBe(10);
     expect(resolved.broadcastEvents).toBe(false);
-    expect(resolved.suspendOnLlmWait).toBe(false);
     expect(resolved.tenantResolver).toBeUndefined();
     expect(resolved.retentionSweepIntervalMs).toBe(DEFAULT_RETENTION_SWEEP_INTERVAL_MS);
     expect(resolved.retentionSweepBatchSize).toBe(DEFAULT_RETENTION_SWEEP_BATCH_SIZE);
@@ -53,7 +52,6 @@ describe('resolveEngineOptions', () => {
         checkpointSizeWarningThreshold: 131_072,
         maxNestingDepth: 6,
         broadcastEvents: true,
-        suspendOnLlmWait: false,
         retention: suppliedRetention,
         retentionSweepInterval: suppliedInterval,
         retentionSweepBatchSize: 42,
@@ -67,7 +65,6 @@ describe('resolveEngineOptions', () => {
     expect(resolved.checkpointSizeWarningThreshold).toBe(131_072);
     expect(resolved.maxNestingDepth).toBe(6);
     expect(resolved.broadcastEvents).toBe(true);
-    expect(resolved.suspendOnLlmWait).toBe(false);
     expect(resolved.tenantResolver).toBe(tenantResolver);
     expect(resolved.retention).toEqual(
       normalizeRetentionPolicy(suppliedRetention, 'options.retention'),
@@ -114,12 +111,6 @@ describe('resolveEngineOptions', () => {
       resolveEngineOptions(new MemoryStorage(), { retention: 'invalid-shape' as any }, getNow)
         .retention,
     ).toBeNull();
-  });
-
-  it('keeps the suspendOnLlmWait implementation guard', () => {
-    expect(() =>
-      resolveEngineOptions(new MemoryStorage(), { suspendOnLlmWait: true }, getNow),
-    ).toThrow('suspendOnLlmWait is not yet implemented');
   });
 
   it('coerces explicit-null scalar fields to documented defaults (JS-caller safety)', () => {

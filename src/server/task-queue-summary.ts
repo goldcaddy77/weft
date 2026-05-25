@@ -2,7 +2,7 @@
 // Pure summary projection for TaskQueue diagnostics
 // ---------------------------------------------------------------------------
 
-import type { SchedulingPolicy, TaskQueueSummary } from './task-queue.ts';
+import type { SchedulingPolicy, TaskQueueSummary } from './task-queue-types.ts';
 
 /**
  * Read-only snapshot of the fields {@link buildQueueSummaries} needs. Captured
