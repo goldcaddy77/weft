@@ -49,32 +49,6 @@ const BASE_COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
     },
   ],
   [
-    'src/ai/agent.ts',
-    {
-      // Line coverage is complete. Bun still reports one unnamed aggregate
-      // function miss in this large orchestrator module after the surrounding
-      // behavioral tests exercise the visible branches.
-      functions: 1,
-    },
-  ],
-  [
-    'src/ai/agent/runtime.ts',
-    {
-      // The runtime wrapper now owns the aggregate function and defensive
-      // return path that used to live in `src/ai/agent.ts`.
-      functions: 1,
-      lines: new Set([139, 140, 141]),
-    },
-  ],
-  [
-    'src/ai/prompt-cache/trie.ts',
-    {
-      // Bun leaves a tiny fallback branch uncovered after the surrounding trie
-      // behavior is exercised through the prompt-cache benchmark and tests.
-      lines: new Set([64, 65]),
-    },
-  ],
-  [
     'src/benchmarks/benchmark-subprocess.ts',
     {
       // These branches only execute when a child benchmark subprocess fails to
@@ -571,45 +545,6 @@ const COVERAGE_ALLOWANCE_OVERRIDES = new Map<string, CoverageAllowance>([
   // substantial amount of Bun's coverage noise. Keep the allowances aligned
   // with the current source layout rather than pretending these are new test
   // gaps when they still require cross-runtime or instrumentation-only paths.
-  [
-    'src/ai/agent/chat.ts',
-    {
-      functions: 1,
-      lines: new Set([20]),
-    },
-  ],
-  [
-    'src/ai/agent/finalize.ts',
-    {
-      lines: new Set([53]),
-    },
-  ],
-  [
-    'src/ai/agent/suspending-provider.ts',
-    {
-      functions: 2,
-      lines: new Set([143, 144, 145, 146, 147, 148, 149]),
-    },
-  ],
-  [
-    'src/ai/agent/tool-execution.ts',
-    {
-      functions: 1,
-      lines: new Set([81, 82, 83, 84, 85, 119, 120, 121, 122, 123, 124, 126, 127, 128, 129, 130]),
-    },
-  ],
-  [
-    'src/ai/agent/tool-initialization.ts',
-    {
-      functions: 1,
-    },
-  ],
-  [
-    'src/ai/coordination/supervise.ts',
-    {
-      lines: new Set([58, 161]),
-    },
-  ],
   [
     'src/cli/conformance.ts',
     {
