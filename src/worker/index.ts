@@ -160,12 +160,17 @@ export class RemoteWorker implements Disposable {
 
     return new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(this.#options.serverUrl);
+      // Track the socket immediately (while still CONNECTING) so a re-entrant
+      // connect() or a #failSocket() before `open` can close it instead of
+      // leaking it. The `connected` getter and #isReadyToSend() already gate on
+      // readyState === OPEN, so a CONNECTING socket here is correctly treated as
+      // not-yet-usable.
+      this.#ws = ws;
       this.#pendingRegistration = { resolve, reject };
 
       ws.addEventListener(
         'open',
         () => {
-          this.#ws = ws;
           this.#sendMessage(
             buildRegisterMessage(this.#workerId, Object.keys(this.#activityTable), this.#options),
           );
@@ -446,13 +451,21 @@ export class RemoteWorker implements Disposable {
     }
   }
 
-  /** Whether a `taskResult` may be sent now: socket open AND already registered. */
-  #isReadyToSend(): boolean {
-    return (
+  /**
+   * The socket a `taskResult` may be sent over right now — open AND already
+   * registered — or `null` when no send is permitted. Returning the socket
+   * (rather than a boolean) lets callers send without a `?.` that would
+   * silently swallow a null `#ws` and drop the result.
+   */
+  #readySocket(): WebSocket | null {
+    if (
       this.#ws !== null &&
       this.#ws.readyState === WebSocket.OPEN &&
       this.#pendingRegistration === null
-    );
+    ) {
+      return this.#ws;
+    }
+    return null;
   }
 
   /**
@@ -466,10 +479,10 @@ export class RemoteWorker implements Disposable {
     // that disposal just cleared.
     if (this.#disposed) return;
 
-    if (this.#isReadyToSend()) {
+    const socket = this.#readySocket();
+    if (socket !== null) {
       try {
-        // #isReadyToSend() guarantees #ws is non-null and OPEN here.
-        this.#ws?.send(JSON.stringify(message));
+        socket.send(JSON.stringify(message));
         this.#taskResultOutbox.delete(message.operationId);
         return;
       } catch {
@@ -494,12 +507,13 @@ export class RemoteWorker implements Disposable {
    */
   #flushTaskResultOutbox(): boolean {
     for (const message of this.#taskResultOutbox.drainOrder()) {
-      if (!this.#isReadyToSend()) {
+      const socket = this.#readySocket();
+      if (socket === null) {
         this.#failSocket();
         return false;
       }
       try {
-        this.#ws?.send(JSON.stringify(message));
+        socket.send(JSON.stringify(message));
         this.#taskResultOutbox.delete(message.operationId);
       } catch {
         this.#failSocket();
@@ -513,10 +527,15 @@ export class RemoteWorker implements Disposable {
    * Tear down the current socket from application logic (a send failed or the
    * result backlog is full). Uses the same abort-before-replace discipline as
    * `#teardownActiveConnection` so no late event from the failed socket can
-   * mutate worker state. Does not touch the outbox or reject a pending
-   * registration.
+   * mutate worker state, and rejects any still-pending registration so a
+   * `connect()` whose socket fails before `registerAck` (e.g. a task that
+   * arrives full-buffer before registration completes) settles rather than
+   * hanging forever. Does not touch the outbox — buffered results survive.
    */
   #failSocket(): void {
+    this.#rejectPendingRegistration(
+      'WebSocket failed before worker registration completed; reconnect required',
+    );
     const oldAbortController = this.#abortController;
     this.#abortController = new AbortController();
     oldAbortController.abort();

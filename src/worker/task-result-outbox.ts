@@ -32,6 +32,11 @@ export class TaskResultOutbox {
   #warnedFull = false;
 
   constructor(max: number = MAX_BUFFERED_TASK_RESULTS) {
+    if (!Number.isInteger(max) || max < 0) {
+      throw new RangeError(
+        `maxBufferedResults must be a non-negative integer, received ${String(max)}`,
+      );
+    }
     this.#max = max;
   }
 
@@ -63,6 +68,9 @@ export class TaskResultOutbox {
   /** Drop a buffered result once it has been confirmed sent. */
   delete(operationId: string): void {
     this.#entries.delete(operationId);
+    // Re-arm the one-time full warning once the backlog drains below the cap,
+    // so a later full episode (e.g. a second disconnect cycle) warns again.
+    if (!this.full) this.#warnedFull = false;
   }
 
   /** Snapshot of buffered results in insertion (flush) order. */
@@ -73,5 +81,6 @@ export class TaskResultOutbox {
   /** Discard all buffered results (terminal disposal). */
   clear(): void {
     this.#entries.clear();
+    this.#warnedFull = false;
   }
 }

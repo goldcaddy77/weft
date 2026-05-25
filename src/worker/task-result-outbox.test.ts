@@ -54,11 +54,35 @@ describe('TaskResultOutbox', () => {
     expect(outbox.full).toBe(true);
   });
 
-  it('warns at most once after the ceiling is reached', () => {
+  it('warns at most once per full episode', () => {
     const outbox = new TaskResultOutbox(1);
+    outbox.buffer(completed('a', 'x'));
+    expect(outbox.full).toBe(true);
     expect(outbox.shouldWarnFull()).toBe(true);
     expect(outbox.shouldWarnFull()).toBe(false);
-    expect(outbox.shouldWarnFull()).toBe(false);
+
+    // Draining below the cap re-arms the warning for the next full episode.
+    outbox.delete('a');
+    expect(outbox.full).toBe(false);
+    outbox.buffer(completed('b', 'y'));
+    expect(outbox.shouldWarnFull()).toBe(true);
+  });
+
+  it('clear re-arms the full warning', () => {
+    const outbox = new TaskResultOutbox(1);
+    outbox.buffer(completed('a', 'x'));
+    expect(outbox.shouldWarnFull()).toBe(true);
+    outbox.clear();
+    outbox.buffer(completed('b', 'y'));
+    expect(outbox.shouldWarnFull()).toBe(true);
+  });
+
+  it('rejects an invalid ceiling', () => {
+    expect(() => new TaskResultOutbox(-1)).toThrow(RangeError);
+    expect(() => new TaskResultOutbox(1.5)).toThrow(RangeError);
+    expect(() => new TaskResultOutbox(Number.NaN)).toThrow(RangeError);
+    expect(() => new TaskResultOutbox(Number.POSITIVE_INFINITY)).toThrow(RangeError);
+    expect(() => new TaskResultOutbox(0)).not.toThrow();
   });
 
   it('clear discards everything', () => {

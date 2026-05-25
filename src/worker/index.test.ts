@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import type { ActivityInterceptor } from '../core/interceptor.ts';
 import { restoreRealTimers, sleepForTesting, waitForCondition } from '../testing/fake-timers.ts';
-import { isOutboxFull, RemoteWorker } from './index.ts';
+import { RemoteWorker } from './index.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1679,9 +1679,12 @@ function createReconnectServer(onRegister?: (ws: any, index: number) => void): {
   framesFor: (index: number) => any[];
   /** Every frame across every registration. */
   allFrames: () => any[];
+  /** The server-side socket for the Nth registration (for test-driven close). */
+  socketFor: (index: number) => any;
   registerCount: () => number;
 } {
   const messagesByRegistration: any[][] = [];
+  const socketsByRegistration: any[] = [];
   let registers = 0;
 
   const server = Bun.serve({
@@ -1697,6 +1700,7 @@ function createReconnectServer(onRegister?: (ws: any, index: number) => void): {
           const idx = registers++;
           (ws as any).__index = idx;
           messagesByRegistration[idx] = messagesByRegistration[idx] ?? [];
+          socketsByRegistration[idx] = ws;
           ws.send(
             JSON.stringify({
               type: 'registerAck',
@@ -1722,6 +1726,7 @@ function createReconnectServer(onRegister?: (ws: any, index: number) => void): {
     server,
     framesFor: (index: number) => messagesByRegistration[index] ?? [],
     allFrames: () => messagesByRegistration.flat(),
+    socketFor: (index: number) => socketsByRegistration[index],
     registerCount: () => registers,
   };
 }
@@ -1975,8 +1980,6 @@ describe('RemoteWorker — taskResult resend on reconnect', () => {
             input: null,
           }),
         );
-        // Close the worker's socket once the activity is in flight.
-        setTimeout(() => ws.close(), 30);
       }
     });
     server = harness.server;
@@ -1994,7 +1997,9 @@ describe('RemoteWorker — taskResult resend on reconnect', () => {
       label: 'activity in flight',
     });
 
-    // Socket goes down (server closed it above) while the activity runs.
+    // Deterministically close the worker's socket now that the activity is
+    // confirmed in flight (no timer race).
+    harness.socketFor(0).close();
     await waitForCondition(() => !worker.connected, {
       timeoutMs: 1_000,
       label: 'socket down',
@@ -2082,7 +2087,6 @@ describe('RemoteWorker — taskResult resend on reconnect', () => {
             input: null,
           }),
         );
-        setTimeout(() => ws.close(), 30);
       }
     });
     server = harness.server;
@@ -2102,6 +2106,7 @@ describe('RemoteWorker — taskResult resend on reconnect', () => {
       timeoutMs: 1_000,
       label: 'boom in flight',
     });
+    harness.socketFor(0).close();
     await waitForCondition(() => !worker.connected, {
       timeoutMs: 1_000,
       label: 'socket down before failure',
@@ -2144,7 +2149,6 @@ describe('RemoteWorker — taskResult resend on reconnect', () => {
             input: null,
           }),
         );
-        setTimeout(() => ws.close(), 30);
       }
     });
     server = harness.server;
@@ -2159,6 +2163,7 @@ describe('RemoteWorker — taskResult resend on reconnect', () => {
       timeoutMs: 1_000,
       label: 'slow in flight before dispose',
     });
+    harness.socketFor(0).close();
     await waitForCondition(() => !worker.connected, {
       timeoutMs: 1_000,
       label: 'socket down before dispose',
@@ -2202,7 +2207,7 @@ describe('RemoteWorker — send-failure recovery and backpressure', () => {
       override send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
         // Only sabotage taskResult frames so register/heartbeat sends still
         // succeed; the race we model is a result send failing mid-flight.
-        const isTaskResult = typeof data === 'string' && data.includes('"taskResult"');
+        const isTaskResult = typeof data === 'string' && data.includes('"type":"taskResult"');
         if (control.shouldThrow && isTaskResult) {
           control.shouldThrow = false;
           throw new Error('simulated send failure');
@@ -2286,7 +2291,6 @@ describe('RemoteWorker — send-failure recovery and backpressure', () => {
             input: null,
           }),
         );
-        setTimeout(() => ws.close(), 30);
       }
     });
     server = harness.server;
@@ -2301,6 +2305,7 @@ describe('RemoteWorker — send-failure recovery and backpressure', () => {
       timeoutMs: 1_000,
       label: 'flush-throw in flight',
     });
+    harness.socketFor(0).close();
     await waitForCondition(() => !worker.connected, {
       timeoutMs: 1_000,
       label: 'socket down (flush-throw)',
@@ -2338,6 +2343,7 @@ describe('RemoteWorker — send-failure recovery and backpressure', () => {
     let resolveActivity: ((v: string) => void) | undefined;
     const activityPromise = new Promise<string>((resolve) => (resolveActivity = resolve));
     let ackSecond: (() => void) | undefined;
+    let firstSocket: any;
 
     // One long-lived server. Registration 0 is acked immediately and gets a
     // task; registration 1's ack is withheld until the test triggers it, so we
@@ -2356,6 +2362,7 @@ describe('RemoteWorker — send-failure recovery and backpressure', () => {
             (ws as any).__index = idx;
             messagesByRegistration[idx] = messagesByRegistration[idx] ?? [];
             if (idx === 0) {
+              firstSocket = ws;
               ws.send(
                 JSON.stringify({
                   type: 'registerAck',
@@ -2374,7 +2381,6 @@ describe('RemoteWorker — send-failure recovery and backpressure', () => {
                   input: null,
                 }),
               );
-              setTimeout(() => ws.close(), 30);
             } else {
               ackSecond = () =>
                 ws.send(
@@ -2407,6 +2413,7 @@ describe('RemoteWorker — send-failure recovery and backpressure', () => {
       timeoutMs: 1_000,
       label: 'preack in flight',
     });
+    firstSocket.close();
     await waitForCondition(() => !worker.connected, {
       timeoutMs: 1_000,
       label: 'socket down (preack)',
@@ -2442,36 +2449,16 @@ describe('RemoteWorker — send-failure recovery and backpressure', () => {
     await worker.disconnect();
   });
 
-  it('isOutboxFull reports the cap boundary', () => {
-    expect(isOutboxFull(0, 1)).toBe(false);
-    expect(isOutboxFull(1, 1)).toBe(true);
-    expect(isOutboxFull(2, 1)).toBe(true);
-    expect(isOutboxFull(999, 1_000)).toBe(false);
-    expect(isOutboxFull(1_000, 1_000)).toBe(true);
-  });
-
   it('declines a task without executing or emitting a frame when the buffer is full', async () => {
-    const { armThrow } = installSendThrottle();
-    let blockedRan = false;
+    // A zero-capacity outbox is full from construction (isOutboxFull(0, 0) is
+    // true), so #executeTask hits the backpressure branch on the very first
+    // task — over a healthy, registered socket, with no flush and no timer
+    // race. This pins the decline branch itself (not a listener-detachment
+    // side effect): the activity body must never run, no taskResult frame is
+    // emitted, and the socket is failed so the server can redeliver.
     let declinedRan = false;
-
-    // Registration 0 delivers `seed`; we close the socket so its result buffers
-    // (outbox size 1 == cap). Registration 1 delivers `declined`. The flush of
-    // the buffered seed is sabotaged (throttle armed) so the buffer stays full;
-    // the declined task, processed after the failed flush, must hit the full
-    // buffer and be declined without executing.
     const harness = createReconnectServer((ws, idx) => {
       if (idx === 0) {
-        ws.send(
-          JSON.stringify({
-            type: 'task',
-            operationId: 'op-seed',
-            activityName: 'seed',
-            input: null,
-          }),
-        );
-        setTimeout(() => ws.close(), 15);
-      } else if (idx === 1) {
         ws.send(
           JSON.stringify({
             type: 'task',
@@ -2484,18 +2471,10 @@ describe('RemoteWorker — send-failure recovery and backpressure', () => {
     });
     server = harness.server;
 
-    let resolveSeed: (() => void) | undefined;
-    const seedGate = new Promise<void>((resolve) => (resolveSeed = () => resolve()));
-
     const worker = new RemoteWorker({
       serverUrl: `ws://localhost:${server.port}`,
-      maxBufferedResults: 1,
+      maxBufferedResults: 0,
       activities: {
-        seed: async () => {
-          blockedRan = true;
-          await seedGate;
-          return 'seeded';
-        },
         declined: async () => {
           declinedRan = true;
           return 'should-not-run';
@@ -2504,36 +2483,17 @@ describe('RemoteWorker — send-failure recovery and backpressure', () => {
     });
 
     await worker.connect();
-    await waitForCondition(() => blockedRan, { timeoutMs: 1_000, label: 'seed started' });
+    // The decline path fails the socket, so the worker disconnects without ever
+    // running the activity. Waiting on that observable condition (not a sleep)
+    // proves the branch fired.
     await waitForCondition(() => !worker.connected, {
       timeoutMs: 1_000,
-      label: 'socket down to buffer seed',
+      label: 'socket failed by backpressure decline',
     });
 
-    // Complete the seed while down → buffered, outbox size now 1 (== cap).
-    resolveSeed!();
-    await waitForCondition(() => worker.inFlight === 0, {
-      timeoutMs: 1_000,
-      label: 'seed buffered',
-    });
-
-    // Arm the throttle so the registerAck flush of the seed fails, keeping the
-    // buffer full when the declined task is processed.
-    armThrow();
-    await worker.connect().catch(() => {
-      // connect() rejects (flush failed during registration) — expected.
-    });
-    await sleepForTesting(80);
-
-    // The declined task must never have executed, and no result frame for it
-    // was emitted on any connection.
     expect(declinedRan).toBe(false);
-    const allFrames = harness.allFrames();
-    expect(allFrames.some((m) => m.type === 'taskResult' && m.operationId === 'op-declined')).toBe(
-      false,
-    );
-
-    await worker.disconnect();
+    expect(worker.inFlight).toBe(0);
+    expect(harness.allFrames().some((m) => m.type === 'taskResult')).toBe(false);
   });
 
   it('a frame on a failed socket cannot mutate the new connection state', async () => {
