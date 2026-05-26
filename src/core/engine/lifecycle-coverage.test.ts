@@ -169,7 +169,7 @@ describe('engine lifecycle coverage helpers', () => {
     const handle = { id: workflowId };
     const resumed = await import('./lifecycle.ts').then(({ resume }) =>
       resume(
-        { storage } as never,
+        { storage, options: { historyPolicy: { maxEvents: null } } } as never,
         workflowId,
         createLifecycleCallbacks({
           getHandle: () => handle,
@@ -189,7 +189,7 @@ describe('engine lifecycle coverage helpers', () => {
     const handle = { id: workflowId };
     const resumed = await import('./lifecycle.ts').then(({ resume }) =>
       resume(
-        { storage } as never,
+        { storage, options: { historyPolicy: { maxEvents: null } } } as never,
         workflowId,
         createLifecycleCallbacks({
           getHandle: () => handle,
@@ -348,7 +348,7 @@ describe('engine lifecycle coverage helpers', () => {
     await expect(
       startWorkflow(
         {
-          options: { getNow: () => 1_000 },
+          options: { getNow: () => 1_000, payloadSizePolicy: { maxBytes: null } },
           pendingStarts: new Set(['workflow-duplicate-start']),
           registrations: new Map([
             [

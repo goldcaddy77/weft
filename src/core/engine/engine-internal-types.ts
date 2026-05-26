@@ -8,6 +8,7 @@ import type {
   DefinitionSchema,
   EngineOptions,
   NormalizedHistoryPolicy,
+  NormalizedPayloadSizePolicy,
   NormalizedRetentionPolicy,
   SearchAttributeSchema,
   WorkflowFunction,
@@ -40,6 +41,7 @@ export interface ResolvedOptions {
   historyPolicy: NormalizedHistoryPolicy;
   /** Operator-supplied sink for compacted event-log ranges; `null` when none. */
   archiveAdapter: ArchiveAdapter | null;
+  payloadSizePolicy: NormalizedPayloadSizePolicy;
   getNow: () => number;
 }
 

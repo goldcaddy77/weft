@@ -109,6 +109,7 @@ export type {
   NormalizedActivityEntry,
   NormalizedRetentionPolicy,
   PaginatedResult,
+  PayloadSizePolicy,
   PendingReviewEntry,
   PurgeResult,
   QueryDefinition,
@@ -238,6 +239,8 @@ export type {
 } from './storage/typed-storage';
 // Codec
 export { decode, encode, validateCloneable } from './core/codec';
+// Payload-size cap
+export { PayloadSizeExceededError } from './core/payload-size';
 
 export {
   advanceCheckpoint,

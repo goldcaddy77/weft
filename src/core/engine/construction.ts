@@ -23,6 +23,7 @@ import type {
 } from './engine-internal-types.ts';
 import {
   normalizeHistoryPolicy,
+  normalizePayloadSizePolicy,
   normalizeRetentionDuration,
   normalizeRetentionPolicy,
 } from './validation.ts';
@@ -146,10 +147,11 @@ function resolveNumericDefaults(
 
 function resolveHistoryFields(
   options: EngineConstructorOptions | undefined,
-): Pick<ResolvedOptions, 'historyPolicy' | 'archiveAdapter'> {
+): Pick<ResolvedOptions, 'historyPolicy' | 'archiveAdapter' | 'payloadSizePolicy'> {
   return {
     historyPolicy: normalizeHistoryPolicy(options?.history, 'options.history'),
     archiveAdapter: options?.archive ?? null,
+    payloadSizePolicy: normalizePayloadSizePolicy(options?.payloadSize, 'options.payloadSize'),
   };
 }
 

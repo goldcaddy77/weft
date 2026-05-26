@@ -5,6 +5,7 @@ import type { Interceptor } from '../interceptor.ts';
 import type { ArchiveAdapter } from './archive-adapter.ts';
 import type { HistoryPolicy } from './history-policy.ts';
 import type { FailureCategory, WorkflowStatus } from './identity.ts';
+import type { PayloadSizePolicy } from './payload-size-policy.ts';
 import type { Duration, RetentionPolicy } from './retry-retention.ts';
 import type { SearchAttributeHandle, SearchAttributeValue } from './search-attributes.ts';
 import type { Serializer } from './serializer.ts';
@@ -126,6 +127,13 @@ export interface EngineOptions {
    * {@link ArchiveAdapter}. Omit for no archival (the default).
    */
   archive?: ArchiveAdapter;
+  /**
+   * Payload-size cap thresholds. When `payloadSize.maxBytes` is set, a workflow
+   * input, signal payload, or activity result whose serialized (codec-encoded)
+   * size would exceed it is rejected at admission with `PayloadSizeExceededError`
+   * before any storage write. Omit to disable. There are no baked-in defaults.
+   */
+  payloadSize?: PayloadSizePolicy;
   /** Payload compression applied at the storage layer. */
   compression?: CompressionOptions;
   checkpointHistory?: number;

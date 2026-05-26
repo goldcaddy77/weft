@@ -8,6 +8,7 @@ import {
   EffectReplayConflictError,
   EngineCreateNameMismatchError,
   HttpClientError,
+  PayloadSizeExceededError,
   PersistedDataIncompatibleError,
   ReviewTimeoutError,
   UpdateTimeoutError,
@@ -58,6 +59,7 @@ const cases: Record<WeftErrorCode, () => WeftError> = {
   EffectReplayConflictError: () => new EffectReplayConflictError('hash-abc', 'charge'),
   ReviewTimeoutError: () => new ReviewTimeoutError('review-1', 1_000),
   AtomicStateConflictError: () => new AtomicStateConflictError('counter', 3),
+  PayloadSizeExceededError: () => new PayloadSizeExceededError('activity result', 2_048, 1_024),
   StandardSchemaValidationError: () =>
     new StandardSchemaValidationError({
       fieldName: 'input',
