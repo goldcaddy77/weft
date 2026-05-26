@@ -110,10 +110,15 @@ export type StorageCapabilities = {
  *
  * @example
  * ```ts
+ * import { MemoryStorage } from 'weft';
+ * import { requireStorageCapability } from 'weft/storage/interface';
  * import type { GatedStorageCapabilityKey } from 'weft/storage/interface';
  *
- * const gated: GatedStorageCapabilityKey = 'conditionalBatch';
- * console.log(gated); // 'conditionalBatch'
+ * await using storage = new MemoryStorage();
+ * // The third argument's type is GatedStorageCapabilityKey — only the
+ * // runtime-gated 'conditionalBatch' is accepted.
+ * const capability: GatedStorageCapabilityKey = 'conditionalBatch';
+ * requireStorageCapability(storage, capability, 'MyFeature compare-and-swap');
  * ```
  */
 export type GatedStorageCapabilityKey = 'conditionalBatch';
