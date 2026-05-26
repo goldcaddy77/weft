@@ -340,7 +340,13 @@ export class RemoteWorker implements Disposable {
   #handleRegisterError(message: string): void {
     this.#rejectPendingRegistration(message);
     this.#heartbeat.stop();
-    this.#ws?.close();
+    // Close AND null #ws, consistent with every other close site. Leaving a
+    // CLOSING socket in #ws lets its later `close` event null out a socket a
+    // fast reconnect may have already assigned.
+    if (this.#ws !== null) {
+      this.#ws.close();
+      this.#ws = null;
+    }
   }
 
   #rejectPendingRegistration(message: string): void {
