@@ -1,9 +1,15 @@
+import { requireStorageCapability, type StorageCapabilities } from './capabilities.ts';
+import { DEFAULT_SCOPE } from './default-scope.ts';
 import {
   storageCountCore,
   storageDeletePrefixCore,
   storageHasCore,
   storageKeysCore,
 } from './derived-operations.ts';
+
+export { requireStorageCapability } from './capabilities.ts';
+export type { GatedStorageCapabilityKey, StorageCapabilities } from './capabilities.ts';
+export { DEFAULT_SCOPE } from './default-scope.ts';
 
 /**
  * A single KV operation in a batch.
@@ -72,6 +78,14 @@ export interface ScanOptions {
  * ```
  */
 export interface Storage extends Disposable {
+  /**
+   * Self-report the backend's consistency and feature guarantees. Required on
+   * every adapter so the engine and feature gates can act on an honest,
+   * declarative profile rather than duck-typing optional methods. See
+   * {@link StorageCapabilities} for the contract each field promises and which
+   * fields are runtime-gated versus trusted.
+   */
+  capabilities(): StorageCapabilities;
   get(key: string): Promise<Uint8Array | null>;
   put(key: string, value: Uint8Array): Promise<void>;
   delete(key: string): Promise<void>;
@@ -296,9 +310,13 @@ export async function storageConditionalBatch(
   conditions: ConditionalBatchCondition[],
   operations: BatchOperation[],
 ): Promise<boolean> {
+  // Trust the declared capability, not method presence: an adapter that has the
+  // method but honestly reports conditionalBatch: false (e.g. a remote HTTP
+  // backend known to lack CAS) must not silently execute the swap.
+  requireStorageCapability(storage, 'conditionalBatch', 'storageConditionalBatch');
   if (!storage.conditionalBatch) {
     throw new Error(
-      'This storage backend does not support conditionalBatch(), which is required for this operation.',
+      'This storage backend reports conditionalBatch capability but does not implement the conditionalBatch() method.',
     );
   }
 
@@ -363,25 +381,6 @@ export function tryDecodeStorageKeyComponent(value: string): string | null {
 function formatSortableTimestamp(timestamp: number): string {
   return String(timestamp).padStart(16, '0');
 }
-
-/**
- * Constant scope under which all workflow-type-shared durable state is written.
- * Weft is single-tenant: workflow-owned data is namespaced under this one stable
- * scope (via the `state:workflow-scope:` prefix in {@link KEYS.stateWorkflow}),
- * so a future re-partition is a key rename, not a data migration. The renamed
- * prefix is deliberately distinct from the legacy `state:workflow:<tenantId>:…`
- * layout so a historical tenant id equal to this value cannot alias into the new
- * namespace. Single source of truth — never inline the literal elsewhere.
- *
- * @example
- * ```ts
- * import { KEYS, DEFAULT_SCOPE } from 'weft/storage/interface';
- *
- * const key = KEYS.stateWorkflow('invoice', 'cursor');
- * console.log(key.startsWith(`state:workflow-scope:${DEFAULT_SCOPE}:`)); // true
- * ```
- */
-export const DEFAULT_SCOPE = 'default';
 
 /**
  * Key layout constants for hierarchical key encoding.
@@ -462,8 +461,6 @@ export const KEYS = {
   stateExecution: (ownerWorkflowId: string, key: string) =>
     `state:execution:${encodeStorageKeyComponent(ownerWorkflowId)}:${encodeStorageKeyComponent(key)}`,
   stateWorkflow: (workflowType: string, key: string) =>
-    // `state:workflow-scope:` (not the legacy `state:workflow:<tenantId>:`) so a
-    // historical tenant id equal to DEFAULT_SCOPE cannot alias into this namespace.
     `state:workflow-scope:${DEFAULT_SCOPE}:${encodeStorageKeyComponent(workflowType)}:${encodeStorageKeyComponent(key)}`,
   streamChunkPrefix: (workflowId: string, key: string) =>
     `blob:${encodeStorageKeyComponent(workflowId)}:${key}:chunk:`,
