@@ -374,6 +374,50 @@ describe('EventLog.verify() with a watermark', () => {
     expect(await log.verify()).toEqual({ valid: true });
   });
 
+  it('retries to success when the head advances mid-verify (ordinary append, no compaction)', async () => {
+    // No compaction here. Storage has entries 0..9 and a head at sequence 9. The
+    // FIRST head read returns a STALE head (sequence 8), so pass 1's tail check
+    // sees lastSequence 9 !== stale-head 8 → invalid. The post-scan head re-read
+    // returns the real head 9 → headMoved → retry. Pass 2 verifies clean. This is
+    // the append-races-verify case that must NOT report false corruption.
+    const storage = new MemoryStorage();
+    await seedLog(storage, 'wf', 10);
+    const realHead = decode((await storage.get(KEYS.eventHead('wf')))!) as {
+      sequence: number;
+      lastHash: string;
+    };
+    expect(realHead.sequence).toBe(9);
+
+    const { encode } = await import('../codec.ts');
+    const realGet = storage.get.bind(storage);
+    let firstHeadRead = true;
+    storage.get = (async (key: string) => {
+      if (key === KEYS.eventHead('wf') && firstHeadRead) {
+        firstHeadRead = false;
+        // Stale lower head: as if an append committed after this read.
+        return encode({ sequence: 8, lastHash: 'stalehash00000000' });
+      }
+      return realGet(key);
+    }) as typeof storage.get;
+
+    const log = new EventLog(storage, 'wf');
+    expect(await log.verify()).toEqual({ valid: true });
+  });
+
+  it('reports a tampered tail at its own sequence (same last sequence, diverged hash)', async () => {
+    // Entries 0..4 with head at 4. Tamper the LAST entry's payload so its bytes
+    // hash differently from head.lastHash while keeping sequence 4 and a valid
+    // prevHash link. The tail-vs-head check must flag corruption at 4, not 5.
+    const storage = new MemoryStorage();
+    await seedLog(storage, 'wf', 5);
+    const { encode } = await import('../codec.ts');
+    const entry4 = decode((await storage.get(KEYS.event('wf', 4)))!) as Record<string, unknown>;
+    await storage.put(KEYS.event('wf', 4), encode({ ...entry4, payload: { tampered: true } }));
+
+    const log = new EventLog(storage, 'wf');
+    expect(await log.verify()).toEqual({ valid: false, firstInvalidSequence: 4 });
+  });
+
   it('reports corruption when the last record is lost but the head still points past it', async () => {
     // After compaction, watermark 7 and records 7,8,9 survive (head sequence 9).
     // Delete record 9 (the tail) but leave the head record claiming sequence 9.

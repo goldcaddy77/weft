@@ -15,6 +15,7 @@ import { decode } from './codec.ts';
 import { type EventLogWatermark, readEventLogWatermark } from './engine/event-log-compaction.ts';
 import {
   EMPTY_EVENT_HEAD,
+  type EventHeadRecord,
   GENESIS_HASH,
   type WorkflowLogEntry,
   hashBytes,
@@ -73,31 +74,36 @@ export async function verifyEventLog(storage: Storage, workflowId: string): Prom
   // declaring the log too volatile to verify deterministically.
   const MAX_ATTEMPTS = 5;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+    // Snapshot the watermark AND the head before the scan, then re-read both
+    // after the pass. Both move only forward under a concurrent commit (a
+    // compaction advances the watermark; an ordinary append advances the head),
+    // and the scan reads entries written between them. If either moved during the
+    // pass, the snapshot was torn — a failure may be a false break, so retry.
     const watermark = await readEventLogWatermark(storage, workflowId);
-    const usedSequence = watermark?.sequence ?? -1;
-    const result = await verifyFromWatermark(storage, workflowId, watermark);
+    const head = await readEventHead(storage, workflowId);
+    const result = await verifyAgainstSnapshot(storage, workflowId, watermark, head);
 
     if (result.outcome === 'ok') return { valid: true };
 
-    // A failing pass is only "explained by a concurrent compaction" if the
-    // watermark ADVANCED since the snapshot this pass used — records were
-    // truncated out from under the scan mid-flight. Re-read once; if it moved,
-    // retry against the newer boundary. Otherwise the failure is stable, so it is
-    // genuine corruption — never a false `indeterminate`.
-    const latest = await readEventLogWatermark(storage, workflowId);
-    if (latest !== null && latest.sequence > usedSequence) {
+    const watermarkAfter = await readEventLogWatermark(storage, workflowId);
+    const headAfter = await readEventHead(storage, workflowId);
+    const watermarkMoved = (watermarkAfter?.sequence ?? -1) > (watermark?.sequence ?? -1);
+    const headMoved = headAfter.sequence !== head.sequence || headAfter.lastHash !== head.lastHash;
+    if (watermarkMoved || headMoved) {
       continue;
     }
+    // Stable failure across a quiescent snapshot — genuine corruption.
     return { valid: false, firstInvalidSequence: result.firstInvalidSequence };
   }
   return { valid: false, indeterminate: true, reason: 'concurrent-compaction' };
 }
 
-/** One verification pass against a fixed watermark snapshot. */
-async function verifyFromWatermark(
+/** One verification pass against a fixed watermark + head snapshot. */
+async function verifyAgainstSnapshot(
   storage: Storage,
   workflowId: string,
   watermark: EventLogWatermark | null,
+  head: EventHeadRecord,
 ): Promise<VerifyPass> {
   const seed = watermark?.prevHash ?? GENESIS_HASH;
   const expectedFirstSequence = watermark?.sequence ?? 0;
@@ -114,23 +120,19 @@ async function verifyFromWatermark(
     return { outcome: 'invalid', firstInvalidSequence: watermark.sequence };
   }
 
-  // Validate the tail against the head record. Without this a lost LAST entry
-  // (head still pointing past the survivors) would leave a shorter internally
-  // consistent prefix that falsely verifies.
-  return verifyTailAgainstHead(storage, workflowId, scan);
+  // Cross-check the surviving tail against the snapshotted head. Without this a
+  // lost LAST entry (head still pointing past the survivors) would leave a
+  // shorter internally consistent prefix that falsely verifies.
+  return verifyTailAgainstHead(scan, head);
 }
 
 /**
- * Cross-check the final scanned entry against `ev:{id}:head`. The head records
- * the expected last sequence and its hash; a mismatch (a truncated tail, or a
- * head that claims entries the scan did not find) is corruption.
+ * Cross-check the final scanned entry against the snapshotted head record. The
+ * head records the expected last sequence and its hash; a divergence (a missing
+ * tail, a tampered tail, or a head that claims entries the scan did not find) is
+ * corruption.
  */
-async function verifyTailAgainstHead(
-  storage: Storage,
-  workflowId: string,
-  scan: ScannedChain,
-): Promise<VerifyPass> {
-  const head = await readEventHead(storage, workflowId);
+function verifyTailAgainstHead(scan: ScannedChain, head: EventHeadRecord): VerifyPass {
   if (head.sequence === EMPTY_EVENT_HEAD.sequence) {
     // No head record: only an empty scan is consistent (a fresh/empty log).
     return scan.entriesSeen === 0
@@ -141,9 +143,14 @@ async function verifyTailAgainstHead(
     // Head claims a tail but the scan found nothing surviving.
     return { outcome: 'invalid', firstInvalidSequence: head.sequence };
   }
-  if (scan.lastSequence !== head.sequence || scan.lastHash !== head.lastHash) {
-    // The surviving tail does not reach the head's claimed last record.
+  if (scan.lastSequence !== head.sequence) {
+    // The surviving tail does not reach the head's claimed last record: the
+    // missing record is the one after the last survivor.
     return { outcome: 'invalid', firstInvalidSequence: scan.lastSequence + 1 };
+  }
+  if (scan.lastHash !== head.lastHash) {
+    // Same last sequence but the hash diverges: the tail record itself is corrupt.
+    return { outcome: 'invalid', firstInvalidSequence: scan.lastSequence };
   }
   return { outcome: 'ok' };
 }
