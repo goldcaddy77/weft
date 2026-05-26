@@ -1,5 +1,6 @@
 import type { ContextOperationRequest } from '../context.ts';
 import type { ComposedActivityInterceptor, ComposedWorkflowInterceptor } from '../interceptor.ts';
+import { assertPayloadWithinLimit } from '../payload-size.ts';
 import type { ActivityContext } from '../types.ts';
 import { ActivityResolutionError } from './errors.ts';
 import type { EngineInternals } from './internals.ts';
@@ -298,6 +299,8 @@ export async function executeActivityOperationResult(
   speculativeState?: SpeculativeExecutionState,
 ): Promise<unknown> {
   const result = await executeActivity(internals, workflowId, operation, callbacks);
+
+  assertPayloadWithinLimit(result, internals.options.payloadSizePolicy.maxBytes, 'activity result');
 
   const compensation = speculativeState
     ? buildActivityCompensation(internals, workflowId, operation, result)

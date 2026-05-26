@@ -2,6 +2,7 @@ import type { BatchOperation } from '../../../storage/interface.ts';
 import { KEYS } from '../../../storage/interface.ts';
 import { createCheckpoint } from '../../checkpoint.ts';
 import { WorkflowStartedEvent } from '../../events.ts';
+import { assertPayloadWithinLimit } from '../../payload-size.ts';
 import { normalizeStorageTimestamp } from '../../scheduler.ts';
 import {
   StartWorkflowValidationError,
@@ -112,6 +113,8 @@ export async function startWorkflow(
   if (!registration) {
     throw new WorkflowNotRegisteredError(type);
   }
+
+  assertPayloadWithinLimit(input, internals.options.payloadSizePolicy.maxBytes, 'workflow input');
 
   const preparation = prepareStartWorkflow(internals, options, callbacks);
   const { workflowId, callerProvidedId, parentHeaders, executionStateOwnerId, delayedStartTimer } =

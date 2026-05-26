@@ -5,7 +5,9 @@ import { coerceStartWorkflowId, parseStartWorkflowDuration } from '../start-work
 import type {
   HistoryPolicy,
   NormalizedHistoryPolicy,
+  NormalizedPayloadSizePolicy,
   NormalizedRetentionPolicy,
+  PayloadSizePolicy,
   RetentionPolicy,
   WorkflowState,
   WorkflowStatus,
@@ -177,6 +179,35 @@ export function normalizeHistoryPolicy(
     );
   }
   return { maxEvents };
+}
+
+/**
+ * Validate and normalise a {@link PayloadSizePolicy} into a
+ * {@link NormalizedPayloadSizePolicy}. Mirrors {@link normalizeHistoryPolicy}'s
+ * throw-on-bad-input contract.
+ *
+ * Contract for `maxBytes`:
+ * - omitted policy, or omitted/`undefined` field → `{ maxBytes: null }` (disabled).
+ * - `0` → `{ maxBytes: null }` (disabled).
+ * - any other value that is not a positive safe integer (negatives, non-integers,
+ *   non-finite values, unsafe integers, wrong types) → throws.
+ */
+export function normalizePayloadSizePolicy(
+  policy: PayloadSizePolicy | undefined,
+  context: string,
+): NormalizedPayloadSizePolicy {
+  const maxBytes = policy?.maxBytes;
+  if (maxBytes === undefined || maxBytes === 0) {
+    return { maxBytes: null };
+  }
+  if (typeof maxBytes !== 'number' || !Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new TypeError(
+      `${context}.maxBytes must be a positive safe integer (or 0/undefined to disable); received ${String(
+        maxBytes,
+      )}`,
+    );
+  }
+  return { maxBytes };
 }
 
 export function normalizeRetentionPolicy(

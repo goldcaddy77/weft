@@ -3,6 +3,7 @@ import { KEYS, encodeStorageKeyComponent } from '../../storage/interface.ts';
 import { decode, encode } from '../codec.ts';
 import { SignalReceivedEvent } from '../events.ts';
 import type { ComposedWorkflowInterceptor } from '../interceptor.ts';
+import { assertPayloadWithinLimit } from '../payload-size.ts';
 import type { WorkflowState } from '../types.ts';
 import type { EngineInternals } from './internals.ts';
 import { isTerminalWorkflowStatus } from './validation.ts';
@@ -127,6 +128,16 @@ export async function bufferSignalPayloads(
   const targetState = await callbacks.loadWorkflowState(workflowId);
   if (targetState && isTerminalWorkflowStatus(targetState.status)) {
     return;
+  }
+
+  // Reject before building any batch operation so one oversize payload aborts
+  // the whole buffer with nothing written.
+  for (const { payload } of deliveries) {
+    assertPayloadWithinLimit(
+      payload,
+      internals.options.payloadSizePolicy.maxBytes,
+      'signal payload',
+    );
   }
 
   const operations: BatchOperation[] = deliveries.map(({ signalName, payload }) => ({

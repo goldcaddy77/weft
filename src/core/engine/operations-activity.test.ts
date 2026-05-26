@@ -42,6 +42,7 @@ function createInternals(overrides: Record<string, unknown> = {}) {
     activityRegistriesByWorkflow: new Map(),
     activityRegistry: { resolve: () => undefined },
     heartbeatDetails: new Map(),
+    options: { payloadSizePolicy: { maxBytes: null } },
     workflowTypeByWorkflowId: new Map(),
     ...overrides,
   };
