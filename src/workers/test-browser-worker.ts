@@ -60,6 +60,47 @@ registrations.set('infinite-loop-after-resume', async function* (ctx, input) {
   return 'unreachable';
 });
 
+registrations.set('catch-failed-activity-then-wait', async function* (ctx, input) {
+  let caughtError = 'none';
+  try {
+    yield {
+      id: `activity:${ctx.workflowId}:fails-before-signal`,
+      workflowId: ctx.workflowId,
+      kind: 'activity',
+      queue: 'default',
+      activityName: 'failsBeforeSignal',
+      attempt: 1,
+      retryPolicy: {
+        maxAttempts: 1,
+        initialBackoff: 1000,
+        backoffMultiplier: 1,
+        maxBackoff: 1000,
+      },
+      scheduledAt: Date.now(),
+    };
+  } catch (error) {
+    caughtError = error instanceof Error ? error.message : String(error);
+  }
+
+  const signalName = signalNameFromInput(input);
+  const payload: unknown = yield {
+    id: `wait:${ctx.workflowId}:${signalName}`,
+    workflowId: ctx.workflowId,
+    kind: 'signal-wait',
+    queue: 'default',
+    attempt: 1,
+    retryPolicy: {
+      maxAttempts: 1,
+      initialBackoff: 0,
+      backoffMultiplier: 1,
+      maxBackoff: 0,
+    },
+    scheduledAt: Date.now(),
+    signalName,
+  };
+  return { caughtError, payload, workflowId: ctx.workflowId };
+});
+
 registrations.set('with-activity', async function* (_ctx, input) {
   const result: unknown = yield {
     id: 'op-1',

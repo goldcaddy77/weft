@@ -13,7 +13,7 @@ The main thread runs the HTTP server, the API router, and the scheduler. With `w
 │  Scheduler            ← Timer/retry polling   │
 │  BroadcastChannel     ← Coordination          │
 │                                              │
-│  Worker mode keeps workflow turns out         │
+│  Worker mode keeps workflow turns isolated    │
 └──────────────┬──────────────┬────────────────┘
                │              │
      ┌─────────▼──────┐ ┌────▼───────────┐
