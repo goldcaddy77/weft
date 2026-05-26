@@ -22,6 +22,7 @@ import { hashBytes } from '../../runtime/portable.ts';
 import type { BatchOperation, Storage } from '../../storage/interface.ts';
 import { KEYS } from '../../storage/interface.ts';
 import { decode, encode } from '../codec.ts';
+import { isWorkflowLogEntry } from '../event-log-shared.ts';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -229,7 +230,7 @@ async function collectDeleteRange(
     // watermark suffixes sort after all numeric keys and lie above `lt`, so they
     // never appear here. Require the FULL event-log entry shape (not just a
     // numeric `sequence`) so a malformed record aborts rather than being deleted.
-    if (!isCompactableEventEntry(decoded) || decoded.sequence !== expected) return null;
+    if (!isWorkflowLogEntry(decoded) || decoded.sequence !== expected) return null;
     deletedEntries.push(bytes);
     expected += 1;
   }
@@ -240,24 +241,6 @@ async function collectDeleteRange(
   const lastDeletedBytes = deletedEntries[deletedEntries.length - 1];
   if (lastDeletedBytes === undefined) return null;
   return { deletedEntries, lastDeletedBytes };
-}
-
-/**
- * Narrow a decoded record to a deletable event-log entry. Mirrors the
- * `WorkflowLogEntry` shape (kept local to avoid an import cycle with
- * `event-log.ts`, which imports the watermark reader from this module).
- */
-function isCompactableEventEntry(value: unknown): value is { sequence: number } {
-  if (typeof value !== 'object' || value === null) return false;
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record['type'] === 'string' &&
-    typeof record['workflowId'] === 'string' &&
-    typeof record['sequence'] === 'number' &&
-    typeof record['prevHash'] === 'string' &&
-    typeof record['timestamp'] === 'number' &&
-    'payload' in record
-  );
 }
 
 /**
