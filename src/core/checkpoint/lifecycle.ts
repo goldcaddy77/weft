@@ -60,6 +60,12 @@ export function advanceCheckpoint(
     step: checkpoint.step + 1,
     locals,
     accumulatedResults: options?.accumulatedResults ?? checkpoint.accumulatedResults,
+    ...(checkpoint.workerReplaySignatures === undefined
+      ? {}
+      : { workerReplaySignatures: checkpoint.workerReplaySignatures }),
+    ...(checkpoint.workerReplayFailures === undefined
+      ? {}
+      : { workerReplayFailures: checkpoint.workerReplayFailures }),
     pendingSignals: checkpoint.pendingSignals,
     searchAttributes: {
       ...checkpoint.searchAttributes,

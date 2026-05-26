@@ -1,41 +1,93 @@
-/** Worker-based execution strategy that runs workflows in Web Workers.
- * @module core/worker-execution-strategy */
-
 import type { WorkerPool } from '../workers/pool.ts';
 import type { ExecutionStrategy } from './execution-strategy.ts';
-import type { OperationOutcome, WorkerInboundMessage, WorkerOutboundMessage } from './types.ts';
+import type {
+  FailureCategory,
+  OperationOutcome,
+  WorkerInboundMessage,
+  WorkerOutboundMessage,
+} from './types.ts';
 import { WorkerCheckpointResumeState } from './worker-checkpoint-resume-state.ts';
-
-interface WorkerListeners {
-  message: (event: MessageEvent<WorkerOutboundMessage>) => void;
-  error: (event: ErrorEvent) => void;
-}
+import {
+  WorkerExecutionDispatcher,
+  type WorkerResumeParameters,
+} from './worker-execution-dispatcher.ts';
+import { WorkerExecutionOwnership } from './worker-execution-ownership.ts';
+import type { WorkerExecutionStrategyOptions } from './worker-execution-strategy-options.ts';
+import { WorkerListenerRegistry } from './worker-listener-registry.ts';
+import {
+  emitWorkerMessageToEngine,
+  isParkableWaitSignalCheckpoint,
+} from './worker-message-helpers.ts';
+import { WorkerProtocolGuard } from './worker-protocol-guard.ts';
+import { WORKER_PROTOCOL_VERSION } from './worker-protocol.ts';
+import { WorkerTurnWatchdog, type WorkerTurnState } from './worker-turn-watchdog.ts';
 
 export class WorkerExecutionStrategy implements ExecutionStrategy {
   readonly #pool: WorkerPool;
-  readonly #workersByWorkflowId: Map<string, Worker>;
-  readonly #parkedWorkersByWorkflowId: Map<string, Worker>;
-  readonly #activeWorkflowIdByWorker: Map<Worker, string>;
-  readonly #workerListeners: Map<Worker, WorkerListeners>;
+  readonly #ownership: WorkerExecutionOwnership;
+  readonly #workerListeners: WorkerListenerRegistry;
   readonly #broadcastChannel: BroadcastChannel | null;
   readonly #broadcastListener: ((event: MessageEvent) => void) | null;
   readonly #checkpointResumeState: WorkerCheckpointResumeState;
-  readonly #cancelledWorkflowIds: Set<string>;
+  readonly #workflowTurnTimeoutMs: number | undefined;
+  readonly #maxProtocolMessageBytes: number | undefined;
+  readonly #requireProtocolVersion: boolean;
+  readonly #discardOnCancel: boolean;
+  readonly #turnWatchdog: WorkerTurnWatchdog;
+  readonly #protocolGuard: WorkerProtocolGuard;
+  readonly #dispatcher: WorkerExecutionDispatcher;
   #messageHandler: ((message: WorkerOutboundMessage) => void | Promise<void>) | null;
   #disposed: boolean;
+  #nextTurnId: number;
 
-  constructor(pool: WorkerPool, options?: { broadcastEvents?: boolean }) {
+  constructor(pool: WorkerPool, options?: WorkerExecutionStrategyOptions) {
     this.#pool = pool;
-    this.#workersByWorkflowId = new Map();
-    this.#parkedWorkersByWorkflowId = new Map();
-    this.#activeWorkflowIdByWorker = new Map();
-    this.#workerListeners = new Map();
+    this.#ownership = new WorkerExecutionOwnership();
+    this.#workerListeners = new WorkerListenerRegistry();
     this.#checkpointResumeState = new WorkerCheckpointResumeState();
-    this.#cancelledWorkflowIds = new Set();
+    this.#workflowTurnTimeoutMs = options?.workflowTurnTimeoutMs;
+    this.#maxProtocolMessageBytes = options?.maxProtocolMessageBytes;
+    this.#requireProtocolVersion = options?.requireProtocolVersion ?? false;
+    this.#discardOnCancel = options?.discardOnCancel ?? false;
+    this.#turnWatchdog = new WorkerTurnWatchdog(this.#workflowTurnTimeoutMs, (turn) => {
+      this.#handleTurnTimeout(turn);
+    });
+    this.#protocolGuard = new WorkerProtocolGuard(
+      this.#maxProtocolMessageBytes,
+      this.#requireProtocolVersion,
+      this.#turnWatchdog,
+    );
+    this.#dispatcher = new WorkerExecutionDispatcher({
+      pool: this.#pool,
+      ownership: this.#ownership,
+      isDisposed: () => this.#disposed,
+      requireProtocolVersion: () => this.#requireProtocolVersion,
+      validateHostToWorkerMessage: (workflowId, message, worker) =>
+        this.#assertHostToWorkerMessageWithinLimit(workflowId, message, worker),
+      attachWorkerListeners: (worker) => {
+        this.#attachWorkerListeners(worker);
+      },
+      detachWorkerListenersIfIdle: (worker) => {
+        this.#detachWorkerListenersIfIdle(worker);
+      },
+      beginTurn: (worker, workflowId, turnId, kind) => {
+        this.#turnWatchdog.begin(worker, workflowId, turnId, kind);
+      },
+      clearTurn: (worker) => {
+        this.#turnWatchdog.clear(worker);
+      },
+      discardWorkerAndFailWorkflows: (worker, discardOptions) => {
+        this.#discardWorkerAndFailWorkflows(worker, discardOptions);
+      },
+      emit: (message) => {
+        this.#emit(message);
+      },
+    });
     this.#messageHandler = null;
     this.#broadcastChannel = null;
     this.#broadcastListener = null;
     this.#disposed = false;
+    this.#nextTurnId = 1;
 
     if (options?.broadcastEvents) {
       try {
@@ -44,9 +96,7 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
           this.#handleBroadcastMessage(event.data as Record<string, unknown>);
         };
         this.#broadcastChannel.addEventListener('message', this.#broadcastListener);
-      } catch {
-        // BroadcastChannel may not be available in all environments
-      }
+      } catch {}
     }
   }
 
@@ -66,24 +116,32 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     deadline?: number;
     headers?: [string, string][];
   }): void {
-    this.#cancelledWorkflowIds.delete(parameters.workflowId);
+    this.#ownership.resetWorkflow(parameters.workflowId);
     this.#checkpointResumeState.resetWorkflow(parameters.workflowId);
 
     const message: WorkerInboundMessage & { type: 'run' } = {
       type: 'run',
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      turnId: this.#nextTurnId++,
       workflowId: parameters.workflowId,
       workflowType: parameters.workflowType,
       checkpoint: parameters.checkpoint,
       input: parameters.input,
       executionStateOwnerId: parameters.executionStateOwnerId ?? parameters.workflowId,
     };
+    if (this.#maxProtocolMessageBytes !== undefined) {
+      message.maxProtocolMessageBytes = this.#maxProtocolMessageBytes;
+    }
     if (parameters.deadline !== undefined) {
       message.deadline = parameters.deadline;
     }
     if (parameters.headers) {
       message.headers = parameters.headers;
     }
-    void this.#acquireAndSend(parameters.workflowId, message);
+    if (!this.#assertHostToWorkerMessageWithinLimit(parameters.workflowId, message)) {
+      return;
+    }
+    void this.#dispatcher.acquireAndSend(parameters.workflowId, message);
   }
 
   resumeWorkflow(parameters: {
@@ -91,20 +149,24 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     checkpoint: ArrayBuffer;
     operationResult: OperationOutcome;
   }): void {
-    const worker = this.#workersByWorkflowId.get(parameters.workflowId);
+    const worker = this.#ownership.getActiveWorker(parameters.workflowId);
     if (worker) {
       this.#checkpointResumeState.recordResume(parameters.workflowId);
-      this.#postResumeMessage(worker, parameters);
+      this.#dispatcher.postResumeMessage(worker, parameters, this.#createResumeMessage(parameters));
       return;
     }
 
-    const parkedWorker = this.#parkedWorkersByWorkflowId.get(parameters.workflowId);
+    const parkedWorker = this.#ownership.getParkedWorker(parameters.workflowId);
     if (parkedWorker) {
-      void this.#resumeParkedWorkflow(parameters, parkedWorker);
+      void this.#dispatcher.resumeParkedWorkflow(
+        parameters,
+        parkedWorker,
+        this.#createResumeMessage(parameters),
+      );
       return;
     }
 
-    if (this.#cancelledWorkflowIds.delete(parameters.workflowId)) {
+    if (this.#ownership.consumeCancelled(parameters.workflowId)) {
       return;
     }
 
@@ -117,48 +179,64 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     }
   }
 
-  #postResumeMessage(
-    worker: Worker,
-    parameters: {
-      workflowId: string;
-      checkpoint: ArrayBuffer;
-      operationResult: OperationOutcome;
-    },
-  ): void {
-    const message: WorkerInboundMessage = {
+  #createResumeMessage(
+    parameters: WorkerResumeParameters,
+  ): WorkerInboundMessage & { type: 'resume' } {
+    const message: WorkerInboundMessage & { type: 'resume' } = {
       type: 'resume',
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      turnId: this.#nextTurnId++,
       workflowId: parameters.workflowId,
       checkpoint: parameters.checkpoint,
       operationResult: parameters.operationResult,
     };
-
-    const transferable =
-      parameters.checkpoint instanceof ArrayBuffer
-        ? parameters.checkpoint
-        : (parameters.checkpoint as Uint8Array).buffer;
-    worker.postMessage(message, [transferable]);
+    if (this.#maxProtocolMessageBytes !== undefined) {
+      message.maxProtocolMessageBytes = this.#maxProtocolMessageBytes;
+    }
+    return message;
   }
 
   cancelWorkflow(workflowId: string): void {
-    const worker = this.#workersByWorkflowId.get(workflowId);
+    const worker = this.#ownership.getActiveWorker(workflowId);
     if (worker) {
-      this.#cancelledWorkflowIds.add(workflowId);
+      this.#ownership.markCancelled(workflowId);
+      if (this.#discardOnCancel) {
+        this.#discardWorkerAndFailWorkflows(worker, {
+          targetWorkflowId: workflowId,
+          skipTarget: true,
+          otherCategory: 'system',
+          otherError: `Worker discarded during cancellation of workflow: ${workflowId}`,
+        });
+        return;
+      }
       const message: WorkerInboundMessage = {
         type: 'cancel',
         workflowId,
       };
+      if (this.#requireProtocolVersion) {
+        message.protocolVersion = WORKER_PROTOCOL_VERSION;
+      }
 
       worker.postMessage(message);
       this.#releaseActiveWorker(workflowId);
       return;
     }
 
-    const parkedWorker = this.#parkedWorkersByWorkflowId.get(workflowId);
+    const parkedWorker = this.#ownership.getParkedWorker(workflowId);
     if (!parkedWorker) return;
 
-    this.#cancelledWorkflowIds.add(workflowId);
-    this.#parkedWorkersByWorkflowId.delete(workflowId);
-    void this.#cancelParkedWorkflow(workflowId, parkedWorker);
+    this.#ownership.markCancelled(workflowId);
+    this.#ownership.deleteParked(workflowId);
+    if (this.#discardOnCancel) {
+      this.#discardWorkerAndFailWorkflows(parkedWorker, {
+        targetWorkflowId: workflowId,
+        skipTarget: true,
+        otherCategory: 'system',
+        otherError: `Worker discarded during cancellation of parked workflow: ${workflowId}`,
+      });
+      return;
+    }
+    void this.#dispatcher.cancelParkedWorkflow(workflowId, parkedWorker);
   }
 
   [Symbol.dispose](): void {
@@ -171,7 +249,6 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     await this.#pool[Symbol.asyncDispose]();
   }
 
-  /** Shared cleanup for both sync and async disposal paths. */
   #teardown(): void {
     this.#disposed = true;
 
@@ -182,127 +259,33 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
       this.#broadcastChannel.close();
     }
 
-    // Release all active workers back to the pool before disposing
-    const activeWorkflowIds = Array.from(this.#workersByWorkflowId.keys());
+    this.#turnWatchdog.clearAll();
+
+    const activeWorkflowIds = this.#ownership.activeWorkflowIds();
     for (const workflowId of activeWorkflowIds) {
       this.#releaseActiveWorker(workflowId);
     }
 
-    this.#detachAllWorkerListeners();
-    this.#parkedWorkersByWorkflowId.clear();
-    this.#activeWorkflowIdByWorker.clear();
-    this.#workerListeners.clear();
+    this.#workerListeners.detachAll();
+    this.#ownership.clear();
     this.#checkpointResumeState.clear();
-    this.#cancelledWorkflowIds.clear();
     this.#messageHandler = null;
   }
 
-  async #acquireAndSend(
-    workflowId: string,
-    message: WorkerInboundMessage & { type: 'run' },
-  ): Promise<void> {
-    try {
-      const worker = await this.#pool.acquire();
-      this.#workersByWorkflowId.set(workflowId, worker);
-      this.#activeWorkflowIdByWorker.set(worker, workflowId);
-
-      this.#attachWorkerListeners(worker);
-
-      // Send the run message with checkpoint as Transferable.
-      // Extract the underlying ArrayBuffer since only ArrayBuffer objects
-      // are valid Transferables (not Uint8Array or other typed arrays).
-      const transferable =
-        message.checkpoint instanceof ArrayBuffer
-          ? message.checkpoint
-          : (message.checkpoint as Uint8Array).buffer;
-      worker.postMessage(message, [transferable]);
-    } catch (error) {
-      this.#emit({
-        type: 'failed',
-        workflowId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+  async #handleWorkerMessage(worker: Worker, message: unknown): Promise<void> {
+    if (!this.#acceptWorkerMessage(worker, message)) {
+      return;
     }
-  }
 
-  async #resumeParkedWorkflow(
-    parameters: {
-      workflowId: string;
-      checkpoint: ArrayBuffer;
-      operationResult: OperationOutcome;
-    },
-    parkedWorker: Worker,
-  ): Promise<void> {
-    try {
-      const worker = await this.#pool.acquireSpecificWorker(parkedWorker);
-
-      if (this.#disposed || this.#parkedWorkersByWorkflowId.get(parameters.workflowId) !== worker) {
-        this.#pool.release(worker);
-        return;
-      }
-
-      this.#parkedWorkersByWorkflowId.delete(parameters.workflowId);
-      this.#workersByWorkflowId.set(parameters.workflowId, worker);
-      this.#activeWorkflowIdByWorker.set(worker, parameters.workflowId);
-      this.#attachWorkerListeners(worker);
-      this.#postResumeMessage(worker, parameters);
-    } catch (error) {
-      if (
-        this.#disposed ||
-        this.#parkedWorkersByWorkflowId.get(parameters.workflowId) !== parkedWorker
-      ) {
-        return;
-      }
-
-      this.#parkedWorkersByWorkflowId.delete(parameters.workflowId);
-      this.#emit({
-        type: 'failed',
-        workflowId: parameters.workflowId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  async #cancelParkedWorkflow(workflowId: string, parkedWorker: Worker): Promise<void> {
-    try {
-      const worker = await this.#pool.acquireSpecificWorker(parkedWorker);
-
-      worker.postMessage({ type: 'cancel', workflowId } satisfies WorkerInboundMessage);
-      this.#detachWorkerListenersIfIdle(worker);
-      this.#pool.release(worker);
-    } catch {
-      // Cancellation is best-effort once the engine-side parked marker has
-      // been cleared. A disposed or crashed pool must not keep the workflow
-      // mapped as parked.
-    }
-  }
-
-  async #handleWorkerMessage(worker: Worker, message: WorkerOutboundMessage): Promise<void> {
+    this.#turnWatchdog.clear(worker);
     const resumeVersionBeforeCheckpointHandling =
       this.#checkpointResumeState.beginCheckpointHandling(message);
 
-    // Forward the message to the engine
-    let handlerFailed = false;
-    try {
-      const emitResult = this.#messageHandler?.(message);
-      if (emitResult instanceof Promise) {
-        await emitResult;
-      }
-    } catch {
-      handlerFailed = true;
-    }
+    const emitResult = emitWorkerMessageToEngine(this.#messageHandler, message);
+    const handlerFailed = emitResult instanceof Promise ? await emitResult : emitResult;
 
     try {
-      // On terminal messages, release the worker back to the pool
-      if (message.type === 'completed' || message.type === 'failed') {
-        this.#cancelledWorkflowIds.delete(message.workflowId);
-        this.#parkedWorkersByWorkflowId.delete(message.workflowId);
-        this.#releaseActiveWorker(message.workflowId);
-        this.#detachWorkerListenersIfIdle(worker);
-        this.#checkpointResumeState.forgetWorkflowIfClosed(
-          message.workflowId,
-          this.#isWorkflowClosed(message.workflowId),
-        );
+      if (this.#settleTerminalWorkerMessage(worker, message)) {
         return;
       }
 
@@ -310,162 +293,192 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
         return;
       }
 
-      if (
-        message.type === 'checkpoint' &&
-        this.#isParkableWaitSignalCheckpoint(message) &&
-        !this.#checkpointResumeState.wasResumedDuringCheckpointHandling(
-          message.workflowId,
-          resumeVersionBeforeCheckpointHandling,
-        )
-      ) {
-        this.#parkActiveWorkflow(message.workflowId, worker);
-      }
+      this.#parkCheckpointIfStillWaiting(worker, message, resumeVersionBeforeCheckpointHandling);
     } finally {
       this.#checkpointResumeState.finishCheckpointHandling(
         message.workflowId,
         resumeVersionBeforeCheckpointHandling,
-        this.#isWorkflowClosed(message.workflowId),
+        this.#ownership.isWorkflowClosed(message.workflowId),
       );
     }
   }
 
+  #settleTerminalWorkerMessage(worker: Worker, message: WorkerOutboundMessage): boolean {
+    if (message.type !== 'completed' && message.type !== 'failed') {
+      return false;
+    }
+
+    this.#ownership.consumeCancelled(message.workflowId);
+    this.#ownership.deleteParked(message.workflowId);
+    this.#releaseActiveWorker(message.workflowId);
+    this.#detachWorkerListenersIfIdle(worker);
+    this.#checkpointResumeState.forgetWorkflowIfClosed(
+      message.workflowId,
+      this.#ownership.isWorkflowClosed(message.workflowId),
+    );
+    return true;
+  }
+
+  #parkCheckpointIfStillWaiting(
+    worker: Worker,
+    message: WorkerOutboundMessage,
+    resumeVersionBeforeCheckpointHandling: number | null,
+  ): void {
+    if (message.type !== 'checkpoint' || !isParkableWaitSignalCheckpoint(message)) {
+      return;
+    }
+    if (
+      this.#checkpointResumeState.wasResumedDuringCheckpointHandling(
+        message.workflowId,
+        resumeVersionBeforeCheckpointHandling,
+      )
+    ) {
+      return;
+    }
+    if (this.#ownership.parkActive(message.workflowId, worker)) {
+      this.#pool.release(worker);
+    }
+  }
+
   #handleWorkerError(worker: Worker, errorEvent: ErrorEvent): void {
-    const workflowIds = this.#workflowIdsForWorker(worker);
-    if (workflowIds.length === 0) return; // Already cleaned up by a racing completion
-
-    for (const workflowId of workflowIds) {
-      this.#emit({
-        type: 'failed',
-        workflowId,
-        error: `Worker crashed: ${errorEvent.message ?? 'unknown error'}`,
-      });
-
-      this.#workersByWorkflowId.delete(workflowId);
-      this.#parkedWorkersByWorkflowId.delete(workflowId);
-      this.#cancelledWorkflowIds.delete(workflowId);
-    }
-
-    this.#activeWorkflowIdByWorker.delete(worker);
-    const listeners = this.#workerListeners.get(worker);
-    if (listeners) {
-      worker.removeEventListener('message', listeners.message as EventListener);
-      worker.removeEventListener('error', listeners.error as EventListener);
-      this.#workerListeners.delete(worker);
-    }
-
-    // Discard the crashed worker so the pool cannot hand the terminated
-    // instance out to another workflow.
-    this.#pool.discard(worker);
+    this.#discardWorkerAndFailWorkflows(worker, {
+      targetCategory: 'system',
+      targetError: `Worker crashed: ${errorEvent.message ?? 'unknown error'}`,
+      otherCategory: 'system',
+      otherError: `Worker crashed: ${errorEvent.message ?? 'unknown error'}`,
+    });
   }
 
   #releaseActiveWorker(workflowId: string): void {
-    const worker = this.#workersByWorkflowId.get(workflowId);
+    const worker = this.#ownership.releaseActive(workflowId);
     if (worker) {
-      this.#workersByWorkflowId.delete(workflowId);
-      this.#activeWorkflowIdByWorker.delete(worker);
-
+      this.#turnWatchdog.clear(worker);
       this.#detachWorkerListenersIfIdle(worker);
 
       this.#pool.release(worker);
     }
   }
 
-  #parkActiveWorkflow(workflowId: string, worker: Worker): void {
-    if (this.#workersByWorkflowId.get(workflowId) !== worker) {
-      return;
-    }
-
-    this.#workersByWorkflowId.delete(workflowId);
-    this.#activeWorkflowIdByWorker.delete(worker);
-    this.#parkedWorkersByWorkflowId.set(workflowId, worker);
-    this.#pool.release(worker);
-  }
-
-  #isWorkflowClosed(workflowId: string): boolean {
-    return (
-      !this.#workersByWorkflowId.has(workflowId) && !this.#parkedWorkersByWorkflowId.has(workflowId)
-    );
-  }
-
   #attachWorkerListeners(worker: Worker): void {
-    if (this.#workerListeners.has(worker)) {
-      return;
-    }
-
-    const listeners: WorkerListeners = {
-      message: (event: MessageEvent<WorkerOutboundMessage>) => {
-        void this.#handleWorkerMessage(worker, event.data).catch(() => {});
+    this.#workerListeners.attach(worker, {
+      message: (message) => {
+        void this.#handleWorkerMessage(worker, message).catch(() => {});
       },
-      error: (errorEvent: ErrorEvent) => {
+      error: (errorEvent) => {
         this.#handleWorkerError(worker, errorEvent);
       },
-    };
-
-    this.#workerListeners.set(worker, listeners);
-    worker.addEventListener('message', listeners.message as EventListener);
-    worker.addEventListener('error', listeners.error as EventListener);
+      messageerror: () => {
+        this.#discardWorkerAndFailWorkflows(worker, {
+          targetCategory: 'system',
+          targetError: 'Worker messageerror event',
+          otherCategory: 'system',
+          otherError: 'Worker messageerror event',
+        });
+      },
+    });
   }
 
   #detachWorkerListenersIfIdle(worker: Worker): void {
-    if (this.#activeWorkflowIdByWorker.has(worker)) {
-      return;
-    }
-    if (this.#workflowHasParkedWorker(worker)) {
-      return;
-    }
-
-    const listeners = this.#workerListeners.get(worker);
-    if (!listeners) {
-      return;
-    }
-
-    worker.removeEventListener('message', listeners.message as EventListener);
-    worker.removeEventListener('error', listeners.error as EventListener);
-    this.#workerListeners.delete(worker);
+    this.#workerListeners.detachIfIdle(worker, (candidate) =>
+      this.#ownership.workerIsIdle(candidate),
+    );
   }
 
-  #detachAllWorkerListeners(): void {
-    for (const [worker, listeners] of this.#workerListeners) {
-      worker.removeEventListener('message', listeners.message as EventListener);
-      worker.removeEventListener('error', listeners.error as EventListener);
+  #assertHostToWorkerMessageWithinLimit(
+    workflowId: string,
+    message: WorkerInboundMessage,
+    worker?: Worker,
+  ): boolean {
+    const failure = this.#protocolGuard.validateHostToWorkerMessage(message);
+    if (!failure) return true;
+    if (worker) {
+      this.#discardWorkerAndFailWorkflows(worker, {
+        targetWorkflowId: workflowId,
+        targetCategory: failure.failureCategory,
+        targetError: failure.error,
+        otherCategory: 'system',
+        otherError: `Worker discarded after protocol send failure for workflow: ${workflowId}`,
+      });
+      return false;
     }
-  }
 
-  #workflowHasParkedWorker(worker: Worker): boolean {
-    for (const parkedWorker of this.#parkedWorkersByWorkflowId.values()) {
-      if (parkedWorker === worker) {
-        return true;
-      }
-    }
+    this.#emit({
+      type: 'failed',
+      workflowId,
+      error: failure.error,
+      failureCategory: failure.failureCategory,
+    });
     return false;
   }
 
-  #workflowIdsForWorker(worker: Worker): string[] {
-    const workflowIds: string[] = [];
-    const activeWorkflowId = this.#activeWorkflowIdByWorker.get(worker);
-    if (activeWorkflowId) {
-      workflowIds.push(activeWorkflowId);
-    }
-    for (const [workflowId, parkedWorker] of this.#parkedWorkersByWorkflowId) {
-      if (parkedWorker === worker) {
-        workflowIds.push(workflowId);
-      }
-    }
-    return workflowIds;
+  #acceptWorkerMessage(worker: Worker, message: unknown): message is WorkerOutboundMessage {
+    const result = this.#protocolGuard.acceptWorkerMessage(worker, message);
+    if (result.accepted) return true;
+    this.#discardWorkerAndFailWorkflows(worker, {
+      ...(result.failure.targetWorkflowId === undefined
+        ? {}
+        : { targetWorkflowId: result.failure.targetWorkflowId }),
+      targetCategory: result.failure.failureCategory,
+      targetError: result.failure.error,
+      otherCategory: 'system',
+      otherError: result.failure.otherError,
+    });
+    return false;
   }
 
-  #isParkableWaitSignalCheckpoint(
-    message: Extract<WorkerOutboundMessage, { type: 'checkpoint' }>,
-  ): boolean {
-    const operationRequest = message.operationRequest as Record<string, unknown>;
-    return operationRequest['type'] === 'wait-signal' || operationRequest['kind'] === 'signal-wait';
+  #handleTurnTimeout(turn: WorkerTurnState): void {
+    this.#discardWorkerAndFailWorkflows(turn.worker, {
+      targetWorkflowId: turn.workflowId,
+      targetCategory: 'timeout',
+      targetError: `Worker workflow turn timed out after ${this.#workflowTurnTimeoutMs}ms`,
+      otherCategory: 'timeout',
+      otherError: `Worker discarded after workflow turn timed out: ${turn.workflowId}`,
+    });
+  }
+
+  #discardWorkerAndFailWorkflows(
+    worker: Worker,
+    options: {
+      targetWorkflowId?: string;
+      targetCategory?: FailureCategory;
+      targetError?: string;
+      skipTarget?: boolean;
+      otherCategory: FailureCategory;
+      otherError: string;
+    },
+  ): void {
+    const workflowIds = this.#ownership.workflowIdsForWorker(worker);
+    if (workflowIds.length === 0) {
+      this.#turnWatchdog.clear(worker);
+      return;
+    }
+
+    for (const workflowId of workflowIds) {
+      const isTarget = workflowId === options.targetWorkflowId;
+      this.#ownership.forgetWorkflow(workflowId);
+      this.#checkpointResumeState.forgetWorkflowIfClosed(workflowId, true);
+      if (isTarget && options.skipTarget) {
+        continue;
+      }
+
+      this.#emit({
+        type: 'failed',
+        workflowId,
+        error: isTarget ? (options.targetError ?? options.otherError) : options.otherError,
+        failureCategory: isTarget
+          ? (options.targetCategory ?? options.otherCategory)
+          : options.otherCategory,
+      });
+    }
+
+    this.#turnWatchdog.clear(worker);
+    this.#workerListeners.detach(worker);
+    this.#pool.discard(worker);
   }
 
   #handleBroadcastMessage(data: Record<string, unknown>): void {
-    // Forward signal-related messages to the appropriate worker
     if (data['type'] === 'signal:received' && typeof data['workflowId'] === 'string') {
-      const worker = this.#workersByWorkflowId.get(data['workflowId']);
-      const targetWorker = worker ?? this.#parkedWorkersByWorkflowId.get(data['workflowId']);
+      const targetWorker = this.#ownership.getTargetWorker(data['workflowId']);
       if (targetWorker) {
         targetWorker.postMessage(data);
       }

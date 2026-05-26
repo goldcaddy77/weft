@@ -143,6 +143,8 @@ export type {
   UpdateDefinition,
   UpdateMap,
   UpdatePayload,
+  WorkerReplayOperationFailure,
+  WorkerReplayOperationSignature,
   WorkflowAlreadyRegistered,
   WorkflowAtomicState,
   WorkflowAtomicStateOptions,

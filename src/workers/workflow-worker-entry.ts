@@ -9,13 +9,23 @@
  */
 
 import type { WorkerInboundMessage, WorkerOutboundMessage } from '../core/types.ts';
+import {
+  assertWorkerProtocolMessageWithinLimit,
+  createBoundedWorkerFailureMessage,
+  WORKER_PROTOCOL_VERSION,
+} from '../core/worker-protocol.ts';
 import type { WorkerWorkflowContext } from './workflow-runner.ts';
 import {
+  cleanupWorkflowRunnerState,
   createWorkflowRunnerContext,
   handleCancelMessage,
   handleResumeMessage,
   handleRunMessage,
 } from './workflow-runner.ts';
+
+const workerPostMessage = self.postMessage.bind(self);
+const workerClose =
+  'close' in self && typeof self.close === 'function' ? self.close.bind(self) : undefined;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -50,7 +60,7 @@ export function initializeWorkerMessageLoop(getWorkflowHandler: WorkflowHandlerF
     switch (message.type) {
       case 'run': {
         const response = await handleRunMessage(runnerContext, message, getWorkflowHandler);
-        postOutboundMessage(response);
+        postOutboundMessage(runnerContext, response, message);
         break;
       }
 
@@ -60,12 +70,16 @@ export function initializeWorkerMessageLoop(getWorkflowHandler: WorkflowHandlerF
             ? message.operationResult.value
             : undefined;
 
-        const response = await handleResumeMessage(runnerContext, {
+        const resumeMessage = {
           workflowId: message.workflowId,
           result: resultValue,
           operationResult: message.operationResult,
-        });
-        postOutboundMessage(response);
+          ...(message.maxProtocolMessageBytes === undefined
+            ? {}
+            : { maxProtocolMessageBytes: message.maxProtocolMessageBytes }),
+        };
+        const response = await handleResumeMessage(runnerContext, resumeMessage);
+        postOutboundMessage(runnerContext, response, message);
         break;
       }
 
@@ -85,12 +99,44 @@ export function initializeWorkerMessageLoop(getWorkflowHandler: WorkflowHandlerF
  * Post an outbound message back to the main thread, using the checkpoint
  * ArrayBuffer as a Transferable for zero-copy transfer.
  */
-function postOutboundMessage(message: WorkerOutboundMessage): void {
-  if (message.type === 'checkpoint') {
-    self.postMessage(message, [message.checkpoint]);
-  } else {
-    self.postMessage(message);
+function postOutboundMessage(
+  runnerContext: ReturnType<typeof createWorkflowRunnerContext>,
+  message: WorkerOutboundMessage,
+  inboundMessage: Extract<WorkerInboundMessage, { type: 'run' | 'resume' }>,
+): void {
+  const outboundMessage = attachWorkerProtocol(message, inboundMessage);
+  try {
+    assertWorkerProtocolMessageWithinLimit(outboundMessage, inboundMessage.maxProtocolMessageBytes);
+    if (outboundMessage.type === 'checkpoint') {
+      workerPostMessage(outboundMessage, [outboundMessage.checkpoint]);
+    } else {
+      workerPostMessage(outboundMessage);
+    }
+  } catch (error) {
+    cleanupWorkflowRunnerState(runnerContext, inboundMessage.workflowId);
+    const failedMessage = createBoundedWorkerFailureMessage({
+      workflowId: inboundMessage.workflowId,
+      error: error instanceof Error ? error.message : String(error),
+      failureCategory: 'resource',
+      ...(inboundMessage.turnId === undefined ? {} : { turnId: inboundMessage.turnId }),
+    });
+    try {
+      workerPostMessage(failedMessage);
+    } catch {
+      workerClose?.();
+    }
   }
+}
+
+function attachWorkerProtocol(
+  message: WorkerOutboundMessage,
+  inboundMessage: Extract<WorkerInboundMessage, { type: 'run' | 'resume' }>,
+): WorkerOutboundMessage {
+  return {
+    ...message,
+    protocolVersion: WORKER_PROTOCOL_VERSION,
+    ...(inboundMessage.turnId === undefined ? {} : { turnId: inboundMessage.turnId }),
+  } as WorkerOutboundMessage;
 }
 
 /**

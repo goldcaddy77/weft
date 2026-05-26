@@ -125,7 +125,7 @@ The engine tracks checkpoint size automatically and warns you when it exceeds a 
 
 **The Weft answer.** No bundling, no sandbox, no Webpack. Workflows are regular TypeScript generator functions. Import anything. Use `console.log`. Reference activities directly.
 
-The isolation that Temporal achieves through Webpack plus a sandbox, Weft achieves through Web Workers. Workers provide process-level isolation without restricting the JavaScript language.
+The engine-isolate protection that Temporal achieves through Webpack plus a sandbox, Weft achieves through Web Workers when `workflowExecutionMode: 'worker'` is configured. Workers keep workflow generator turns out of the engine isolate without restricting the JavaScript language.
 
 ```typescript pseudocode
 // Temporal: 4 lines of ceremony before your first activity call

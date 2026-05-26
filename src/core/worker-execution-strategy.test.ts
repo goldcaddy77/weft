@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
-import { sleepForTesting } from '../testing/fake-timers.ts';
+import {
+  advanceTimersByTime,
+  restoreRealTimers,
+  sleepForTesting,
+  useFakeTimers,
+} from '../testing/fake-timers.ts';
 
 import type { WorkerPool } from '../workers/pool.ts';
 import type { WorkerOutboundMessage } from './types.ts';
 import { WorkerExecutionStrategy } from './worker-execution-strategy.ts';
+import { WORKER_PROTOCOL_VERSION } from './worker-protocol.ts';
 
 // ---------------------------------------------------------------------------
 // Mock helpers
@@ -146,12 +152,16 @@ describe('WorkerExecutionStrategy', () => {
 
   afterEach(() => {
     strategy?.[Symbol.dispose]();
+    restoreRealTimers();
   });
 
-  function setup(workerCount: number = 1): void {
+  function setup(
+    workerCount: number = 1,
+    options?: ConstructorParameters<typeof WorkerExecutionStrategy>[1],
+  ): void {
     mockWorkers = Array.from({ length: workerCount }, () => createMockWorker());
     mockPool = createMockPool(mockWorkers);
-    strategy = new WorkerExecutionStrategy(mockPool);
+    strategy = new WorkerExecutionStrategy(mockPool, options);
     messages = [];
     strategy.onMessage((message) => {
       messages.push(message);
@@ -169,6 +179,12 @@ describe('WorkerExecutionStrategy', () => {
   function firstMessage(): WorkerOutboundMessage {
     expect(messages).toHaveLength(1);
     const message = messages[0];
+    expect(message).toBeDefined();
+    return message!;
+  }
+
+  function lastMessage(): WorkerOutboundMessage {
+    const message = messages.at(-1);
     expect(message).toBeDefined();
     return message!;
   }
@@ -969,6 +985,369 @@ describe('WorkerExecutionStrategy', () => {
     });
   });
 
+  describe('hardened worker turns', () => {
+    it('times out a wedged run turn, discards that worker, and lets a later workflow use another worker', async () => {
+      useFakeTimers();
+      setup(2, {
+        workflowTurnTimeoutMs: 5,
+        maxProtocolMessageBytes: 4_096,
+        requireProtocolVersion: true,
+      });
+
+      strategy.startWorkflow({
+        workflowId: 'wf-timeout',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+
+      await sleepForTesting(0);
+      await advanceTimersByTime(5);
+
+      expect(mockPool.discard).toHaveBeenCalledWith(mockWorkers[0]);
+      expect(firstMessage()).toMatchObject({
+        type: 'failed',
+        workflowId: 'wf-timeout',
+        failureCategory: 'timeout',
+      });
+
+      strategy.startWorkflow({
+        workflowId: 'wf-after-timeout',
+        workflowType: 'test',
+        input: 'ok',
+        checkpoint: new ArrayBuffer(0),
+      });
+      await sleepForTesting(0);
+
+      expect(mockWorkers[1]?.postMessage).toHaveBeenCalledTimes(1);
+      expect(mockWorkers[1]?.postMessage.mock.calls[0]?.[0]).toMatchObject({
+        type: 'run',
+        workflowId: 'wf-after-timeout',
+      });
+    });
+
+    it('times out a wedged resume turn for an active workflow', async () => {
+      useFakeTimers();
+      setup(1, {
+        workflowTurnTimeoutMs: 5,
+        maxProtocolMessageBytes: 4_096,
+        requireProtocolVersion: true,
+      });
+
+      strategy.startWorkflow({
+        workflowId: 'wf-active-resume-timeout',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+      await sleepForTesting(0);
+      await advanceTimersByTime(4);
+
+      expect(messages).toHaveLength(0);
+      expect(mockPool.discard).not.toHaveBeenCalled();
+
+      strategy.resumeWorkflow({
+        workflowId: 'wf-active-resume-timeout',
+        checkpoint: new ArrayBuffer(0),
+        operationResult: { status: 'completed', value: null },
+      });
+
+      expect(firstWorker().postMessage.mock.calls.at(-1)?.[0]).toMatchObject({
+        type: 'resume',
+        workflowId: 'wf-active-resume-timeout',
+      });
+
+      await advanceTimersByTime(4);
+      expect(messages).toHaveLength(0);
+      expect(mockPool.discard).not.toHaveBeenCalled();
+
+      await advanceTimersByTime(1);
+
+      expect(mockPool.discard).toHaveBeenCalledWith(firstWorker());
+      expect(firstMessage()).toMatchObject({
+        type: 'failed',
+        workflowId: 'wf-active-resume-timeout',
+        failureCategory: 'timeout',
+      });
+    });
+
+    it('times out a wedged resume turn after reacquiring a parked worker', async () => {
+      useFakeTimers();
+      setup(1, {
+        workflowTurnTimeoutMs: 5,
+        maxProtocolMessageBytes: 4_096,
+        requireProtocolVersion: true,
+      });
+
+      strategy.startWorkflow({
+        workflowId: 'wf-parked-resume-timeout',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+      await sleepForTesting(0);
+
+      const worker = firstWorker();
+      const runMessage = worker.postMessage.mock.calls[0]?.[0] as { turnId: number };
+      dispatchToMockWorker(
+        worker,
+        'message',
+        new MessageEvent('message', {
+          data: {
+            type: 'checkpoint',
+            protocolVersion: WORKER_PROTOCOL_VERSION,
+            turnId: runMessage.turnId,
+            workflowId: 'wf-parked-resume-timeout',
+            checkpoint: new ArrayBuffer(0),
+            operationRequest: {
+              type: 'wait-signal',
+              operationId: 'op-wait',
+              signalName: 'resume',
+            },
+          } satisfies WorkerOutboundMessage,
+        }),
+      );
+
+      strategy.resumeWorkflow({
+        workflowId: 'wf-parked-resume-timeout',
+        checkpoint: new ArrayBuffer(0),
+        operationResult: { status: 'completed', value: null },
+      });
+      await sleepForTesting(0);
+
+      expect(worker.postMessage.mock.calls.at(-1)?.[0]).toMatchObject({
+        type: 'resume',
+        workflowId: 'wf-parked-resume-timeout',
+      });
+
+      await advanceTimersByTime(5);
+
+      expect(mockPool.discard).toHaveBeenCalledWith(worker);
+      expect(lastMessage()).toMatchObject({
+        type: 'failed',
+        workflowId: 'wf-parked-resume-timeout',
+        failureCategory: 'timeout',
+      });
+    });
+
+    it('rejects worker messages that do not echo the active protocol version and turn id', async () => {
+      setup(1, {
+        workflowTurnTimeoutMs: 100,
+        maxProtocolMessageBytes: 4_096,
+        requireProtocolVersion: true,
+      });
+
+      strategy.startWorkflow({
+        workflowId: 'wf-protocol',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+      await sleepForTesting(10);
+
+      dispatchToMockWorker(
+        firstWorker(),
+        'message',
+        new MessageEvent('message', {
+          data: {
+            type: 'completed',
+            workflowId: 'wf-protocol',
+            result: 'spoofed',
+          } satisfies WorkerOutboundMessage,
+        }),
+      );
+
+      expect(firstMessage()).toMatchObject({
+        type: 'failed',
+        workflowId: 'wf-protocol',
+        failureCategory: 'system',
+      });
+      expect(mockPool.discard).toHaveBeenCalledWith(firstWorker());
+    });
+
+    it('rejects malformed worker messages before forwarding to the engine', async () => {
+      setup(1, {
+        workflowTurnTimeoutMs: 100,
+        maxProtocolMessageBytes: 4_096,
+        requireProtocolVersion: true,
+      });
+
+      strategy.startWorkflow({
+        workflowId: 'wf-malformed',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+      await sleepForTesting(10);
+
+      const runMessage = firstWorker().postMessage.mock.calls[0]?.[0] as {
+        turnId: number;
+      };
+      dispatchToMockWorker(
+        firstWorker(),
+        'message',
+        new MessageEvent('message', {
+          data: {
+            type: 'checkpoint',
+            protocolVersion: WORKER_PROTOCOL_VERSION,
+            turnId: runMessage.turnId,
+            workflowId: 'wf-malformed',
+            checkpoint: 'not-bytes',
+            operationRequest: { type: 'wait-signal' },
+          },
+        }),
+      );
+
+      expect(firstMessage()).toMatchObject({
+        type: 'failed',
+        workflowId: 'wf-malformed',
+        failureCategory: 'system',
+      });
+      expect(mockPool.discard).toHaveBeenCalledWith(firstWorker());
+    });
+
+    it('fails an oversized run message before acquiring a worker', async () => {
+      setup(1, {
+        maxProtocolMessageBytes: 4_096,
+        requireProtocolVersion: true,
+      });
+
+      strategy.startWorkflow({
+        workflowId: 'wf-large-run',
+        workflowType: 'test',
+        input: { payload: 'x'.repeat(5_000) },
+        checkpoint: new ArrayBuffer(0),
+      });
+
+      expect(mockPool.acquire).not.toHaveBeenCalled();
+      expect(firstMessage()).toMatchObject({
+        type: 'failed',
+        workflowId: 'wf-large-run',
+        failureCategory: 'resource',
+      });
+    });
+
+    it('rejects oversized outbound worker messages before forwarding to the engine', async () => {
+      setup(1, {
+        workflowTurnTimeoutMs: 100,
+        maxProtocolMessageBytes: 4_096,
+        requireProtocolVersion: true,
+      });
+
+      strategy.startWorkflow({
+        workflowId: 'wf-large-outbound',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+      await sleepForTesting(10);
+
+      const runMessage = firstWorker().postMessage.mock.calls[0]?.[0] as {
+        turnId: number;
+      };
+      dispatchToMockWorker(
+        firstWorker(),
+        'message',
+        new MessageEvent('message', {
+          data: {
+            type: 'completed',
+            protocolVersion: WORKER_PROTOCOL_VERSION,
+            turnId: runMessage.turnId,
+            workflowId: 'wf-large-outbound',
+            result: 'x'.repeat(5_000),
+          } satisfies WorkerOutboundMessage,
+        }),
+      );
+
+      expect(firstMessage()).toMatchObject({
+        type: 'failed',
+        workflowId: 'wf-large-outbound',
+        failureCategory: 'resource',
+      });
+      expect(mockPool.discard).toHaveBeenCalledWith(firstWorker());
+    });
+
+    it('rejects oversized active resume messages and discards that worker', async () => {
+      setup(1, {
+        maxProtocolMessageBytes: 4_096,
+        requireProtocolVersion: true,
+      });
+
+      strategy.startWorkflow({
+        workflowId: 'wf-large-active-resume',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+      await sleepForTesting(10);
+
+      strategy.resumeWorkflow({
+        workflowId: 'wf-large-active-resume',
+        checkpoint: new ArrayBuffer(0),
+        operationResult: { status: 'completed', value: 'x'.repeat(5_000) },
+      });
+
+      expect(firstWorker().postMessage).toHaveBeenCalledTimes(1);
+      expect(mockPool.discard).toHaveBeenCalledWith(firstWorker());
+      expect(firstMessage()).toMatchObject({
+        type: 'failed',
+        workflowId: 'wf-large-active-resume',
+        failureCategory: 'resource',
+      });
+    });
+
+    it('rejects oversized parked resume messages and discards the parked worker', async () => {
+      setup(1, {
+        maxProtocolMessageBytes: 4_096,
+        requireProtocolVersion: true,
+      });
+
+      strategy.startWorkflow({
+        workflowId: 'wf-large-parked-resume',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+      await sleepForTesting(10);
+
+      const worker = firstWorker();
+      const runMessage = worker.postMessage.mock.calls[0]?.[0] as { turnId: number };
+      dispatchToMockWorker(
+        worker,
+        'message',
+        new MessageEvent('message', {
+          data: {
+            type: 'checkpoint',
+            protocolVersion: WORKER_PROTOCOL_VERSION,
+            turnId: runMessage.turnId,
+            workflowId: 'wf-large-parked-resume',
+            checkpoint: new ArrayBuffer(0),
+            operationRequest: {
+              type: 'wait-signal',
+              operationId: 'op-wait',
+              signalName: 'resume',
+            },
+          } satisfies WorkerOutboundMessage,
+        }),
+      );
+
+      strategy.resumeWorkflow({
+        workflowId: 'wf-large-parked-resume',
+        checkpoint: new ArrayBuffer(0),
+        operationResult: { status: 'completed', value: 'x'.repeat(5_000) },
+      });
+      await sleepForTesting(10);
+
+      expect(worker.postMessage).toHaveBeenCalledTimes(1);
+      expect(mockPool.discard).toHaveBeenCalledWith(worker);
+      expect(lastMessage()).toMatchObject({
+        type: 'failed',
+        workflowId: 'wf-large-parked-resume',
+        failureCategory: 'resource',
+      });
+    });
+  });
+
   // -------------------------------------------------------------------------
   // resumeWorkflow
   // -------------------------------------------------------------------------
@@ -1102,6 +1481,43 @@ describe('WorkerExecutionStrategy', () => {
 
       expect(messages).toHaveLength(1);
       expect(messages.at(-1)?.type).toBe('checkpoint');
+    });
+
+    it('discards the active worker on hardened cancellation without emitting a duplicate failure', async () => {
+      setup(2, {
+        discardOnCancel: true,
+        maxProtocolMessageBytes: 4_096,
+        requireProtocolVersion: true,
+      });
+
+      strategy.startWorkflow({
+        workflowId: 'wf-discard-on-cancel',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+      await sleepForTesting(10);
+
+      const cancelledWorker = firstWorker();
+      strategy.cancelWorkflow('wf-discard-on-cancel');
+
+      expect(messages).toHaveLength(0);
+      expect(mockPool.release).not.toHaveBeenCalled();
+      expect(mockPool.discard).toHaveBeenCalledWith(cancelledWorker);
+
+      strategy.startWorkflow({
+        workflowId: 'wf-after-cancel-discard',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+      await sleepForTesting(10);
+
+      expect(mockWorkers[1]?.postMessage).toHaveBeenCalledTimes(1);
+      expect(mockWorkers[1]?.postMessage.mock.calls[0]?.[0]).toMatchObject({
+        type: 'run',
+        workflowId: 'wf-after-cancel-discard',
+      });
     });
   });
 

@@ -372,10 +372,40 @@ interface Checkpoint {
   workflowId: WorkflowId;
   step: number;
   locals: Record<string, unknown>;
+  accumulatedResults: Array<[number, unknown]>;
+  workerReplaySignatures?: Array<[number, WorkerReplayOperationSignature]>;
+  workerReplayFailures?: Array<[number, WorkerReplayOperationFailure]>;
   pendingSignals: string[];
   searchAttributes: Record<string, SearchAttributeValue>;
   version: string;
+  schemaVersion: number;
   createdAt: number;
+}
+```
+
+`workerReplaySignatures` and `workerReplayFailures` are written by Worker-mode execution only. Signatures let Worker recovery verify a cached operation result against the operation currently yielded by the workflow before reusing that result. Failed operation outcomes live in `workerReplayFailures` so replay can throw them back into the generator without interpreting user result values as internal records. Inline execution ignores both fields when they are absent.
+
+### `WorkerReplayOperationSignature`
+
+```ts
+interface WorkerReplayOperationSignature {
+  format: 'weft-worker-operation-signature-v1';
+  operationType: string;
+  stableFieldsDigest: string;
+  stableFieldsByteLength: number;
+}
+```
+
+### `WorkerReplayOperationFailure`
+
+```ts
+import type { FailureCategory } from 'weft';
+
+interface WorkerReplayOperationFailure {
+  status: 'failed';
+  error: string;
+  errorName?: string;
+  failureCategory?: FailureCategory;
 }
 ```
 
@@ -494,13 +524,14 @@ interface EngineOptions {
   broadcastEvents?: boolean;
   retention?: RetentionPolicy;
   compression?: CompressionOptions;
+  workflowExecutionMode?: 'inline' | 'worker';
   workerExecution?: WorkerExecutionOptions;
   activityExecution?: ActivityExecutionOptions;
   alerts?: AlertOptions[];
 }
 ```
 
-See [Configuration](./configuration.md) for detailed field descriptions and defaults.
+See [Configuration](./configuration.md) for detailed field descriptions and defaults. `workflowExecutionMode: 'worker'` requires `workerExecution` and applies Worker turn timeout and protocol-message bounds for untrusted workflow code; `workflowExecutionMode: 'inline'` rejects `workerExecution`.
 
 ### `CompressionOptions`
 

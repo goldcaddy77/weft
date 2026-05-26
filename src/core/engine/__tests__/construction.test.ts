@@ -7,7 +7,11 @@ import {
   type Duration,
   type RetentionPolicy,
 } from '../../types.ts';
-import { resolveEngineOptions } from '../construction.ts';
+import {
+  createExecutionStrategyBundle,
+  normalizeWorkerExecutionConfiguration,
+  resolveEngineOptions,
+} from '../construction.ts';
 import { normalizeRetentionDuration, normalizeRetentionPolicy } from '../validation.ts';
 
 const getNow = () => 1_234;
@@ -128,5 +132,97 @@ describe('resolveEngineOptions', () => {
     expect(resolved.checkpointSizeWarningThreshold).toBe(65_536);
     expect(resolved.maxNestingDepth).toBe(10);
     expect(resolved.broadcastEvents).toBe(false);
+  });
+});
+
+describe('normalizeWorkerExecutionConfiguration', () => {
+  const workerUrl = new URL('../../../workers/test-browser-worker.ts', import.meta.url);
+
+  it('preserves legacy selection defaults', () => {
+    expect(normalizeWorkerExecutionConfiguration(undefined)).toEqual({
+      mode: 'inline',
+      workerExecution: null,
+    });
+    expect(normalizeWorkerExecutionConfiguration({ workerExecution: { workerUrl } })).toMatchObject(
+      {
+        mode: 'worker',
+        workflowTurnTimeoutMs: undefined,
+        maxProtocolMessageBytes: undefined,
+      },
+    );
+  });
+
+  it('applies hardened defaults for explicit worker mode', () => {
+    expect(
+      normalizeWorkerExecutionConfiguration({
+        workflowExecutionMode: 'worker',
+        workerExecution: { workerUrl },
+      }),
+    ).toMatchObject({
+      mode: 'worker',
+      workflowTurnTimeoutMs: 1_000,
+      maxProtocolMessageBytes: 1_048_576,
+      requireProtocolVersion: true,
+      discardOnCancel: true,
+    });
+  });
+
+  it('rejects explicit worker mode without worker configuration', () => {
+    expect(() =>
+      normalizeWorkerExecutionConfiguration({ workflowExecutionMode: 'worker' }),
+    ).toThrow('workerExecution is required');
+  });
+
+  it('rejects explicit inline mode with worker configuration', () => {
+    expect(() =>
+      normalizeWorkerExecutionConfiguration({
+        workflowExecutionMode: 'inline',
+        workerExecution: { workerUrl },
+      }),
+    ).toThrow('cannot be provided');
+  });
+
+  for (const value of [
+    Number.NaN,
+    Infinity,
+    1.5,
+    -1,
+    0,
+    null,
+    '1000',
+    Number.MAX_SAFE_INTEGER + 1,
+  ]) {
+    it(`rejects invalid worker turn timeout value ${String(value)}`, () => {
+      expect(() =>
+        normalizeWorkerExecutionConfiguration({
+          workerExecution: { workerUrl, workflowTurnTimeoutMs: value as any },
+        }),
+      ).toThrow('workflowTurnTimeoutMs');
+    });
+  }
+
+  it('rejects protocol message limits below the bounded failure envelope minimum', () => {
+    expect(() =>
+      normalizeWorkerExecutionConfiguration({
+        workerExecution: { workerUrl, maxProtocolMessageBytes: 4_095 },
+      }),
+    ).toThrow('at least 4096');
+  });
+
+  it('routes explicit worker mode through the Worker execution strategy bundle', () => {
+    const bundle = createExecutionStrategyBundle({
+      options: {
+        workflowExecutionMode: 'worker',
+        workerExecution: { workerUrl },
+      },
+      getNow,
+      maxNestingDepth: 10,
+      development: false,
+      broadcastEvents: false,
+      getRegistration: () => undefined,
+      resolveWorkflowType: (target) => String(target),
+    });
+
+    expect(bundle.inlineStrategy).toBeNull();
   });
 });

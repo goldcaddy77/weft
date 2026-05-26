@@ -90,8 +90,8 @@ export interface ForkOptions {
  * Configuration options for the {@link Engine} constructor.
  *
  * All fields are optional. Common overrides include `storage`, `retention`,
- * `development`, `serializer`, `compression`, `workerExecution`, and
- * `alerts`.
+ * `development`, `serializer`, `compression`, `workflowExecutionMode`,
+ * `workerExecution`, and `alerts`.
  *
  * @example
  * ```ts
@@ -142,10 +142,27 @@ export interface EngineOptions {
   /** Enable BroadcastChannel for cross-worker event coordination. Default: false. */
   broadcastEvents?: boolean;
   /**
-   * Enable worker-based execution. When provided, workflows run in isolated
-   * Web Workers instead of inline on the main thread. Activities are still
-   * executed on the main thread via the activity registry (unless
-   * `activityExecution` is also configured).
+   * Select where workflow generator turns execute. Omit to preserve legacy
+   * behavior: `workerExecution` selects Worker execution and no Worker
+   * configuration selects inline execution. Use `'worker'` for untrusted
+   * deployments and `'inline'` only when workflow code is trusted to run in the
+   * engine isolate.
+   */
+  workflowExecutionMode?: 'inline' | 'worker';
+  /**
+   * Enable Worker-based workflow execution. When provided, workflow generator
+   * turns run in Web Workers instead of inline on the engine isolate. Activities
+   * are still executed on the main thread via the activity registry unless
+   * `activityExecution` is also configured.
+   *
+   * Explicit `workflowExecutionMode: 'worker'` requires this object, applies
+   * hardened defaults for Worker turn timeout and protocol-message size, and
+   * rejects invalid runtime values. Explicit `workflowExecutionMode: 'inline'`
+   * rejects this object to avoid ambiguous trust posture.
+   *
+   * Worker execution protects engine liveness and engine heap access. It is not
+   * an operating-system sandbox: workflow code can still access APIs exposed in
+   * the Worker runtime.
    */
   workerExecution?: {
     /** URL of the worker script (created via `createWorkerEntryUrl`). */
@@ -154,6 +171,18 @@ export interface EngineOptions {
     poolSize?: number;
     /** Use Bun's `smol` worker option for smaller memory footprint. */
     smol?: boolean;
+    /**
+     * Host-enforced wall-clock timeout for each Worker `run` or `resume` turn.
+     * Defaults to `1_000` in explicit Worker mode. Omit in legacy Worker mode
+     * to keep the legacy no-timeout behavior.
+     */
+    workflowTurnTimeoutMs?: number;
+    /**
+     * Maximum encoded size of Weft-owned Worker protocol messages. Defaults to
+     * `1_048_576` in explicit Worker mode. The minimum accepted value is
+     * `4_096` so bounded failure envelopes can always cross the protocol.
+     */
+    maxProtocolMessageBytes?: number;
   };
 
   /**

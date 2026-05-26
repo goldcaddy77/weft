@@ -4,6 +4,72 @@ import type { FailureCategory, OperationId, WorkflowId } from './identity.ts';
 import type { Duration, RetryPolicy } from './retry-retention.ts';
 import type { SearchAttributeValue } from './search-attributes.ts';
 
+/** Version tag for Worker-mode operation replay signatures stored in checkpoints. */
+export const WORKER_REPLAY_SIGNATURE_FORMAT = 'weft-worker-operation-signature-v1';
+
+/**
+ * Canonical fingerprint of an operation yielded by a Worker-mode workflow.
+ *
+ * The Worker runner stores these optional signatures next to cached operation
+ * results so recovery can prove a cached result still belongs to the operation
+ * currently yielded by the workflow code before replaying it.
+ *
+ * @example
+ * ```ts
+ * import type { WorkerReplayOperationSignature } from 'weft';
+ *
+ * const signature: WorkerReplayOperationSignature = {
+ *   format: 'weft-worker-operation-signature-v1',
+ *   operationType: 'activity',
+ *   stableFieldsDigest: '0123456789abcdef',
+ *   stableFieldsByteLength: 128,
+ * };
+ *
+ * void signature;
+ * ```
+ */
+export interface WorkerReplayOperationSignature {
+  /** Signature format tag. */
+  format: typeof WORKER_REPLAY_SIGNATURE_FORMAT;
+  /** Operation type or kind used by the workflow runner. */
+  operationType: string;
+  /** SHA-256 digest of the canonical stable operation fields. */
+  stableFieldsDigest: string;
+  /** Encoded byte length of the canonical stable operation fields. */
+  stableFieldsByteLength: number;
+}
+
+/**
+ * Failed operation outcome cached by a Worker-mode checkpoint.
+ *
+ * Stored in a dedicated side table rather than inside `accumulatedResults` so
+ * user-controlled result values can never be reinterpreted as internal failure
+ * records by matching an object shape.
+ *
+ * @example
+ * ```ts
+ * import type { WorkerReplayOperationFailure } from 'weft';
+ *
+ * const failure: WorkerReplayOperationFailure = {
+ *   status: 'failed',
+ *   error: 'activity timed out',
+ *   failureCategory: 'timeout',
+ * };
+ *
+ * void failure;
+ * ```
+ */
+export interface WorkerReplayOperationFailure {
+  /** Failed operation status marker. */
+  status: 'failed';
+  /** Error message captured from the failed operation outcome. */
+  error: string;
+  /** Optional JavaScript error name captured from the failed operation outcome. */
+  errorName?: string;
+  /** Optional Weft failure category captured from the failed operation outcome. */
+  failureCategory?: FailureCategory;
+}
+
 // ---------------------------------------------------------------------------
 // Checkpoint: snapshot of workflow at a yield* boundary
 // ---------------------------------------------------------------------------
@@ -33,6 +99,18 @@ export interface Checkpoint {
   step: number;
   locals: Record<string, unknown>;
   accumulatedResults: Array<[number, unknown]>;
+  /**
+   * Worker-mode replay guards for cached operation results. Inline execution
+   * ignores this optional field; Worker recovery uses it to prove a cached
+   * result still belongs to the yielded operation before reusing it.
+   */
+  workerReplaySignatures?: Array<[number, WorkerReplayOperationSignature]>;
+  /**
+   * Worker-mode failed operation outcomes keyed by step. Completed operation
+   * results stay in `accumulatedResults`; failed outcomes live here so replay
+   * can throw them back into the generator without trusting user result shape.
+   */
+  workerReplayFailures?: Array<[number, WorkerReplayOperationFailure]>;
   pendingSignals: string[];
   searchAttributes: Record<string, SearchAttributeValue>;
   /** User-defined workflow code version. Used for code migrations. */
@@ -121,12 +199,7 @@ export interface OperationRequest {
 
 export type OperationOutcome =
   | { status: 'completed'; value: unknown }
-  | {
-      status: 'failed';
-      error: string;
-      errorName?: string;
-      failureCategory?: FailureCategory;
-    };
+  | WorkerReplayOperationFailure;
 
 // ---------------------------------------------------------------------------
 // Timer entry for scheduler
@@ -170,6 +243,9 @@ export interface TimerEntry {
 export type WorkerInboundMessage =
   | {
       type: 'run';
+      protocolVersion?: number;
+      turnId?: number;
+      maxProtocolMessageBytes?: number;
       workflowId: WorkflowId;
       workflowType: string;
       checkpoint: ArrayBuffer;
@@ -180,22 +256,35 @@ export type WorkerInboundMessage =
     }
   | {
       type: 'resume';
+      protocolVersion?: number;
+      turnId?: number;
+      maxProtocolMessageBytes?: number;
       workflowId: WorkflowId;
       checkpoint: ArrayBuffer;
       operationResult: OperationOutcome;
     }
-  | { type: 'cancel'; workflowId: WorkflowId };
+  | { type: 'cancel'; protocolVersion?: number; turnId?: number; workflowId: WorkflowId };
 
 export type WorkerOutboundMessage =
   | {
       type: 'checkpoint';
+      protocolVersion?: number;
+      turnId?: number;
       workflowId: WorkflowId;
       checkpoint: ArrayBuffer;
       operationRequest: OperationRequest | ContextOperationRequest;
     }
-  | { type: 'completed'; workflowId: WorkflowId; result: unknown }
+  | {
+      type: 'completed';
+      protocolVersion?: number;
+      turnId?: number;
+      workflowId: WorkflowId;
+      result: unknown;
+    }
   | {
       type: 'failed';
+      protocolVersion?: number;
+      turnId?: number;
       workflowId: WorkflowId;
       error: string;
       errorStack?: string;
