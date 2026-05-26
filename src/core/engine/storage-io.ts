@@ -84,7 +84,7 @@ export async function loadScheduleState(
   return bytes ? decodeScheduleState(bytes) : null;
 }
 
-/** Load a schedule state and enforce schedule access filtering. */
+/** Load a schedule state. */
 export async function requireScheduleState(
   internals: EngineInternals,
   scheduleId: string,
