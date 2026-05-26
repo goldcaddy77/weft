@@ -155,6 +155,29 @@ describe('Worker replay operation signatures', () => {
     expect(first.stableFieldsDigest).not.toBe(second.stableFieldsDigest);
   });
 
+  it('keeps sleep signatures stable when scheduled fire times change', async () => {
+    const first = await createWorkerReplayOperationSignature(
+      {
+        type: 'sleep',
+        operationId: 'sleep-1',
+        duration: 1_000,
+        scheduledFireAt: 10_000,
+      },
+      MIN_WORKER_PROTOCOL_MESSAGE_BYTES,
+    );
+    const second = await createWorkerReplayOperationSignature(
+      {
+        type: 'sleep',
+        operationId: 'sleep-2',
+        duration: 1_000,
+        scheduledFireAt: 20_000,
+      },
+      MIN_WORKER_PROTOCOL_MESSAGE_BYTES,
+    );
+
+    expect(first).toEqual(second);
+  });
+
   it('produces signatures for every workflow context operation variant', async () => {
     const operations: ContextOperationRequest[] = [
       {

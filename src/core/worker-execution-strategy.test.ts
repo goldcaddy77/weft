@@ -1041,6 +1041,10 @@ describe('WorkerExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
       await sleepForTesting(0);
+      await advanceTimersByTime(4);
+
+      expect(messages).toHaveLength(0);
+      expect(mockPool.discard).not.toHaveBeenCalled();
 
       strategy.resumeWorkflow({
         workflowId: 'wf-active-resume-timeout',
@@ -1053,7 +1057,11 @@ describe('WorkerExecutionStrategy', () => {
         workflowId: 'wf-active-resume-timeout',
       });
 
-      await advanceTimersByTime(5);
+      await advanceTimersByTime(4);
+      expect(messages).toHaveLength(0);
+      expect(mockPool.discard).not.toHaveBeenCalled();
+
+      await advanceTimersByTime(1);
 
       expect(mockPool.discard).toHaveBeenCalledWith(firstWorker());
       expect(firstMessage()).toMatchObject({

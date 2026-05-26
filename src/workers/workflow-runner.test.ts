@@ -553,6 +553,80 @@ describe('handleResumeMessage', () => {
     } satisfies WorkerOutboundMessage);
   });
 
+  it('replays failed operation outcomes from the Worker failure side table', async () => {
+    const firstContext = createWorkflowRunnerContext();
+    const firstOperation = createActivityOperation('wf-failed-outcome-replay', 'step1', 'one');
+    const secondOperation = createActivityOperation('wf-failed-outcome-replay', 'step2', 'two');
+
+    async function* replayWorkflow() {
+      let caughtError = 'none';
+      try {
+        yield firstOperation;
+      } catch (error) {
+        caughtError = (error as Error).message;
+      }
+      const second: unknown = yield secondOperation;
+      return { caughtError, second };
+    }
+
+    await handleRunMessage(
+      firstContext,
+      { workflowId: 'wf-failed-outcome-replay', workflowType: 'replay', input: null },
+      () => replayWorkflow,
+    );
+    const checkpointBeforeRestart = await handleResumeMessage(firstContext, {
+      workflowId: 'wf-failed-outcome-replay',
+      result: undefined,
+      operationResult: {
+        status: 'failed',
+        error: 'activity timed out',
+        failureCategory: 'timeout',
+      },
+    });
+
+    expect(checkpointBeforeRestart.type).toBe('checkpoint');
+    if (checkpointBeforeRestart.type !== 'checkpoint') return;
+
+    const checkpoint = deserializeCheckpoint(new Uint8Array(checkpointBeforeRestart.checkpoint));
+    expect(checkpoint.accumulatedResults).toEqual([]);
+    expect(checkpoint.workerReplayFailures).toEqual([
+      [
+        0,
+        {
+          status: 'failed',
+          error: 'activity timed out',
+          failureCategory: 'timeout',
+        },
+      ],
+    ]);
+
+    const recoveredContext = createWorkflowRunnerContext();
+    const recoveredCheckpoint = await handleRunMessage(
+      recoveredContext,
+      {
+        workflowId: 'wf-failed-outcome-replay',
+        workflowType: 'replay',
+        input: null,
+        checkpoint: checkpointBeforeRestart.checkpoint,
+      },
+      () => replayWorkflow,
+    );
+
+    expect(recoveredCheckpoint.type).toBe('checkpoint');
+    if (recoveredCheckpoint.type !== 'checkpoint') return;
+    expect(recoveredCheckpoint.operationRequest).toEqual(secondOperation);
+
+    const final = await handleResumeMessage(recoveredContext, {
+      workflowId: 'wf-failed-outcome-replay',
+      result: 'second-result',
+    });
+    expect(final).toEqual({
+      type: 'completed',
+      workflowId: 'wf-failed-outcome-replay',
+      result: { caughtError: 'activity timed out', second: 'second-result' },
+    } satisfies WorkerOutboundMessage);
+  });
+
   it('fails closed when a cached worker result has no replay signature', async () => {
     const context = createWorkflowRunnerContext();
     const operation = createActivityOperation('wf-missing-signature', 'step1', 'one');
@@ -652,13 +726,14 @@ describe('handleResumeMessage', () => {
     });
   });
 
-  it('replays user results that resemble the old worker failure marker as normal values', async () => {
+  it('replays user results that resemble Worker failure records as normal values', async () => {
     const firstContext = createWorkflowRunnerContext();
     const firstOperation = createActivityOperation('wf-marker-collision', 'step1', 'one');
     const secondOperation = createActivityOperation('wf-marker-collision', 'step2', 'two');
     const userResult = {
       __weftWorkerOperationFailure: true,
-      outcome: { status: 'completed', value: 'not-a-failure' },
+      version: 1,
+      outcome: { status: 'failed', error: 'user data, not an internal failure' },
     };
 
     async function* replayWorkflow() {

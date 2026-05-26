@@ -15,6 +15,7 @@ import type {
   OperationOutcome,
   OperationRequest,
   WorkerOutboundMessage,
+  WorkerReplayOperationFailure,
   WorkflowAtomicStateOptions,
   WorkflowContext,
   WorkflowSessionState,
@@ -25,10 +26,6 @@ import {
   type WorkerReplayOperationSignature,
   workerReplayOperationSignaturesEqual,
 } from '../core/worker-protocol.ts';
-import {
-  createStoredWorkerOperationFailure,
-  isStoredWorkerOperationFailure,
-} from './worker-operation-failure-record.ts';
 
 // ---------------------------------------------------------------------------
 // Worker-side workflow context
@@ -111,6 +108,7 @@ interface WorkerReplayState {
   checkpoint: Checkpoint;
   accumulatedResults: Map<number, unknown>;
   signatures: Map<number, WorkerReplayOperationSignature>;
+  failedOutcomes: Map<number, WorkerReplayOperationFailure>;
   nextStepIndex: number;
   pendingStepIndex: number | null;
   maxProtocolMessageBytes: number | undefined;
@@ -344,7 +342,7 @@ async function processGeneratorStep(
       replayState.maxProtocolMessageBytes ?? Number.MAX_SAFE_INTEGER,
     );
 
-    if (replayState.accumulatedResults.has(stepIndex)) {
+    if (hasCachedWorkerOutcome(replayState, stepIndex)) {
       const persistedSignature = replayState.signatures.get(stepIndex);
       if (!persistedSignature) {
         cleanupWorkflowRunnerState(context, workflowId);
@@ -366,10 +364,7 @@ async function processGeneratorStep(
       }
 
       replayState.nextStepIndex = stepIndex + 1;
-      currentStep = await replayGeneratorStep(
-        generator,
-        replayState.accumulatedResults.get(stepIndex),
-      );
+      currentStep = await replayGeneratorStep(generator, replayState, stepIndex);
       continue;
     }
 
@@ -412,6 +407,7 @@ function createReplayState(message: {
     checkpoint,
     accumulatedResults: new Map(checkpoint.accumulatedResults),
     signatures: new Map(checkpoint.workerReplaySignatures ?? []),
+    failedOutcomes: new Map(checkpoint.workerReplayFailures ?? []),
     nextStepIndex: 0,
     pendingStepIndex: null,
     maxProtocolMessageBytes: message.maxProtocolMessageBytes,
@@ -425,31 +421,44 @@ function recordOperationOutcome(
   const pendingStepIndex = replayState.pendingStepIndex;
   if (pendingStepIndex === null || !outcome) return;
 
-  replayState.accumulatedResults.set(
-    pendingStepIndex,
-    outcome.status === 'failed' ? createStoredWorkerOperationFailure(outcome) : outcome.value,
-  );
+  if (outcome.status === 'failed') {
+    replayState.failedOutcomes.set(pendingStepIndex, outcome);
+    replayState.accumulatedResults.delete(pendingStepIndex);
+  } else {
+    replayState.accumulatedResults.set(pendingStepIndex, outcome.value);
+    replayState.failedOutcomes.delete(pendingStepIndex);
+  }
   replayState.nextStepIndex = pendingStepIndex + 1;
   replayState.pendingStepIndex = null;
 }
 
+function hasCachedWorkerOutcome(replayState: WorkerReplayState, stepIndex: number): boolean {
+  return replayState.accumulatedResults.has(stepIndex) || replayState.failedOutcomes.has(stepIndex);
+}
+
 async function replayGeneratorStep(
   generator: AsyncGenerator,
-  value: unknown,
+  replayState: WorkerReplayState,
+  stepIndex: number,
 ): Promise<IteratorResult<unknown>> {
-  if (isStoredWorkerOperationFailure(value)) {
-    return await generator.throw(errorFromFailedOperationOutcome(value.outcome));
+  const failedOutcome = replayState.failedOutcomes.get(stepIndex);
+  if (failedOutcome) {
+    return await generator.throw(errorFromFailedOperationOutcome(failedOutcome));
   }
-  return await generator.next(value);
+  return await generator.next(replayState.accumulatedResults.get(stepIndex));
 }
 
 function advanceWorkerCheckpoint(replayState: WorkerReplayState): Checkpoint {
   const advanced = advanceCheckpoint(replayState.checkpoint, replayState.checkpoint.locals, {
     accumulatedResults: [...replayState.accumulatedResults],
   });
+  const workerReplayFailures = [...replayState.failedOutcomes];
+  const advancedCheckpoint = { ...advanced };
+  delete advancedCheckpoint.workerReplayFailures;
   return {
-    ...advanced,
+    ...advancedCheckpoint,
     workerReplaySignatures: [...replayState.signatures],
+    ...(workerReplayFailures.length === 0 ? {} : { workerReplayFailures }),
   };
 }
 

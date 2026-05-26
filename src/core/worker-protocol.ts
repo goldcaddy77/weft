@@ -30,6 +30,7 @@ const WORKER_SIGNATURE_EXCLUDED_FIELDS = new Set([
   'id',
   'operationId',
   'resumedCacheEntry',
+  'scheduledFireAt',
   'scheduledAt',
   'workflowId',
 ]);

@@ -131,6 +131,26 @@ describe('advanceCheckpoint', () => {
 
     expect(advanced.workerReplaySignatures).toEqual(checkpoint.workerReplaySignatures);
   });
+
+  it('preserves Worker replay failures while advancing', () => {
+    const checkpoint: Checkpoint = {
+      ...createCheckpoint('wf-1', '1.0.0'),
+      workerReplayFailures: [
+        [
+          0,
+          {
+            status: 'failed',
+            error: 'activity failed',
+            failureCategory: 'timeout',
+          },
+        ],
+      ],
+    };
+
+    const advanced = advanceCheckpoint(checkpoint, { done: true });
+
+    expect(advanced.workerReplayFailures).toEqual(checkpoint.workerReplayFailures);
+  });
 });
 
 describe('serializeCheckpoint / deserializeCheckpoint', () => {
@@ -507,6 +527,33 @@ describe('validateCheckpointShape (via deserializeCheckpoint)', () => {
     });
 
     expect(() => deserializeCheckpoint(bytes)).toThrow('workerReplaySignatures');
+  });
+
+  it('throws when Worker replay failures have invalid entries', () => {
+    const { encode } = require('./codec.ts');
+    const bytes = encode({
+      workflowId: 'wf-invalid-worker-replay-failure',
+      step: 0,
+      locals: {},
+      accumulatedResults: [],
+      workerReplayFailures: [
+        [
+          0,
+          {
+            status: 'failed',
+            error: 'activity failed',
+            failureCategory: 'not-real',
+          },
+        ],
+      ],
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
+      createdAt: Date.now(),
+    });
+
+    expect(() => deserializeCheckpoint(bytes)).toThrow('workerReplayFailures');
   });
 });
 

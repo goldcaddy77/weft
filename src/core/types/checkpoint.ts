@@ -39,6 +39,37 @@ export interface WorkerReplayOperationSignature {
   stableFieldsByteLength: number;
 }
 
+/**
+ * Failed operation outcome cached by a Worker-mode checkpoint.
+ *
+ * Stored in a dedicated side table rather than inside `accumulatedResults` so
+ * user-controlled result values can never be reinterpreted as internal failure
+ * records by matching an object shape.
+ *
+ * @example
+ * ```ts
+ * import type { WorkerReplayOperationFailure } from 'weft';
+ *
+ * const failure: WorkerReplayOperationFailure = {
+ *   status: 'failed',
+ *   error: 'activity timed out',
+ *   failureCategory: 'timeout',
+ * };
+ *
+ * void failure;
+ * ```
+ */
+export interface WorkerReplayOperationFailure {
+  /** Failed operation status marker. */
+  status: 'failed';
+  /** Error message captured from the failed operation outcome. */
+  error: string;
+  /** Optional JavaScript error name captured from the failed operation outcome. */
+  errorName?: string;
+  /** Optional Weft failure category captured from the failed operation outcome. */
+  failureCategory?: FailureCategory;
+}
+
 // ---------------------------------------------------------------------------
 // Checkpoint: snapshot of workflow at a yield* boundary
 // ---------------------------------------------------------------------------
@@ -74,6 +105,12 @@ export interface Checkpoint {
    * result still belongs to the yielded operation before reusing it.
    */
   workerReplaySignatures?: Array<[number, WorkerReplayOperationSignature]>;
+  /**
+   * Worker-mode failed operation outcomes keyed by step. Completed operation
+   * results stay in `accumulatedResults`; failed outcomes live here so replay
+   * can throw them back into the generator without trusting user result shape.
+   */
+  workerReplayFailures?: Array<[number, WorkerReplayOperationFailure]>;
   pendingSignals: string[];
   searchAttributes: Record<string, SearchAttributeValue>;
   /** User-defined workflow code version. Used for code migrations. */
@@ -162,12 +199,7 @@ export interface OperationRequest {
 
 export type OperationOutcome =
   | { status: 'completed'; value: unknown }
-  | {
-      status: 'failed';
-      error: string;
-      errorName?: string;
-      failureCategory?: FailureCategory;
-    };
+  | WorkerReplayOperationFailure;
 
 // ---------------------------------------------------------------------------
 // Timer entry for scheduler

@@ -66,6 +66,7 @@ export function validateCheckpointShape(value: unknown): asserts value is Checkp
   validateSessionStateLocals(record['locals'] as Record<string, unknown>);
   normalizeAccumulatedResults(record);
   validateWorkerReplaySignatures(record);
+  validateWorkerReplayFailures(record);
   assertArrayField(record, 'pendingSignals');
   assertRecordField(record, 'searchAttributes');
   assertStringField(record, 'version');
@@ -127,6 +128,66 @@ function validateWorkerReplaySignatureRecord(record: Record<string, unknown>): v
 function validateWorkerReplaySignatureByteLength(value: unknown): void {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
     throw new Error('Invalid checkpoint: invalid "workerReplaySignatures" stableFieldsByteLength');
+  }
+}
+
+function validateWorkerReplayFailures(record: Record<string, unknown>): void {
+  if (!('workerReplayFailures' in record) || record['workerReplayFailures'] === undefined) {
+    return;
+  }
+
+  const failures = record['workerReplayFailures'];
+  if (!Array.isArray(failures)) {
+    throw new Error('Invalid checkpoint: invalid "workerReplayFailures" (expected array)');
+  }
+
+  for (const entry of failures) {
+    validateWorkerReplayFailureEntry(entry);
+  }
+}
+
+function validateWorkerReplayFailureEntry(value: unknown): void {
+  if (!Array.isArray(value) || value.length !== 2) {
+    throw new Error('Invalid checkpoint: invalid "workerReplayFailures" entry');
+  }
+
+  const [step, outcome] = value;
+  validateWorkerReplaySignatureStep(step);
+  validateWorkerReplayFailureOutcome(assertWorkerReplayFailureRecord(outcome));
+}
+
+function assertWorkerReplayFailureRecord(outcome: unknown): Record<string, unknown> {
+  if (typeof outcome !== 'object' || outcome === null) {
+    throw new Error('Invalid checkpoint: invalid "workerReplayFailures" outcome');
+  }
+  return outcome as Record<string, unknown>;
+}
+
+function validateWorkerReplayFailureOutcome(record: Record<string, unknown>): void {
+  if (record['status'] !== 'failed') {
+    throw new Error('Invalid checkpoint: invalid "workerReplayFailures" status');
+  }
+  if (typeof record['error'] !== 'string') {
+    throw new Error('Invalid checkpoint: invalid "workerReplayFailures" error');
+  }
+  if (record['errorName'] !== undefined && typeof record['errorName'] !== 'string') {
+    throw new Error('Invalid checkpoint: invalid "workerReplayFailures" errorName');
+  }
+  if (record['failureCategory'] !== undefined && !isFailureCategory(record['failureCategory'])) {
+    throw new Error('Invalid checkpoint: invalid "workerReplayFailures" failureCategory');
+  }
+}
+
+function isFailureCategory(value: unknown): boolean {
+  switch (value) {
+    case 'application':
+    case 'cancellation':
+    case 'resource':
+    case 'system':
+    case 'timeout':
+      return true;
+    default:
+      return false;
   }
 }
 
