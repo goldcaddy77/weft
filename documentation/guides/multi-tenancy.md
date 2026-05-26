@@ -142,6 +142,12 @@ console.log(usage.activeWorkflows.used, usage.activeWorkflows.limit);
 
 When JWT authentication is enabled, the quota endpoint limits tenant-scoped callers to their own tenant claim. API-key callers with the `quota:read` scope can inspect the requested tenant.
 
+Schedule reads and mutations follow the same tenant-scoped rule when they come
+through the server. JWT callers with a tenant claim can read, update, pause,
+resume, or cancel schedules in that tenant. JWT callers without a tenant claim
+receive `403 Forbidden`. Cross-tenant schedule IDs are masked as not found, so
+the response does not reveal whether the schedule exists in another tenant.
+
 ## Tenant-scoped workflow decisions
 
 Use `ctx.tenant` inside the workflow body to choose queues, review routing, or activity input:

@@ -166,6 +166,9 @@ If an `as` cast is genuinely necessary (e.g., deserializing from storage where t
 - Failure categories are the execution taxonomy `application`, `timeout`, `cancellation`, `resource`, and `system`. Preserve read/query normalization for legacy persisted values, but do not reintroduce legacy values as accepted public filter input.
 - MCP discovery is public metadata that emits absolute URLs. Changes to `/.well-known/mcp.json`, `/openrpc.json` MCP metadata, or `/mcp` must cover `publicOrigin`/`trustedHosts`, authentication/session binding, and tenant-scoped resource access.
 - Preserve legacy REST response contracts during cleanup refactors. Shared helpers are fine, but tests must pin any intentionally raw or masked error shape.
+- REST `EngineFailure` responses are masked by the canonical `shapeRestFault` path as `{ error: "Internal server error" }` with status `500`; JSON-RPC still receives the operation fault object. Preserve that split when refactoring operation helpers.
+- Schedule read/update/pause/resume/cancel operations must forward JWT tenant claims into engine access checks across REST and JSON-RPC. Missing tenant claims produce `403`; cross-tenant schedule IDs are masked as `404` without an existence oracle.
+- Task polling and shutdown changes must cover already-aborted request signals, disconnects during parked long-polls, task retention for dead pollers, and `server.stop()` disposal of queued timers/waiters.
 
 ### Testing Approach
 

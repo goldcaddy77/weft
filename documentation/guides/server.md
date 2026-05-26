@@ -70,6 +70,11 @@ interface WeftServer extends AsyncDisposable {
 
 `WeftServer` implements `AsyncDisposable`, so `await using` is required for correct async cleanup.
 
+Stopping the server also disposes the in-memory task queue. Pending task
+expiration timers are cleared, parked long-poll waiters settle with no task,
+and queued state is dropped without invoking completion callbacks against a
+disposed engine.
+
 ## REST API endpoints
 
 The server exposes a versioned REST API under `/v1/`. All endpoints return JSON by default, with content negotiation for MessagePack (`Accept: application/msgpack`).
@@ -206,6 +211,10 @@ Three WebSocket routes are available:
 
 - `/v1/workflows/:id/watch` --- observe workflow state changes in real time
 - `/v1/tasks/:queue/stream` --- [remote worker](./remote-workers.md) task dispatch
+
+HTTP long-poll task requests use the request's `AbortSignal`. If the client
+disconnects before or during the poll, the waiter settles promptly and does
+not claim a pending task for a caller that can no longer complete it.
 
 ## The `handleRequest()` function
 
