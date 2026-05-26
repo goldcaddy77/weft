@@ -2,6 +2,7 @@ import type { AlertingOptions } from '../../alerting/types.ts';
 import type { Storage as WeftStorage } from '../../storage/interface.ts';
 import type { CompressionOptions } from '../compression.ts';
 import type { Interceptor } from '../interceptor.ts';
+import type { ArchiveAdapter } from './archive-adapter.ts';
 import type { HistoryPolicy } from './history-policy.ts';
 import type { FailureCategory, WorkflowStatus } from './identity.ts';
 import type { PayloadSizePolicy } from './payload-size-policy.ts';
@@ -120,6 +121,12 @@ export interface EngineOptions {
    * Omit to disable. There are no baked-in defaults.
    */
   history?: HistoryPolicy;
+  /**
+   * Operator-supplied sink for event-log ranges discarded by
+   * `history.retentionWindow` compaction. Best-effort export only — see
+   * {@link ArchiveAdapter}. Omit for no archival (the default).
+   */
+  archive?: ArchiveAdapter;
   /**
    * Payload-size cap thresholds. When `payloadSize.maxBytes` is set, a workflow
    * input, signal payload, or activity result whose serialized (codec-encoded)

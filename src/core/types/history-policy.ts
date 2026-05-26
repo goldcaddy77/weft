@@ -30,8 +30,28 @@ export interface HistoryPolicy {
    * `maxEvents + 1` trips the circuit breaker and the workflow is forced to
    * `timed-out`. Must be a positive safe integer. `0`, omitted, or `undefined`
    * disables enforcement.
+   *
+   * `maxEvents` counts the **lifetime** event-log sequence (`head.sequence + 1`),
+   * which `retentionWindow` compaction never resets — compaction reclaims storage
+   * but does not make a workflow semantically younger, so the circuit breaker
+   * still fires on total lifetime events.
    */
   maxEvents?: number;
+  /**
+   * Event-log compaction window: keep **at most** the `retentionWindow` most
+   * recent event-log records (measured against the head sequence) and truncate
+   * older records behind a confirmed checkpoint to reclaim storage. The canonical
+   * checkpoint already holds the compacted state, so truncation never affects
+   * resume. `retentionWindow: 1` keeps only the head record. Must be a positive
+   * safe integer. `0`, omitted, or `undefined` disables compaction.
+   *
+   * "At most", not "exactly": the compaction watermark only ever advances forward,
+   * so raising `retentionWindow` after compaction has run does not restore
+   * already-truncated history. Distinct from {@link maxEvents}: that is a
+   * circuit-breaker backstop on lifetime count; this is storage reclamation. They
+   * share validation mechanics only.
+   */
+  retentionWindow?: number;
 }
 
 /**
@@ -41,6 +61,7 @@ export interface HistoryPolicy {
  */
 export interface NormalizedHistoryPolicy {
   maxEvents: number | null;
+  retentionWindow: number | null;
 }
 
 /**

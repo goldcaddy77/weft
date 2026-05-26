@@ -147,9 +147,10 @@ function resolveNumericDefaults(
 
 function resolveHistoryFields(
   options: EngineConstructorOptions | undefined,
-): Pick<ResolvedOptions, 'historyPolicy' | 'payloadSizePolicy'> {
+): Pick<ResolvedOptions, 'historyPolicy' | 'archiveAdapter' | 'payloadSizePolicy'> {
   return {
     historyPolicy: normalizeHistoryPolicy(options?.history, 'options.history'),
+    archiveAdapter: options?.archive ?? null,
     payloadSizePolicy: normalizePayloadSizePolicy(options?.payloadSize, 'options.payloadSize'),
   };
 }

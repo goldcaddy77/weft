@@ -429,6 +429,7 @@ export const KEYS = {
   event: (workflowId: string, sequence: number) =>
     `ev:${encodeStorageKeyComponent(workflowId)}:${String(sequence).padStart(10, '0')}`,
   eventHead: (workflowId: string) => `ev:${encodeStorageKeyComponent(workflowId)}:head`,
+  eventWatermark: (workflowId: string) => `ev:${encodeStorageKeyComponent(workflowId)}:watermark`,
   signal: (workflowId: string, name: string, id: string) =>
     `sig:${encodeStorageKeyComponent(workflowId)}:${name}:${id}`,
   deadline: (deadline: number, workflowId: string) =>

@@ -155,9 +155,10 @@ export function normalizeRetentionDuration(
  * {@link NormalizedHistoryPolicy}. Mirrors {@link normalizeRetentionPolicy}'s
  * throw-on-bad-input contract.
  *
- * Contract for `maxEvents`:
- * - omitted policy, or omitted/`undefined` field → `{ maxEvents: null }` (disabled).
- * - `0` → `{ maxEvents: null }` (disabled; mirrors `checkpointHistory: 0` meaning "off").
+ * Both `maxEvents` and `retentionWindow` share the same validation mechanics
+ * (they differ in semantics — see {@link HistoryPolicy}):
+ * - omitted policy, or omitted/`undefined` field → `null` (disabled).
+ * - `0` → `null` (disabled; mirrors `checkpointHistory: 0` meaning "off").
  * - any other value that is not a positive safe integer (negatives, non-integers,
  *   non-finite values, unsafe integers, wrong types) → throws.
  */
@@ -165,20 +166,31 @@ export function normalizeHistoryPolicy(
   policy: HistoryPolicy | undefined,
   context: string,
 ): NormalizedHistoryPolicy {
-  const maxEvents = policy?.maxEvents;
+  return {
+    maxEvents: normalizePositiveCountOrDisabled(policy?.maxEvents, `${context}.maxEvents`),
+    retentionWindow: normalizePositiveCountOrDisabled(
+      policy?.retentionWindow,
+      `${context}.retentionWindow`,
+    ),
+  };
+}
+
+/**
+ * Normalize a "positive count, or 0/undefined to disable" history-policy field
+ * into `number | null`. Shared by `maxEvents` and `retentionWindow`.
+ */
+function normalizePositiveCountOrDisabled(value: number | undefined, field: string): number | null {
   // `undefined` and `0` both mean "disabled" and short-circuit before the guard,
   // so the guard below only ever rejects genuinely invalid positive-intent input.
-  if (maxEvents === undefined || maxEvents === 0) {
-    return { maxEvents: null };
+  if (value === undefined || value === 0) {
+    return null;
   }
-  if (typeof maxEvents !== 'number' || !Number.isSafeInteger(maxEvents) || maxEvents < 0) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
     throw new TypeError(
-      `${context}.maxEvents must be a positive safe integer (or 0/undefined to disable); received ${String(
-        maxEvents,
-      )}`,
+      `${field} must be a positive safe integer (or 0/undefined to disable); received ${String(value)}`,
     );
   }
-  return { maxEvents };
+  return value;
 }
 
 /**

@@ -2,6 +2,7 @@
 // `import { ... } from './types.ts'` path for the rest of the codebase.
 
 export * from './types/activity.ts';
+export * from './types/archive-adapter.ts';
 export * from './types/bulk.ts';
 export * from './types/checkpoint.ts';
 export * from './types/constants.ts';

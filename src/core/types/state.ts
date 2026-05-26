@@ -285,4 +285,14 @@ export type WorkflowReplay = {
   checkpoint: CheckpointState;
   accumulatedResults: Array<[number, unknown]>;
   events: WorkflowEvent[];
+  /**
+   * Lowest event sequence still present in the log, set whenever event-log
+   * compaction has truncated earlier records (i.e. a watermark exists). When
+   * present, `events` omits the `[0, compactedBefore)` prefix regardless of the
+   * requested step — an inspection caller can use this to tell an incomplete
+   * replay from a complete one. Absent when nothing was compacted. Workflow
+   * execution state always rebuilds fully from `checkpoint`; only the event
+   * slice is bounded.
+   */
+  compactedBefore?: number;
 };

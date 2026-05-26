@@ -17,67 +17,24 @@
  * @module core/event-log
  */
 
-import { hashBytes as portableHashBytes } from '../runtime/portable.ts';
 import type { BatchOperation, Storage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { decode, encode } from './codec.ts';
+import {
+  EMPTY_EVENT_HEAD,
+  type EventHeadRecord,
+  type WorkflowLogEntry,
+  hashBytes,
+  isWorkflowLogEntry,
+  readEventHead,
+} from './event-log-shared.ts';
+import { type VerifyResult, verifyEventLog } from './event-log-verify.ts';
 import type { WorkflowVersionTuple } from './workflow-version-tuple.ts';
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/** Hash value used as `prevHash` for the very first entry in a log. */
-const GENESIS_HASH = '0000000000000000';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-/** A single entry in the event log, as stored in the KV backend. */
-export interface WorkflowLogEntry {
-  /** Discriminates the entry type, e.g. `'workflow:checkpoint'`. */
-  type: string;
-  /** Workflow this entry belongs to. */
-  workflowId: string;
-  /** Zero-based monotonic sequence number. */
-  sequence: number;
-  /**
-   * wyhash (16 hex chars) of the *encoded bytes* of the previous entry.
-   * The first entry carries {@link GENESIS_HASH}.
-   */
-  prevHash: string;
-  /** Arbitrary event payload. */
-  payload: unknown;
-  /** Unix timestamp (ms) at the time of the append. */
-  timestamp: number;
-  /**
-   * Workflow, agent, and tool version tuple captured at the time of this
-   * entry. Only present when the caller passes a `versionTuple` argument.
-   * Absent for entries written by non-agent workflows or callers that opt out.
-   */
-  versionTuple?: WorkflowVersionTuple;
-}
-
-/**
- * The head record stored at `ev:{workflowId}:head`.
- * Tracks both the latest sequence number and the hash of the last committed
- * entry so that subsequent appends can chain without a second storage read.
- */
-export interface EventHeadRecord {
-  sequence: number;
-  lastHash: string;
-}
-
-/**
- * The head state for a workflow with no committed entries.
- * Used as the starting point when appending the first event.
- * Frozen to prevent accidental mutation of the shared genesis sentinel.
- */
-export const EMPTY_EVENT_HEAD: Readonly<EventHeadRecord> = Object.freeze({
-  sequence: -1,
-  lastHash: GENESIS_HASH,
-});
+// Re-export the shared record/result types and the empty-head sentinel so that
+// the canonical `from './event-log.ts'` import path stays stable for callers.
+export { EMPTY_EVENT_HEAD };
+export type { EventHeadRecord, VerifyResult, WorkflowLogEntry };
 
 /**
  * Result returned from `appendToBatch()`. Carries the updated head
@@ -90,36 +47,6 @@ export type AppendToBatchResult = {
   readonly newHead: EventHeadRecord;
   readonly timestamp: number;
 };
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Compute a 16-character hex hash of an arbitrary byte buffer. */
-function hashBytes(bytes: Uint8Array): string {
-  return portableHashBytes(bytes);
-}
-
-/** Narrow an unknown decoded value to {@link WorkflowLogEntry}. */
-function isWorkflowLogEntry(value: unknown): value is WorkflowLogEntry {
-  if (typeof value !== 'object' || value === null) return false;
-  const obj = value as Record<string, unknown>;
-  return (
-    typeof obj['type'] === 'string' &&
-    typeof obj['workflowId'] === 'string' &&
-    typeof obj['sequence'] === 'number' &&
-    typeof obj['prevHash'] === 'string' &&
-    typeof obj['timestamp'] === 'number' &&
-    'payload' in obj
-  );
-}
-
-/** Narrow an unknown decoded value to {@link EventHeadRecord}. */
-function isEventHeadRecord(value: unknown): value is EventHeadRecord {
-  if (typeof value !== 'object' || value === null) return false;
-  const obj = value as Record<string, unknown>;
-  return typeof obj['sequence'] === 'number' && typeof obj['lastHash'] === 'string';
-}
 
 // ---------------------------------------------------------------------------
 // EventLog
@@ -260,40 +187,13 @@ export class EventLog {
   // -------------------------------------------------------------------------
 
   /**
-   * Walk the entire log and verify hash-chain integrity.
-   *
-   * Returns `{ valid: true }` when every `prevHash` matches the hash of the
-   * preceding entry's encoded bytes. Returns `{ valid: false, firstInvalidSequence: N }`
-   * at the first broken link.
+   * Walk the log and verify hash-chain integrity, tolerating concurrent
+   * compaction and a compaction watermark. Delegates to {@link verifyEventLog};
+   * see that function for the full watermark-seeding, retry, and corruption
+   * semantics.
    */
-  async verify(): Promise<{ valid: boolean; firstInvalidSequence?: number }> {
-    let previousHash: string = GENESIS_HASH;
-    let isFirst = true;
-
-    const prefix = KEYS.eventPrefix(this.#workflowId);
-
-    for await (const [, bytes] of this.#storage.scan(prefix)) {
-      const decoded = decode(bytes);
-      // The head record is not a WorkflowLogEntry; the type guard skips it.
-      if (!isWorkflowLogEntry(decoded)) continue;
-
-      if (isFirst) {
-        // First entry must carry the genesis hash.
-        if (decoded.prevHash !== GENESIS_HASH) {
-          return { valid: false, firstInvalidSequence: decoded.sequence };
-        }
-        isFirst = false;
-      } else {
-        // Subsequent entries: prevHash must equal the hash of the previous bytes.
-        if (decoded.prevHash !== previousHash) {
-          return { valid: false, firstInvalidSequence: decoded.sequence };
-        }
-      }
-
-      previousHash = hashBytes(bytes);
-    }
-
-    return { valid: true };
+  async verify(): Promise<VerifyResult> {
+    return verifyEventLog(this.#storage, this.#workflowId);
   }
 
   // -------------------------------------------------------------------------
@@ -362,15 +262,6 @@ export class EventLog {
    * `sequence = 0` and `prevHash = GENESIS_HASH` for the first entry.
    */
   async #readHead(): Promise<EventHeadRecord> {
-    const headKey = KEYS.eventHead(this.#workflowId);
-    const bytes = await this.#storage.get(headKey);
-    if (bytes === null) {
-      return { sequence: -1, lastHash: GENESIS_HASH };
-    }
-    const decoded = decode(bytes);
-    if (isEventHeadRecord(decoded)) {
-      return decoded;
-    }
-    return { sequence: -1, lastHash: GENESIS_HASH };
+    return readEventHead(this.#storage, this.#workflowId);
   }
 }

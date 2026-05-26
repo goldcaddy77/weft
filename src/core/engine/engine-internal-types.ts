@@ -3,6 +3,7 @@ import type { ConstraintDefinition } from '../constraint.ts';
 import type { ExecutionStrategy } from '../execution-strategy.ts';
 import type { InlineExecutionStrategy } from '../inline-execution-strategy.ts';
 import type {
+  ArchiveAdapter,
   Checkpoint,
   DefinitionSchema,
   EngineOptions,
@@ -38,6 +39,8 @@ export interface ResolvedOptions {
   retentionSweepIntervalMs: number;
   retentionSweepBatchSize: number;
   historyPolicy: NormalizedHistoryPolicy;
+  /** Operator-supplied sink for compacted event-log ranges; `null` when none. */
+  archiveAdapter: ArchiveAdapter | null;
   payloadSizePolicy: NormalizedPayloadSizePolicy;
   getNow: () => number;
 }
