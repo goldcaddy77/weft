@@ -13,6 +13,7 @@ import { WorkflowTimeoutError } from '../../timeouts.ts';
 import type {
   FailureCategory,
   SearchAttributeValue,
+  TerminationReason,
   WorkflowState,
   WorkflowTimelineEntry,
 } from '../../types.ts';
@@ -58,6 +59,7 @@ export async function terminateWorkflow(
   workflowId: string,
   status: 'cancelled' | 'timed-out',
   callbacks: TerminationCallbacks,
+  reason?: TerminationReason,
 ): Promise<void> {
   internals.terminalizingWorkflows.add(workflowId);
   dropQueuedInlineWorkflowStart(internals, workflowId);
@@ -73,7 +75,7 @@ export async function terminateWorkflow(
     const terminationResult = await updateWorkflowState(
       internals,
       workflowId,
-      { status },
+      { status, ...(reason !== undefined ? { terminationReason: reason } : {}) },
       {
         allowedStatuses: ['running', 'pending'],
         buildAdditionalOperations: (_previousState, updatedAt) => {
@@ -107,18 +109,12 @@ export async function terminateWorkflow(
     }
 
     const resolver = internals.resultResolvers.get(workflowId);
-    const terminalError =
-      status === 'timed-out'
-        ? new WorkflowTimeoutError(workflowId, 'execution', elapsed)
-        : new Error('Workflow cancelled');
+    const terminalError = buildTerminalError(workflowId, status, elapsed);
 
     try {
       await cleanupTerminalWorkflowSynchronously(internals, workflowId, true, callbacks);
 
-      const event =
-        status === 'timed-out'
-          ? new WorkflowTimedOutEvent(workflowId, 'execution', elapsed)
-          : new WorkflowCancelledEvent(workflowId);
+      const event = buildTerminalEvent(workflowId, status, elapsed, reason);
       callbacks.dispatchEvent(event);
       callbacks.forwardEventToHandle(workflowId, event);
 
@@ -135,6 +131,29 @@ export async function terminateWorkflow(
   } finally {
     internals.terminalizingWorkflows.delete(workflowId);
   }
+}
+
+/** The error a terminated workflow's result promise rejects with. */
+function buildTerminalError(
+  workflowId: string,
+  status: 'cancelled' | 'timed-out',
+  elapsed: number,
+): Error {
+  return status === 'timed-out'
+    ? new WorkflowTimeoutError(workflowId, 'execution', elapsed)
+    : new Error('Workflow cancelled');
+}
+
+/** The terminal lifecycle event dispatched for a terminated workflow. */
+function buildTerminalEvent(
+  workflowId: string,
+  status: 'cancelled' | 'timed-out',
+  elapsed: number,
+  reason: TerminationReason | undefined,
+): WorkflowTimedOutEvent | WorkflowCancelledEvent {
+  return status === 'timed-out'
+    ? new WorkflowTimedOutEvent(workflowId, 'execution', elapsed, reason)
+    : new WorkflowCancelledEvent(workflowId);
 }
 
 function buildCompletedWorkflowState(

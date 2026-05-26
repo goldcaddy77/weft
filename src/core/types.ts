@@ -7,6 +7,7 @@ export * from './types/checkpoint.ts';
 export * from './types/constants.ts';
 export * from './types/definition-schema-to-json.ts';
 export * from './types/definition-schema.ts';
+export * from './types/history-policy.ts';
 export * from './types/identity.ts';
 export * from './types/message-handles.ts';
 export * from './types/options.ts';

@@ -1,3 +1,5 @@
+import type { TerminationReason } from '../types/history-policy.ts';
+
 /**
  * Fired on the {@link Engine} when a new workflow execution begins. Listen via
  * `engine.addEventListener('workflow:started', handler)` and read
@@ -131,7 +133,10 @@ export class WorkflowCancelledEvent extends Event {
 /**
  * Fired on the {@link Engine} when a workflow exceeds its execution or run
  * timeout. Read `e.timeoutType` (`'execution'` or `'run'`) and `e.elapsed`
- * (milliseconds) to understand which limit was hit.
+ * (milliseconds) to understand which limit was hit. `e.reason` is populated
+ * only when the workflow was forced to `timed-out` by the history circuit
+ * breaker (it is `undefined` for ordinary deadline timeouts), so operators
+ * reading the event stream can distinguish the two.
  *
  * @example
  * ```ts
@@ -149,12 +154,21 @@ export class WorkflowTimedOutEvent extends Event {
   readonly workflowId: string;
   readonly timeoutType: 'execution' | 'run';
   readonly elapsed: number;
+  readonly reason?: TerminationReason;
 
-  constructor(workflowId: string, timeoutType: 'execution' | 'run', elapsed: number) {
+  constructor(
+    workflowId: string,
+    timeoutType: 'execution' | 'run',
+    elapsed: number,
+    reason?: TerminationReason,
+  ) {
     super(WorkflowTimedOutEvent.type);
     this.workflowId = workflowId;
     this.timeoutType = timeoutType;
     this.elapsed = elapsed;
+    if (reason !== undefined) {
+      this.reason = reason;
+    }
   }
 }
 

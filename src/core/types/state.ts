@@ -2,6 +2,7 @@ import type { AtomicStateOptions } from '../atomic-state.ts';
 import type { WorkflowVersionTuple } from '../workflow-version-tuple.ts';
 import type { ActivityCallOptions } from './activity.ts';
 import type { CheckpointState } from './checkpoint.ts';
+import type { TerminationReason } from './history-policy.ts';
 import type { FailureCategory, WorkflowId, WorkflowStatus } from './identity.ts';
 import type { WorkflowOperation } from './workflow-function.ts';
 
@@ -37,6 +38,15 @@ export interface WorkflowState {
    * `engine.list({ attributes: [{ key: 'failureCategory', value: 'application' }] })`
    */
   failureCategory?: FailureCategory | null;
+  /**
+   * Distinct reason a workflow reached its terminal state, beyond the
+   * {@link WorkflowStatus} itself. Currently populated only when the history
+   * circuit breaker forces a workflow to `timed-out`
+   * ({@link HISTORY_CIRCUIT_BREAKER_REASON}), letting operators tell
+   * circuit-breaker termination apart from an ordinary deadline timeout (which
+   * leaves this `undefined`).
+   */
+  terminationReason?: TerminationReason;
   version: string;
   /**
    * Owner identifier for execution-scoped durable state. Top-level workflows

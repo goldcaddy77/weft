@@ -1046,7 +1046,7 @@ describe('engine lifecycle coverage helpers', () => {
           checkpoints: new Map(),
           eventLogHeads: new Map(),
           inlineStrategy: null,
-          options: { development: false, getNow: () => 1_000 },
+          options: { development: false, getNow: () => 1_000, historyPolicy: { maxEvents: null } },
           parkedInlineWorkflows: new Set<string>(),
           registrations: new Map([
             [
@@ -1093,7 +1093,7 @@ describe('engine lifecycle coverage helpers', () => {
           checkpoints: new Map(),
           eventLogHeads: new Map(),
           inlineStrategy: null,
-          options: { development: false, getNow: () => 1_000 },
+          options: { development: false, getNow: () => 1_000, historyPolicy: { maxEvents: null } },
           parkedInlineWorkflows: new Set<string>(),
           registrations: new Map([
             [
@@ -1156,7 +1156,7 @@ describe('engine lifecycle coverage helpers', () => {
       checkpoints: new Map<string, Checkpoint>(),
       eventLogHeads: new Map(),
       inlineStrategy: null,
-      options: { development: false, getNow: () => 20_000 },
+      options: { development: false, getNow: () => 20_000, historyPolicy: { maxEvents: null } },
       parkedInlineWorkflows: new Set<string>(),
       registrations: new Map([
         [

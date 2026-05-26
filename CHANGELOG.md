@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — history circuit breaker
+
+New `EngineOptions.history: { maxEvents?: number }`. Activation rehydrates a
+workflow by replaying its event log, so cost is O(history); an unbounded log
+(e.g. a runaway infinite-yield loop) can stall the shared single-process engine
+for every workflow. When `maxEvents` is set, a workflow whose durable event-log
+record count would exceed it is forced to a terminal `timed-out` state — both on
+the per-yield checkpoint write path and before replaying an already-oversized
+history at recovery. The terminal state and the emitted `WorkflowTimedOutEvent`
+carry a distinct `terminationReason: 'history-circuit-breaker'`
+(`HISTORY_CIRCUIT_BREAKER_REASON`) so operators can tell circuit-breaker
+termination apart from an ordinary deadline timeout. There are no baked-in
+defaults; omit `history` (or set `maxEvents: 0`) to disable. New public exports:
+`HistoryPolicy`, `TerminationReason`, `HISTORY_CIRCUIT_BREAKER_REASON`, and
+`WorkflowState.terminationReason`.
+
 ### Removed — multi-tenancy (BREAKING)
 
 weft is now single-tenant by default. The open-source core exposes generic
