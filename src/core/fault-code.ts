@@ -43,7 +43,6 @@ export type FaultCode =
   | 'Conflict'
   | 'Unprocessable'
   | 'Timeout'
-  | 'RateLimited'
   | 'NotImplemented'
   | 'UnsupportedTransport'
   | 'SubscriptionOverflow'
@@ -65,7 +64,6 @@ export type FaultCode =
  * ```ts
  * import { FAULT_CODE_TO_FAILURE_CATEGORY } from 'weft';
  *
- * FAULT_CODE_TO_FAILURE_CATEGORY.RateLimited; // 'resource'
  * FAULT_CODE_TO_FAILURE_CATEGORY.Timeout; // 'timeout'
  * ```
  */
@@ -81,8 +79,7 @@ export const FAULT_CODE_TO_FAILURE_CATEGORY = Object.freeze({
   MethodNotFound: 'application',
   // Deadline exceeded.
   Timeout: 'timeout',
-  // Capacity / quota limits.
-  RateLimited: 'resource',
+  // Capacity limits.
   SubscriptionOverflow: 'resource',
   // Server cannot fulfill — infrastructure or unimplemented surface.
   NotImplemented: 'system',

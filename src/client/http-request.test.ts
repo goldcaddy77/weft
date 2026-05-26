@@ -42,8 +42,8 @@ describe('HttpClientError', () => {
   });
 
   it('derives category from a provided faultCode', () => {
-    const error = new HttpClientError(429, 'slow down', { faultCode: 'RateLimited' });
-    expect(error.faultCode).toBe('RateLimited');
+    const error = new HttpClientError(503, 'overflow', { faultCode: 'SubscriptionOverflow' });
+    expect(error.faultCode).toBe('SubscriptionOverflow');
     expect(error.category).toBe('resource');
   });
 });
@@ -74,14 +74,17 @@ describe('request() error-body parsing', () => {
     expect(error.category).toBe('timeout');
   });
 
-  it('maps a RateLimited fault to the resource category', async () => {
+  it('maps a SubscriptionOverflow fault to the resource category', async () => {
     const error = await captureError(
-      new Response(JSON.stringify({ error: { code: 'RateLimited', message: 'too many' } }), {
-        status: 429,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+      new Response(
+        JSON.stringify({ error: { code: 'SubscriptionOverflow', message: 'too many' } }),
+        {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
     );
-    expect(error.faultCode).toBe('RateLimited');
+    expect(error.faultCode).toBe('SubscriptionOverflow');
     expect(error.category).toBe('resource');
   });
 

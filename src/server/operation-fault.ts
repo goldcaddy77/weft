@@ -75,12 +75,11 @@ export type OperationFault =
       };
     }
   | { code: 'Unprocessable'; message: string; data: { reason: string } }
-  // Both `Timeout` and `RateLimited` allow callers to construct
-  // `data: { hint: undefined }` legally — the wire serializers strip
-  // undefined-valued keys via `filterDefined`. Spelling `| undefined`
-  // explicitly accepts that under `exactOptionalPropertyTypes`.
+  // `Timeout` allows callers to construct `data: { operationName: undefined }`
+  // legally — the wire serializers strip undefined-valued keys via
+  // `filterDefined`. Spelling `| undefined` explicitly accepts that under
+  // `exactOptionalPropertyTypes`.
   | { code: 'Timeout'; message: string; data: { operationName?: string | undefined } }
-  | { code: 'RateLimited'; message: string; data: { retryAfterMs?: number | undefined } }
   | { code: 'NotImplemented'; message: string; data: Record<string, never> }
   | {
       code: 'UnsupportedTransport';
@@ -113,7 +112,6 @@ export const FAULT_CODE_TO_HTTP_STATUS: Readonly<Record<FaultCode, number>> = Ob
   Conflict: 409,
   Unprocessable: 422,
   Timeout: 408,
-  RateLimited: 429,
   NotImplemented: 501,
   UnsupportedTransport: 501,
   SubscriptionOverflow: 500,
@@ -176,7 +174,6 @@ export const FAULT_CODE_TO_JSON_RPC_CODE: Readonly<Record<FaultCode, number>> = 
   Conflict: -32021,
   Unprocessable: -32022,
   Timeout: -32023,
-  RateLimited: -32024,
   NotImplemented: -32025,
   UnsupportedTransport: -32030,
   SubscriptionOverflow: -32031,
