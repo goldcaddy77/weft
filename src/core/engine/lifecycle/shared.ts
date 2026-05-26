@@ -88,9 +88,10 @@ export async function enforceHistoryPolicyBeforeReplay(
  * {@link enforceHistoryPolicyBeforeReplay} for callers that have not already
  * loaded the event-log head. Resolves the head from the engine's in-memory map
  * (present for workflows this instance already tracks, e.g. locally-owned ones)
- * and falls back to storage. Used by `resume`, whose local-ownership paths
- * return before any storage load — without this the circuit breaker would be
- * skipped for a workflow left `running` with an oversized history.
+ * and falls back to storage. Used by `resume` on its local-ownership paths,
+ * which return before reaching `resumeWorkflowFromStorage` (where the head is
+ * otherwise loaded for the guard) — without this the circuit breaker would be
+ * skipped for a locally-owned workflow left `running` with an oversized history.
  */
 export async function enforceHistoryPolicyBeforeReplayById(
   internals: EngineInternals,

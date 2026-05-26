@@ -170,20 +170,19 @@ export async function resume(
 ): Promise<WorkflowHandle> {
   const workflowState = await loadWorkflowState(internals, workflowId);
   if (workflowState !== null) {
-    // Enforce the history circuit breaker before any ownership short-circuit.
-    // The local-ownership paths below return without reaching
-    // `resumeWorkflowFromStorage`, so without this guard a workflow left
-    // `running` with an oversized history (e.g. after a write-path termination
-    // failure on this same engine instance) could never be reaped on resume.
-    if (await enforceHistoryPolicyBeforeReplayById(internals, workflowId, callbacks)) {
-      return callbacks.getHandle(workflowId);
-    }
-
-    if (callbacks.isInlineWorkflowLocallyOwned(workflowId, workflowState.status)) {
-      return callbacks.getHandle(workflowId);
-    }
-
-    if (callbacks.hasLocalCheckpointOwnership(workflowId, workflowState.status)) {
+    const locallyOwned =
+      callbacks.isInlineWorkflowLocallyOwned(workflowId, workflowState.status) ||
+      callbacks.hasLocalCheckpointOwnership(workflowId, workflowState.status);
+    if (locallyOwned) {
+      // The local-ownership paths return without reaching
+      // `resumeWorkflowFromStorage`, where the pre-replay history guard lives.
+      // Run the guard here so a locally-owned workflow left `running` with an
+      // oversized history (e.g. after a write-path termination failure on this
+      // same engine instance) is still reaped on resume. Only the owned paths
+      // need this — the non-owned path below delegates to
+      // `resumeWorkflowFromStorage`, which guards using the head it already
+      // loads, so we avoid a duplicate event-log head read on the hot path.
+      await enforceHistoryPolicyBeforeReplayById(internals, workflowId, callbacks);
       return callbacks.getHandle(workflowId);
     }
   }
