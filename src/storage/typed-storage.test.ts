@@ -173,11 +173,15 @@ describe('JSONValue is the single canonical public JSON value type', () => {
     const readonlyArray: JSONValue = { rows: [1, 2, 3] as readonly number[] };
     const nested: JSONValue = { a: { b: { c: [{ d: true }, null, 'x'] } } };
 
-    // All three barrels resolve to the same readonly JSONValue.
+    // Assigning a JSONValue into the root- and storage-barrel aliases proves
+    // both barrels re-export a type that accepts the canonical JSONValue.
     const fromRoot: JSONValueFromRoot = mutableArray;
     const fromStorage: JSONValueFromStorageBarrel = readonlyArray;
 
-    expect([mutableArray, readonlyArray, nested, fromRoot, fromStorage]).toHaveLength(5);
+    // Runtime body is incidental — the assignments above are the real (compile-time) test.
+    expect(JSON.stringify([mutableArray, readonlyArray, nested, fromRoot, fromStorage])).toContain(
+      'rows',
+    );
   });
 
   it('jsonCodec generic bound still accepts mutable user value types', () => {
@@ -189,5 +193,14 @@ describe('JSONValue is the single canonical public JSON value type', () => {
     const encoded = codec.encode({ id: 1, tags: ['a', 'b'] });
 
     expect(codec.decode(encoded)).toEqual({ id: 1, tags: ['a', 'b'] });
+  });
+
+  it('jsonCodec() without a parser yields a StorageCodec<JSONValue>', () => {
+    // Pins the no-argument overload's return type: decode output must be
+    // assignable to JSONValue, not silently widened to `unknown`/`any`.
+    const codec = jsonCodec();
+    const roundTripped: JSONValue = codec.decode(codec.encode({ ok: true, rows: [1, 2] }));
+
+    expect(roundTripped).toEqual({ ok: true, rows: [1, 2] });
   });
 });
