@@ -12,8 +12,15 @@
  * storage write. Pass via {@link EngineOptions.payloadSize}.
  *
  * Thresholds are operator config only — there are no baked-in defaults. Omit
- * the policy (or `maxBytes`) to disable the cap entirely; when disabled, no
- * extra encode is performed, so the unconfigured path has zero added cost.
+ * the policy (or set `maxBytes` to `0`/`null`) to disable the cap entirely;
+ * when disabled, no extra encode is performed, so the unconfigured path has
+ * zero added cost.
+ *
+ * The cap measures the codec-encoded byte length of the payload value before
+ * any storage-layer compression or record-envelope wrapping, and is an
+ * admission-time check: it rejects new oversized payloads but does not
+ * retroactively invalidate data already persisted under a larger (or disabled)
+ * limit, which remains replayable.
  *
  * @example
  * ```ts
@@ -29,9 +36,9 @@ export interface PayloadSizePolicy {
    * Maximum serialized (codec-encoded) byte length a single payload may have.
    * A payload whose encoded size is exactly `maxBytes` is allowed; one byte
    * larger is rejected with `PayloadSizeExceededError`. Must be a positive safe
-   * integer. `0`, omitted, or `undefined` disables the cap.
+   * integer. `0`, `null`, omitted, or `undefined` disables the cap.
    */
-  maxBytes?: number;
+  maxBytes?: number | null;
 }
 
 /**

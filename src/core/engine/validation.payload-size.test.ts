@@ -13,6 +13,12 @@ describe('normalizePayloadSizePolicy', () => {
     expect(normalizePayloadSizePolicy({}, 'options.payloadSize')).toEqual({ maxBytes: null });
   });
 
+  it('disables when maxBytes is null', () => {
+    expect(normalizePayloadSizePolicy({ maxBytes: null }, 'options.payloadSize')).toEqual({
+      maxBytes: null,
+    });
+  });
+
   it('disables when maxBytes is 0', () => {
     expect(normalizePayloadSizePolicy({ maxBytes: 0 }, 'options.payloadSize')).toEqual({
       maxBytes: null,

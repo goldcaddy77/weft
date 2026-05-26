@@ -47,9 +47,9 @@ describe('assertPayloadWithinLimit', () => {
   });
 
   it('does not throw and does not encode when the limit is null (disabled)', () => {
-    // A value that throws when encoded proves the disabled path never encodes:
-    // structuredClone/MessagePack cannot serialize a function-bearing value with
-    // a getter that throws. We use a getter that records whether it was read.
+    // Prove the disabled path never encodes: a getter records whether it was
+    // read. encode() would read the property, so an unread getter means the
+    // helper short-circuited before touching the value.
     let read = false;
     const value = {
       get probe() {

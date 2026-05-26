@@ -145,7 +145,7 @@ function resolveNumericDefaults(
   };
 }
 
-function resolvePolicyFields(
+function resolveHistoryFields(
   options: EngineConstructorOptions | undefined,
 ): Pick<ResolvedOptions, 'historyPolicy' | 'payloadSizePolicy'> {
   return {
@@ -165,7 +165,7 @@ export function resolveEngineOptions(
     ...resolveBooleanDefaults(options),
     ...resolveNumericDefaults(options),
     ...resolveRetentionFields(options),
-    ...resolvePolicyFields(options),
+    ...resolveHistoryFields(options),
   };
 }
 

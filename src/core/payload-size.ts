@@ -11,7 +11,13 @@ export type PayloadKind = 'workflow input' | 'signal payload' | 'activity result
 /**
  * Thrown at admission when a payload's serialized (codec-encoded) size exceeds
  * the operator-configured {@link PayloadSizePolicy.maxBytes}. The rejection
- * happens before any storage write, so no oversized value is ever persisted.
+ * happens before any storage write, so an oversized value is never newly
+ * persisted. The measured size is the codec-encoded byte length of the bare
+ * value, before any storage-layer compression or record-envelope wrapping.
+ *
+ * This is a terminal admission failure, not a transient one: re-running the
+ * producing operation cannot make the result smaller, so it should not be
+ * retried.
  *
  * This is a local validation error: its `code` is not part of the
  * cross-boundary `WeftErrorCode` union. Catch it with `instanceof` or by
@@ -56,10 +62,11 @@ export class PayloadSizeExceededError extends WeftError<'PayloadSizeExceededErro
 /**
  * Reject a payload whose serialized size exceeds `limit`, before it is written.
  *
- * Size is measured as `encode(value).byteLength` — the exact bytes the storage
- * layer would persist. A payload exactly at `limit` is allowed; one byte larger
- * throws {@link PayloadSizeExceededError}. When `limit` is `null` the cap is
- * disabled and the function returns immediately without encoding, so the
+ * Size is measured as `encode(value).byteLength` — the codec-encoded byte
+ * length of the bare value, before any storage-layer compression or
+ * record-envelope wrapping. A payload exactly at `limit` is allowed; one byte
+ * larger throws {@link PayloadSizeExceededError}. When `limit` is `null` the
+ * cap is disabled and the function returns immediately without encoding, so the
  * unconfigured path costs nothing.
  *
  * @param value - The payload to measure.

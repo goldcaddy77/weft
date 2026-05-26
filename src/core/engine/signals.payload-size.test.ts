@@ -4,7 +4,8 @@ import { MemoryStorage } from '../../storage/memory.ts';
 import { sleepForTesting } from '../../testing/fake-timers.ts';
 import { Engine } from '../engine.ts';
 import { PayloadSizeExceededError } from '../payload-size.ts';
-import { type WorkflowContext, workflow } from '../types.ts';
+import { workflow, type WorkflowContext } from '../types.ts';
+import { bufferSignalPayloads, type SignalCallbacks } from './signals.ts';
 
 async function flush(): Promise<void> {
   await sleepForTesting(10);
@@ -65,5 +66,39 @@ describe('payload-size cap — signal payload', () => {
     expect(await resultPromise).toBe('ping');
 
     engine[Symbol.dispose]();
+  });
+
+  it('aborts the whole buffered batch when any one payload is oversize (nothing written)', async () => {
+    const storage = new MemoryStorage();
+    const internals = {
+      options: { payloadSizePolicy: { maxBytes: 64 } },
+      parkedInlineWorkflows: new Set<string>(),
+      signalWaiters: new Map<string, () => void>(),
+      signalWaitersByWorkflow: new Map(),
+      storage,
+      workflowsNeedingTerminalCleanup: new Set<string>(),
+    };
+    const callbacks: SignalCallbacks = {
+      broadcast: () => {},
+      dispatchEvent: () => true,
+      getComposedInterceptor: () => null,
+      loadWorkflowState: async () => null,
+      resumeParkedInlineWorkflow: async () => {},
+    };
+
+    await expect(
+      bufferSignalPayloads(
+        internals as never,
+        'wf-batch',
+        [
+          { signalName: 'a', payload: 'small' },
+          { signalName: 'b', payload: 'x'.repeat(1024) },
+        ],
+        callbacks,
+      ),
+    ).rejects.toBeInstanceOf(PayloadSizeExceededError);
+
+    // The small delivery that preceded the oversize one was not written either.
+    expect(await countSignalKeys(storage, 'wf-batch')).toBe(0);
   });
 });
