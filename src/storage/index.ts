@@ -190,8 +190,8 @@ const exportedWithCodec = withCodec;
 
 export type {
   BatchOperation,
-  BooleanStorageCapabilityKey,
   ConditionalBatchCondition,
+  GatedStorageCapabilityKey,
   ScanOptions,
   Storage,
   StorageCapabilities,

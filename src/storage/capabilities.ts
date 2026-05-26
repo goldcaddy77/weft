@@ -14,15 +14,19 @@ import type { Storage } from './interface.ts';
  * backend, returned by {@link Storage.capabilities}. Values describe the
  * guarantees a backend actually provides, not what callers wish it provided.
  *
- * **Two kinds of capability.** Only `conditionalBatch` is gated at runtime
- * (see {@link requireStorageCapability}): a backend may legitimately omit
- * compare-and-swap, so its absence fails fast with a clear diagnostic at first
- * use. The remaining fields — `atomicBatch`, `readAfterWrite`,
- * `scanConsistency`, `boundedRangeDelete` — are **trusted correctness
- * contracts** the engine reads but does NOT verify at runtime. If a backend
- * reports `atomicBatch: true` but applies batches non-atomically, the failure
- * mode is checkpoint corruption, not a missing feature: honesty is the adapter
- * author's responsibility.
+ * **Three kinds of capability, treated differently:**
+ * - **Runtime-gated:** `conditionalBatch` is the only capability the engine
+ *   enforces at runtime (see {@link requireStorageCapability}). A backend may
+ *   legitimately omit compare-and-swap, so its absence fails fast with a clear
+ *   diagnostic at the first feature that needs it.
+ * - **Trusted correctness contracts:** `atomicBatch`, `readAfterWrite`, and
+ *   `scanConsistency` are read by the engine but NOT verified at runtime. If a
+ *   backend reports `atomicBatch: true` but applies batches non-atomically, the
+ *   failure mode is checkpoint corruption, not a missing feature — honesty is
+ *   the adapter author's responsibility.
+ * - **Operational hint:** `boundedRangeDelete` is a strength-of-implementation
+ *   claim about `deletePrefix()` (a single bounded range op vs. a scan-and-delete
+ *   fallback). It affects performance, not correctness, and nothing gates on it.
  *
  * **Why the engine needs these.** Checkpoint commit relies on `atomicBatch`
  * (all-or-nothing); resume relies on `readAfterWrite` (the just-written
@@ -97,31 +101,40 @@ export type StorageCapabilities = {
 };
 
 /**
- * Capability keys whose values are booleans, and therefore gateable via
- * {@link requireStorageCapability}. Resolves to the union
- * `'atomicBatch' | 'conditionalBatch' | 'boundedRangeDelete'`, excluding the
- * enum-valued `readAfterWrite` and `scanConsistency`.
+ * The boolean capabilities the engine enforces at runtime via
+ * {@link requireStorageCapability}. Today this is only `conditionalBatch` —
+ * see the "three kinds of capability" note on {@link StorageCapabilities}. A
+ * future capability that needs gating is added here deliberately, keeping the
+ * type in lockstep with what is actually enforced rather than implying every
+ * boolean capability is gateable.
  *
  * @example
  * ```ts
- * import type { BooleanStorageCapabilityKey } from 'weft/storage/interface';
+ * import { MemoryStorage } from 'weft';
+ * import { requireStorageCapability } from 'weft/storage/interface';
+ * import type { GatedStorageCapabilityKey } from 'weft/storage/interface';
  *
- * // Only boolean capabilities are assignable.
- * const gateable: BooleanStorageCapabilityKey = 'conditionalBatch';
- * console.log(gateable); // 'conditionalBatch'
+ * await using storage = new MemoryStorage();
+ * // The third argument's type is GatedStorageCapabilityKey — only the
+ * // runtime-gated 'conditionalBatch' is accepted.
+ * const capability: GatedStorageCapabilityKey = 'conditionalBatch';
+ * requireStorageCapability(storage, capability, 'MyFeature compare-and-swap');
  * ```
  */
-export type BooleanStorageCapabilityKey = {
-  [K in keyof StorageCapabilities]: StorageCapabilities[K] extends boolean ? K : never;
-}[keyof StorageCapabilities];
+export type GatedStorageCapabilityKey = 'conditionalBatch';
 
 /**
- * Fail fast when a feature requires a boolean storage capability the backend
- * does not provide. Reads the honest {@link StorageCapabilities} report (not
- * mere method presence), so a value-transforming decorator that downgrades a
- * capability is respected. Call this at the first use of a feature — not at
+ * Fail fast when a feature requires a runtime-gated storage capability the
+ * backend does not provide. Reads the honest {@link StorageCapabilities} report
+ * (not mere method presence), so a value-transforming decorator that downgrades
+ * a capability is respected. Call this at the first use of a feature — not at
  * engine startup — so the diagnostic points at the operation that needs the
  * guarantee.
+ *
+ * Only {@link GatedStorageCapabilityKey} capabilities are accepted: the
+ * non-gated `atomicBatch`/`readAfterWrite`/`scanConsistency` are trusted
+ * contracts the engine does not enforce, and `boundedRangeDelete` is an
+ * operational hint, so gating on any of them would be meaningless.
  *
  * @throws {Error} When `storage.capabilities()[capability]` is `false`.
  *
@@ -137,7 +150,7 @@ export type BooleanStorageCapabilityKey = {
  */
 export function requireStorageCapability(
   storage: Storage,
-  capability: BooleanStorageCapabilityKey,
+  capability: GatedStorageCapabilityKey,
   featureName: string,
 ): void {
   if (!storage.capabilities()[capability]) {

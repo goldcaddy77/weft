@@ -214,8 +214,8 @@ export {
 } from './storage/interface';
 export type {
   BatchOperation,
-  BooleanStorageCapabilityKey,
   ConditionalBatchCondition,
+  GatedStorageCapabilityKey,
   ScanOptions,
   Storage,
   StorageCapabilities,
