@@ -14,6 +14,7 @@ description: >-
 - Renaming fields in persisted or replayed shapes, such as `input` to `arguments`.
 - Changing semantic hash inputs, canonicalization, serialization, or codec behavior.
 - Updating `JSONValue`, tool-call, tool-result, checkpoint, storage, or effect-log data.
+- Adding storage primitives that can delete persisted ranges, especially `deleteRange` bounds, prefix intersection, or watermark truncation semantics.
 - Adding compatibility with another package while Weft still owns the runtime contract.
 - Generating or validating cross-process declarations from registry snapshots, or wrapping byte-oriented storage for string-oriented consumers.
 - Normalizing failure-category values, changing workflow visibility index keys, or changing framed compressed-storage payloads.
@@ -34,6 +35,7 @@ description: >-
 6. For failure-category changes, preserve read/query compatibility for legacy stored values while keeping new public filter input limited to the current taxonomy.
 7. For compression changes, keep the two-byte framing contract pinned so gzip, brotli, and uncompressed values remain distinguishable without storage-side metadata.
 8. Keep external compatibility structural and dev/test-only; do not import sibling package runtime types into Weft runtime source.
+9. For bounded storage deletion, prove the operation cannot become an unbounded wipe through malformed options, negative limits, reverse iteration, or scoped-storage prefix smuggling.
 
 ## Verification
 

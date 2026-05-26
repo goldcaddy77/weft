@@ -35,12 +35,13 @@ description: >-
 ### RemoteWorker reconnect work
 
 - Model close, deferred requeue, same-`workerId` re-register, peer takeover, heartbeat visibility extension, and stale `taskResult` arrival as separate transitions.
+- Treat `taskResult` send failures as durable lifecycle work: buffer bounded results, flush them after reconnect, and prove backpressure does not drop terminal outcomes silently.
 - Persist task ownership before sending work across a socket; otherwise a fast worker can complete before the in-flight record exists and leave an orphan that the scanner redelivers.
 
 ## Verification
 
 - Add race regression tests for before-ack disposal, socket close, cancellation, and shutdown paths touched by the change.
-- For reconnect behavior, cover grace-window cancellation, visibility-timeout takeover, stale completion rejection, and server-restart redelivery.
+- For reconnect behavior, cover grace-window cancellation, visibility-timeout takeover, stale completion rejection, server-restart redelivery, and buffered `taskResult` resend after a socket failure.
 - For long-poll task queues, cover disconnect during wait, already-aborted signals, pending-task retention for dead callers, idempotent disposal, and timer cleanup.
 - Prove no test depends on unbounded waits or real-time sleeps.
 - Run the focused lifecycle or worker tests plus `bun run verify:no-test-sleeps` when relevant.

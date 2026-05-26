@@ -62,7 +62,7 @@ The checker enforces the production-source suppression ceiling and the mechanica
 bun test
 ```
 
-Catches: regressions, broken behavior, incorrect logic. Tests use Bun's native test runner with colocated `.test.ts` files.
+Catches: regressions, broken behavior, incorrect logic. Tests use Bun's native test runner with colocated `.test.ts` files. The pre-commit hook wraps this through `scripts/husky/run-tests.ts` so failures include JUnit-derived testcase summaries and isolation rerun diagnostics; inspect that output before assuming a failure is non-reproducible.
 
 For focused verification during development, run tests for just the affected area:
 

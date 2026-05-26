@@ -113,7 +113,7 @@ type StorageCapabilities = {
 };
 ```
 
-The engine depends on four guarantees. **`atomicBatch`** keeps a checkpoint commit all-or-nothing. **`readAfterWrite`** lets a resume observe the checkpoint it just wrote. **`scanConsistency`** keeps visibility and index scans from seeing torn writes. **`conditionalBatch`** backs compare-and-swap state and tenant-quota reservation.
+The engine depends on four guarantees. **`atomicBatch`** keeps a checkpoint commit all-or-nothing. **`readAfterWrite`** lets a resume observe the checkpoint it just wrote. **`scanConsistency`** keeps visibility and index scans from seeing torn writes. **`conditionalBatch`** backs compare-and-swap state, including storage-backed workflow state and operations that must commit only if the current value still matches the caller's expectation.
 
 The honest profile per built-in adapter:
 
@@ -130,7 +130,7 @@ The honest profile per built-in adapter:
 
 Three kinds of capability, treated differently:
 
-- **`conditionalBatch` is runtime-gated.** It is the only capability the engine enforces. A backend may legitimately omit compare-and-swap, so its absence has a clean failure path: the first feature that needs it (`AtomicState` updates, the `storage.conditionalBatch` server operation, CAS-requiring tenant quotas) throws a clear diagnostic naming the feature and the capability. `WebExtensionStorage` and `CompressedStorage` report `false` here. `HTTPStorage` reports `false` by default — the client cannot know whether the remote server's backend supports CAS, so a gated feature fails fast locally rather than via a remote `501`; pass `remoteConditionalBatch: true` when you have verified the server supports it.
+- **`conditionalBatch` is runtime-gated.** It is the only capability the engine enforces. A backend may legitimately omit compare-and-swap, so its absence has a clean failure path: the first feature that needs it (`AtomicState` updates or the `storage.conditionalBatch` server operation) throws a clear diagnostic naming the feature and the capability. `WebExtensionStorage` and `CompressedStorage` report `false` here. `HTTPStorage` reports `false` by default — the client cannot know whether the remote server's backend supports CAS, so a gated feature fails fast locally rather than via a remote `501`; pass `remoteConditionalBatch: true` when you have verified the server supports it.
 - **`atomicBatch`, `readAfterWrite`, and `scanConsistency` are trusted correctness contracts.** The engine reads them but does not verify them at runtime. If an adapter reports `atomicBatch: true` but applies batches non-atomically, the failure mode is checkpoint corruption — so adapter authors must report honestly.
 - **`boundedRangeDelete` is an operational hint.** It describes whether `deletePrefix()` is a single bounded range op or a scan-and-delete fallback (see the note below). It affects performance, not correctness, and nothing gates on it.
 
@@ -140,7 +140,9 @@ Three kinds of capability, treated differently:
 **The opaque-value invariant:** adapters and decorators must treat stored values as opaque bytes and must not inspect or depend on value contents — values may later be encrypted or compressed. The engine ranges only over keys, never value bytes. This is why `CompressedStorage`, which transforms value bytes, downgrades `conditionalBatch` to `false`: a caller-supplied `expectedValue` can never byte-match the compressed stored value.
 
 > [!NOTE] `boundedRangeDelete`
-> `true` means `deletePrefix()` is a single range-scoped delete (one SQL `DELETE`, an `IDBKeyRange` delete, or an LMDB range delete). `false` means the adapter falls back to the derived scan-and-delete loop — `deletePrefix()` still works, it just is not a single bounded operation.
+> `true` means `deletePrefix()` or `deleteRange()` can run as a single bounded operation (one SQL `DELETE`, an `IDBKeyRange` delete, or an LMDB range delete). `false` means the adapter falls back to the derived scan-and-delete loop — the operation still works, it just is not a single native bounded delete.
+
+`deleteRange(prefix, options)` deletes only keys under `prefix` that also satisfy at least one lexicographic bound (`gt`, `gte`, `lt`, or `lte`). The public `storageDeleteRange()` dispatcher validates the bounds, rejects unbounded requests, normalizes `limit`, and falls back to a bounded `scan()` plus `batch()` loop when the adapter does not provide a native method. Use it for checkpoint-history or event-log truncation below a known watermark; use `deletePrefix()` for intentional whole-prefix cleanup.
 
 ## Key layout
 

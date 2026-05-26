@@ -12,6 +12,7 @@ interface Storage extends Disposable {
   delete(key: string): Promise<void>;
   scan(prefix: string, options?: ScanOptions): AsyncIterable<[string, Uint8Array]>;
   batch(operations: BatchOperation[]): Promise<void>;
+  deleteRange?(prefix: string, options: DeleteRangeOptions): Promise<number>;
   query?<T>(sql: string, params?: unknown[]): Promise<T[]>;
 }
 ```
@@ -72,6 +73,16 @@ query?<T>(sql: string, params?: unknown[]): Promise<T[]>
 
 Raw SQL passthrough. Only available on `BunSQLiteStorage`. Useful for dashboard queries and debugging.
 
+### `deleteRange()` (optional)
+
+```ts partial
+deleteRange?(prefix: string, options: DeleteRangeOptions): Promise<number>
+```
+
+Delete keys under `prefix` that fall inside a bounded lexicographic range and return the number of deleted keys. Native adapters may implement this as a single bounded operation; callers should use [`storageDeleteRange()`](#storagedeleterange) so adapters without a native method get the validated scan-and-delete fallback.
+
+`deleteRange` is intentionally not a whole-prefix delete. The options must include at least one bound (`gt`, `gte`, `lt`, or `lte`), `limit` must be a finite non-negative integer, and deletion always proceeds in ascending key order. Use `deletePrefix()` when the intended operation is to remove every key under a prefix.
+
 ### `[Symbol.dispose]()`
 
 All storage adapters implement `Disposable`. For `BunSQLiteStorage`, this closes the database. For `MemoryStorage`, this clears the in-memory map.
@@ -110,6 +121,20 @@ type GatedStorageCapabilityKey = 'conditionalBatch';
 
 The boolean capabilities the engine enforces at runtime via `requireStorageCapability`. Today this is only `'conditionalBatch'`. It is deliberately narrower than "every boolean capability": `atomicBatch`/`readAfterWrite`/`scanConsistency` are trusted contracts and `boundedRangeDelete` is an operational hint, so gating on them would be meaningless. A future gated capability is added to this type by an explicit edit.
 
+### `DeleteRangeOptions`
+
+```ts partial
+type DeleteRangeOptions = {
+  gt?: string;
+  gte?: string;
+  lt?: string;
+  lte?: string;
+  limit?: number;
+};
+```
+
+Bounds for [`deleteRange()`](#deleterange-optional) and [`storageDeleteRange()`](#storagedeleterange). At least one bound is required, all bounds must be strings, and `limit` must be a finite non-negative integer. `reverse` is deliberately not part of this type because bounded deletes always remove the lowest keys in range first.
+
 ### `ScanOptions`
 
 ```ts
@@ -131,6 +156,34 @@ interface ScanOptions {
 | `lt`      | `string`  | Exclusive upper bound on key           |
 | `gte`     | `string`  | Inclusive lower bound on key           |
 | `lte`     | `string`  | Inclusive upper bound on key           |
+
+---
+
+## `storageDeleteRange()`
+
+```ts partial
+async function storageDeleteRange(
+  storage: Storage,
+  prefix: string,
+  options: DeleteRangeOptions,
+): Promise<number>;
+```
+
+Validate `DeleteRangeOptions`, call the adapter's native `deleteRange()` when it exists, or derive the operation with a bounded `scan()` plus `batch()` fallback. This is the public dispatcher to use from engine and adapter code; it keeps unbounded or malformed deletes from reaching native SQL, IndexedDB, or LMDB implementations.
+
+```ts
+import { MemoryStorage, storageDeleteRange } from 'weft';
+
+await using storage = new MemoryStorage();
+await storage.put('ev:wf-1:0000000001', new Uint8Array([1]));
+await storage.put('ev:wf-1:0000000002', new Uint8Array([2]));
+await storage.put('ev:wf-1:0000000003', new Uint8Array([3]));
+
+const deleted = await storageDeleteRange(storage, 'ev:wf-1:', {
+  lt: 'ev:wf-1:0000000003',
+});
+// deleted === 2
+```
 
 ---
 
