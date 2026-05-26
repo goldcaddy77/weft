@@ -1,9 +1,9 @@
 import type { BatchOperation } from '../../storage/interface.ts';
 import { KEYS, encodeStorageKeyComponent } from '../../storage/interface.ts';
-import { decode, encode } from '../codec.ts';
+import { decode } from '../codec.ts';
 import { SignalReceivedEvent } from '../events.ts';
 import type { ComposedWorkflowInterceptor } from '../interceptor.ts';
-import { assertPayloadWithinLimit } from '../payload-size.ts';
+import { encodePayloadWithinLimit } from '../payload-size.ts';
 import type { WorkflowState } from '../types.ts';
 import type { EngineInternals } from './internals.ts';
 import { isTerminalWorkflowStatus } from './validation.ts';
@@ -130,20 +130,18 @@ export async function bufferSignalPayloads(
     return;
   }
 
-  // Reject before building any batch operation so one oversize payload aborts
-  // the whole buffer with nothing written.
-  for (const { payload } of deliveries) {
-    assertPayloadWithinLimit(
-      payload,
-      internals.options.payloadSizePolicy.maxBytes,
-      'signal payload',
-    );
-  }
-
+  // Encode each payload once, enforcing the size cap on the result, and reuse
+  // the bytes for the write. An oversize payload throws out of this map before
+  // the operations array is assigned, so the whole buffer aborts with nothing
+  // written.
   const operations: BatchOperation[] = deliveries.map(({ signalName, payload }) => ({
     type: 'put',
     key: KEYS.signal(workflowId, signalName, crypto.randomUUID()),
-    value: encode(payload),
+    value: encodePayloadWithinLimit(
+      payload,
+      internals.options.payloadSizePolicy.maxBytes,
+      'signal payload',
+    ),
   }));
   if (!internals.workflowsNeedingTerminalCleanup.has(workflowId)) {
     internals.workflowsNeedingTerminalCleanup.add(workflowId);

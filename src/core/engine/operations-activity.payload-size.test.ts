@@ -1,9 +1,23 @@
 import { describe, expect, it } from 'bun:test';
 
 import { MemoryStorage } from '../../storage/memory.ts';
+import { encode } from '../codec.ts';
 import { Engine } from '../engine.ts';
 import { PayloadSizeExceededError } from '../payload-size.ts';
 import { activity, workflow, type WorkflowContext } from '../types.ts';
+
+/** True when `haystack` contains `needle` as a contiguous byte subsequence. */
+function bytesContain(haystack: Uint8Array, needle: Uint8Array): boolean {
+  if (needle.length === 0) return true;
+  if (needle.length > haystack.length) return false;
+  outer: for (let start = 0; start <= haystack.length - needle.length; start++) {
+    for (let offset = 0; offset < needle.length; offset++) {
+      if (haystack[start + offset] !== needle[offset]) continue outer;
+    }
+    return true;
+  }
+  return false;
+}
 
 /** Walk an error's `cause` chain looking for a payload-size rejection. */
 function causeChainHas(error: unknown, predicate: (candidate: unknown) => boolean): boolean {
@@ -53,8 +67,24 @@ describe('payload-size cap — activity result', () => {
     // against a vacuous pass: there must actually be events to scan.
     const events = await engine.getEvents('wf-activity');
     expect(events.length).toBeGreaterThan(0);
-    const carriesOversize = events.some((event) => JSON.stringify(event).includes(bigResult));
-    expect(carriesOversize).toBe(false);
+    const eventsCarryOversize = events.some((event) => JSON.stringify(event).includes(bigResult));
+    expect(eventsCarryOversize).toBe(false);
+
+    // Decisive: the oversize value is absent from EVERY persisted record —
+    // not just the event log, but checkpoints, checkpoint history, and
+    // workflow state too. Decode each stored value and look for the marker.
+    const bigBytes = encode(bigResult);
+    let scannedAny = false;
+    let anyRecordCarriesOversize = false;
+    for await (const [, bytes] of storage.scan('')) {
+      scannedAny = true;
+      if (bytesContain(bytes, bigBytes)) {
+        anyRecordCarriesOversize = true;
+        break;
+      }
+    }
+    expect(scannedAny).toBe(true);
+    expect(anyRecordCarriesOversize).toBe(false);
 
     engine[Symbol.dispose]();
   });

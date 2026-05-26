@@ -7,9 +7,10 @@
  * payloads. Large payloads — workflow input, signal payloads, activity results
  * — are encoded into per-yield checkpoints and event-log entries, so an
  * oversized value inflates every durable write and is re-deserialized on every
- * replay. `maxBytes` caps the codec-boundary size (the exact byte length that
- * would be written) and rejects oversized payloads at admission, before any
- * storage write. Pass via {@link EngineOptions.payloadSize}.
+ * replay. `maxBytes` caps the codec-boundary size (the codec-encoded byte
+ * length of the bare value, not the final on-disk record size) and rejects
+ * oversized payloads at admission, before any storage write. Pass via
+ * {@link EngineOptions.payloadSize}.
  *
  * Thresholds are operator config only — there are no baked-in defaults. Omit
  * the policy (or set `maxBytes` to `0`/`null`) to disable the cap entirely;

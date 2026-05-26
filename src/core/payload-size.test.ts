@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 
-import { encode } from './codec.ts';
+import { decode, encode } from './codec.ts';
 import {
   PayloadSizeExceededError,
   assertPayloadWithinLimit,
+  encodePayloadWithinLimit,
   type PayloadKind,
 } from './payload-size.ts';
 
@@ -73,4 +74,36 @@ describe('assertPayloadWithinLimit', () => {
       }
     },
   );
+});
+
+describe('encodePayloadWithinLimit', () => {
+  it('returns the encoded bytes when within the limit (single encode reused by caller)', () => {
+    const value = { hello: 'world' };
+    const bytes = encodePayloadWithinLimit(value, 1024, 'signal payload');
+    expect(bytes).toBeInstanceOf(Uint8Array);
+    // The returned bytes are the real encoding, decodable back to the value.
+    expect(decode(bytes)).toEqual(value);
+    // ...and byte-identical to a direct encode().
+    expect(bytes).toEqual(encode(value));
+  });
+
+  it('allows a payload exactly at the limit', () => {
+    const value = 'x'.repeat(40);
+    const exactBytes = encode(value).byteLength;
+    expect(() => encodePayloadWithinLimit(value, exactBytes, 'signal payload')).not.toThrow();
+  });
+
+  it('throws PayloadSizeExceededError one byte over the limit', () => {
+    const value = 'x'.repeat(40);
+    const exactBytes = encode(value).byteLength;
+    expect(() => encodePayloadWithinLimit(value, exactBytes - 1, 'signal payload')).toThrow(
+      PayloadSizeExceededError,
+    );
+  });
+
+  it('still encodes (and returns bytes) when the limit is null', () => {
+    const value = { a: 1 };
+    const bytes = encodePayloadWithinLimit(value, null, 'workflow input');
+    expect(decode(bytes)).toEqual(value);
+  });
 });

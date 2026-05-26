@@ -19,9 +19,9 @@ export type PayloadKind = 'workflow input' | 'signal payload' | 'activity result
  * producing operation cannot make the result smaller, so it should not be
  * retried.
  *
- * This is a local validation error: its `code` is not part of the
- * cross-boundary `WeftErrorCode` union. Catch it with `instanceof` or by
- * comparing `error.code === 'PayloadSizeExceededError'`.
+ * Its `code` (`'PayloadSizeExceededError'`) is part of the public
+ * {@link WeftErrorCode} union. Catch it with `instanceof` or by comparing
+ * `error.code === 'PayloadSizeExceededError'`.
  *
  * @example
  * ```ts
@@ -86,4 +86,31 @@ export function assertPayloadWithinLimit(
   if (serializedBytes > limit) {
     throw new PayloadSizeExceededError(payloadKind, serializedBytes, limit);
   }
+}
+
+/**
+ * Encode a payload once, enforce the size cap on the result, and return the
+ * encoded bytes for reuse by the caller's write — avoiding a second `encode`
+ * at call sites that persist the exact value they measured.
+ *
+ * Behaves like {@link assertPayloadWithinLimit} on the size check (a value
+ * exactly at `limit` is allowed; one byte larger throws), but always encodes
+ * (there is no `null` short-circuit) because the caller needs the bytes
+ * regardless of whether the cap is enabled.
+ *
+ * @param value - The payload to encode and measure.
+ * @param limit - The maximum serialized byte length, or `null` to skip the cap.
+ * @param payloadKind - Which admission point is validating, for the error message.
+ * @returns The codec-encoded bytes, guaranteed within `limit` when `limit` is set.
+ */
+export function encodePayloadWithinLimit(
+  value: unknown,
+  limit: number | null,
+  payloadKind: PayloadKind,
+): Uint8Array {
+  const encoded = encode(value);
+  if (limit !== null && encoded.byteLength > limit) {
+    throw new PayloadSizeExceededError(payloadKind, encoded.byteLength, limit);
+  }
+  return encoded;
 }

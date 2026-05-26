@@ -202,7 +202,7 @@ export function normalizePayloadSizePolicy(
   }
   if (typeof maxBytes !== 'number' || !Number.isSafeInteger(maxBytes) || maxBytes < 0) {
     throw new TypeError(
-      `${context}.maxBytes must be a positive safe integer (or 0/undefined to disable); received ${String(
+      `${context}.maxBytes must be a positive safe integer (or 0/null/undefined to disable); received ${String(
         maxBytes,
       )}`,
     );
