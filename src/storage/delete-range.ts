@@ -82,13 +82,10 @@ function normalizeDeleteRangeLimit(limit: number | undefined): number | undefine
  * @throws {Error} When no bound is present, a bound is not a string, or `limit`
  * is not a finite non-negative integer.
  *
- * @example
- * ```ts
- * import { normalizeDeleteRangeOptions } from 'weft/storage';
- *
- * const normalized = normalizeDeleteRangeOptions({ lt: 'ev:wf:0000000003', limit: 100 });
- * console.log(normalized.lt); // 'ev:wf:0000000003'
- * ```
+ * Internal helper: not exported from any package subpath. Callers reach it
+ * transitively through {@link storageDeleteRange} (which is public). No `@example`
+ * here for that reason — it has no public import path, like the derived `*Core`
+ * helpers in `./derived-operations.ts`.
  */
 export function normalizeDeleteRangeOptions(
   options: DeleteRangeOptions,

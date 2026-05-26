@@ -25,9 +25,13 @@ import type { Storage } from './interface.ts';
  *   failure mode is checkpoint corruption, not a missing feature — honesty is
  *   the adapter author's responsibility.
  * - **Operational hint:** `boundedRangeDelete` is a strength-of-implementation
- *   claim about `deletePrefix()` and `deleteRange()` (a single bounded range op
- *   vs. a scan-and-delete fallback). It affects performance, not correctness, and
- *   nothing gates on it.
+ *   claim about the adapter's bounded-delete methods — `deletePrefix()` and, when
+ *   present, `deleteRange()` — being single bounded range ops rather than a
+ *   scan-and-delete fallback. It affects performance, not correctness, and nothing
+ *   gates on it. In every built-in adapter the two methods share the same native
+ *   path (both native, or both fall back), so one boolean describes both honestly;
+ *   a custom adapter whose two methods differ in strength should report `false`
+ *   rather than overclaim.
  *
  * **Why the engine needs these.** Checkpoint commit relies on `atomicBatch`
  * (all-or-nothing); resume relies on `readAfterWrite` (the just-written
@@ -90,14 +94,16 @@ export type StorageCapabilities = {
   /** `conditionalBatch()` compare-and-swap preconditions are supported. */
   conditionalBatch: boolean;
   /**
-   * `deletePrefix()` and `deleteRange()` are implemented as bounded range
-   * operations (a single range-scoped SQL `DELETE`, an `IDBKeyRange` delete, an
-   * LMDB range delete in one write transaction, or an in-memory range-bounded
-   * delete), NOT a client-side scan-then-delete loop. Adapters that only fall
-   * back to the derived `storageDeletePrefixCore`/`storageDeleteRangeCore`
-   * helpers report `false` even though those methods work. This is a
-   * strength-of-implementation claim about the adapter's own methods, not a
-   * guarantee about a remote backend behind it.
+   * The adapter's bounded-delete methods — `deletePrefix()` and, when present,
+   * `deleteRange()` — are implemented natively against the backend's own range
+   * machinery rather than as a generic client-side scan-then-`batch()` loop:
+   * a single range-scoped SQL `DELETE`, an `IDBKeyRange` delete, an LMDB range
+   * cursor whose removals commit in one write transaction, or an in-memory
+   * range-bounded delete. Adapters that only fall back to the derived
+   * `storageDeletePrefixCore`/`storageDeleteRangeCore` helpers report `false`
+   * even though those methods work. This is a strength-of-implementation claim
+   * about the adapter's own methods, not a guarantee about a remote backend
+   * behind it; an adapter whose two methods differ in strength reports `false`.
    */
   boundedRangeDelete: boolean;
 };
