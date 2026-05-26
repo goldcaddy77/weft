@@ -2,10 +2,12 @@ import { describe, expect, it } from 'bun:test';
 import { z } from 'zod';
 
 import type { JSONValue } from '../core/json.ts';
-// Prove the public surface: JSONValue must resolve from both the package root
-// barrel and the `weft/storage` subpath barrel. These imports fail to compile
-// (and the file fails `bun run typecheck`) if either export is dropped or the
-// lowercase-cased duplicate collision is ever reintroduced.
+// Pin the public surface: `JSONValue` must remain exported from both the
+// package root barrel and the `weft/storage` subpath barrel. If either export
+// is dropped or renamed, these imports stop resolving and the file fails
+// `bun run typecheck`. (This does not detect a *reintroduced* lowercase
+// `JsonValue` — TypeScript treats it as a distinct name; the absence of that
+// duplicate is enforced by the repo-wide grep in the implementation plan.)
 import type { JSONValue as JSONValueFromRoot } from '../index.ts';
 import type { JSONValue as JSONValueFromStorageBarrel } from './index.ts';
 

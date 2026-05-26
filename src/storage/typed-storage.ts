@@ -62,8 +62,12 @@ export type MessagePackPrimitive = bigint | boolean | null | number | string | u
 /**
  * Recursive union of every value that MessagePack can encode and decode.
  *
- * A superset of {@link JSONValue} that additionally supports `Date`, `Map`,
- * `Set`, `Uint8Array`, `RegExp`, `Error`, `ArrayBuffer`, and `bigint`.  Prefer
+ * Covers everything {@link JSONValue} represents and additionally supports
+ * `Date`, `Map`, `Set`, `Uint8Array`, `RegExp`, `Error`, `ArrayBuffer`, and
+ * `bigint`. Note it is not a strict type-level superset of `JSONValue`: this
+ * type uses mutable arrays (`MessagePackValue[]`) whereas `JSONValue` uses
+ * `ReadonlyArray`, so a `readonly` array or `as const` tuple that satisfies
+ * `JSONValue` is not assignable here (it remains encodable at runtime). Prefer
  * this codec when your domain objects contain binary data or richly-typed
  * primitives that JSON cannot represent without custom serialisation.
  */
