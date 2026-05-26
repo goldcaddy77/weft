@@ -2,7 +2,7 @@
  * `weft.workflows.result.get` operation + REST binding — behavior tests.
  */
 
-import { describe, expect, it, spyOn } from 'bun:test';
+import { afterEach, describe, expect, it, spyOn } from 'bun:test';
 
 import { encode } from '../../core/codec.ts';
 import { Engine } from '../../core/engine.ts';
@@ -29,14 +29,26 @@ const failingWorkflow = workflow({ name: 'failing' }).execute(async function* ()
   throw new Error('workflow failed');
 });
 
+// Engines hold background timers/intervals and must be disposed, or they emit a
+// WeftEngineLeakWarning and leak resources across tests. Track every engine the
+// factory creates and dispose them after each test.
+const createdEngines: Engine[] = [];
+
 function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
   engine.register(echoWorkflow);
   engine.register(holdWorkflow);
   engine.register(failingWorkflow);
+  createdEngines.push(engine);
   return { engine, storage };
 }
+
+afterEach(() => {
+  while (createdEngines.length > 0) {
+    createdEngines.pop()?.[Symbol.dispose]();
+  }
+});
 
 const registry = createOperationRegistry([getWorkflowResultOperation]);
 const bindings = [getWorkflowResultRestBinding];
@@ -315,5 +327,7 @@ describe('weft.workflows.result.get', () => {
       clearTimeoutSpy.mockRestore();
       engine.getHandle = originalGetHandle;
     }
+    // The engine (with its still-running `hold` workflow) is disposed by `afterEach`,
+    // which runs after the spies are restored so teardown uses the real `clearTimeout`.
   });
 });
