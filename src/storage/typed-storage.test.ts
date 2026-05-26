@@ -1,19 +1,21 @@
 import { describe, expect, it } from 'bun:test';
 import { z } from 'zod';
 
+import type { JSONValue } from '../core/json.ts';
+// Prove the public surface: JSONValue must resolve from both the package root
+// barrel and the `weft/storage` subpath barrel. These imports fail to compile
+// (and the file fails `bun run typecheck`) if either export is dropped or the
+// lowercase-cased duplicate collision is ever reintroduced.
+import type { JSONValue as JSONValueFromRoot } from '../index.ts';
+import type { JSONValue as JSONValueFromStorageBarrel } from './index.ts';
+
 import { MemoryStorage } from './memory.ts';
 import {
   collect,
   createCoreStorageAdapter,
   createFullStorageAdapter,
 } from './storage-adapter.test-support.ts';
-import {
-  type JsonValue,
-  type MessagePackValue,
-  jsonCodec,
-  msgpackCodec,
-  withCodec,
-} from './typed-storage.ts';
+import { type MessagePackValue, jsonCodec, msgpackCodec, withCodec } from './typed-storage.ts';
 
 describe('withCodec', () => {
   it('withCodec(storage, jsonCodec) round-trips structured values without TextEncoder boilerplate', async () => {
@@ -103,7 +105,7 @@ describe('withCodec', () => {
   it('jsonCodec without a parser rejects unsupported values before serialization', () => {
     const codec = jsonCodec();
 
-    expect(() => codec.encode(undefined as unknown as JsonValue)).toThrow(
+    expect(() => codec.encode(undefined as unknown as JSONValue)).toThrow(
       'jsonCodec only supports JSON-serializable values.',
     );
   });
@@ -157,5 +159,35 @@ describe('withCodec', () => {
 
     storage[Symbol.dispose]();
     expect(adapter.wasDisposed()).toBe(true);
+  });
+});
+
+describe('JSONValue is the single canonical public JSON value type', () => {
+  // These assertions are compile-time: they fail `bun run typecheck` if the
+  // canonical readonly `JSONValue` ever stops accepting the value shapes it must,
+  // or if `jsonCodec`'s generic bound is accidentally over-tightened. The runtime
+  // body is incidental — type-checking the fixtures is the actual test.
+
+  it('accepts mutable arrays, readonly arrays, and nested objects', () => {
+    const mutableArray: JSONValue = { rows: [1, 2, 3] satisfies number[] };
+    const readonlyArray: JSONValue = { rows: [1, 2, 3] as readonly number[] };
+    const nested: JSONValue = { a: { b: { c: [{ d: true }, null, 'x'] } } };
+
+    // All three barrels resolve to the same readonly JSONValue.
+    const fromRoot: JSONValueFromRoot = mutableArray;
+    const fromStorage: JSONValueFromStorageBarrel = readonlyArray;
+
+    expect([mutableArray, readonlyArray, nested, fromRoot, fromStorage]).toHaveLength(5);
+  });
+
+  it('jsonCodec generic bound still accepts mutable user value types', () => {
+    // `{ tags: string[] }` has a mutable array but must still satisfy
+    // `Value extends JSONValue` — guards against the readonly switch tightening
+    // the bound and rejecting previously-valid codec value types.
+    type MutableUserValue = { id: number; tags: string[] };
+    const codec = jsonCodec<MutableUserValue>((value) => value as MutableUserValue);
+    const encoded = codec.encode({ id: 1, tags: ['a', 'b'] });
+
+    expect(codec.decode(encoded)).toEqual({ id: 1, tags: ['a', 'b'] });
   });
 });

@@ -214,7 +214,6 @@ export { MemoryStorage } from './storage/memory';
 export { ScopedStorage, scopedStorage } from './storage/scoped-storage';
 export { jsonCodec, msgpackCodec, withCodec } from './storage/typed-storage';
 export type {
-  JsonValue,
   MessagePackValue,
   StorageCodec,
   StorageValueParser,
