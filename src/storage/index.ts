@@ -188,6 +188,7 @@ const exportedTextValueStore = textValueStore;
  */
 const exportedWithCodec = withCodec;
 
+export type { JSONValue } from '../core/json.ts';
 export type {
   BatchOperation,
   ConditionalBatchCondition,
@@ -199,7 +200,6 @@ export type {
 export type { StorageConfiguration } from './resolve';
 export type { TextValueStore } from './text-value-store';
 export type {
-  JsonValue,
   MessagePackValue,
   StorageCodec,
   StorageValueParser,
