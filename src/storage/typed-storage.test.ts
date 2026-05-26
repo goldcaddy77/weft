@@ -205,4 +205,20 @@ describe('JSONValue is the single canonical public JSON value type', () => {
 
     expect(roundTripped).toEqual({ ok: true, rows: [1, 2] });
   });
+
+  it('the canonical JSONValue uses readonly arrays (not the old mutable shape)', () => {
+    // The defining property of the canonical type: its array branch is
+    // ReadonlyArray. The deleted duplicate used mutable `JsonValue[]`. A
+    // ReadonlyArray<JSONValue> must be assignable to JSONValue; a value typed as
+    // JSONValue must NOT be writable as a mutable array. If a mutable-array
+    // duplicate were ever reintroduced as the canonical type, this assignment
+    // would fail to compile — a structural guard the import-name check cannot give.
+    const readonlyArrayValue: ReadonlyArray<JSONValue> = [1, 'a', true, null];
+    const asJsonValue: JSONValue = readonlyArrayValue;
+    // @ts-expect-error — JSONValue's array branch is readonly; mutable assignment must be rejected.
+    const mutable: JSONValue[] = asJsonValue;
+    void mutable;
+
+    expect(Array.isArray(asJsonValue)).toBe(true);
+  });
 });

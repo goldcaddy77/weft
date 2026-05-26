@@ -62,14 +62,14 @@ export type MessagePackPrimitive = bigint | boolean | null | number | string | u
 /**
  * Recursive union of every value that MessagePack can encode and decode.
  *
- * Covers everything {@link JSONValue} represents and additionally supports
- * `Date`, `Map`, `Set`, `Uint8Array`, `RegExp`, `Error`, `ArrayBuffer`, and
- * `bigint`. Note it is not a strict type-level superset of `JSONValue`: this
- * type uses mutable arrays (`MessagePackValue[]`) whereas `JSONValue` uses
- * `ReadonlyArray`, so a `readonly` array or `as const` tuple that satisfies
- * `JSONValue` is not assignable here (it remains encodable at runtime). Prefer
- * this codec when your domain objects contain binary data or richly-typed
- * primitives that JSON cannot represent without custom serialisation.
+ * A superset of {@link JSONValue} that additionally supports `Date`, `Map`,
+ * `Set`, `Uint8Array`, `RegExp`, `Error`, `ArrayBuffer`, and `bigint`. Its
+ * array branch is `ReadonlyArray` (matching `JSONValue`), so every `JSONValue`
+ * — including `readonly` arrays and `as const` tuples — is assignable here and
+ * accepted by `msgpackCodec<Value extends MessagePackValue>`. The encoder only
+ * reads its input, so a readonly bound is sound. Prefer this codec when your
+ * domain objects contain binary data or richly-typed primitives that JSON
+ * cannot represent without custom serialisation.
  */
 export type MessagePackValue =
   | ArrayBuffer
@@ -77,7 +77,7 @@ export type MessagePackValue =
   | Error
   | Map<MessagePackValue, MessagePackValue>
   | MessagePackPrimitive
-  | MessagePackValue[]
+  | ReadonlyArray<MessagePackValue>
   | RegExp
   | Set<MessagePackValue>
   | Uint8Array
