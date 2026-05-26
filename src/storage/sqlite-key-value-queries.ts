@@ -27,7 +27,8 @@ export type SqliteKeyRangeQuery = {
   sqlSuffix: string;
 };
 
-export type SqliteRangeSelectQuery = {
+/** A fully-built SQL statement and its bound parameters (SELECT or DELETE). */
+export type SqliteBuiltQuery = {
   parameters: SqliteKeyRangeQueryParameter[];
   sql: string;
 };
@@ -116,7 +117,7 @@ export function buildSqliteKeyRangeQuery(
 export function buildSqliteKeyRangeDelete(
   prefix: string,
   options: NormalizedDeleteRangeOptions,
-): SqliteRangeSelectQuery {
+): SqliteBuiltQuery {
   const { conditions, parameters } = buildSqliteKeyRangeConditions(prefix, options);
   const whereClause = conditions.join(' AND ');
 
@@ -137,7 +138,7 @@ export function buildSqliteKeyRangeDelete(
 export function buildSqliteKeyValueRangeSelect(
   prefix: string,
   options: ScanOptions = {},
-): SqliteRangeSelectQuery {
+): SqliteBuiltQuery {
   const { parameters, sqlSuffix } = buildSqliteKeyRangeQuery(prefix, options);
   return {
     parameters,
@@ -148,7 +149,7 @@ export function buildSqliteKeyValueRangeSelect(
 export function buildSqliteKeyRangeSelect(
   prefix: string,
   options: ScanOptions = {},
-): SqliteRangeSelectQuery {
+): SqliteBuiltQuery {
   const { parameters, sqlSuffix } = buildSqliteKeyRangeQuery(prefix, options);
   return {
     parameters,

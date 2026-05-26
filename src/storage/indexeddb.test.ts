@@ -478,6 +478,24 @@ describe('IndexedDBStorage deleteRange edge cases', () => {
     expect(await storage.get('k:b')).not.toBeNull();
   });
 
+  it('deletes nothing for a half-open empty range (gt === lt at the same key)', async () => {
+    // Exercises the second null clause in resolveDeleteRangeBounds: equal bounds
+    // with an open side collapse to an empty interval.
+    const storage = await seed('k:', ['k:a', 'k:b']);
+    expect(await storage.deleteRange('k:', { gt: 'k:a', lt: 'k:a' })).toBe(0);
+    expect(await storage.get('k:a')).not.toBeNull();
+    expect(await storage.get('k:b')).not.toBeNull();
+  });
+
+  it('lets gte win when it is stricter (higher) than gt', async () => {
+    const storage = await seed('k:', ['k:a', 'k:b', 'k:c']);
+    // gt='k:a' is wider; gte='k:b' is tighter and inclusive — k:b and k:c go.
+    expect(await storage.deleteRange('k:', { gt: 'k:a', gte: 'k:b' })).toBe(2);
+    expect(await storage.get('k:a')).not.toBeNull();
+    expect(await storage.get('k:b')).toBeNull();
+    expect(await storage.get('k:c')).toBeNull();
+  });
+
   it('deletes the lowest keys first under a limit', async () => {
     const storage = await seed('k:', ['k:1', 'k:2', 'k:3', 'k:4']);
     expect(await storage.deleteRange('k:', { gte: 'k:', limit: 2 })).toBe(2);

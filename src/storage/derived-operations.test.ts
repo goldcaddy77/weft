@@ -166,4 +166,17 @@ describe('derived-operations *Core helpers', () => {
     expect(deleted).toBe(0);
     expect(await storage.get('other:1')).not.toBeNull();
   });
+
+  it('storageDeleteRangeCore returns 0 and deletes nothing for limit 0', async () => {
+    const storage = createTrapStorage();
+    await storage.put('ev:wf:01', new Uint8Array([1]));
+
+    const deleted = await storageDeleteRangeCore(
+      storage,
+      'ev:wf:',
+      normalizeDeleteRangeOptions({ gte: 'ev:wf:', limit: 0 }),
+    );
+    expect(deleted).toBe(0);
+    expect(await storage.get('ev:wf:01')).not.toBeNull();
+  });
 });

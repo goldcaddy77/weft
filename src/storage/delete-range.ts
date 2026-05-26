@@ -28,13 +28,13 @@ import { resolvePrefixRangeEnd, type Storage } from './interface.ts';
  * const options: DeleteRangeOptions = { lt: 'ev:wf:0000000003' };
  * ```
  */
-export interface DeleteRangeOptions {
+export type DeleteRangeOptions = {
   gt?: string;
   gte?: string;
   lt?: string;
   lte?: string;
   limit?: number;
-}
+};
 
 declare const normalizedDeleteRangeBrand: unique symbol;
 
@@ -119,6 +119,9 @@ export function normalizeDeleteRangeOptions(
     normalized.limit = limit;
   }
 
+  // Safe: `normalized` was built by copying only validated fields from `options`
+  // and has passed the bound-presence, bound-type, and limit checks above. The
+  // brand marks it as having cleared every deleteRange invariant.
   return normalized as NormalizedDeleteRangeOptions;
 }
 

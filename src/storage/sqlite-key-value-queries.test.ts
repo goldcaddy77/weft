@@ -127,6 +127,15 @@ describe('buildSqliteKeyRangeDelete', () => {
     });
   });
 
+  it('uses the subquery form and emits LIMIT 0 when limit is zero', () => {
+    expect(
+      buildSqliteKeyRangeDelete('k:', normalizeDeleteRangeOptions({ gte: 'k:', limit: 0 })),
+    ).toEqual({
+      parameters: ['k:', 'k;', 'k:', 0],
+      sql: 'DELETE FROM kv WHERE key IN (SELECT key FROM kv WHERE key >= ? AND key < ? AND key >= ? ORDER BY key ASC LIMIT ?)',
+    });
+  });
+
   it('keeps the SQL shape stable when only the limit value changes', () => {
     const first = buildSqliteKeyRangeDelete(
       'k:',
