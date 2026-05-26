@@ -146,9 +146,10 @@ function resolveNumericDefaults(
 
 function resolveHistoryFields(
   options: EngineConstructorOptions | undefined,
-): Pick<ResolvedOptions, 'historyPolicy'> {
+): Pick<ResolvedOptions, 'historyPolicy' | 'archiveAdapter'> {
   return {
     historyPolicy: normalizeHistoryPolicy(options?.history, 'options.history'),
+    archiveAdapter: options?.archive ?? null,
   };
 }
 

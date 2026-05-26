@@ -1,4 +1,5 @@
 import { EventLog } from '../event-log.ts';
+import { readEventLogWatermark } from './event-log-compaction.ts';
 import type { EngineInternals } from './internals.ts';
 import { workflowFeedListenerKey } from './state-utilities.ts';
 import { loadStoredStreamChunks } from './stream-chunk-loading.ts';
@@ -20,6 +21,15 @@ export const TOKENS_STREAM_KEY = 'tokens';
 
 /** Record `kind` for every token stream chunk emitted by the feed. */
 export const STREAM_CHUNK_KIND = 'stream:chunk';
+
+/**
+ * Record `kind` emitted when a subscriber resumes from a cursor below the
+ * event-log compaction watermark. The `[cursor, watermark.sequence)` records
+ * were truncated, so the feed reports an explicit boundary marker (rather than
+ * silently skipping) before continuing from the surviving records. `sequence`
+ * is the watermark sequence (the first surviving record).
+ */
+export const COMPACTION_BOUNDARY_KIND = 'workflow:compaction-boundary';
 
 /**
  * A committed workflow-feed record surfaced to subscribers of
@@ -135,7 +145,25 @@ export async function* replayWorkflowEventLog(
   afterSequence: number,
 ): AsyncIterable<WorkflowFeedRecord> {
   const eventLog = new EventLog(internals.storage, workflowId);
-  const fromSequence = afterSequence < 0 ? 0 : afterSequence + 1;
+  let fromSequence = afterSequence < 0 ? 0 : afterSequence + 1;
+
+  // If compaction truncated records below where this cursor wants to resume,
+  // clamp to the watermark and emit an explicit boundary marker so the
+  // subscriber learns the `[fromSequence, watermark.sequence)` records are gone
+  // rather than silently receiving fewer events.
+  const watermark = await readEventLogWatermark(internals.storage, workflowId);
+  if (watermark !== null && fromSequence < watermark.sequence) {
+    yield {
+      workflowId,
+      selector: 'events',
+      kind: COMPACTION_BOUNDARY_KIND,
+      sequence: watermark.sequence,
+      timestamp: 0,
+      payload: { compactedBefore: watermark.sequence, requestedFrom: fromSequence },
+    };
+    fromSequence = watermark.sequence;
+  }
+
   for await (const entry of eventLog.scan({ fromSequence })) {
     yield {
       workflowId,

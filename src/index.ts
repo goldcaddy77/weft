@@ -65,6 +65,7 @@ export type {
   ActivityResultFor,
   AnyActivityDefinition,
   AnyWorkflowDefinition,
+  ArchiveAdapter,
   BuilderState,
   BuiltWorkflowDefinition,
   BulkCancelResult,

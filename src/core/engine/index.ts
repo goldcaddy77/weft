@@ -92,7 +92,7 @@ import {
   getTimeline as getWorkflowTimeline,
   listCheckpoints as listCheckpointHistory,
   replayTo as replayWorkflowToCheckpoint,
-} from './checkpoint-io.ts';
+} from './checkpoint-reads.ts';
 import {
   copyWorkflowDefinition,
   createActivityWorkerDispatcher,

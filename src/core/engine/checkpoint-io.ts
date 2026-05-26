@@ -6,9 +6,8 @@ import {
   serializeCheckpoint,
   validateCheckpointRoundTrip,
 } from '../checkpoint.ts';
-import { decode, encode } from '../codec.ts';
+import { encode } from '../codec.ts';
 import type { ContextOperationRequest } from '../context.ts';
-import { sanitizeDebugValueForDisplay } from '../debug-output.ts';
 import { EMPTY_EVENT_HEAD, EventLog } from '../event-log.ts';
 import {
   AttributesChangedEvent,
@@ -16,24 +15,15 @@ import {
   DevelopmentWarningEvent,
 } from '../events.ts';
 import { buildIndexOperations } from '../search-attributes.ts';
-import type {
-  CheckpointState,
-  CheckpointSummary,
-  SearchAttributeValue,
-  WorkflowEvent,
-  WorkflowReplay,
-  WorkflowTimelineEntry,
-} from '../types.ts';
-import type { EngineInternals } from './internals.ts';
+import type { SearchAttributeValue, WorkflowTimelineEntry } from '../types.ts';
 import {
-  getTimelineInputSummary,
-  getTimelineOperationLabel,
-  sanitizeCheckpointState,
-  sanitizeTimelineSummary,
-  sanitizeWorkflowEventPayload,
-} from './state-utilities.ts';
+  appendCompactionOperations,
+  type CompactionResult,
+  serializeDeletedEntries,
+} from './event-log-compaction.ts';
+import type { EngineInternals } from './internals.ts';
+import { getTimelineInputSummary, getTimelineOperationLabel } from './state-utilities.ts';
 import { buildPendingTimelineOperation } from './termination.ts';
-import { isWorkflowTimelineEntry } from './validation.ts';
 import { notifyWorkflowFeedCommit } from './workflow-feed.ts';
 
 type PendingTimelineEntryValue = {
@@ -101,144 +91,6 @@ export function appendTimelineBatchOperations(
   return {
     startedAt: timestamp,
     entry,
-  };
-}
-
-/** Retrieve the event history for a workflow. */
-export async function getEvents(
-  internals: EngineInternals,
-  workflowId: string,
-): Promise<WorkflowEvent[]> {
-  const events: WorkflowEvent[] = [];
-  const eventLog = new EventLog(internals.storage, workflowId);
-
-  // Use EventLog.scan() instead of scanning the raw prefix so that the head
-  // record (ev:{workflowId}:head) is filtered out by the isWorkflowLogEntry
-  // guard inside scan(). Previously this method scanned the raw prefix and
-  // returned a spurious entry for the head record on every checkpointed workflow.
-  for await (const entry of eventLog.scan()) {
-    events.push({
-      type: entry.type,
-      timestamp: entry.timestamp,
-      data: sanitizeWorkflowEventPayload(entry.payload),
-    });
-  }
-
-  return events;
-}
-
-/**
- * List checkpoint history entries for a workflow, newest first.
- * Returns summary metadata only — use getCheckpointAt for full state.
- */
-export async function listCheckpoints(
-  internals: EngineInternals,
-  workflowId: string,
-): Promise<CheckpointSummary[]> {
-  if (internals.options.checkpointHistory <= 0) return [];
-
-  const prefix = `${KEYS.checkpoint(workflowId)}:`;
-  const summaries: CheckpointSummary[] = [];
-
-  for await (const [, value] of internals.storage.scan(prefix, {
-    reverse: true,
-    limit: internals.options.checkpointHistory,
-  })) {
-    const checkpoint = deserializeCheckpoint(value);
-    summaries.push({
-      step: checkpoint.step,
-      timestamp: checkpoint.createdAt,
-      sizeBytes: value.byteLength,
-    });
-  }
-
-  return summaries;
-}
-
-/** Retrieve the full deserialized checkpoint state at a specific step. */
-export async function getCheckpointAt(
-  internals: EngineInternals,
-  workflowId: string,
-  step: number,
-): Promise<CheckpointState | null> {
-  const bytes = await internals.storage.get(KEYS.checkpointHistory(workflowId, step));
-  if (!bytes) return null;
-
-  const checkpoint = deserializeCheckpoint(bytes);
-  return sanitizeCheckpointState({
-    step: checkpoint.step,
-    locals: checkpoint.locals,
-    searchAttributes: checkpoint.searchAttributes,
-    version: checkpoint.version,
-    createdAt: checkpoint.createdAt,
-  });
-}
-
-/** Return the durable per-step execution timeline for a workflow. */
-export async function getTimeline(
-  internals: EngineInternals,
-  workflowId: string,
-): Promise<WorkflowTimelineEntry[]> {
-  const timeline: WorkflowTimelineEntry[] = [];
-
-  for await (const [, value] of internals.storage.scan(KEYS.timelinePrefix(workflowId))) {
-    let decoded: unknown;
-    try {
-      decoded = decode(value);
-    } catch {
-      continue;
-    }
-
-    if (isWorkflowTimelineEntry(decoded)) {
-      timeline.push({
-        ...decoded,
-        inputSummary: sanitizeTimelineSummary(decoded.inputSummary) ?? decoded.inputSummary,
-        ...(decoded.outputSummary !== undefined
-          ? {
-              outputSummary:
-                sanitizeTimelineSummary(decoded.outputSummary) ?? decoded.outputSummary,
-            }
-          : {}),
-      });
-    }
-  }
-
-  timeline.sort((left, right) => left.step - right.step);
-  return timeline;
-}
-
-/** Reconstruct workflow state at a historical checkpoint step. */
-export async function replayTo(
-  internals: EngineInternals,
-  workflowId: string,
-  step: number,
-): Promise<WorkflowReplay | null> {
-  const bytes = await internals.storage.get(KEYS.checkpointHistory(workflowId, step));
-  if (!bytes) {
-    return null;
-  }
-
-  const checkpoint = deserializeCheckpoint(bytes);
-  const eventLog = new EventLog(internals.storage, workflowId);
-  const entries = await eventLog.replay(Math.max(step - 1, -1));
-
-  return {
-    checkpoint: sanitizeCheckpointState({
-      step: checkpoint.step,
-      locals: checkpoint.locals,
-      searchAttributes: checkpoint.searchAttributes,
-      version: checkpoint.version,
-      createdAt: checkpoint.createdAt,
-    }),
-    accumulatedResults: checkpoint.accumulatedResults.map(([index, value]) => [
-      index,
-      sanitizeDebugValueForDisplay(value),
-    ]),
-    events: entries.map((entry) => ({
-      type: entry.type,
-      timestamp: entry.timestamp,
-      data: sanitizeWorkflowEventPayload(entry.payload),
-    })),
   };
 }
 
@@ -394,10 +246,34 @@ async function commitCheckpoint(
   );
   const { newHead, timestamp } = appendCheckpointEventLog(internals, workflowId, commit);
 
+  // Event-log compaction: fold the deletes + watermark into the SAME batch as the
+  // checkpoint and event append, so verify() can never observe a gap without its
+  // watermark. No-op (null) when retentionWindow is disabled or nothing aged out.
+  // The synchronous `retentionWindow` guard avoids introducing an extra awaited
+  // microtask turn on the common (compaction-off) commit path, so the engine's
+  // existing checkpoint/signal interleaving is unchanged when the feature is off.
+  const retentionWindow = internals.options.historyPolicy.retentionWindow;
+  const compaction =
+    retentionWindow === null
+      ? null
+      : await appendCompactionOperations(
+          { storage: internals.storage, retentionWindow },
+          workflowId,
+          newHead.sequence,
+          commit.operations,
+        );
+
   await internals.storage.batch(commit.operations);
   internals.pendingTimelineEntries.set(workflowId, nextPendingTimelineEntry);
   internals.checkpoints.set(workflowId, commit.checkpoint);
   internals.eventLogHeads.set(workflowId, newHead);
+  // Archival runs only after the truncation has committed durably; it is a
+  // best-effort export, never a rollback trigger (see ArchiveAdapter). The
+  // Promise.resolve().then(...) wrapper turns synchronous adapter throws into
+  // swallowed rejections too.
+  if (compaction !== null) {
+    dispatchCompactionArchival(internals, workflowId, compaction, callbacks);
+  }
   notifyWorkflowFeedCommit(internals, workflowId, 'events', {
     workflowId,
     selector: 'events',
@@ -425,6 +301,29 @@ async function commitCheckpoint(
 function historyEventLimitBreached(internals: EngineInternals, sequence: number): boolean {
   const maxEvents = internals.options.historyPolicy.maxEvents;
   return maxEvents !== null && sequence + 1 > maxEvents;
+}
+
+/**
+ * Best-effort export of a compacted event-log range to the operator's
+ * {@link import('../types/archive-adapter.ts').ArchiveAdapter}, if configured.
+ * Never affects checkpoint success: a rejecting OR synchronously-throwing
+ * adapter is swallowed, and the records are already deleted regardless.
+ */
+function dispatchCompactionArchival(
+  internals: EngineInternals,
+  workflowId: string,
+  compaction: CompactionResult,
+  callbacks: Pick<PersistCheckpointCallbacks, 'swallowPromiseRejection'>,
+): void {
+  const adapter = internals.options.archiveAdapter;
+  if (adapter === null || compaction.deletedEntries.length === 0) return;
+
+  const { from, to } = compaction.deletedRange;
+  const key = `events:${from}-${to}`;
+  const bytes = serializeDeletedEntries(compaction.deletedEntries);
+  callbacks.swallowPromiseRejection(
+    Promise.resolve().then(() => adapter.store(workflowId, key, bytes)),
+  );
 }
 
 function dispatchCheckpointSizeWarning(

@@ -502,22 +502,30 @@ describe('history circuit breaker — persisted-shape compatibility', () => {
 
 describe('normalizeHistoryPolicy', () => {
   it('disables when policy is omitted', () => {
-    expect(normalizeHistoryPolicy(undefined, 'options.history')).toEqual({ maxEvents: null });
+    expect(normalizeHistoryPolicy(undefined, 'options.history')).toEqual({
+      maxEvents: null,
+      retentionWindow: null,
+    });
   });
 
   it('disables when maxEvents is omitted', () => {
-    expect(normalizeHistoryPolicy({}, 'options.history')).toEqual({ maxEvents: null });
+    expect(normalizeHistoryPolicy({}, 'options.history')).toEqual({
+      maxEvents: null,
+      retentionWindow: null,
+    });
   });
 
   it('disables when maxEvents is 0', () => {
     expect(normalizeHistoryPolicy({ maxEvents: 0 }, 'options.history')).toEqual({
       maxEvents: null,
+      retentionWindow: null,
     });
   });
 
   it('keeps a positive safe integer', () => {
     expect(normalizeHistoryPolicy({ maxEvents: 1000 }, 'options.history')).toEqual({
       maxEvents: 1000,
+      retentionWindow: null,
     });
   });
 
@@ -545,6 +553,36 @@ describe('normalizeHistoryPolicy', () => {
     expect(() =>
       // @ts-expect-error — exercising the runtime guard against wrong types.
       normalizeHistoryPolicy({ maxEvents: '100' }, 'options.history'),
+    ).toThrow(TypeError);
+  });
+
+  it('disables retentionWindow when omitted or 0', () => {
+    expect(normalizeHistoryPolicy({}, 'options.history').retentionWindow).toBeNull();
+    expect(
+      normalizeHistoryPolicy({ retentionWindow: 0 }, 'options.history').retentionWindow,
+    ).toBeNull();
+  });
+
+  it('keeps a positive safe retentionWindow', () => {
+    expect(normalizeHistoryPolicy({ retentionWindow: 500 }, 'options.history')).toEqual({
+      maxEvents: null,
+      retentionWindow: 500,
+    });
+  });
+
+  it('throws on an invalid retentionWindow', () => {
+    expect(() => normalizeHistoryPolicy({ retentionWindow: -1 }, 'options.history')).toThrow(
+      TypeError,
+    );
+    expect(() => normalizeHistoryPolicy({ retentionWindow: 1.5 }, 'options.history')).toThrow(
+      TypeError,
+    );
+    expect(() =>
+      normalizeHistoryPolicy({ retentionWindow: Number.POSITIVE_INFINITY }, 'options.history'),
+    ).toThrow(TypeError);
+    expect(() =>
+      // @ts-expect-error — exercising the runtime guard against wrong types.
+      normalizeHistoryPolicy({ retentionWindow: '5' }, 'options.history'),
     ).toThrow(TypeError);
   });
 });

@@ -255,8 +255,7 @@ describe('EventLog.verify()', () => {
     await log.append({ type: 'e2', payload: '!' });
 
     const result = await log.verify();
-    expect(result.valid).toBe(true);
-    expect(result.firstInvalidSequence).toBeUndefined();
+    expect(result).toEqual({ valid: true });
   });
 
   it('returns { valid: true } for an empty log', async () => {
@@ -311,10 +310,9 @@ describe('EventLog.verify()', () => {
     await storage.put(KEYS.event('wf-test', 1), encode(tamperedEntry));
 
     const result = await log.verify();
-    expect(result.valid).toBe(false);
     // Entry 1 carries prevHash='0000000000000000' (genesis) but the verifier
     // expects it to match hash(entry0_bytes). That mismatch is detected first.
-    expect(result.firstInvalidSequence).toBe(1);
+    expect(result).toEqual({ valid: false, firstInvalidSequence: 1 });
   });
 });
 
