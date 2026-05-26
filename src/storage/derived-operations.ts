@@ -1,3 +1,4 @@
+import type { NormalizedDeleteRangeOptions } from './delete-range.ts';
 import { type BatchOperation, type ScanOptions, type Storage } from './interface.ts';
 
 /**
@@ -60,6 +61,38 @@ export async function storageDeletePrefixCore(storage: Storage, prefix: string):
   const operations: BatchOperation[] = [];
 
   for await (const key of storageKeysCore(storage, prefix)) {
+    operations.push({ type: 'delete', key });
+  }
+
+  if (operations.length === 0) {
+    return 0;
+  }
+
+  await storage.batch(operations);
+  return operations.length;
+}
+
+/**
+ * Core `deleteRange` derivation: scan the keys under `prefix` that match the
+ * (already-normalized) bounds and remove them in a single batch. Returns the
+ * number of keys deleted.
+ *
+ * The bounds are honored by `scan` via `matchesScanOptions`; `limit` caps the
+ * delete to the lowest (ascending) keys in range. Like
+ * {@link storageDeletePrefixCore}, this is best-effort over the keys observed by
+ * the scan: a key inserted after the scan begins is not deleted. Takes a
+ * {@link NormalizedDeleteRangeOptions} because the only caller, the public
+ * `storageDeleteRange` dispatcher, validates first — keeping this module's
+ * type-only dependency on `interface.ts` intact (no runtime import cycle).
+ */
+export async function storageDeleteRangeCore(
+  storage: Storage,
+  prefix: string,
+  options: NormalizedDeleteRangeOptions,
+): Promise<number> {
+  const operations: BatchOperation[] = [];
+
+  for await (const key of storageKeysCore(storage, prefix, options)) {
     operations.push({ type: 'delete', key });
   }
 

@@ -1,3 +1,4 @@
+import type { NormalizedDeleteRangeOptions } from './delete-range';
 import { resolvePrefixRangeEnd, type ScanOptions } from './interface';
 
 export const SQLITE_CREATE_KEY_VALUE_TABLE = `CREATE TABLE IF NOT EXISTS kv (
@@ -35,11 +36,22 @@ export function buildSqlitePrefixRangeParameters(prefix: string): [string, strin
   return [prefix, resolvePrefixRangeEnd(prefix)];
 }
 
-export function buildSqliteKeyRangeQuery(
+/** The bound (gt/gte/lt/lte) fields shared by scan and delete range queries. */
+type SqliteKeyRangeBounds = Pick<ScanOptions, 'gt' | 'gte' | 'lt' | 'lte'>;
+
+/**
+ * Assemble the prefix-range + bound WHERE conditions and their parameters,
+ * without any ORDER BY or LIMIT. Single source of truth for the gt/gte/lt/lte
+ * predicate logic shared by the SELECT and DELETE builders.
+ */
+function buildSqliteKeyRangeConditions(
   prefix: string,
-  options: ScanOptions = {},
-): SqliteKeyRangeQuery {
-  const { limit, reverse, gt, lt, gte, lte } = options;
+  bounds: SqliteKeyRangeBounds,
+): {
+  conditions: string[];
+  parameters: SqliteKeyRangeQueryParameter[];
+} {
+  const { gt, gte, lt, lte } = bounds;
 
   const conditions: string[] = ['key >= ? AND key < ?'];
   const parameters: SqliteKeyRangeQueryParameter[] = buildSqlitePrefixRangeParameters(prefix);
@@ -61,6 +73,17 @@ export function buildSqliteKeyRangeQuery(
     parameters.push(lte);
   }
 
+  return { conditions, parameters };
+}
+
+export function buildSqliteKeyRangeQuery(
+  prefix: string,
+  options: ScanOptions = {},
+): SqliteKeyRangeQuery {
+  const { limit, reverse } = options;
+
+  const { conditions, parameters } = buildSqliteKeyRangeConditions(prefix, options);
+
   const direction = reverse ? 'DESC' : 'ASC';
   const limitClause = limit !== undefined ? ' LIMIT ?' : '';
 
@@ -71,6 +94,43 @@ export function buildSqliteKeyRangeQuery(
   return {
     parameters,
     sqlSuffix: `WHERE ${conditions.join(' AND ')} ORDER BY key ${direction}${limitClause}`,
+  };
+}
+
+/**
+ * Build a bounded-range `DELETE` for the `kv` table from already-validated
+ * delete options.
+ *
+ * Without `limit`, emits a plain `DELETE FROM kv WHERE <conditions>` — no
+ * ordering, since order is meaningless when deleting the whole matched range.
+ * With `limit`, emits a portable subquery form so the lowest (ascending) keys
+ * are deleted first: `DELETE FROM kv WHERE key IN (SELECT key FROM kv WHERE
+ * <conditions> ORDER BY key ASC LIMIT ?)`. The subquery avoids relying on
+ * `DELETE ... ORDER BY ... LIMIT`, which requires the
+ * `SQLITE_ENABLE_UPDATE_DELETE_LIMIT` compile flag and is not available on
+ * libSQL/Turso.
+ *
+ * Requires {@link NormalizedDeleteRangeOptions}: the type guarantees at least
+ * one bound is present, so this builder can never produce a whole-prefix wipe.
+ */
+export function buildSqliteKeyRangeDelete(
+  prefix: string,
+  options: NormalizedDeleteRangeOptions,
+): SqliteRangeSelectQuery {
+  const { conditions, parameters } = buildSqliteKeyRangeConditions(prefix, options);
+  const whereClause = conditions.join(' AND ');
+
+  if (options.limit === undefined) {
+    return {
+      parameters,
+      sql: `DELETE FROM kv WHERE ${whereClause}`,
+    };
+  }
+
+  parameters.push(options.limit);
+  return {
+    parameters,
+    sql: `DELETE FROM kv WHERE key IN (SELECT key FROM kv WHERE ${whereClause} ORDER BY key ASC LIMIT ?)`,
   };
 }
 

@@ -1,5 +1,6 @@
 import { Database, Statement, type SQLQueryBindings } from 'bun:sqlite';
 
+import { normalizeDeleteRangeOptions, type DeleteRangeOptions } from './delete-range';
 import {
   storageValuesEqual,
   type BatchOperation,
@@ -18,6 +19,7 @@ import {
   SQLITE_SELECT_KEY_PRESENCE,
   SQLITE_SELECT_VALUE_BY_KEY,
   SQLITE_UPSERT_VALUE_BY_KEY,
+  buildSqliteKeyRangeDelete,
   buildSqliteKeyRangeSelect,
   buildSqliteKeyValueRangeSelect,
   buildSqlitePrefixRangeParameters,
@@ -85,6 +87,9 @@ export class BunSQLiteStorage implements Storage {
   #scanStatements: Map<string, Statement<{ key: string; value: Uint8Array }, SQLQueryBindings[]>> =
     new Map();
   #keyStatements: Map<string, Statement<{ key: string }, SQLQueryBindings[]>> = new Map();
+  // deleteRange SQL varies only by bound shape and limit-presence (LIMIT is a
+  // bound parameter), so the cache is bounded the same way as #scanStatements.
+  #deleteRangeStatements: Map<string, Statement<unknown, SQLQueryBindings[]>> = new Map();
 
   /**
    * Number of distinct prepared-statement cache entries for scan().
@@ -139,7 +144,7 @@ export class BunSQLiteStorage implements Storage {
   capabilities(): StorageCapabilities {
     // Single-process WAL SQLite: serialized writers, same-connection reads see
     // committed data (linearizable); statements observe a snapshot; batch() runs
-    // in one transaction (atomic); deletePrefix is a single range DELETE.
+    // in one transaction (atomic); deletePrefix and deleteRange are single range DELETEs.
     return {
       readAfterWrite: 'linearizable',
       scanConsistency: 'snapshot',
@@ -171,6 +176,19 @@ export class BunSQLiteStorage implements Storage {
   async deletePrefix(prefix: string): Promise<number> {
     const [rangeStart, rangeEnd] = buildSqlitePrefixRangeParameters(prefix);
     return this.#deletePrefixStatement.run(rangeStart, rangeEnd).changes;
+  }
+
+  async deleteRange(prefix: string, options: DeleteRangeOptions): Promise<number> {
+    const normalized = normalizeDeleteRangeOptions(options);
+    const { parameters, sql } = buildSqliteKeyRangeDelete(prefix, normalized);
+
+    let statement = this.#deleteRangeStatements.get(sql);
+    if (!statement) {
+      statement = this.#database.prepare<unknown, SQLQueryBindings[]>(sql);
+      this.#deleteRangeStatements.set(sql, statement);
+    }
+
+    return statement.run(...parameters).changes;
   }
 
   async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
@@ -286,6 +304,10 @@ export class BunSQLiteStorage implements Storage {
       statement.finalize();
     }
     this.#keyStatements.clear();
+    for (const statement of this.#deleteRangeStatements.values()) {
+      statement.finalize();
+    }
+    this.#deleteRangeStatements.clear();
     // database.close() finalizes any remaining compiled statements including the
     // internal BEGIN/COMMIT/ROLLBACK statements created by database.transaction().
     // We close after finalizing named statements so their handles are released

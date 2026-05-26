@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 
+import { normalizeDeleteRangeOptions } from './delete-range.ts';
 import {
   storageCountCore,
   storageDeletePrefixCore,
+  storageDeleteRangeCore,
   storageHasCore,
   storageKeysCore,
 } from './derived-operations.ts';
@@ -38,6 +40,9 @@ function createTrapStorage(): Storage {
     },
     deletePrefix: () => {
       throw new Error('optional deletePrefix() must not be called by a *Core helper');
+    },
+    deleteRange: () => {
+      throw new Error('optional deleteRange() must not be called by a *Core helper');
     },
     [Symbol.dispose]: storage[Symbol.dispose].bind(storage),
   };
@@ -110,6 +115,55 @@ describe('derived-operations *Core helpers', () => {
     await storage.put('other:1', new Uint8Array([1]));
 
     expect(await storageDeletePrefixCore(storage, 'missing:')).toBe(0);
+    expect(await storage.get('other:1')).not.toBeNull();
+  });
+
+  it('storageDeleteRangeCore batch-deletes in-range keys, ignoring optional deleteRange()', async () => {
+    const storage = createTrapStorage();
+    for (const sequence of [1, 2, 3]) {
+      await storage.put(`ev:wf:0${sequence}`, new Uint8Array([sequence]));
+    }
+    await storage.put('other:1', new Uint8Array([9]));
+
+    const deleted = await storageDeleteRangeCore(
+      storage,
+      'ev:wf:',
+      normalizeDeleteRangeOptions({ lt: 'ev:wf:03' }),
+    );
+    expect(deleted).toBe(2);
+    expect(await storage.get('ev:wf:01')).toBeNull();
+    expect(await storage.get('ev:wf:02')).toBeNull();
+    expect(await storage.get('ev:wf:03')).not.toBeNull();
+    expect(await storage.get('other:1')).not.toBeNull();
+  });
+
+  it('storageDeleteRangeCore honors limit by deleting the lowest keys first', async () => {
+    const storage = createTrapStorage();
+    for (const sequence of [1, 2, 3, 4]) {
+      await storage.put(`ev:wf:0${sequence}`, new Uint8Array([sequence]));
+    }
+
+    const deleted = await storageDeleteRangeCore(
+      storage,
+      'ev:wf:',
+      normalizeDeleteRangeOptions({ gte: 'ev:wf:', limit: 2 }),
+    );
+    expect(deleted).toBe(2);
+    expect(await storage.get('ev:wf:01')).toBeNull();
+    expect(await storage.get('ev:wf:02')).toBeNull();
+    expect(await storage.get('ev:wf:03')).not.toBeNull();
+  });
+
+  it('storageDeleteRangeCore returns 0 and skips batch() when nothing matches', async () => {
+    const storage = createTrapStorage();
+    await storage.put('other:1', new Uint8Array([1]));
+
+    const deleted = await storageDeleteRangeCore(
+      storage,
+      'ev:wf:',
+      normalizeDeleteRangeOptions({ lt: 'ev:wf:99' }),
+    );
+    expect(deleted).toBe(0);
     expect(await storage.get('other:1')).not.toBeNull();
   });
 });

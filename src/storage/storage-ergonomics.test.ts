@@ -1,10 +1,78 @@
 import { describe, expect, it } from 'bun:test';
 
 import { storageBackends } from '../testing/storage-backends.ts';
+import { storageDeleteRange, type DeleteRangeOptions } from './delete-range.ts';
+import { KEYS } from './interface.ts';
 
 function encode(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
+
+/**
+ * Cross-adapter cases for deleteRange. Each seeds `range:1..5` then deletes with
+ * the given bounds and asserts the count removed and the keys that survive.
+ */
+const deleteRangeCases: ReadonlyArray<{
+  name: string;
+  options: DeleteRangeOptions;
+  deleted: number;
+  survivors: string[];
+}> = [
+  {
+    name: 'gt lower bound',
+    options: { gt: 'range:2' },
+    deleted: 3,
+    survivors: ['range:1', 'range:2'],
+  },
+  {
+    name: 'gte lower bound',
+    options: { gte: 'range:2' },
+    deleted: 4,
+    survivors: ['range:1'],
+  },
+  {
+    name: 'lt upper bound',
+    options: { lt: 'range:3' },
+    deleted: 2,
+    survivors: ['range:3', 'range:4', 'range:5'],
+  },
+  {
+    name: 'lte upper bound',
+    options: { lte: 'range:3' },
+    deleted: 3,
+    survivors: ['range:4', 'range:5'],
+  },
+  {
+    name: 'combined lower and upper bound',
+    options: { gt: 'range:1', lt: 'range:4' },
+    deleted: 2,
+    survivors: ['range:1', 'range:4', 'range:5'],
+  },
+  {
+    name: 'limit 0 deletes nothing',
+    options: { gte: 'range:1', limit: 0 },
+    deleted: 0,
+    survivors: ['range:1', 'range:2', 'range:3', 'range:4', 'range:5'],
+  },
+  {
+    name: 'limit below match count deletes the lowest keys',
+    options: { gte: 'range:1', limit: 2 },
+    deleted: 2,
+    survivors: ['range:3', 'range:4', 'range:5'],
+  },
+  {
+    name: 'impossible range deletes nothing',
+    options: { gt: 'range:9', lt: 'range:0' },
+    deleted: 0,
+    survivors: ['range:1', 'range:2', 'range:3', 'range:4', 'range:5'],
+  },
+  {
+    name: 'smuggled reverse does not flip which keys the limit selects',
+    options: { gte: 'range:1', limit: 2, reverse: true } as DeleteRangeOptions,
+    deleted: 2,
+    survivors: ['range:3', 'range:4', 'range:5'],
+  },
+];
 
 async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const values: T[] = [];
@@ -89,6 +157,53 @@ for (const backend of storageBackends) {
         expect(await storage.get('delete:two')).toBeNull();
         expect(await storage.get('keep:three')).toEqual(encode('3'));
         expect(await storage.count?.('delete:')).toBe(0);
+      } finally {
+        cleanup();
+      }
+    });
+
+    it('Storage.deleteRange(prefix, options) honors bounds and limit across built-in adapters', async () => {
+      for (const testCase of deleteRangeCases) {
+        const { storage, cleanup } = backend.factory();
+        try {
+          expect(storage.deleteRange).toBeDefined();
+
+          await storage.batch(
+            [1, 2, 3, 4, 5].map((n) => ({
+              type: 'put' as const,
+              key: `range:${n}`,
+              value: encode(String(n)),
+            })),
+          );
+
+          const deleted = await storage.deleteRange?.('range:', testCase.options);
+          expect(deleted, testCase.name).toBe(testCase.deleted);
+
+          const survivors = await collect(storage.keys!('range:'));
+          expect(survivors, testCase.name).toEqual(testCase.survivors);
+        } finally {
+          cleanup();
+        }
+      }
+    });
+
+    it('storageDeleteRange truncates events below a sequence watermark via KEYS.event', async () => {
+      const { storage, cleanup } = backend.factory();
+      try {
+        for (let sequence = 1; sequence <= 5; sequence++) {
+          await storage.put(KEYS.event('wf', sequence), encode(String(sequence)));
+        }
+
+        // Exactly how the downstream truncation task calls it: delete events with
+        // sequence strictly below the cutoff (3), leaving 3..5.
+        const deleted = await storageDeleteRange(storage, KEYS.eventPrefix('wf'), {
+          lt: KEYS.event('wf', 3),
+        });
+        expect(deleted).toBe(2);
+        expect(await storage.get(KEYS.event('wf', 1))).toBeNull();
+        expect(await storage.get(KEYS.event('wf', 2))).toBeNull();
+        expect(await storage.get(KEYS.event('wf', 3))).not.toBeNull();
+        expect(await storage.get(KEYS.event('wf', 5))).not.toBeNull();
       } finally {
         cleanup();
       }

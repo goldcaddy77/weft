@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
+import { normalizeDeleteRangeOptions } from './delete-range';
 import {
   SQLITE_COUNT_KEYS_BY_PREFIX,
   SQLITE_CREATE_KEY_VALUE_TABLE,
@@ -8,6 +9,7 @@ import {
   SQLITE_SELECT_KEY_PRESENCE,
   SQLITE_SELECT_VALUE_BY_KEY,
   SQLITE_UPSERT_VALUE_BY_KEY,
+  buildSqliteKeyRangeDelete,
   buildSqliteKeyRangeQuery,
   buildSqliteKeyRangeSelect,
   buildSqliteKeyValueRangeSelect,
@@ -76,5 +78,73 @@ describe('SQLite key-value query helpers', () => {
     expect(first.sql).toBe(second.sql);
     expect(first.parameters).toEqual(['page:', 'page;', 1]);
     expect(second.parameters).toEqual(['page:', 'page;', 100]);
+  });
+});
+
+describe('buildSqliteKeyRangeDelete', () => {
+  it('emits a plain bounded DELETE with no ORDER BY when unlimited', () => {
+    expect(
+      buildSqliteKeyRangeDelete('ev:wf:', normalizeDeleteRangeOptions({ lt: 'ev:wf:03' })),
+    ).toEqual({
+      parameters: ['ev:wf:', 'ev:wf;', 'ev:wf:03'],
+      sql: 'DELETE FROM kv WHERE key >= ? AND key < ? AND key < ?',
+    });
+  });
+
+  it('threads lower-only and upper-only bounds into the WHERE clause and parameters', () => {
+    expect(buildSqliteKeyRangeDelete('k:', normalizeDeleteRangeOptions({ gt: 'k:a' }))).toEqual({
+      parameters: ['k:', 'k;', 'k:a'],
+      sql: 'DELETE FROM kv WHERE key >= ? AND key < ? AND key > ?',
+    });
+
+    expect(buildSqliteKeyRangeDelete('k:', normalizeDeleteRangeOptions({ lte: 'k:z' }))).toEqual({
+      parameters: ['k:', 'k;', 'k:z'],
+      sql: 'DELETE FROM kv WHERE key >= ? AND key < ? AND key <= ?',
+    });
+  });
+
+  it('handles inclusive and exclusive variants of both bounds at once', () => {
+    expect(
+      buildSqliteKeyRangeDelete(
+        'k:',
+        normalizeDeleteRangeOptions({ gt: 'k:001', gte: 'k:010', lt: 'k:900', lte: 'k:800' }),
+      ),
+    ).toEqual({
+      parameters: ['k:', 'k;', 'k:001', 'k:010', 'k:900', 'k:800'],
+      sql: 'DELETE FROM kv WHERE key >= ? AND key < ? AND key > ? AND key >= ? AND key < ? AND key <= ?',
+    });
+  });
+
+  it('uses a portable ascending subquery when a limit caps the delete', () => {
+    expect(
+      buildSqliteKeyRangeDelete(
+        'ev:wf:',
+        normalizeDeleteRangeOptions({ gte: 'ev:wf:', limit: 100 }),
+      ),
+    ).toEqual({
+      parameters: ['ev:wf:', 'ev:wf;', 'ev:wf:', 100],
+      sql: 'DELETE FROM kv WHERE key IN (SELECT key FROM kv WHERE key >= ? AND key < ? AND key >= ? ORDER BY key ASC LIMIT ?)',
+    });
+  });
+
+  it('keeps the SQL shape stable when only the limit value changes', () => {
+    const first = buildSqliteKeyRangeDelete(
+      'k:',
+      normalizeDeleteRangeOptions({ gte: 'k:', limit: 1 }),
+    );
+    const second = buildSqliteKeyRangeDelete(
+      'k:',
+      normalizeDeleteRangeOptions({ gte: 'k:', limit: 999 }),
+    );
+    expect(first.sql).toBe(second.sql);
+    expect(first.parameters).toEqual(['k:', 'k;', 'k:', 1]);
+    expect(second.parameters).toEqual(['k:', 'k;', 'k:', 999]);
+  });
+
+  it('cannot be reached with empty bounds — normalize is the only door to the builder', () => {
+    // The builder accepts only NormalizedDeleteRangeOptions, and the only way to
+    // obtain one is normalizeDeleteRangeOptions, which rejects empty bounds. So a
+    // full-prefix DELETE shape is unreachable by construction.
+    expect(() => normalizeDeleteRangeOptions({})).toThrow(/at least one of gt\/gte\/lt\/lte/);
   });
 });

@@ -398,6 +398,49 @@ describe('WebExtensionStorage', () => {
     }
   });
 
+  it('deleteRange removes only the in-range keys through the fallback', async () => {
+    const area = new FakeStorageArea();
+    const restore = installStorageNamespace('browser', area);
+    try {
+      const storage = new WebExtensionStorage();
+      await storage.put('ev:wf:01', encode('1'));
+      await storage.put('ev:wf:02', encode('2'));
+      await storage.put('ev:wf:03', encode('3'));
+
+      expect(await storage.deleteRange('ev:wf:', { lt: 'ev:wf:03' })).toBe(2);
+
+      expect(decode(await storage.get('ev:wf:01'))).toBeNull();
+      expect(decode(await storage.get('ev:wf:02'))).toBeNull();
+      expect(decode(await storage.get('ev:wf:03'))).toBe('3');
+    } finally {
+      restore();
+    }
+  });
+
+  it('rejects deleteRange on managed storage before deleting anything', async () => {
+    const area = new FakeStorageArea();
+    area.data.set('ev:wf:01', '1');
+    area.data.set('ev:wf:02', '2');
+    const restore = installStorageNamespace('browser', area);
+    try {
+      const storage = new WebExtensionStorage({ area: 'managed' });
+
+      await expect(storage.deleteRange('ev:wf:', { lt: 'ev:wf:02' })).rejects.toThrow(
+        'WebExtensionStorage area "managed" is read-only.',
+      );
+
+      // Invalid options still throw the validation error, never silently no-op.
+      await expect(storage.deleteRange('ev:wf:', {})).rejects.toThrow(
+        /at least one of gt\/gte\/lt\/lte/,
+      );
+
+      expect(area.data.has('ev:wf:01')).toBe(true);
+      expect(area.removeCallCount).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
   it('deletePrefix removes exactly the matching keys and leaves nearby keys intact', async () => {
     const area = new FakeStorageArea();
     const restore = installStorageNamespace('browser', area);

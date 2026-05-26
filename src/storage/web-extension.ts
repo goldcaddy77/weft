@@ -1,7 +1,9 @@
 import { decodeBase64ToBytes, encodeBytesToBase64, isRecord } from './byte-encoding.ts';
+import { normalizeDeleteRangeOptions, type DeleteRangeOptions } from './delete-range.ts';
 import {
   storageCountCore,
   storageDeletePrefixCore,
+  storageDeleteRangeCore,
   storageHasCore,
   storageKeysCore,
 } from './derived-operations.ts';
@@ -265,7 +267,7 @@ export class WebExtensionStorage implements Storage {
     // compare-and-swap (conditionalBatch: false). Same-instance reads observe
     // this instance's own writes (session); a separate extension context may
     // lag, and there is no scan-time transaction isolation (best-effort).
-    // deletePrefix uses the derived scan-and-delete fallback, so
+    // deletePrefix and deleteRange use the derived scan-and-delete fallback, so
     // boundedRangeDelete is false.
     return {
       readAfterWrite: 'session',
@@ -473,6 +475,15 @@ export class WebExtensionStorage implements Storage {
     // rejected promise rather than a synchronous throw.
     this.#assertWritable();
     return storageDeletePrefixCore(this, prefix);
+  }
+
+  async deleteRange(prefix: string, options: DeleteRangeOptions): Promise<number> {
+    // Normalize before the writable check so an invalid request (e.g. missing
+    // bounds) throws the same way regardless of area writability; then reject a
+    // write attempt on a read-only area up front, matching deletePrefix.
+    const normalized = normalizeDeleteRangeOptions(options);
+    this.#assertWritable();
+    return storageDeleteRangeCore(this, prefix, normalized);
   }
 
   scoped(prefix: string): Storage {

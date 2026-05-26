@@ -1,4 +1,9 @@
 import {
+  normalizeDeleteRangeOptions,
+  storageDeleteRange,
+  type DeleteRangeOptions,
+} from './delete-range.ts';
+import {
   storageConditionalBatch,
   storageCount,
   storageDeletePrefix,
@@ -109,6 +114,28 @@ export class ScopedStorage implements Storage {
     return innerOptions;
   }
 
+  #toInnerDeleteRangeOptions(options: DeleteRangeOptions): DeleteRangeOptions {
+    const innerOptions: DeleteRangeOptions = {};
+
+    if (options.limit !== undefined) {
+      innerOptions.limit = options.limit;
+    }
+    if (options.gt !== undefined) {
+      innerOptions.gt = this.#toInnerKey(options.gt);
+    }
+    if (options.gte !== undefined) {
+      innerOptions.gte = this.#toInnerKey(options.gte);
+    }
+    if (options.lt !== undefined) {
+      innerOptions.lt = this.#toInnerKey(options.lt);
+    }
+    if (options.lte !== undefined) {
+      innerOptions.lte = this.#toInnerKey(options.lte);
+    }
+
+    return innerOptions;
+  }
+
   capabilities(): StorageCapabilities {
     // Pure key-rewriting pass-through: every consistency and feature guarantee
     // is exactly the inner store's. Delegate verbatim.
@@ -192,6 +219,14 @@ export class ScopedStorage implements Storage {
 
   async deletePrefix(prefix: string): Promise<number> {
     return storageDeletePrefix(this.#storage, this.#toInnerKey(prefix));
+  }
+
+  async deleteRange(prefix: string, options: DeleteRangeOptions): Promise<number> {
+    // Normalize first (validates, drops reverse), then translate bound keys into
+    // the inner namespace. Translating an already-normalized object guarantees a
+    // future refactor cannot smuggle `reverse` into the inner delete.
+    const inner = this.#toInnerDeleteRangeOptions(normalizeDeleteRangeOptions(options));
+    return storageDeleteRange(this.#storage, this.#toInnerKey(prefix), inner);
   }
 
   async *keys(prefix: string, options?: ScanOptions): AsyncIterable<string> {

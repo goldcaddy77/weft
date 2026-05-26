@@ -1,5 +1,6 @@
 import * as lmdb from 'lmdb';
 
+import { normalizeDeleteRangeOptions, type DeleteRangeOptions } from './delete-range';
 import {
   matchesScanOptions,
   resolvePrefixRangeEnd,
@@ -52,7 +53,7 @@ export class LMDBStorage implements Storage {
   capabilities(): StorageCapabilities {
     // LMDB MVCC, single writer, memory-mapped: a committed write is visible to
     // later reads (linearizable); read transactions are point-in-time snapshots;
-    // batch() and the range deletePrefix run inside one write transaction.
+    // batch() and the range deletePrefix/deleteRange run inside one write transaction.
     return {
       readAfterWrite: 'linearizable',
       scanConsistency: 'snapshot',
@@ -88,6 +89,29 @@ export class LMDBStorage implements Storage {
     this.#assertOpen();
     const keys: string[] = [];
     for await (const key of this.keys(prefix)) {
+      keys.push(key);
+    }
+
+    if (keys.length === 0) {
+      return 0;
+    }
+
+    await this.#database.batch(() => {
+      for (const key of keys) {
+        void this.#database.remove(key);
+      }
+    });
+
+    return keys.length;
+  }
+
+  async deleteRange(prefix: string, options: DeleteRangeOptions): Promise<number> {
+    this.#assertOpen();
+    const normalized = normalizeDeleteRangeOptions(options);
+
+    // keys() already applies gt/gte/lt/lte and limit, ascending (no reverse).
+    const keys: string[] = [];
+    for await (const key of this.keys(prefix, normalized)) {
       keys.push(key);
     }
 

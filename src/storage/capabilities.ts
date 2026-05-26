@@ -25,8 +25,9 @@ import type { Storage } from './interface.ts';
  *   failure mode is checkpoint corruption, not a missing feature — honesty is
  *   the adapter author's responsibility.
  * - **Operational hint:** `boundedRangeDelete` is a strength-of-implementation
- *   claim about `deletePrefix()` (a single bounded range op vs. a scan-and-delete
- *   fallback). It affects performance, not correctness, and nothing gates on it.
+ *   claim about `deletePrefix()` and `deleteRange()` (a single bounded range op
+ *   vs. a scan-and-delete fallback). It affects performance, not correctness, and
+ *   nothing gates on it.
  *
  * **Why the engine needs these.** Checkpoint commit relies on `atomicBatch`
  * (all-or-nothing); resume relies on `readAfterWrite` (the just-written
@@ -89,13 +90,14 @@ export type StorageCapabilities = {
   /** `conditionalBatch()` compare-and-swap preconditions are supported. */
   conditionalBatch: boolean;
   /**
-   * `deletePrefix()` is implemented as a bounded range operation (a single
-   * range-scoped SQL `DELETE`, an `IDBKeyRange` delete, an LMDB range delete in
-   * one write transaction, or an in-memory range-bounded delete), NOT a
-   * client-side scan-then-delete loop. Adapters that only fall back to the
-   * derived `storageDeletePrefixCore` helper report `false` even though
-   * `deletePrefix()` works. This is a strength-of-implementation claim about the
-   * adapter's own method, not a guarantee about a remote backend behind it.
+   * `deletePrefix()` and `deleteRange()` are implemented as bounded range
+   * operations (a single range-scoped SQL `DELETE`, an `IDBKeyRange` delete, an
+   * LMDB range delete in one write transaction, or an in-memory range-bounded
+   * delete), NOT a client-side scan-then-delete loop. Adapters that only fall
+   * back to the derived `storageDeletePrefixCore`/`storageDeleteRangeCore`
+   * helpers report `false` even though those methods work. This is a
+   * strength-of-implementation claim about the adapter's own methods, not a
+   * guarantee about a remote backend behind it.
    */
   boundedRangeDelete: boolean;
 };

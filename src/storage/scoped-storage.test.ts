@@ -81,6 +81,55 @@ describe('scopedStorage', () => {
     expect(await scoped.count('item:')).toBe(0);
   });
 
+  it('storage.scoped(prefix) forwards deleteRange, translating bounds within the namespace only', async () => {
+    const storage = new MemoryStorage();
+    const scoped = storage.scoped('scope');
+
+    await writeEntries(storage, [
+      { type: 'put', key: 'scope:item:1', value: encode('1') },
+      { type: 'put', key: 'scope:item:2', value: encode('2') },
+      { type: 'put', key: 'scope:item:3', value: encode('3') },
+      { type: 'put', key: 'other:item:2', value: encode('outside') },
+    ]);
+
+    if (!scoped.deleteRange) {
+      throw new Error('Scoped storage should expose deleteRange(prefix, options).');
+    }
+
+    // Public bound 'item:3' is translated to inner 'scope:item:3'; the delete
+    // must not touch the unscoped 'other:item:2'.
+    expect(await scoped.deleteRange('item:', { lt: 'item:3' })).toBe(2);
+    expect(await scoped.get('item:1')).toBeNull();
+    expect(await scoped.get('item:2')).toBeNull();
+    expect(await scoped.get('item:3')).toEqual(encode('3'));
+    expect(await storage.get('other:item:2')).toEqual(encode('outside'));
+  });
+
+  it('storage.scoped(prefix).deleteRange ignores a smuggled reverse flag', async () => {
+    const storage = new MemoryStorage();
+    const scoped = storage.scoped('scope');
+
+    await writeEntries(
+      storage,
+      [1, 2, 3, 4].map((n) => ({
+        type: 'put' as const,
+        key: `scope:item:${n}`,
+        value: encode(String(n)),
+      })),
+    );
+
+    // reverse must not flip which keys the limit selects: still the lowest two.
+    await scoped.deleteRange!('item:', {
+      gte: 'item:1',
+      limit: 2,
+      reverse: true,
+    } as never);
+    expect(await scoped.get('item:1')).toBeNull();
+    expect(await scoped.get('item:2')).toBeNull();
+    expect(await scoped.get('item:3')).toEqual(encode('3'));
+    expect(await scoped.get('item:4')).toEqual(encode('4'));
+  });
+
   it('storage.scoped(prefix) translates bounds, reverse ordering, and limit within the namespace', async () => {
     const storage = new MemoryStorage();
     if (!storage.scoped) {
@@ -121,7 +170,8 @@ describe('scopedStorage', () => {
     expect(await scoped.has('item:1')).toBe(true);
     expect(await collect(scoped.keys('item:'))).toEqual(['item:1', 'item:2']);
     expect(await scoped.count('item:')).toBe(2);
-    expect(await scoped.deletePrefix('item:')).toBe(2);
+    expect(await scoped.deleteRange('item:', { gt: 'item:1' })).toBe(1); // fallback path: only item:2
+    expect(await scoped.deletePrefix('item:')).toBe(1); // item:1 remains
     expect(await storage.get('other:item:3')).toEqual(encode('3'));
   });
 
@@ -163,6 +213,39 @@ describe('scopedStorage', () => {
 
     scoped[Symbol.dispose]();
     expect(adapter.wasDisposed()).toBe(true);
+  });
+
+  it('forwards conditionalBatch, rewriting condition and operation keys into the namespace', async () => {
+    const inner = new MemoryStorage();
+    const scoped = scopedStorage(inner, 'scope');
+
+    await scoped.put('counter', encode('start'));
+
+    // Mismatched precondition: nothing applies, returns false.
+    expect(
+      await scoped.conditionalBatch(
+        [{ key: 'counter', expectedValue: encode('wrong') }],
+        [{ type: 'put', key: 'counter', value: encode('changed') }],
+      ),
+    ).toBe(false);
+    expect(decode((await scoped.get('counter'))!)).toBe('start');
+
+    // Matching precondition: a put and a delete both rewrite into the namespace.
+    await scoped.put('stale', encode('old'));
+    expect(
+      await scoped.conditionalBatch(
+        [{ key: 'counter', expectedValue: encode('start') }],
+        [
+          { type: 'put', key: 'counter', value: encode('next') },
+          { type: 'delete', key: 'stale' },
+        ],
+      ),
+    ).toBe(true);
+    expect(decode((await scoped.get('counter'))!)).toBe('next');
+    expect(await scoped.get('stale')).toBeNull();
+    // Writes landed under the scope prefix in the inner store.
+    expect(decode((await inner.get('scope:counter'))!)).toBe('next');
+    expect(await inner.get('scope:stale')).toBeNull();
   });
 });
 
