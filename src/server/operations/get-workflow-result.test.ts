@@ -2,7 +2,7 @@
  * `weft.workflows.result.get` operation + REST binding — behavior tests.
  */
 
-import { describe, expect, it, spyOn } from 'bun:test';
+import { afterEach, describe, expect, it, spyOn } from 'bun:test';
 
 import { encode } from '../../core/codec.ts';
 import { Engine } from '../../core/engine.ts';
@@ -29,9 +29,17 @@ const failingWorkflow = workflow({ name: 'failing' }).execute(async function* ()
   throw new Error('workflow failed');
 });
 
+// Engines hold background timers/intervals and must be disposed, or they emit a
+// WeftEngineLeakWarning and leak resources across tests. Track every engine the
+// factory creates and dispose them after each test.
+const createdEngines: Engine[] = [];
+
 function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
+  // Track immediately after construction so a throwing `register` below still leaves
+  // the engine for `afterEach` to dispose.
+  createdEngines.push(engine);
   engine.register(echoWorkflow);
   engine.register(holdWorkflow);
   engine.register(failingWorkflow);
@@ -40,6 +48,24 @@ function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
 
 const registry = createOperationRegistry([getWorkflowResultOperation]);
 const bindings = [getWorkflowResultRestBinding];
+
+// Surface the first disposal error rather than swallowing it; matches the shared
+// pattern in list-workflows.test.ts and json-rpc-http-integration.test.ts.
+function disposeCreatedEngines(): void {
+  let disposeError: unknown;
+  for (const engine of createdEngines.splice(0)) {
+    try {
+      engine[Symbol.dispose]();
+    } catch (error) {
+      disposeError ??= error;
+    }
+  }
+  if (disposeError !== undefined) throw disposeError;
+}
+
+afterEach(() => {
+  disposeCreatedEngines();
+});
 
 describe('weft.workflows.result.get', () => {
   it('returns the workflow result on the happy path', async () => {
@@ -315,5 +341,7 @@ describe('weft.workflows.result.get', () => {
       clearTimeoutSpy.mockRestore();
       engine.getHandle = originalGetHandle;
     }
+    // The engine (with its still-running `hold` workflow) is disposed by `afterEach`,
+    // which runs after the spies are restored so teardown uses the real `clearTimeout`.
   });
 });
