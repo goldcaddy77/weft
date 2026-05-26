@@ -7,7 +7,7 @@ import {
 } from './derived-operations.ts';
 
 export { requireStorageCapability } from './capabilities.ts';
-export type { BooleanStorageCapabilityKey, StorageCapabilities } from './capabilities.ts';
+export type { GatedStorageCapabilityKey, StorageCapabilities } from './capabilities.ts';
 
 /**
  * A single KV operation in a batch.

@@ -100,7 +100,7 @@ type StorageCapabilities = {
 };
 ```
 
-The self-reported guarantee profile returned by [`capabilities()`](#capabilities). `conditionalBatch` is runtime-gated; the rest are trusted contracts the engine does not verify. The per-adapter matrix and the opaque-value invariant live in the [Consistency & capabilities](../guides/storage.md#consistency-capabilities) guide. Gate a feature on a boolean capability with `requireStorageCapability(storage, 'conditionalBatch', featureName)`, which throws a clear diagnostic at first use when the capability is `false`.
+The self-reported guarantee profile returned by [`capabilities()`](#capabilities). `conditionalBatch` is the only runtime-gated capability; `atomicBatch`/`readAfterWrite`/`scanConsistency` are trusted correctness contracts the engine does not verify, and `boundedRangeDelete` is an operational hint. The per-adapter matrix and the opaque-value invariant live in the [Consistency & capabilities](../guides/storage.md#consistency-capabilities) guide. Gate a feature with `requireStorageCapability(storage, 'conditionalBatch', featureName)` — its capability parameter is typed `GatedStorageCapabilityKey` (today only `'conditionalBatch'`) — which throws a clear diagnostic at first use when the capability is `false`.
 
 ### `ScanOptions`
 
