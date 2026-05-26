@@ -59,7 +59,7 @@ allowed-tools:
 - Use `WebSocketClient` for real-time updates
 - Navigation via `navigate()` from `router.svelte.ts`
 - No SvelteKit load functions, form actions, or `$app/*` imports
-- Workflow list filters must reuse the shared filter builder so list requests, aggregate counts, tenant suggestions, and bulk-action previews send the same filter shape.
+- Workflow list filters must reuse the shared filter builder so list requests, aggregate counts, saved filter suggestions, and bulk-action previews send the same filter shape.
 - Date-range filters use millisecond bounds from `datetime-local` controls and should keep loading/error state announced through accessible status regions.
 
 ### 4) Accessibility

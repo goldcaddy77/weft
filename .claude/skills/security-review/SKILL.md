@@ -33,12 +33,12 @@ The server routes through operation handlers plus transport-specific discovery e
 
 - [ ] Path parameters are decoded safely (`decodeURIComponent` is already used — verify no double-decoding)
 - [ ] Request bodies are parsed with try/catch (malformed JSON returns 400, not 500)
-- [ ] Query parameters (`status`, `type`, `tenant_id`, `failure_category`, date ranges, `limit`, `offset`) are validated before use — check for NaN on numeric params, validate enum values against allowed sets
+- [ ] Query parameters (`status`, `type`, `failure_category`, date ranges, `limit`, `offset`) are validated before use — check for NaN on numeric params, validate enum values against allowed sets
 - [ ] No user-controlled strings are interpolated into storage keys without sanitization
 - [ ] Error messages do not leak internal state (stack traces, storage keys, file paths)
 - [ ] Discovery documents that emit absolute URLs use `publicOrigin` or trusted host validation, not arbitrary Host-header text
 - [ ] REST `EngineFailure` responses use the canonical masked body; raw engine messages stay out of HTTP responses
-- [ ] Schedule read and mutation routes forward JWT tenant claims into engine access checks; missing claims return 403 and cross-tenant IDs are masked as not found
+- [ ] Schedule routes use operation-catalog access policies consistently across REST and JSON-RPC; do not add tenant-claim gates back into core schedule access
 
 Routes that accept bodies include workflow start, signal, update, query, attributes, review decisions, bulk actions, JSON-RPC, HTTP storage, and MCP `POST /mcp`.
 
@@ -48,7 +48,7 @@ Routes that accept bodies include workflow start, signal, update, query, attribu
 
 - [ ] Bearer tokens, startup tokens, API keys, and authenticated principals are never logged, serialized to checkpoints, or included in error messages
 - [ ] `initialize` binds the authenticated principal to the MCP session, and subsequent POST/GET/DELETE requests cannot switch principals by changing headers
-- [ ] Tenant-scoped MCP sessions can only list, read, or mutate workflows in their tenant; cross-tenant resources should appear not found
+- [ ] MCP sessions keep authenticated principals bound for the session lifetime; route authorization is scope-based, not tenant-claim-based
 - [ ] Local stdio admission requires `--startup-token` or an explicit trusted-boundary flag
 - [ ] Workflow tool failures return MCP tool results with `isError: true` without leaking server internals
 
@@ -71,6 +71,8 @@ User-defined workflow functions run inside the engine. They should not be able t
 - [ ] `BunSQLiteStorage` uses parameterized queries — no string concatenation for SQL
 - [ ] The `encode()`/`decode()` codec (msgpack) does not execute code during deserialization
 - [ ] Storage keys constructed from user input (workflow IDs, attribute names) are bounded in length and character set
+- [ ] Bounded range deletes go through `storageDeleteRange()` or the same normalized bounds; unbounded deletion must use explicit `deletePrefix()`, never a malformed `deleteRange()`
+- [ ] Bounded delete tests cover empty options rejection, invalid negative limits, impossible bound intersections, and scoped-storage prefix-smuggling attempts
 - [ ] Batch operations in storage cannot be used to overwrite keys belonging to other workflows
 - [ ] IndexedDB storage (`src/storage/indexeddb.ts`) applies the same key validation
 

@@ -79,7 +79,7 @@ Use `weft conformance` when a change touches the `RemoteWorker` protocol or work
 
 Hooks live as Bun TypeScript files under `scripts/husky/` and are invoked by tiny sh wrappers in `.husky/`:
 
-- `pre-commit`: runs lint-staged, the lint-disable ceiling check, and basic dependency checks
+- `pre-commit`: runs lint-staged, the lint-disable ceiling check, basic dependency checks, and the diagnosable Bun test runner in `scripts/husky/run-tests.ts`
 - `post-checkout`: installs deps when `package.json`+`bun.lock` change; surfaces config changes
 - `post-merge`: installs/cleans when dependencies or config changed; shows merge stats
 
@@ -139,7 +139,8 @@ If an `as` cast is genuinely necessary (e.g., deserializing from storage where t
 - MCP discovery is public metadata that emits absolute URLs. Changes to `/.well-known/mcp.json`, `/openrpc.json` MCP metadata, or `/mcp` must cover `publicOrigin`/`trustedHosts`, and authentication/session binding.
 - Preserve legacy REST response contracts during cleanup refactors. Shared helpers are fine, but tests must pin any intentionally raw or masked error shape.
 - REST `EngineFailure` responses are masked by the canonical `shapeRestFault` path as `{ error: "Internal server error" }` with status `500`; JSON-RPC still receives the operation fault object. Preserve that split when refactoring operation helpers.
-- Schedule read/update/pause/resume/cancel operations must forward JWT tenant claims into engine access checks across REST and JSON-RPC. Missing tenant claims produce `403`; cross-tenant schedule IDs are masked as `404` without an existence oracle.
+- Schedule operations use their operation-catalog access policies across REST and JSON-RPC. Do not reintroduce tenant-claim access checks; multi-tenancy has been removed from the core, and legacy tenant fields are tolerated only as persisted-data cleanup.
+- Storage adapters must report `capabilities()` honestly. Gate only `conditionalBatch` with `requireStorageCapability`; treat `boundedRangeDelete` as an operational hint and route bounded deletes through `storageDeleteRange()` so unbounded range deletion is impossible.
 - Task polling and shutdown changes must cover already-aborted request signals, disconnects during parked long-polls, task retention for dead pollers, and `server.stop()` disposal of queued timers/waiters.
 
 ### Testing Approach

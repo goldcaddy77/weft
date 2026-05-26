@@ -246,12 +246,20 @@ Use `POST /v1/schedules/:id/resume` to resume a paused schedule. There is no
 
 Schedule read and mutation operations are also available over JSON-RPC as
 `weft.schedules.get`, `weft.schedules.update`, `weft.schedules.cancel`,
-`weft.schedules.pause`, and `weft.schedules.resume`. When JWT authentication
-is enabled, the caller's tenant claim is forwarded into the engine access
-check for read, update, pause, resume, and cancel. A JWT-authenticated caller
-missing a tenant claim receives `403 Forbidden`; a cross-tenant schedule ID is
-masked as `404 NotFound` with the same body as a genuinely missing schedule.
-Non-JWT principals follow the engine's normal access policy.
+`weft.schedules.pause`, and `weft.schedules.resume`. Schedule operations use
+their operation-catalog access policy consistently across REST and JSON-RPC:
+
+| Operation                                   | Access policy                    |
+| ------------------------------------------- | -------------------------------- |
+| `weft.schedules.list`, `weft.schedules.get` | Authenticated principal required |
+| `weft.schedules.create`                     | Public operation entry           |
+| `weft.schedules.update`                     | Public operation entry           |
+| `weft.schedules.cancel`                     | Public operation entry           |
+| `weft.schedules.pause`                      | Public operation entry           |
+| `weft.schedules.resume`                     | Public operation entry           |
+
+Transport-level authenticators can still reject a request before it reaches the
+operation catalog.
 
 ### Bulk Operations
 
