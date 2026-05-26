@@ -124,8 +124,7 @@ const KEYS: {
   review: (workflowId: string, reviewId: string) => string;
   archive: (workflowId: string, key: string) => string;
   stateExecution: (ownerWorkflowId: string, key: string) => string;
-  stateWorkflow: (tenantId: string, workflowType: string, key: string) => string;
-  stateTenant: (tenantId: string, key: string) => string;
+  stateWorkflow: (workflowType: string, key: string) => string;
 };
 ```
 
@@ -432,9 +431,9 @@ type WebExtensionStorageOptions = {
 };
 ```
 
-| Field  | Type                                          | Default   | Description                                                                                       |
-| ------ | --------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------- |
-| `area` | `'local' \| 'sync' \| 'session' \| 'managed'` | `'local'` | Which storage area to use. `managed` is read-only; `sync` writes are checked against quota first. |
+| Field  | Type                                          | Default   | Description                                                                                                                       |
+| ------ | --------------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `area` | `'local' \| 'sync' \| 'session' \| 'managed'` | `'local'` | Which storage area to use. `managed` is read-only; `sync` writes are checked against the browser's per-area storage limits first. |
 
 The constructor resolves either `globalThis.browser` or `globalThis.chrome` and accesses the matching `storage` namespace. If neither is present, the constructor throws immediately with: `WebExtensionStorage requires globalThis.browser.storage or globalThis.chrome.storage.`
 
@@ -481,10 +480,10 @@ type HTTPStorageOptions = {
 };
 ```
 
-| Field     | Type                     | Default | Description                                                                                   |
-| --------- | ------------------------ | ------- | --------------------------------------------------------------------------------------------- |
-| `baseUrl` | `string \| URL`          | —       | Base URL of the Weft server. Routes are appended (`/v1/storage/...`).                         |
-| `headers` | `Record<string, string>` | `{}`    | Headers sent with every request. Use this for `authorization` and any tenant-context headers. |
+| Field     | Type                     | Default | Description                                                                                  |
+| --------- | ------------------------ | ------- | -------------------------------------------------------------------------------------------- |
+| `baseUrl` | `string \| URL`          | —       | Base URL of the Weft server. Routes are appended (`/v1/storage/...`).                        |
+| `headers` | `Record<string, string>` | `{}`    | Headers sent with every request. Use this for `authorization` and any other request headers. |
 
 ```ts partial
 import { HTTPStorage } from 'weft/storage/http';

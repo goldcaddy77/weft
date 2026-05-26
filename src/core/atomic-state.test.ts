@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { KEYS } from '../storage/interface.ts';
+import { DEFAULT_SCOPE, KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import {
   AtomicState,
@@ -9,6 +9,7 @@ import {
   AtomicStateConflictEvent,
   AtomicStateExhaustedEvent,
   OBSERVABLE_SYMBOL,
+  atomicStateDataKey,
   atomicStateVersionKey,
 } from './atomic-state.ts';
 import { decode } from './codec.ts';
@@ -145,5 +146,30 @@ describe('AtomicState', () => {
 
     expect(events[0]).toBeInstanceOf(AtomicStateConflictEvent);
     expect(events[1]).toBeInstanceOf(AtomicStateExhaustedEvent);
+  });
+});
+
+// Acceptance-critical invariant: workflow-owned durable state is written under
+// a constant default scope prefix, never at the storage root. weft is
+// single-tenant, but the scope component is kept so a future re-partition is a
+// key rename, not a data migration. If this changes, it must be a deliberate,
+// versioned storage migration — not an accident.
+describe('workflow-scoped state default-scope invariant', () => {
+  it('keys workflow-shared state under state:workflow:<DEFAULT_SCOPE>:, never at root', () => {
+    const dataKey = atomicStateDataKey({ type: 'workflow', workflowType: 'invoice' }, 'cursor');
+    expect(dataKey).toBe(`state:workflow:${DEFAULT_SCOPE}:invoice:cursor`);
+    expect(dataKey.startsWith(`state:workflow:${DEFAULT_SCOPE}:`)).toBe(true);
+    // The key must carry the scope component — not collapse to a root-level
+    // `state:workflow:invoice:cursor` form.
+    expect(dataKey).not.toBe('state:workflow:invoice:cursor');
+  });
+
+  it('keeps execution-scoped state owner-partitioned and distinct from workflow scope', () => {
+    const executionKey = atomicStateDataKey(
+      { type: 'execution', ownerWorkflowId: 'wf-1' },
+      'cursor',
+    );
+    expect(executionKey).toBe('state:execution:wf-1:cursor');
+    expect(executionKey.startsWith('state:workflow:')).toBe(false);
   });
 });

@@ -158,7 +158,6 @@ Returns `201` with `{ "id": "<workflow-id>" }`.
 | `type`                                                 | `string` | Filter by workflow type.                                                             |
 | `tag`                                                  | `string` | Filter by tag. Repeat to AND multiple tags.                                          |
 | `id_prefix`                                            | `string` | Match workflow ids starting with this prefix. Restricted to `[A-Za-z0-9_-]+`.        |
-| `tenant_id`                                            | `string` | Filter by tenant id. Repeat for an OR filter across tenants.                         |
 | `failure_category`                                     | `string` | One of `application`, `timeout`, `cancellation`, `resource`, `system`. Repeats OR.   |
 | `created_at_{gte,gt,lte,lt}`                           | `number` | Filter by `createdAt` (ms epoch). At most one of `gte`/`gt` and one of `lte`/`lt`.   |
 | `updated_at_{gte,gt,lte,lt}`                           | `number` | Filter by `updatedAt` (ms epoch).                                                    |
@@ -176,7 +175,7 @@ Results are ordered by `createdAt` descending with `id` ascending as the tiebrea
 
 | Parameter  | Type     | Description                                                                                    |
 | ---------- | -------- | ---------------------------------------------------------------------------------------------- |
-| `group_by` | `string` | Required. One of `status`, `type`, `tenant`, `failureCategory`, or `attribute:<name>`.         |
+| `group_by` | `string` | Required. One of `status`, `type`, `failureCategory`, or `attribute:<name>`.                   |
 | `limit`    | `number` | Cap on the number of returned groups (default 1000, max 10000). Excess groups set `truncated`. |
 
 Response shape:
@@ -270,7 +269,7 @@ Run a preview first by sending `dryRun: true` and an optional `requestId`:
 ```
 
 The preview returns a stable confirmation token plus the matched count, scope
-summary, tenant IDs, and sampled workflow IDs:
+summary, and sampled workflow IDs:
 
 ```json
 {
@@ -286,7 +285,6 @@ summary, tenant IDs, and sampled workflow IDs:
     "filter": { "status": "running", "type": "checkout", "tags": ["nightly"] },
     "statuses": ["running"],
     "workflowTypes": ["checkout"],
-    "tenantIds": ["acme"],
     "sampleWorkflowIds": ["wf-1", "wf-2"],
     "sampleLimit": 20
   }
@@ -364,7 +362,7 @@ Discovery starts at `GET /.well-known/mcp.json`. The document advertises the liv
 
 `POST /mcp` accepts `initialize` without an existing session and returns `Mcp-Session-Id`. Every subsequent POST, GET, or DELETE request sends that session id. Requests may also send `Mcp-Protocol-Version`; unsupported versions return `400`.
 
-When server authentication is enabled, MCP requests pass through the same authentication bridge as REST and JSON-RPC before they reach the MCP dispatcher. The authenticated principal is bound to the MCP session created by `initialize`, and tenant-scoped sessions can only list, read, or mutate workflows in their tenant. Cross-tenant workflow resources are reported as not found.
+When server authentication is enabled, MCP requests pass through the same authentication bridge as REST and JSON-RPC before they reach the MCP dispatcher. The authenticated principal is bound to the MCP session created by `initialize`, and every subsequent request is authorized against that principal's scopes.
 
 MCP tool discovery includes:
 
@@ -382,7 +380,7 @@ The `weft/mcp` subpath exports the server helpers for embedding, and the `weft-m
 > [!NOTE]
 > These routes are HTTP-only — they're not exposed over JSON-RPC, WebSocket, or stdio. The corresponding operation names (`weft.storage.get`, `weft.storage.put`, etc.) appear in `/openapi.json` but not in `/openrpc.json`.
 
-Raw key-value access to the engine's storage layer, used by `HTTPStorage` and any client that wants to treat a Weft server as a remote storage backend. Every key is namespaced under `tenant:{tenantId}` for tenant-scoped principals; `storage:admin` callers see the unscoped keyspace.
+Raw key-value access to the engine's storage layer, used by `HTTPStorage` and any client that wants to treat a Weft server as a remote storage backend. Callers operate directly on the unscoped keyspace, so the routes require the `storage:admin` scope.
 
 | Method   | Path                              | Description                            |
 | -------- | --------------------------------- | -------------------------------------- |
@@ -405,11 +403,9 @@ Every storage route requires authentication. Required scopes:
 
 The conditional-batch route requires read access too because conditions compare against current values—a write-only caller would otherwise be able to probe key state through condition outcomes.
 
-#### Tenant scoping
+#### Keyspace access
 
-When the authenticated principal has a non-empty `tenantId`, every key is transparently prefixed with `tenant:{encodeStorageKeyComponent(tenantId)}` before hitting the underlying storage. Clients see and write the unprefixed key; the server handles the namespacing.
-
-A principal without a `tenantId` must hold `storage:admin` to access raw storage. Without it, the server returns 403 with a `Forbidden` fault.
+Raw storage routes operate on the unscoped keyspace, so the principal must hold `storage:admin` in addition to satisfying the per-route scopes above. Without it, the server returns 403 with a `Forbidden` fault.
 
 #### `GET /v1/storage/:key`
 

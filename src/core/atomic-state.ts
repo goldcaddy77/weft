@@ -49,7 +49,7 @@ const RESERVED_ATOMIC_STATE_KEYS = new Set(['__proto__', 'constructor', 'prototy
  * import { MemoryStorage } from 'weft/storage/memory';
  *
  * const storage = new MemoryStorage();
- * const state = new AtomicState<number>(storage, 'state:tenant:acme:counter', {
+ * const state = new AtomicState<number>(storage, 'state:workflow:default:counter', {
  *   initial: 0,
  *   maxRetries: 3,
  * });
@@ -83,9 +83,7 @@ export function atomicStateDataKey(scope: AtomicStateScope, key: string): string
     case 'execution':
       return KEYS.stateExecution(scope.ownerWorkflowId, key);
     case 'workflow':
-      return KEYS.stateWorkflow(scope.tenantId, scope.workflowType, key);
-    case 'tenant':
-      return KEYS.stateTenant(scope.tenantId, key);
+      return KEYS.stateWorkflow(scope.workflowType, key);
   }
 }
 
@@ -216,7 +214,7 @@ function notifyObserver<T>(observer: AtomicStateObserver<T>, event: AtomicStateE
 /**
  * Storage-backed compare-and-swap state slot. `AtomicState` is scoped by the
  * storage key supplied to the constructor; use `engine.state.*` and
- * `ctx.state.*` for the built-in execution, workflow, and tenant scopes.
+ * `ctx.state.*` for the built-in execution and workflow scopes.
  *
  * @example
  * ```ts
@@ -224,7 +222,7 @@ function notifyObserver<T>(observer: AtomicStateObserver<T>, event: AtomicStateE
  * import { MemoryStorage } from 'weft/storage/memory';
  *
  * const storage = new MemoryStorage();
- * const counter = new AtomicState<number>(storage, 'state:tenant:acme:count', { initial: 0 });
+ * const counter = new AtomicState<number>(storage, 'state:workflow:default:count', { initial: 0 });
  * await counter.increment();
  * console.log(await counter.get()); // 1
  * ```

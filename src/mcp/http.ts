@@ -307,7 +307,7 @@ function isSameSessionOwner(left: Principal, right: Principal): boolean {
   if (left.method !== right.method) return false;
   if (!isAuthenticated(left) || !isAuthenticated(right)) return left.method === right.method;
   if (left.subject === undefined || right.subject === undefined) return false;
-  return left.subject === right.subject && left.tenantId === right.tenantId;
+  return left.subject === right.subject;
 }
 
 async function readBodyBounded(request: Request, maxBytes: number): Promise<Uint8Array> {

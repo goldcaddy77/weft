@@ -108,15 +108,15 @@ The `id` and `executionTimeout` fields are optional. If `id` is omitted, one is 
 **List workflows:**
 
 ```
-GET /v1/workflows?status=running&type=order&tenant_id=acme&limit=50&offset=0
+GET /v1/workflows?status=running&type=order&limit=50&offset=0
 → { "items": [...], "total": 142, "offset": 0, "limit": 50 }
 ```
 
-Filter by `status`, `type`, `id_prefix`, `tenant_id`, `failure_category`, created/updated/deadline ranges, or [search attributes](./search-attributes.md) using `attribute.<name>` query parameters. Repeat `status`, `tenant_id`, and `failure_category` for OR filters. Add `include=failureCategory` when the response needs `WorkflowSummary.failureCategory`; the default list path avoids the extra projection work.
+Filter by `status`, `type`, `id_prefix`, `failure_category`, created/updated/deadline ranges, or [search attributes](./search-attributes.md) using `attribute.<name>` query parameters. Repeat `status` and `failure_category` for OR filters. Add `include=failureCategory` when the response needs `WorkflowSummary.failureCategory`; the default list path avoids the extra projection work.
 
-**Aggregate workflows:** `GET /v1/workflows/aggregate?group_by=status&tenant_id=acme` returns grouped counts such as `{ "total": 42, "groups": [{ "key": "running", "count": 24 }], "truncated": false }`.
+**Aggregate workflows:** `GET /v1/workflows/aggregate?group_by=status` returns grouped counts such as `{ "total": 42, "groups": [{ "key": "running", "count": 24 }], "truncated": false }`.
 
-Use aggregates for dashboard counts and tenant suggestions. Supported groupings are `status`, `type`, `tenant`, `failureCategory`, and `attribute:<name>`.
+Use aggregates for dashboard counts. Supported groupings are `status`, `type`, `failureCategory`, and `attribute:<name>`.
 
 **Get workflow state:**
 

@@ -28,7 +28,6 @@ import {
 import { InlineExecutionStrategy } from './inline-execution-strategy.ts';
 import type { ActivityInterceptor, WorkflowInterceptor } from './interceptor.ts';
 import { ListFilterValidationError } from './list-filter-validation.ts';
-import { tenantFromInputField } from './tenant.ts';
 import { WorkflowTimeoutError } from './timeouts.ts';
 import type {
   DefinitionSchema,
@@ -6191,25 +6190,11 @@ describe('Engine speculative execution', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Engine: tenant-isolation safety guards
+// Engine: decode and scoped-state safety guards
 // ---------------------------------------------------------------------------
 
-describe('Engine tenant-isolation guards', () => {
-  it('constructs when both workerExecution and tenantResolver are configured', () => {
-    const engine = new Engine({
-      tenantResolver: {
-        resolve: () => ({ id: 'acme' }),
-      },
-      workerExecution: {
-        workerUrl: new URL('https://example.invalid/worker.js'),
-        poolSize: 1,
-      },
-    });
-    expect(engine).toBeInstanceOf(Engine);
-    engine[Symbol.dispose]();
-  });
-
-  it('still constructs when only workerExecution is configured (no tenant)', () => {
+describe('Engine decode and scoped-state guards', () => {
+  it('still constructs when only workerExecution is configured', () => {
     const engine = new Engine({
       workerExecution: {
         workerUrl: new URL('https://example.invalid/worker.js'),
@@ -6218,71 +6203,6 @@ describe('Engine tenant-isolation guards', () => {
     });
     expect(engine).toBeInstanceOf(Engine);
     engine[Symbol.dispose]();
-  });
-
-  it('still constructs when only tenantResolver is configured (inline mode)', () => {
-    const engine = new Engine({
-      tenantResolver: { resolve: () => ({ id: 'acme' }) },
-    });
-    expect(engine).toBeInstanceOf(Engine);
-    engine[Symbol.dispose]();
-  });
-
-  it('decodeWorkflowState falls back to undefined tenant when persisted tenant is malformed', async () => {
-    const storage = new MemoryStorage();
-
-    // Forge a state record with a tampered `tenant` field — `id` is a number,
-    // not a string. A naive `as` cast would let this through and a workflow's
-    // `pickToolsForTenant` helper could end up matching on `state.tenant.id === 1`
-    // and dispatching admin tools.
-    const tamperedState = {
-      id: 'wf-tampered',
-      type: 'tampered-workflow',
-      status: 'completed',
-      input: null,
-      version: '1',
-      createdAt: 1000,
-      updatedAt: 2000,
-      tenant: { id: 1, attributes: { role: 'admin' } },
-    };
-    await storage.put(KEYS.workflow('wf-tampered'), encode(tamperedState));
-
-    const warnings: string[] = [];
-    const warnSpy = spyOn(console, 'warn').mockImplementation((message: unknown) => {
-      warnings.push(String(message));
-    });
-
-    try {
-      const engine = new Engine({ storage: storage as WeftStorage });
-      const listed = await engine.list();
-
-      expect(listed.items).toHaveLength(1);
-      expect(listed.items[0]?.id).toBe('wf-tampered');
-
-      // The warning was emitted (at least once — list() may decode twice
-      // through fast/slow paths).
-      expect(warnings.some((w) => w.includes('invalid tenant field'))).toBe(true);
-
-      // The entire point of this guard: when the engine returns a decoded
-      // WorkflowState, the tampered tenant must be stripped to `undefined`
-      // so workflow-author tenant-scoping helpers never see it.
-      const fetched = await engine.get('wf-tampered');
-      expect(fetched).not.toBeNull();
-      expect(fetched?.tenant).toBeUndefined();
-
-      // The raw on-disk bytes are deliberately NOT rewritten — we leave
-      // remediation of corrupt records to storage-level tooling — so the
-      // tampered bytes still exist. Verify the guard is load-time, not
-      // persistence-time: the record on disk is unchanged.
-      const reloadedBytes = await storage.get(KEYS.workflow('wf-tampered'));
-      expect(reloadedBytes).toBeTruthy();
-      const reloaded = decode(reloadedBytes!) as { tenant?: unknown };
-      expect(reloaded.tenant).toEqual({ id: 1, attributes: { role: 'admin' } });
-
-      engine[Symbol.dispose]();
-    } finally {
-      warnSpy.mockRestore();
-    }
   });
 
   it('decodeWorkflowState falls back to workflow id when execution owner is malformed', async () => {
@@ -6317,55 +6237,19 @@ describe('Engine tenant-isolation guards', () => {
     }
   });
 
-  it('decodeWorkflowState accepts a well-formed tenant unchanged', async () => {
-    const storage = new MemoryStorage();
-    const validState: WorkflowState = {
-      id: 'wf-valid-tenant',
-      type: 'valid-tenant-workflow',
-      status: 'completed',
-      input: null,
-      version: '1',
-      createdAt: 1000,
-      updatedAt: 2000,
-      tenant: { id: 'acme', attributes: { tier: 'pro' } },
-    };
-    await storage.put(KEYS.workflow('wf-valid-tenant'), encode(validState));
-
-    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      const engine = new Engine({ storage: storage as WeftStorage });
-      const listed = await engine.list();
-      expect(listed.items).toHaveLength(1);
-      // No tenant warning should have fired for a well-formed record.
-      const warnCalls = warnSpy.mock.calls.flatMap((call) => call.map(String));
-      expect(warnCalls.some((c) => c.includes('invalid tenant field'))).toBe(false);
-      engine[Symbol.dispose]();
-    } finally {
-      warnSpy.mockRestore();
-    }
-  });
-
-  it('engine.state exposes tenant, workflow, and execution scoped AtomicState handles', async () => {
+  it('engine.state exposes workflow and execution scoped AtomicState handles', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
 
     expect(
-      await engine.state.tenant<number>('tenant-a', 'counter', { initial: 0 }).increment(),
-    ).toBe(1);
-    expect(await engine.state.tenant<number>('tenant-a', 'counter').get()).toBe(1);
-    expect(await engine.state.tenant<number>('tenant-b', 'counter').get()).toBeUndefined();
-
-    expect(
       await engine.state
-        .workflow<number>('tenant-a', 'invoice', 'counter', {
+        .workflow<number>('invoice', 'counter', {
           initial: 0,
         })
         .increment(),
     ).toBe(1);
-    expect(await engine.state.workflow<number>('tenant-a', 'invoice', 'counter').get()).toBe(1);
-    expect(
-      await engine.state.workflow<number>('tenant-a', 'receipt', 'counter').get(),
-    ).toBeUndefined();
+    expect(await engine.state.workflow<number>('invoice', 'counter').get()).toBe(1);
+    expect(await engine.state.workflow<number>('receipt', 'counter').get()).toBeUndefined();
 
     expect(
       await engine.state.execution<number>('wf-owner', 'counter', { initial: 0 }).increment(),
@@ -6411,31 +6295,25 @@ describe('Engine tenant-isolation guards', () => {
     engine[Symbol.dispose]();
   });
 
-  it('ctx.state shares tenant and workflow state while preserving tenant isolation', async () => {
+  it('ctx.state.workflow is shared across runs of the same workflow type', async () => {
     const storage = new MemoryStorage();
-    const engine = new Engine({
-      storage,
-      tenantResolver: tenantFromInputField('tenantId'),
-    });
+    const engine = new Engine({ storage });
 
     engine.register(
       workflow({ name: 'scoped-state' }).execute(async function* (ctx: WorkflowContext) {
         const context = ctx as Context;
-        const tenant = yield* context.state.tenant<number>('counter', { initial: 0 }).increment();
         const workflowCounter = yield* context.state
           .workflow<number>('counter', { initial: 0 })
           .increment();
-        return { tenant, workflowCounter };
+        return { workflowCounter };
       }),
     );
 
-    const first = await engine.start('scoped-state', { tenantId: 'tenant-a' });
-    const second = await engine.start('scoped-state', { tenantId: 'tenant-a' });
-    const isolated = await engine.start('scoped-state', { tenantId: 'tenant-b' });
+    const first = await engine.start('scoped-state', null);
+    const second = await engine.start('scoped-state', null);
 
-    expect(await first.result()).toEqual({ tenant: 1, workflowCounter: 1 });
-    expect(await second.result()).toEqual({ tenant: 2, workflowCounter: 2 });
-    expect(await isolated.result()).toEqual({ tenant: 1, workflowCounter: 1 });
+    expect(await first.result()).toEqual({ workflowCounter: 1 });
+    expect(await second.result()).toEqual({ workflowCounter: 2 });
 
     engine[Symbol.dispose]();
   });
@@ -6483,35 +6361,24 @@ describe('Engine tenant-isolation guards', () => {
     engine[Symbol.dispose]();
   });
 
-  it('purge deletes execution-scoped state and preserves tenant and workflow state', async () => {
+  it('purge deletes execution-scoped state and preserves workflow state', async () => {
     const storage = new MemoryStorage();
-    const engine = new Engine({
-      storage,
-      tenantResolver: tenantFromInputField('tenantId'),
-    });
+    const engine = new Engine({ storage });
 
     engine.register(
       workflow({ name: 'state-cleanup' }).execute(async function* (ctx: WorkflowContext) {
         const context = ctx as Context;
         yield* context.state.execution<number>('counter', { initial: 0 }).increment();
-        yield* context.state.tenant<number>('counter', { initial: 0 }).increment();
         yield* context.state.workflow<number>('counter', { initial: 0 }).increment();
       }),
     );
 
-    const handle = await engine.start(
-      'state-cleanup',
-      { tenantId: 'tenant-a' },
-      { id: 'wf-state-cleanup' },
-    );
+    const handle = await engine.start('state-cleanup', null, { id: 'wf-state-cleanup' });
     await handle.result();
     await engine.purge();
 
     expect(await storage.get(KEYS.stateExecution('wf-state-cleanup', 'counter'))).toBeNull();
-    expect(await engine.state.tenant<number>('tenant-a', 'counter').get()).toBe(1);
-    expect(await engine.state.workflow<number>('tenant-a', 'state-cleanup', 'counter').get()).toBe(
-      1,
-    );
+    expect(await engine.state.workflow<number>('state-cleanup', 'counter').get()).toBe(1);
 
     engine[Symbol.dispose]();
   });

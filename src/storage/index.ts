@@ -102,7 +102,7 @@ const exportedResolveStorage = resolveStorage;
  * ```ts
  * import { MemoryStorage, ScopedStorage } from 'weft/storage';
  * await using base = new MemoryStorage();
- * const scoped = new ScopedStorage(base, 'tenant:');
+ * const scoped = new ScopedStorage(base, 'scope:');
  * void scoped;
  * ```
  */
@@ -115,7 +115,7 @@ const exportedScopedStorage = ScopedStorage;
  * ```ts
  * import { MemoryStorage, scopedStorage } from 'weft/storage';
  * await using base = new MemoryStorage();
- * const scoped = scopedStorage(base, 'tenant:');
+ * const scoped = scopedStorage(base, 'scope:');
  * void scoped;
  * ```
  */
