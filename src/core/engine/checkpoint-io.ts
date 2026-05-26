@@ -257,9 +257,10 @@ async function commitCheckpoint(
     retentionWindow === null
       ? null
       : await appendCompactionOperations(
-          { storage: internals.storage, retentionWindow },
+          internals.storage,
           workflowId,
           newHead.sequence,
+          retentionWindow,
           commit.operations,
         );
 

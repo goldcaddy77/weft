@@ -104,18 +104,6 @@ export type VerifyResult =
   | { valid: false; firstInvalidSequence: number }
   | { valid: false; indeterminate: true; reason: 'concurrent-compaction' };
 
-/** Internal outcome of a single {@link EventLog.verify} pass over one watermark snapshot. */
-type VerifyPass =
-  | { outcome: 'ok' }
-  | { outcome: 'invalid'; firstInvalidSequence: number }
-  | { outcome: 'raced' };
-
-/** Result of one chain scan: a failing pass, or a clean walk with its entry count. */
-type ChainScanResult =
-  | { outcome: 'invalid'; firstInvalidSequence: number }
-  | { outcome: 'raced' }
-  | { outcome: 'scanned'; entriesSeen: number };
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -142,19 +130,21 @@ function isWorkflowLogEntry(value: unknown): value is WorkflowLogEntry {
 /**
  * Validate one entry's place in the hash chain during a verify pass.
  *
- * For the first surviving entry, its `sequence` must equal the expected start
- * (a mismatch means a compaction raced the watermark read — signal `'raced'`),
- * and its `prevHash` must match the seed. For every subsequent entry, only the
- * `prevHash` link is checked.
+ * For the first surviving entry, its `sequence` must equal the expected start.
+ * A mismatch means either a compaction raced the watermark read OR the expected
+ * first record is genuinely missing; both report `invalid` at the *expected*
+ * sequence, and `verify()` distinguishes a race (retry) from corruption (report)
+ * by re-reading the watermark. The `prevHash` link must also match the seed.
+ * For every subsequent entry, only the `prevHash` link is checked.
  */
 function checkChainLink(
   entry: WorkflowLogEntry,
   previousHash: string,
   isFirst: boolean,
   expectedFirstSequence: number,
-): VerifyPass {
+): { outcome: 'ok' } | { outcome: 'invalid'; firstInvalidSequence: number } {
   if (isFirst && entry.sequence !== expectedFirstSequence) {
-    return { outcome: 'raced' };
+    return { outcome: 'invalid', firstInvalidSequence: expectedFirstSequence };
   }
   if (entry.prevHash !== previousHash) {
     return { outcome: 'invalid', firstInvalidSequence: entry.sequence };
@@ -321,37 +311,53 @@ export class EventLog {
    * If it never stabilizes, the result is flagged `indeterminate` (still
    * `valid: false`, but distinct from genuine corruption — it carries no
    * `firstInvalidSequence`).
+   *
+   * Two corruption cases worth calling out: a watermark that points at a first
+   * surviving record which is no longer present (empty or higher-starting scan)
+   * is reported as `{ valid: false, firstInvalidSequence: watermark.sequence }`;
+   * and a compacted log whose watermark has been removed (e.g. a code rollback
+   * that ignores it) is reported broken at the expected genesis sequence rather
+   * than silently passing — compaction is one-way.
    */
   async verify(): Promise<VerifyResult> {
+    // A single workflow has at most one in-flight checkpoint/compaction at a
+    // time, so one retry is enough to converge in practice; 5 is generous
+    // headroom before declaring the log too volatile to verify deterministically.
     const MAX_ATTEMPTS = 5;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       const watermark = await this.#readWatermark();
+      const usedSequence = watermark?.sequence ?? -1;
       const result = await this.#verifyFromWatermark(watermark);
+
       if (result.outcome === 'ok') return { valid: true };
-      if (result.outcome === 'invalid') {
-        // A break is only "explained by compaction" if the watermark ADVANCED
-        // since the snapshot this pass used — i.e. records were deleted out from
-        // under the scan mid-flight. Re-read; if it moved, retry, otherwise the
-        // break is genuine corruption.
-        const usedSequence = watermark?.sequence ?? -1;
-        const latest = await this.#readWatermark();
-        if (latest !== null && latest.sequence > usedSequence) {
-          continue;
-        }
-        return { valid: false, firstInvalidSequence: result.firstInvalidSequence };
+
+      // A failing pass is only "explained by a concurrent compaction" if the
+      // watermark ADVANCED since the snapshot this pass used — records were
+      // truncated out from under the scan mid-flight. Re-read once; if it moved,
+      // retry against the newer boundary. Otherwise the failure is stable, so it
+      // is genuine corruption — never a false `indeterminate`. (A `raced` outcome
+      // with no advancing watermark, e.g. a genuinely missing first record,
+      // resolves to corruption at the expected first sequence.)
+      const latest = await this.#readWatermark();
+      if (latest !== null && latest.sequence > usedSequence) {
+        continue;
       }
-      // result.outcome === 'raced' — the first scanned sequence did not match the
-      // expected start; a compaction raced the watermark read. Retry.
+      return { valid: false, firstInvalidSequence: result.firstInvalidSequence };
     }
     return { valid: false, indeterminate: true, reason: 'concurrent-compaction' };
   }
 
   /**
-   * One verification pass against a fixed watermark snapshot. Returns `'raced'`
-   * when the first surviving sequence does not match the watermark (a concurrent
-   * compaction moved the boundary), so the caller re-reads and retries.
+   * One verification pass against a fixed watermark snapshot. A failing pass
+   * always carries the `firstInvalidSequence`: a broken hash link reports the
+   * offending entry, and a first-surviving-sequence mismatch (a compaction may
+   * have raced, or the first record is genuinely missing) reports the expected
+   * first sequence. The caller decides retry-vs-corruption by re-reading the
+   * watermark.
    */
-  async #verifyFromWatermark(watermark: EventLogWatermark | null): Promise<VerifyPass> {
+  async #verifyFromWatermark(
+    watermark: EventLogWatermark | null,
+  ): Promise<{ outcome: 'ok' } | { outcome: 'invalid'; firstInvalidSequence: number }> {
     const seed = watermark?.prevHash ?? GENESIS_HASH;
     const expectedFirstSequence = watermark?.sequence ?? 0;
 
@@ -361,7 +367,7 @@ export class EventLog {
       : undefined;
 
     const scan = await this.#scanChain(prefix, options, seed, expectedFirstSequence);
-    if (scan.outcome === 'invalid' || scan.outcome === 'raced') return scan;
+    if (scan.outcome === 'invalid') return scan;
 
     // An empty scan while a watermark expects a surviving entry is corruption:
     // the first surviving record was deleted out from under the watermark.
@@ -380,7 +386,10 @@ export class EventLog {
     options: { gte: string } | undefined,
     seed: string,
     expectedFirstSequence: number,
-  ): Promise<ChainScanResult> {
+  ): Promise<
+    | { outcome: 'invalid'; firstInvalidSequence: number }
+    | { outcome: 'scanned'; entriesSeen: number }
+  > {
     let previousHash = seed;
     let entriesSeen = 0;
 
@@ -390,7 +399,7 @@ export class EventLog {
       if (!isWorkflowLogEntry(decoded)) continue;
 
       const link = checkChainLink(decoded, previousHash, entriesSeen === 0, expectedFirstSequence);
-      if (link.outcome !== 'ok') return link;
+      if (link.outcome === 'invalid') return link;
       entriesSeen += 1;
       previousHash = hashBytes(bytes);
     }

@@ -62,11 +62,6 @@ async function countEventRecords(storage: Storage, workflowId: string): Promise<
   return count;
 }
 
-const compactionContext = (storage: Storage, retentionWindow: number | null) => ({
-  storage,
-  retentionWindow,
-});
-
 // ---------------------------------------------------------------------------
 // appendCompactionOperations — batch building
 // ---------------------------------------------------------------------------
@@ -77,7 +72,7 @@ describe('appendCompactionOperations', () => {
     await seedLog(storage, 'wf', 10);
     const ops: BatchOperation[] = [];
 
-    const result = await appendCompactionOperations(compactionContext(storage, null), 'wf', 9, ops);
+    const result = await appendCompactionOperations(storage, 'wf', 9, null, ops);
 
     expect(result).toBeNull();
     expect(ops).toHaveLength(0);
@@ -89,7 +84,7 @@ describe('appendCompactionOperations', () => {
     const ops: BatchOperation[] = [];
 
     // retentionWindow 3 → keep 7,8,9 → delete 0..6 → watermark.sequence = 7
-    const result = await appendCompactionOperations(compactionContext(storage, 3), 'wf', 9, ops);
+    const result = await appendCompactionOperations(storage, 'wf', 9, 3, ops);
 
     expect(result).not.toBeNull();
     expect(result!.watermark.sequence).toBe(7);
@@ -110,7 +105,7 @@ describe('appendCompactionOperations', () => {
     await seedLog(storage, 'wf', 10);
     const ops: BatchOperation[] = [];
 
-    const result = await appendCompactionOperations(compactionContext(storage, 3), 'wf', 9, ops);
+    const result = await appendCompactionOperations(storage, 'wf', 9, 3, ops);
 
     // watermark.sequence = 7, so prevHash must be hash of the RAW bytes of entry 6.
     const entry6Bytes = await storage.get(KEYS.event('wf', 6));
@@ -126,13 +121,13 @@ describe('appendCompactionOperations', () => {
     const storage = new MemoryStorage();
     await seedLog(storage, 'wf', 5); // 0..4
     const ops1: BatchOperation[] = [];
-    const r1 = await appendCompactionOperations(compactionContext(storage, 1), 'wf', 4, ops1);
+    const r1 = await appendCompactionOperations(storage, 'wf', 4, 1, ops1);
     expect(r1!.watermark.sequence).toBe(4); // only entry 4 survives
 
     const storage2 = new MemoryStorage();
     await seedLog(storage2, 'wf', 5);
     const ops2: BatchOperation[] = [];
-    const r2 = await appendCompactionOperations(compactionContext(storage2, 2), 'wf', 4, ops2);
+    const r2 = await appendCompactionOperations(storage2, 'wf', 4, 2, ops2);
     expect(r2!.watermark.sequence).toBe(3); // entries 3,4 survive
   });
 
@@ -140,11 +135,11 @@ describe('appendCompactionOperations', () => {
     const storage = new MemoryStorage();
     await seedLog(storage, 'wf', 10);
     const ops1: BatchOperation[] = [];
-    const r1 = await appendCompactionOperations(compactionContext(storage, 3), 'wf', 9, ops1);
+    const r1 = await appendCompactionOperations(storage, 'wf', 9, 3, ops1);
     await storage.batch(ops1); // commit watermark.sequence = 7
 
     const ops2: BatchOperation[] = [];
-    const r2 = await appendCompactionOperations(compactionContext(storage, 3), 'wf', 9, ops2);
+    const r2 = await appendCompactionOperations(storage, 'wf', 9, 3, ops2);
     expect(r1!.watermark.sequence).toBe(7);
     expect(r2).toBeNull();
     expect(ops2).toHaveLength(0);
@@ -158,24 +153,14 @@ describe('appendCompactionOperations', () => {
 
     // retentionWindow 1 wants firstSurviving = headSequence, but the batch is capped.
     const ops1: BatchOperation[] = [];
-    const r1 = await appendCompactionOperations(
-      compactionContext(storage, 1),
-      'wf',
-      headSequence,
-      ops1,
-    );
+    const r1 = await appendCompactionOperations(storage, 'wf', headSequence, 1, ops1);
     expect(r1!.watermark.sequence).toBe(MAX_COMPACTION_BATCH); // 0 .. cap-1 deleted this batch
     expect(r1!.deletedEntries).toHaveLength(MAX_COMPACTION_BATCH);
     await storage.batch(ops1);
 
     // Next pass advances the rest.
     const ops2: BatchOperation[] = [];
-    const r2 = await appendCompactionOperations(
-      compactionContext(storage, 1),
-      'wf',
-      headSequence,
-      ops2,
-    );
+    const r2 = await appendCompactionOperations(storage, 'wf', headSequence, 1, ops2);
     expect(r2!.watermark.sequence).toBe(headSequence);
     await storage.batch(ops2);
 
@@ -191,7 +176,7 @@ describe('appendCompactionOperations', () => {
     await storage.delete(KEYS.event('wf', 6));
     const ops: BatchOperation[] = [];
 
-    const result = await appendCompactionOperations(compactionContext(storage, 3), 'wf', 9, ops);
+    const result = await appendCompactionOperations(storage, 'wf', 9, 3, ops);
     expect(result).toBeNull();
     expect(ops).toHaveLength(0);
     expect(await readEventLogWatermark(storage, 'wf')).toBeNull();
@@ -203,7 +188,7 @@ describe('appendCompactionOperations', () => {
     await storage.delete(KEYS.event('wf', 3)); // gap inside [0,7)
     const ops: BatchOperation[] = [];
 
-    const result = await appendCompactionOperations(compactionContext(storage, 3), 'wf', 9, ops);
+    const result = await appendCompactionOperations(storage, 'wf', 9, 3, ops);
     expect(result).toBeNull();
     expect(ops).toHaveLength(0);
   });
@@ -265,12 +250,7 @@ describe('EventLog.verify() with a watermark', () => {
     headSequence: number,
   ): Promise<void> {
     const ops: BatchOperation[] = [];
-    await appendCompactionOperations(
-      compactionContext(storage, retentionWindow),
-      workflowId,
-      headSequence,
-      ops,
-    );
+    await appendCompactionOperations(storage, workflowId, headSequence, retentionWindow, ops);
     await storage.batch(ops);
   }
 
@@ -360,6 +340,54 @@ describe('EventLog.verify() with a watermark', () => {
     expect(result).toEqual({ valid: false, indeterminate: true, reason: 'concurrent-compaction' });
     expect('firstInvalidSequence' in result).toBe(false);
   });
+
+  it('retries to success when a break is explained by a watermark that advanced mid-verify', async () => {
+    // Storage actually has watermark 5 and surviving entries 5..9. But the FIRST
+    // watermark read returns a STALE watermark (3), so pass 1 scans from key(3),
+    // sees entry 5 (5 !== expected 3) → invalid at 3. Re-read shows watermark
+    // advanced to 5 → retry. Pass 2 uses watermark 5 and verifies clean.
+    const storage = new MemoryStorage();
+    await seedLog(storage, 'wf', 10);
+    await compactInPlace(storage, 'wf', 5, 9); // real watermark 5, entries 5..9 survive
+    const realWatermark = await readEventLogWatermark(storage, 'wf');
+    expect(realWatermark!.sequence).toBe(5);
+
+    const { encode } = await import('../codec.ts');
+    const realGet = storage.get.bind(storage);
+    let firstWatermarkRead = true;
+    storage.get = (async (key: string) => {
+      if (key === KEYS.eventWatermark('wf') && firstWatermarkRead) {
+        firstWatermarkRead = false;
+        // Stale lower watermark with a valid (consistent) shape.
+        return encode({
+          type: 'event-log-watermark',
+          version: 1,
+          sequence: 3,
+          prevHash: realWatermark!.prevHash,
+          deletedThrough: 2,
+        });
+      }
+      return realGet(key);
+    }) as typeof storage.get;
+
+    const log = new EventLog(storage, 'wf');
+    expect(await log.verify()).toEqual({ valid: true });
+  });
+
+  it('a compacted log fails genesis-rooted verification once its watermark is removed (one-way)', async () => {
+    // Rollback safety: a log compacted under the new code, read back by code that
+    // ignores the watermark (simulated by deleting the watermark key), must look
+    // broken rather than silently valid — pinning that compaction is irreversible.
+    const storage = new MemoryStorage();
+    await seedLog(storage, 'wf', 10);
+    await compactInPlace(storage, 'wf', 3, 9); // watermark 7, entries 7..9 survive
+    await storage.delete(KEYS.eventWatermark('wf'));
+
+    const log = new EventLog(storage, 'wf');
+    // With no watermark, verify expects the first record at sequence 0; the first
+    // surviving record is 7, so it reports corruption at the expected sequence 0.
+    expect(await log.verify()).toEqual({ valid: false, firstInvalidSequence: 0 });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -433,23 +461,23 @@ describe('engine event-log compaction', () => {
   });
 
   it('the watermark never moves backward when the window is lowered then raised', async () => {
+    // Lower window first: compact entries 0..8 with window 1 → watermark 9.
     const storage = new MemoryStorage();
-    const tightEngine = new Engine({ storage, history: { retentionWindow: 1 } });
-    registerCountingWorkflow(tightEngine, 5);
-    const handle = await tightEngine.start('counting', null);
-    await handle.result();
-    await flush();
-    const tightWatermark = await readEventLogWatermark(storage, handle.id);
-    expect(tightWatermark).not.toBeNull();
-    tightEngine[Symbol.dispose]();
+    await seedLog(storage, 'wf', 10); // 0..9
+    const tightOps: BatchOperation[] = [];
+    const tight = await appendCompactionOperations(storage, 'wf', 9, 1, tightOps);
+    await storage.batch(tightOps);
+    expect(tight!.watermark.sequence).toBe(9);
 
-    // A fresh engine with a much larger window resuming the same storage must not
-    // resurrect already-deleted history; the watermark only advances forward.
-    const wideEngine = new Engine({ storage, history: { retentionWindow: 1000 } });
-    registerCountingWorkflow(wideEngine, 0);
-    const after = await readEventLogWatermark(storage, handle.id);
-    expect(after!.sequence).toBe(tightWatermark!.sequence);
-    wideEngine[Symbol.dispose]();
+    // Raise the window much wider: target boundary (max(0, 9 - 1000 + 1) = 0) is
+    // now BELOW the current floor (9). Compaction must be a no-op and leave the
+    // watermark exactly where it was — already-deleted history is not restored.
+    const wideOps: BatchOperation[] = [];
+    const wide = await appendCompactionOperations(storage, 'wf', 9, 1000, wideOps);
+    expect(wide).toBeNull();
+    expect(wideOps).toHaveLength(0);
+    const after = await readEventLogWatermark(storage, 'wf');
+    expect(after!.sequence).toBe(9);
   });
 
   it('resume after compaction chains the next append correctly and stays valid', async () => {
@@ -532,15 +560,42 @@ describe('engine event-log compaction', () => {
     const watermark = await readEventLogWatermark(storage, handle.id);
     const boundary = watermark!.sequence;
 
-    const records: Array<{ kind: string; sequence: number }> = [];
+    const records: Array<{ kind: string; sequence: number; payload: unknown }> = [];
     for await (const record of engine.replayWorkflowFeed(handle.id, 'events', -1)) {
-      records.push({ kind: record.kind, sequence: record.sequence });
+      records.push({ kind: record.kind, sequence: record.sequence, payload: record.payload });
     }
 
+    // The marker sits at the LAST truncated sequence (boundary - 1) so a cursor
+    // consumer that persists it resumes at `boundary` without skipping it.
     expect(records[0]!.kind).toBe(COMPACTION_BOUNDARY_KIND);
-    expect(records[0]!.sequence).toBe(boundary);
-    // No record below the boundary leaks through after the marker.
+    expect(records[0]!.sequence).toBe(boundary - 1);
+    expect(records[0]!.payload).toMatchObject({ compactedBefore: boundary });
+    // The first real record after the marker is exactly the watermark sequence,
+    // and nothing below it leaks through.
+    expect(records[1]!.sequence).toBe(boundary);
     expect(records.slice(1).every((r) => r.sequence >= boundary)).toBe(true);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('feed replay from a cursor at/above the watermark emits no boundary marker', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage, history: { retentionWindow: 2 } });
+    registerCountingWorkflow(engine, 6);
+    const handle = await engine.start('counting', null);
+    await handle.result();
+    await flush();
+
+    const watermark = await readEventLogWatermark(storage, handle.id);
+    const boundary = watermark!.sequence;
+
+    for (const cursor of [boundary, boundary + 1]) {
+      const kinds: string[] = [];
+      for await (const record of engine.replayWorkflowFeed(handle.id, 'events', cursor)) {
+        kinds.push(record.kind);
+      }
+      expect(kinds.includes(COMPACTION_BOUNDARY_KIND)).toBe(false);
+    }
 
     engine[Symbol.dispose]();
   });

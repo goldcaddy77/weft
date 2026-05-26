@@ -150,14 +150,17 @@ export async function* replayWorkflowEventLog(
   // If compaction truncated records below where this cursor wants to resume,
   // clamp to the watermark and emit an explicit boundary marker so the
   // subscriber learns the `[fromSequence, watermark.sequence)` records are gone
-  // rather than silently receiving fewer events.
+  // rather than silently receiving fewer events. The marker's `sequence` is the
+  // last truncated sequence (`watermark.sequence - 1`), NOT the watermark itself,
+  // so a cursor-based consumer that persists the marker's sequence resumes at
+  // `watermark.sequence` and does not skip the first surviving record.
   const watermark = await readEventLogWatermark(internals.storage, workflowId);
   if (watermark !== null && fromSequence < watermark.sequence) {
     yield {
       workflowId,
       selector: 'events',
       kind: COMPACTION_BOUNDARY_KIND,
-      sequence: watermark.sequence,
+      sequence: watermark.sequence - 1,
       timestamp: 0,
       payload: { compactedBefore: watermark.sequence, requestedFrom: fromSequence },
     };

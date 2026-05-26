@@ -68,16 +68,32 @@ export type EventLogWatermark = {
   deletedThrough: number;
 };
 
-/** Narrow an unknown decoded value to {@link EventLogWatermark}. */
+/**
+ * Narrow an unknown decoded value to {@link EventLogWatermark}, rejecting
+ * internally inconsistent or out-of-range records (negative/non-integer
+ * sequences, `deletedThrough` that is not `sequence - 1`, empty `prevHash`) so a
+ * corrupt or hand-tampered watermark is never treated as authoritative.
+ */
 export function isEventLogWatermark(value: unknown): value is EventLogWatermark {
   if (typeof value !== 'object' || value === null) return false;
   const record = value as Record<string, unknown>;
+  if (record['type'] !== 'event-log-watermark' || record['version'] !== 1) return false;
+  const prevHash = record['prevHash'];
+  if (typeof prevHash !== 'string' || prevHash.length === 0) return false;
+  return isConsistentWatermarkBounds(record['sequence'], record['deletedThrough']);
+}
+
+/**
+ * `sequence` must be a positive safe integer and `deletedThrough` must equal
+ * `sequence - 1` (the watermark only advances forward, so `[0, deletedThrough]`
+ * is the complete deleted prefix).
+ */
+function isConsistentWatermarkBounds(sequence: unknown, deletedThrough: unknown): boolean {
   return (
-    record['type'] === 'event-log-watermark' &&
-    record['version'] === 1 &&
-    typeof record['sequence'] === 'number' &&
-    typeof record['prevHash'] === 'string' &&
-    typeof record['deletedThrough'] === 'number'
+    typeof sequence === 'number' &&
+    Number.isSafeInteger(sequence) &&
+    sequence > 0 &&
+    deletedThrough === sequence - 1
   );
 }
 
@@ -100,17 +116,10 @@ export async function readEventLogWatermark(
 export type CompactionResult = {
   /** The watermark written in this batch. */
   watermark: EventLogWatermark;
-  /** Sum of byte lengths of the records deleted in this batch. */
-  reclaimedBytes: number;
   /** Raw stored bytes of the deleted records, in ascending sequence order. */
   deletedEntries: Uint8Array[];
   /** Inclusive sequence bounds of the records deleted in this batch. */
   deletedRange: { from: number; to: number };
-};
-
-type CompactionContext = {
-  storage: Storage;
-  retentionWindow: number | null;
 };
 
 /**
@@ -126,17 +135,19 @@ type CompactionContext = {
  * - the delete range is non-contiguous (a gap already exists) — aborting keeps
  *   compaction from advancing the watermark past pre-existing corruption.
  *
+ * @param retentionWindow  Keep at most this many most-recent records, or `null`
+ *   to disable compaction (a no-op).
  * @param headSequence  The event-log head sequence AFTER the current
  *   checkpoint append (`newHead.sequence`). The retention window is measured
  *   against this, NOT `checkpoint.step`, so step/sequence need not stay coupled.
  */
 export async function appendCompactionOperations(
-  context: CompactionContext,
+  storage: Storage,
   workflowId: string,
   headSequence: number,
+  retentionWindow: number | null,
   operations: BatchOperation[],
 ): Promise<CompactionResult | null> {
-  const { storage, retentionWindow } = context;
   if (retentionWindow === null) return null;
 
   // Ideal retention boundary: keep AT MOST `retentionWindow` most-recent records.
@@ -181,7 +192,6 @@ export async function appendCompactionOperations(
 
   return {
     watermark,
-    reclaimedBytes: collected.reclaimedBytes,
     deletedEntries: collected.deletedEntries,
     deletedRange: { from: currentFloor, to: batchFirstSurviving - 1 },
   };
@@ -189,15 +199,16 @@ export async function appendCompactionOperations(
 
 type CollectedDeleteRange = {
   deletedEntries: Uint8Array[];
-  reclaimedBytes: number;
   /** Raw stored bytes of the highest deleted record (`batchFirstSurviving - 1`). */
   lastDeletedBytes: Uint8Array;
 };
 
 /**
  * Scan `[currentFloor, batchFirstSurviving)` and collect the raw stored bytes
- * of every record. Returns `null` when the range is non-contiguous (a gap) or
- * the last record is missing — either condition aborts compaction.
+ * of every record. Returns `null` when the range is non-contiguous (a gap), the
+ * last record is missing, or any record is not a well-formed event-log entry —
+ * each condition aborts compaction so a malformed/corrupt record is never
+ * silently deleted and hidden behind an advancing watermark.
  */
 async function collectDeleteRange(
   storage: Storage,
@@ -206,7 +217,6 @@ async function collectDeleteRange(
   batchFirstSurviving: number,
 ): Promise<CollectedDeleteRange | null> {
   const deletedEntries: Uint8Array[] = [];
-  let reclaimedBytes = 0;
   let expected = currentFloor;
 
   const prefix = KEYS.eventPrefix(workflowId);
@@ -215,13 +225,12 @@ async function collectDeleteRange(
 
   for await (const [, bytes] of storage.scan(prefix, { gte, lt })) {
     const decoded = decode(bytes);
-    const sequence = eventSequence(decoded);
     // The scan is bounded to numeric event keys `< batchFirstSurviving`; head and
     // watermark suffixes sort after all numeric keys and lie above `lt`, so they
-    // never appear here. A non-event payload would be corruption — abort.
-    if (sequence === null || sequence !== expected) return null;
+    // never appear here. Require the FULL event-log entry shape (not just a
+    // numeric `sequence`) so a malformed record aborts rather than being deleted.
+    if (!isCompactableEventEntry(decoded) || decoded.sequence !== expected) return null;
     deletedEntries.push(bytes);
-    reclaimedBytes += bytes.byteLength;
     expected += 1;
   }
 
@@ -230,14 +239,25 @@ async function collectDeleteRange(
 
   const lastDeletedBytes = deletedEntries[deletedEntries.length - 1];
   if (lastDeletedBytes === undefined) return null;
-  return { deletedEntries, reclaimedBytes, lastDeletedBytes };
+  return { deletedEntries, lastDeletedBytes };
 }
 
-/** Extract the `sequence` field from a decoded event-log record, or `null`. */
-function eventSequence(value: unknown): number | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const sequence = (value as Record<string, unknown>)['sequence'];
-  return typeof sequence === 'number' ? sequence : null;
+/**
+ * Narrow a decoded record to a deletable event-log entry. Mirrors the
+ * `WorkflowLogEntry` shape (kept local to avoid an import cycle with
+ * `event-log.ts`, which imports the watermark reader from this module).
+ */
+function isCompactableEventEntry(value: unknown): value is { sequence: number } {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record['type'] === 'string' &&
+    typeof record['workflowId'] === 'string' &&
+    typeof record['sequence'] === 'number' &&
+    typeof record['prevHash'] === 'string' &&
+    typeof record['timestamp'] === 'number' &&
+    'payload' in record
+  );
 }
 
 /**
