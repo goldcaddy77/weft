@@ -33,6 +33,27 @@ const WORKER_SIGNATURE_EXCLUDED_FIELDS = new Set([
   'scheduledAt',
   'workflowId',
 ]);
+const WORKER_SIGNATURE_OPERATION_TYPES = new Set<string>([
+  'activity',
+  'archive',
+  'child-workflow',
+  'load',
+  'memo',
+  'offload',
+  'parallel',
+  'race',
+  'run-all',
+  'signal-wait',
+  'sleep',
+  'speculate',
+  'state-commit',
+  'state-read',
+  'stream',
+  'timer',
+  'wait-review',
+  'wait-signal',
+  'wait-update',
+] satisfies Array<ContextOperationRequest['type'] | OperationRequest['kind']>);
 
 export class WorkerProtocolError extends Error {
   constructor(message: string) {
@@ -206,24 +227,55 @@ function stableWorkerOperationFields(
 }
 
 function isSupportedWorkerOperationType(operationType: string): boolean {
-  return (
-    operationType === 'activity' ||
-    operationType === 'timer' ||
-    operationType === 'signal-wait' ||
-    operationType === 'child-workflow' ||
-    operationType === 'state-read' ||
-    operationType === 'state-commit' ||
-    operationType === 'wait-signal'
-  );
+  return WORKER_SIGNATURE_OPERATION_TYPES.has(operationType);
 }
 
 function toSortedStableRecord(record: Record<string, unknown>): Record<string, unknown> {
   const stable: Record<string, unknown> = {};
   for (const key of Object.keys(record).toSorted()) {
     if (WORKER_SIGNATURE_EXCLUDED_FIELDS.has(key)) continue;
+    if (record['type'] === 'run-all' && key === 'branches') {
+      stable[key] = toStableRunAllBranches(record[key], []);
+      continue;
+    }
     stable[key] = toSignatureValue(record[key], []);
   }
   return stable;
+}
+
+function toStableRunAllBranches(value: unknown, stack: object[]): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return toSignatureValue(value, stack);
+  }
+  if (stack.includes(value)) {
+    throw new WorkerProtocolError('Worker replay signature cannot include cyclic values');
+  }
+
+  stack.push(value);
+  try {
+    const stableBranches: Record<string, unknown> = {};
+    const branches = value as Record<string, unknown>;
+    for (const branchName of Object.keys(branches).toSorted()) {
+      stableBranches[branchName] = toStableRunAllBranch(branches[branchName], stack);
+    }
+    return stableBranches;
+  } finally {
+    stack.pop();
+  }
+}
+
+function toStableRunAllBranch(branch: unknown, stack: object[]): unknown {
+  if (!Array.isArray(branch)) {
+    return toSignatureValue(branch, stack);
+  }
+
+  const stableBranch: Record<string, unknown> = {
+    arity: branch.length,
+  };
+  if (branch.length > 1) {
+    stableBranch['input'] = toSignatureValue(branch[1], stack);
+  }
+  return stableBranch;
 }
 
 function toSignatureValue(value: unknown, stack: object[]): unknown {

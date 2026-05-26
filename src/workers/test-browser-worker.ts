@@ -35,6 +35,31 @@ registrations.set('infinite-loop', async function* () {
   return 'unreachable';
 });
 
+registrations.set('infinite-loop-after-resume', async function* (ctx, input) {
+  const signalName = signalNameFromInput(input);
+  yield {
+    id: `wait:${ctx.workflowId}:${signalName}`,
+    workflowId: ctx.workflowId,
+    kind: 'signal-wait',
+    queue: 'default',
+    attempt: 1,
+    retryPolicy: {
+      maxAttempts: 1,
+      initialBackoff: 0,
+      backoffMultiplier: 1,
+      maxBackoff: 0,
+    },
+    scheduledAt: Date.now(),
+    signalName,
+  };
+
+  let keepRunning = true;
+  while (keepRunning) {
+    keepRunning = Date.now() >= 0;
+  }
+  return 'unreachable';
+});
+
 registrations.set('with-activity', async function* (_ctx, input) {
   const result: unknown = yield {
     id: 'op-1',

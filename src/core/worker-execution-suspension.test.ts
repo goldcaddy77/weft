@@ -25,11 +25,17 @@ const infiniteLoopWorkflow = workflow({ name: 'infinite-loop' }).execute(async f
 ) {
   return undefined;
 });
+const infiniteLoopAfterResumeWorkflow = workflow({ name: 'infinite-loop-after-resume' }).execute(
+  async function* (_ctx: WorkflowContext) {
+    return undefined;
+  },
+);
 
 function registerWorkerExecutionTestWorkflows(engine: Engine): void {
   engine.register(waitSignalThenCompleteWorkflow);
   engine.register(simpleWorkflow);
   engine.register(infiniteLoopWorkflow);
+  engine.register(infiniteLoopAfterResumeWorkflow);
 }
 
 async function countStoredSignals(
@@ -67,7 +73,7 @@ describe('worker execution signal suspension', () => {
     const workerEngine = new Engine({
       storage,
       workflowExecutionMode: 'worker',
-      workerExecution: { workerUrl, poolSize: 1, workflowTurnTimeoutMs: 25 },
+      workerExecution: { workerUrl, poolSize: 1, workflowTurnTimeoutMs: 100 },
     });
     registerWorkerExecutionTestWorkflows(workerEngine);
     engine = workerEngine;
@@ -178,6 +184,38 @@ describe('worker execution signal suspension', () => {
       withTimeout(simpleHandle.result(), 1000, 'post-timeout workflow'),
     ).resolves.toEqual({
       input: { label: 'after-loop' },
+      computed: 42,
+    });
+  });
+
+  it('times out a real Worker workflow that loops after resume and runs a later workflow', async () => {
+    const workerEngine = createHardenedWorkerEngine();
+
+    const loopingHandle = await workerEngine.start(
+      'infinite-loop-after-resume',
+      { signalName: 'resume' },
+      {
+        id: 'worker-infinite-loop-after-resume',
+      },
+    );
+    const loopingResult = loopingHandle.result();
+
+    await waitForSignalWaiter(workerEngine);
+    await workerEngine.signal('worker-infinite-loop-after-resume', 'resume', { status: 'go' });
+
+    await expect(
+      withTimeout(loopingResult, 1000, 'infinite-loop-after-resume timeout'),
+    ).rejects.toThrow('Worker workflow turn timed out');
+
+    const simpleHandle = await workerEngine.start(
+      'simple',
+      { label: 'after-resume-loop' },
+      { id: 'worker-after-resume-loop' },
+    );
+    await expect(
+      withTimeout(simpleHandle.result(), 1000, 'post-resume-timeout workflow'),
+    ).resolves.toEqual({
+      input: { label: 'after-resume-loop' },
       computed: 42,
     });
   });

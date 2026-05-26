@@ -651,6 +651,61 @@ describe('handleResumeMessage', () => {
       failureCategory: 'system',
     });
   });
+
+  it('replays user results that resemble the old worker failure marker as normal values', async () => {
+    const firstContext = createWorkflowRunnerContext();
+    const firstOperation = createActivityOperation('wf-marker-collision', 'step1', 'one');
+    const secondOperation = createActivityOperation('wf-marker-collision', 'step2', 'two');
+    const userResult = {
+      __weftWorkerOperationFailure: true,
+      outcome: { status: 'completed', value: 'not-a-failure' },
+    };
+
+    async function* replayWorkflow() {
+      const first: unknown = yield firstOperation;
+      yield secondOperation;
+      return first;
+    }
+
+    await handleRunMessage(
+      firstContext,
+      { workflowId: 'wf-marker-collision', workflowType: 'replay', input: null },
+      () => replayWorkflow,
+    );
+    const checkpointBeforeRestart = await handleResumeMessage(firstContext, {
+      workflowId: 'wf-marker-collision',
+      result: userResult,
+    });
+
+    expect(checkpointBeforeRestart.type).toBe('checkpoint');
+    if (checkpointBeforeRestart.type !== 'checkpoint') return;
+
+    const recoveredContext = createWorkflowRunnerContext();
+    const recoveredCheckpoint = await handleRunMessage(
+      recoveredContext,
+      {
+        workflowId: 'wf-marker-collision',
+        workflowType: 'replay',
+        input: null,
+        checkpoint: checkpointBeforeRestart.checkpoint,
+      },
+      () => replayWorkflow,
+    );
+
+    expect(recoveredCheckpoint.type).toBe('checkpoint');
+    if (recoveredCheckpoint.type !== 'checkpoint') return;
+    expect(recoveredCheckpoint.operationRequest).toEqual(secondOperation);
+
+    const final = await handleResumeMessage(recoveredContext, {
+      workflowId: 'wf-marker-collision',
+      result: 'second-result',
+    });
+    expect(final).toEqual({
+      type: 'completed',
+      workflowId: 'wf-marker-collision',
+      result: userResult,
+    } satisfies WorkerOutboundMessage);
+  });
 });
 
 function createActivityOperation(

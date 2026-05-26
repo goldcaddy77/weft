@@ -25,6 +25,10 @@ import {
   type WorkerReplayOperationSignature,
   workerReplayOperationSignaturesEqual,
 } from '../core/worker-protocol.ts';
+import {
+  createStoredWorkerOperationFailure,
+  isStoredWorkerOperationFailure,
+} from './worker-operation-failure-record.ts';
 
 // ---------------------------------------------------------------------------
 // Worker-side workflow context
@@ -395,13 +399,6 @@ async function processGeneratorStep(
   }
 }
 
-const WORKER_OPERATION_FAILURE_MARKER = '__weftWorkerOperationFailure';
-
-interface StoredWorkerOperationFailure {
-  [WORKER_OPERATION_FAILURE_MARKER]: true;
-  outcome: Extract<OperationOutcome, { status: 'failed' }>;
-}
-
 function createReplayState(message: {
   workflowId: string;
   checkpoint?: ArrayBuffer;
@@ -430,12 +427,7 @@ function recordOperationOutcome(
 
   replayState.accumulatedResults.set(
     pendingStepIndex,
-    outcome.status === 'failed'
-      ? ({
-          [WORKER_OPERATION_FAILURE_MARKER]: true,
-          outcome,
-        } satisfies StoredWorkerOperationFailure)
-      : outcome.value,
+    outcome.status === 'failed' ? createStoredWorkerOperationFailure(outcome) : outcome.value,
   );
   replayState.nextStepIndex = pendingStepIndex + 1;
   replayState.pendingStepIndex = null;
@@ -449,14 +441,6 @@ async function replayGeneratorStep(
     return await generator.throw(errorFromFailedOperationOutcome(value.outcome));
   }
   return await generator.next(value);
-}
-
-function isStoredWorkerOperationFailure(value: unknown): value is StoredWorkerOperationFailure {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    (value as Record<string, unknown>)[WORKER_OPERATION_FAILURE_MARKER] === true
-  );
 }
 
 function advanceWorkerCheckpoint(replayState: WorkerReplayState): Checkpoint {
