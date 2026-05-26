@@ -90,6 +90,30 @@ async function waitForCheckpoint(engine: Engine, workflowId: string): Promise<vo
   throw new Error(`Checkpoint was not recorded for workflow "${workflowId}"`);
 }
 
+/**
+ * Waits until a checkpoint at the given step exists. The fork scenario must
+ * fork at step 2 (after the durable activity, while suspended on the `branch`
+ * signal); waiting for any checkpoint (step 1) could fork from the wrong point
+ * and produce persisted state and deterministic ids that disagree with the
+ * write-path replay test, which waits for step 2. Both sides MUST agree.
+ */
+async function waitForCheckpointStep(
+  engine: Engine,
+  workflowId: string,
+  step: number,
+): Promise<void> {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const checkpoints = await engine.listCheckpoints(workflowId);
+    if (checkpoints.some((checkpoint) => checkpoint.step === step)) {
+      return;
+    }
+
+    await Bun.sleep(10);
+  }
+
+  throw new Error(`Checkpoint step ${step} was not recorded for workflow "${workflowId}"`);
+}
+
 async function pipeStageOne(_ctx: StepWorkflowContext, input: unknown): Promise<string> {
   return `s1:${String(input)}`;
 }
@@ -340,7 +364,7 @@ async function runForkFromCheckpoint(): Promise<ScenarioRun> {
   );
 
   const original = await engine.start('fork-from-checkpoint', null, { id: 'wf-fork-original' });
-  await waitForCheckpoint(engine, original.id);
+  await waitForCheckpointStep(engine, original.id, 2);
 
   const forked = await engine.fork('wf-fork-original');
   await engine.signal('wf-fork-original', 'branch', 'left');
