@@ -17,68 +17,24 @@
  * @module core/event-log
  */
 
-import { hashBytes as portableHashBytes } from '../runtime/portable.ts';
 import type { BatchOperation, Storage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { decode, encode } from './codec.ts';
-import { type EventLogWatermark, readEventLogWatermark } from './engine/event-log-compaction.ts';
+import {
+  EMPTY_EVENT_HEAD,
+  type EventHeadRecord,
+  type WorkflowLogEntry,
+  hashBytes,
+  isWorkflowLogEntry,
+  readEventHead,
+} from './event-log-shared.ts';
+import { type VerifyResult, verifyEventLog } from './event-log-verify.ts';
 import type { WorkflowVersionTuple } from './workflow-version-tuple.ts';
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/** Hash value used as `prevHash` for the very first entry in a log. */
-const GENESIS_HASH = '0000000000000000';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-/** A single entry in the event log, as stored in the KV backend. */
-export interface WorkflowLogEntry {
-  /** Discriminates the entry type, e.g. `'workflow:checkpoint'`. */
-  type: string;
-  /** Workflow this entry belongs to. */
-  workflowId: string;
-  /** Zero-based monotonic sequence number. */
-  sequence: number;
-  /**
-   * wyhash (16 hex chars) of the *encoded bytes* of the previous entry.
-   * The first entry carries {@link GENESIS_HASH}.
-   */
-  prevHash: string;
-  /** Arbitrary event payload. */
-  payload: unknown;
-  /** Unix timestamp (ms) at the time of the append. */
-  timestamp: number;
-  /**
-   * Workflow, agent, and tool version tuple captured at the time of this
-   * entry. Only present when the caller passes a `versionTuple` argument.
-   * Absent for entries written by non-agent workflows or callers that opt out.
-   */
-  versionTuple?: WorkflowVersionTuple;
-}
-
-/**
- * The head record stored at `ev:{workflowId}:head`.
- * Tracks both the latest sequence number and the hash of the last committed
- * entry so that subsequent appends can chain without a second storage read.
- */
-export interface EventHeadRecord {
-  sequence: number;
-  lastHash: string;
-}
-
-/**
- * The head state for a workflow with no committed entries.
- * Used as the starting point when appending the first event.
- * Frozen to prevent accidental mutation of the shared genesis sentinel.
- */
-export const EMPTY_EVENT_HEAD: Readonly<EventHeadRecord> = Object.freeze({
-  sequence: -1,
-  lastHash: GENESIS_HASH,
-});
+// Re-export the shared record/result types and the empty-head sentinel so that
+// the canonical `from './event-log.ts'` import path stays stable for callers.
+export { EMPTY_EVENT_HEAD };
+export type { EventHeadRecord, VerifyResult, WorkflowLogEntry };
 
 /**
  * Result returned from `appendToBatch()`. Carries the updated head
@@ -91,73 +47,6 @@ export type AppendToBatchResult = {
   readonly newHead: EventHeadRecord;
   readonly timestamp: number;
 };
-
-/**
- * Result of {@link EventLog.verify}. The `indeterminate` variant keeps
- * `valid: false` so existing `if (result.valid)` callers never get a false
- * positive, but signals that verification could not complete because the log
- * was being compacted concurrently — it is NOT a corruption report (it carries
- * no `firstInvalidSequence`).
- */
-export type VerifyResult =
-  | { valid: true }
-  | { valid: false; firstInvalidSequence: number }
-  | { valid: false; indeterminate: true; reason: 'concurrent-compaction' };
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Compute a 16-character hex hash of an arbitrary byte buffer. */
-function hashBytes(bytes: Uint8Array): string {
-  return portableHashBytes(bytes);
-}
-
-/** Narrow an unknown decoded value to {@link WorkflowLogEntry}. */
-function isWorkflowLogEntry(value: unknown): value is WorkflowLogEntry {
-  if (typeof value !== 'object' || value === null) return false;
-  const obj = value as Record<string, unknown>;
-  return (
-    typeof obj['type'] === 'string' &&
-    typeof obj['workflowId'] === 'string' &&
-    typeof obj['sequence'] === 'number' &&
-    typeof obj['prevHash'] === 'string' &&
-    typeof obj['timestamp'] === 'number' &&
-    'payload' in obj
-  );
-}
-
-/**
- * Validate one entry's place in the hash chain during a verify pass.
- *
- * For the first surviving entry, its `sequence` must equal the expected start.
- * A mismatch means either a compaction raced the watermark read OR the expected
- * first record is genuinely missing; both report `invalid` at the *expected*
- * sequence, and `verify()` distinguishes a race (retry) from corruption (report)
- * by re-reading the watermark. The `prevHash` link must also match the seed.
- * For every subsequent entry, only the `prevHash` link is checked.
- */
-function checkChainLink(
-  entry: WorkflowLogEntry,
-  previousHash: string,
-  isFirst: boolean,
-  expectedFirstSequence: number,
-): { outcome: 'ok' } | { outcome: 'invalid'; firstInvalidSequence: number } {
-  if (isFirst && entry.sequence !== expectedFirstSequence) {
-    return { outcome: 'invalid', firstInvalidSequence: expectedFirstSequence };
-  }
-  if (entry.prevHash !== previousHash) {
-    return { outcome: 'invalid', firstInvalidSequence: entry.sequence };
-  }
-  return { outcome: 'ok' };
-}
-
-/** Narrow an unknown decoded value to {@link EventHeadRecord}. */
-function isEventHeadRecord(value: unknown): value is EventHeadRecord {
-  if (typeof value !== 'object' || value === null) return false;
-  const obj = value as Record<string, unknown>;
-  return typeof obj['sequence'] === 'number' && typeof obj['lastHash'] === 'string';
-}
 
 // ---------------------------------------------------------------------------
 // EventLog
@@ -298,118 +187,13 @@ export class EventLog {
   // -------------------------------------------------------------------------
 
   /**
-   * Walk the log and verify hash-chain integrity.
-   *
-   * When event-log compaction has truncated the early records, a
-   * {@link EventLogWatermark} at `ev:{id}:watermark` marks where the surviving
-   * chain begins; `verify()` seeds its walk from the watermark's `prevHash`
-   * instead of {@link GENESIS_HASH} so a compacted log does not look broken.
-   *
-   * A compaction can commit concurrently (before or during the scan); to avoid
-   * reporting a *false* chain break, `verify()` re-reads the watermark on any
-   * break and, if the watermark now explains it, restarts — up to a small bound.
-   * If it never stabilizes, the result is flagged `indeterminate` (still
-   * `valid: false`, but distinct from genuine corruption — it carries no
-   * `firstInvalidSequence`).
-   *
-   * Two corruption cases worth calling out: a watermark that points at a first
-   * surviving record which is no longer present (empty or higher-starting scan)
-   * is reported as `{ valid: false, firstInvalidSequence: watermark.sequence }`;
-   * and a compacted log whose watermark has been removed (e.g. a code rollback
-   * that ignores it) is reported broken at the expected genesis sequence rather
-   * than silently passing — compaction is one-way.
+   * Walk the log and verify hash-chain integrity, tolerating concurrent
+   * compaction and a compaction watermark. Delegates to {@link verifyEventLog};
+   * see that function for the full watermark-seeding, retry, and corruption
+   * semantics.
    */
   async verify(): Promise<VerifyResult> {
-    // A single workflow has at most one in-flight checkpoint/compaction at a
-    // time, so one retry is enough to converge in practice; 5 is generous
-    // headroom before declaring the log too volatile to verify deterministically.
-    const MAX_ATTEMPTS = 5;
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-      const watermark = await this.#readWatermark();
-      const usedSequence = watermark?.sequence ?? -1;
-      const result = await this.#verifyFromWatermark(watermark);
-
-      if (result.outcome === 'ok') return { valid: true };
-
-      // A failing pass is only "explained by a concurrent compaction" if the
-      // watermark ADVANCED since the snapshot this pass used — records were
-      // truncated out from under the scan mid-flight. Re-read once; if it moved,
-      // retry against the newer boundary. Otherwise the failure is stable, so it
-      // is genuine corruption — never a false `indeterminate`. (A `raced` outcome
-      // with no advancing watermark, e.g. a genuinely missing first record,
-      // resolves to corruption at the expected first sequence.)
-      const latest = await this.#readWatermark();
-      if (latest !== null && latest.sequence > usedSequence) {
-        continue;
-      }
-      return { valid: false, firstInvalidSequence: result.firstInvalidSequence };
-    }
-    return { valid: false, indeterminate: true, reason: 'concurrent-compaction' };
-  }
-
-  /**
-   * One verification pass against a fixed watermark snapshot. A failing pass
-   * always carries the `firstInvalidSequence`: a broken hash link reports the
-   * offending entry, and a first-surviving-sequence mismatch (a compaction may
-   * have raced, or the first record is genuinely missing) reports the expected
-   * first sequence. The caller decides retry-vs-corruption by re-reading the
-   * watermark.
-   */
-  async #verifyFromWatermark(
-    watermark: EventLogWatermark | null,
-  ): Promise<{ outcome: 'ok' } | { outcome: 'invalid'; firstInvalidSequence: number }> {
-    const seed = watermark?.prevHash ?? GENESIS_HASH;
-    const expectedFirstSequence = watermark?.sequence ?? 0;
-
-    const prefix = KEYS.eventPrefix(this.#workflowId);
-    const options = watermark
-      ? { gte: KEYS.event(this.#workflowId, watermark.sequence) }
-      : undefined;
-
-    const scan = await this.#scanChain(prefix, options, seed, expectedFirstSequence);
-    if (scan.outcome === 'invalid') return scan;
-
-    // An empty scan while a watermark expects a surviving entry is corruption:
-    // the first surviving record was deleted out from under the watermark.
-    if (scan.entriesSeen === 0 && watermark !== null) {
-      return { outcome: 'invalid', firstInvalidSequence: watermark.sequence };
-    }
-    return { outcome: 'ok' };
-  }
-
-  /**
-   * Walk the surviving entries once, validating each chain link. Returns the
-   * first failing pass, or `{ outcome: 'ok', entriesSeen }` after a clean walk.
-   */
-  async #scanChain(
-    prefix: string,
-    options: { gte: string } | undefined,
-    seed: string,
-    expectedFirstSequence: number,
-  ): Promise<
-    | { outcome: 'invalid'; firstInvalidSequence: number }
-    | { outcome: 'scanned'; entriesSeen: number }
-  > {
-    let previousHash = seed;
-    let entriesSeen = 0;
-
-    for await (const [, bytes] of this.#storage.scan(prefix, options)) {
-      const decoded = decode(bytes);
-      // The head and watermark records are not WorkflowLogEntries; the guard skips them.
-      if (!isWorkflowLogEntry(decoded)) continue;
-
-      const link = checkChainLink(decoded, previousHash, entriesSeen === 0, expectedFirstSequence);
-      if (link.outcome === 'invalid') return link;
-      entriesSeen += 1;
-      previousHash = hashBytes(bytes);
-    }
-
-    return { outcome: 'scanned', entriesSeen };
-  }
-
-  /** Read and decode the compaction watermark, or `null` when absent/invalid. */
-  async #readWatermark(): Promise<EventLogWatermark | null> {
-    return readEventLogWatermark(this.#storage, this.#workflowId);
+    return verifyEventLog(this.#storage, this.#workflowId);
   }
 
   // -------------------------------------------------------------------------
@@ -478,15 +262,6 @@ export class EventLog {
    * `sequence = 0` and `prevHash = GENESIS_HASH` for the first entry.
    */
   async #readHead(): Promise<EventHeadRecord> {
-    const headKey = KEYS.eventHead(this.#workflowId);
-    const bytes = await this.#storage.get(headKey);
-    if (bytes === null) {
-      return { sequence: -1, lastHash: GENESIS_HASH };
-    }
-    const decoded = decode(bytes);
-    if (isEventHeadRecord(decoded)) {
-      return decoded;
-    }
-    return { sequence: -1, lastHash: GENESIS_HASH };
+    return readEventHead(this.#storage, this.#workflowId);
   }
 }

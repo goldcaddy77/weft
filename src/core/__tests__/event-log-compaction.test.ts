@@ -374,6 +374,21 @@ describe('EventLog.verify() with a watermark', () => {
     expect(await log.verify()).toEqual({ valid: true });
   });
 
+  it('reports corruption when the last record is lost but the head still points past it', async () => {
+    // After compaction, watermark 7 and records 7,8,9 survive (head sequence 9).
+    // Delete record 9 (the tail) but leave the head record claiming sequence 9.
+    // A prefix-only check would see 7,8 as internally consistent and falsely pass;
+    // the tail-vs-head cross-check must catch the missing last record.
+    const storage = new MemoryStorage();
+    await seedLog(storage, 'wf', 10);
+    await compactInPlace(storage, 'wf', 3, 9);
+    await storage.delete(KEYS.event('wf', 9));
+
+    const log = new EventLog(storage, 'wf');
+    // Survivors reach sequence 8; head says 9 → corruption at the missing 9.
+    expect(await log.verify()).toEqual({ valid: false, firstInvalidSequence: 9 });
+  });
+
   it('a compacted log fails genesis-rooted verification once its watermark is removed (one-way)', async () => {
     // Rollback safety: a log compacted under the new code, read back by code that
     // ignores the watermark (simulated by deleting the watermark key), must look
