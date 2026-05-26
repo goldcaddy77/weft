@@ -1,3 +1,4 @@
+import { HISTORY_CIRCUIT_BREAKER_REASON } from '../types.ts';
 import {
   broadcast as broadcastFromInternals,
   forwardEventToHandle as forwardEventToHandleFromBroadcast,
@@ -31,7 +32,12 @@ import {
   getComposedWorkflowInterceptor,
   swallowPromiseRejection,
 } from './strategy-helpers.ts';
-import { failWorkflow, handleCleanupError, type TerminationCallbacks } from './termination.ts';
+import {
+  failWorkflow,
+  handleCleanupError,
+  terminateWorkflow,
+  type TerminationCallbacks,
+} from './termination.ts';
 
 /**
  * Public update-broadcast hook shape used by callback-bundle factories that
@@ -130,6 +136,14 @@ export function createLifecycleCallbacks<TWorkflows extends object, TActivities 
     handleCleanupError: (source, error, workflowId) =>
       createTerminationCallbacks(engine).handleCleanupError(source, error, workflowId),
     swallowPromiseRejection: (promise) => swallowPromiseRejection(promise),
+    enforceHistoryCircuitBreaker: (workflowId) =>
+      terminateWorkflow(
+        getInternals(engine),
+        workflowId,
+        'timed-out',
+        createTerminationCallbacks(engine),
+        HISTORY_CIRCUIT_BREAKER_REASON,
+      ),
   };
 }
 

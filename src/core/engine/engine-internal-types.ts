@@ -6,6 +6,7 @@ import type {
   Checkpoint,
   DefinitionSchema,
   EngineOptions,
+  NormalizedHistoryPolicy,
   NormalizedRetentionPolicy,
   SearchAttributeSchema,
   WorkflowFunction,
@@ -35,6 +36,7 @@ export interface ResolvedOptions {
   retention: NormalizedRetentionPolicy | null;
   retentionSweepIntervalMs: number;
   retentionSweepBatchSize: number;
+  historyPolicy: NormalizedHistoryPolicy;
   getNow: () => number;
 }
 

@@ -1,5 +1,6 @@
 import { KEYS } from '../../storage/interface.ts';
 import type { ContextOperationRequest } from '../context.ts';
+import { HISTORY_CIRCUIT_BREAKER_REASON } from '../types.ts';
 import { validateAttributeValueSizes } from './attributes-tags.ts';
 import {
   createConstraintCallbacks,
@@ -33,7 +34,7 @@ import {
 import { hasBufferedSignal } from './signals.ts';
 import { loadWorkflowState, runSerializedWorkflowStateWrite } from './storage-io.ts';
 import { swallowPromiseRejection } from './strategy-helpers.ts';
-import { cleanupWaiters, type TerminationCallbacks } from './termination.ts';
+import { cleanupWaiters, terminateWorkflow, type TerminationCallbacks } from './termination.ts';
 
 // Re-export the core/bundle factories so existing import sites (Engine class
 // shims, tests) keep resolving through `./callback-creators.ts`.
@@ -127,6 +128,14 @@ export function persistCheckpointForEngine<TWorkflows extends object, TActivitie
     dispatchEvent: (event) => {
       engine.dispatchEvent(event);
     },
+    enforceHistoryCircuitBreaker: (id) =>
+      terminateWorkflow(
+        getInternals(engine),
+        id,
+        'timed-out',
+        createTerminationCallbacks(engine),
+        HISTORY_CIRCUIT_BREAKER_REASON,
+      ),
   });
 }
 

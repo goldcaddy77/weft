@@ -2,6 +2,7 @@ import type { AlertingOptions } from '../../alerting/types.ts';
 import type { Storage as WeftStorage } from '../../storage/interface.ts';
 import type { CompressionOptions } from '../compression.ts';
 import type { Interceptor } from '../interceptor.ts';
+import type { HistoryPolicy } from './history-policy.ts';
 import type { FailureCategory, WorkflowStatus } from './identity.ts';
 import type { Duration, RetentionPolicy } from './retry-retention.ts';
 import type { SearchAttributeHandle, SearchAttributeValue } from './search-attributes.ts';
@@ -111,6 +112,13 @@ export interface EngineOptions {
   retention?: RetentionPolicy;
   retentionSweepInterval?: Duration;
   retentionSweepBatchSize?: number;
+  /**
+   * History circuit-breaker thresholds. When `history.maxEvents` is set, a
+   * workflow whose event-log record count would exceed it is forced to a
+   * terminal `timed-out` state with reason {@link HISTORY_CIRCUIT_BREAKER_REASON}.
+   * Omit to disable. There are no baked-in defaults.
+   */
+  history?: HistoryPolicy;
   /** Payload compression applied at the storage layer. */
   compression?: CompressionOptions;
   checkpointHistory?: number;

@@ -3,6 +3,8 @@ import { isRecord } from '../debug-output.ts';
 import { normalizeFailureCategory } from '../failure-categories.ts';
 import { coerceStartWorkflowId, parseStartWorkflowDuration } from '../start-workflow-validation.ts';
 import type {
+  HistoryPolicy,
+  NormalizedHistoryPolicy,
   NormalizedRetentionPolicy,
   RetentionPolicy,
   WorkflowState,
@@ -144,6 +146,37 @@ export function normalizeRetentionDuration(
 
   const milliseconds = parseStartWorkflowDuration(value, fieldName);
   return Math.ceil(milliseconds);
+}
+
+/**
+ * Validate and normalise a {@link HistoryPolicy} into a
+ * {@link NormalizedHistoryPolicy}. Mirrors {@link normalizeRetentionPolicy}'s
+ * throw-on-bad-input contract.
+ *
+ * Contract for `maxEvents`:
+ * - omitted policy, or omitted/`undefined` field → `{ maxEvents: null }` (disabled).
+ * - `0` → `{ maxEvents: null }` (disabled; mirrors `checkpointHistory: 0` meaning "off").
+ * - any other value that is not a positive safe integer (negatives, non-integers,
+ *   non-finite values, unsafe integers, wrong types) → throws.
+ */
+export function normalizeHistoryPolicy(
+  policy: HistoryPolicy | undefined,
+  context: string,
+): NormalizedHistoryPolicy {
+  const maxEvents = policy?.maxEvents;
+  // `undefined` and `0` both mean "disabled" and short-circuit before the guard,
+  // so the guard below only ever rejects genuinely invalid positive-intent input.
+  if (maxEvents === undefined || maxEvents === 0) {
+    return { maxEvents: null };
+  }
+  if (typeof maxEvents !== 'number' || !Number.isSafeInteger(maxEvents) || maxEvents < 0) {
+    throw new TypeError(
+      `${context}.maxEvents must be a positive safe integer (or 0/undefined to disable); received ${String(
+        maxEvents,
+      )}`,
+    );
+  }
+  return { maxEvents };
 }
 
 export function normalizeRetentionPolicy(

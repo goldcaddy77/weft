@@ -51,7 +51,37 @@ export type LifecycleCallbacks = {
   hasLocalCheckpointOwnership: (workflowId: string, workflowStatus: string) => boolean;
   handleCleanupError: (source: string, error: unknown, workflowId?: string) => void;
   swallowPromiseRejection: (promise: Promise<unknown> | undefined) => Promise<void>;
+  /**
+   * Force the workflow to a terminal `timed-out` state because its persisted
+   * event-log record count breached the history circuit-breaker threshold.
+   * Invoked by {@link enforceHistoryPolicyBeforeReplay} so an already-oversized
+   * history is terminated without being replayed.
+   */
+  enforceHistoryCircuitBreaker: (workflowId: string) => Promise<void>;
 };
+
+/**
+ * Pre-replay history circuit breaker. Called at every restore-from-checkpoint
+ * entry point immediately after the persisted event-log head is loaded and
+ * before replay. When `maxEvents` is configured and the workflow's durable
+ * event-log record count (`head.sequence + 1`) exceeds it, force the workflow
+ * to a terminal `timed-out` state and return `true` so the caller skips replay.
+ * Returns `false` (and does nothing) when the circuit breaker is disabled or
+ * the limit is not breached.
+ */
+export async function enforceHistoryPolicyBeforeReplay(
+  internals: EngineInternals,
+  workflowId: string,
+  head: { sequence: number },
+  callbacks: Pick<LifecycleCallbacks, 'enforceHistoryCircuitBreaker'>,
+): Promise<boolean> {
+  const maxEvents = internals.options.historyPolicy.maxEvents;
+  if (maxEvents === null || head.sequence + 1 <= maxEvents) {
+    return false;
+  }
+  await callbacks.enforceHistoryCircuitBreaker(workflowId);
+  return true;
+}
 
 export function createWorkflowHandle(
   _internals: EngineInternals,

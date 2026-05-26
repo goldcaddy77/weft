@@ -53,6 +53,14 @@ type PersistCheckpointCallbacks = {
   validateAttributeValueSizes: (attributes: Record<string, SearchAttributeValue>) => void;
   pruneCheckpointHistory: (workflowId: string, step: number) => Promise<void>;
   dispatchEvent: (event: Event) => void;
+  /**
+   * Force the workflow to a terminal `timed-out` state because its event-log
+   * record count breached the configured history circuit-breaker threshold.
+   * Awaited synchronously on the commit path so no further checkpoint can be
+   * written after the breaching one; a rejection propagates out of
+   * {@link commitCheckpoint} (the checkpoint has already committed durably).
+   */
+  enforceHistoryCircuitBreaker: (workflowId: string) => Promise<void>;
 };
 
 type DevelopmentCheckpointCallbacks = {
@@ -399,6 +407,24 @@ async function commitCheckpoint(
     payload: { step: commit.step },
   });
   callbacks.swallowPromiseRejection(callbacks.pruneCheckpointHistory(workflowId, commit.step));
+
+  // History circuit breaker: the breaching event has now committed durably and
+  // participates in the event-log hash chain, so we never unwind it. Awaiting
+  // termination here makes the bound hard — no further checkpoint can commit
+  // after this one. A rejection propagates out (the checkpoint is durable; the
+  // pre-replay guard re-attempts termination on the next activation).
+  if (historyEventLimitBreached(internals, newHead.sequence)) {
+    await callbacks.enforceHistoryCircuitBreaker(workflowId);
+  }
+}
+
+/**
+ * Whether the durable event-log record count (`sequence + 1`) now exceeds the
+ * configured `maxEvents`. Returns `false` when the circuit breaker is disabled.
+ */
+function historyEventLimitBreached(internals: EngineInternals, sequence: number): boolean {
+  const maxEvents = internals.options.historyPolicy.maxEvents;
+  return maxEvents !== null && sequence + 1 > maxEvents;
 }
 
 function dispatchCheckpointSizeWarning(

@@ -119,3 +119,4 @@ src/dashboard/**/.*.compiled/
 src/dashboard/**/.*-harness.*
 src/dashboard/**/.schedule-list.*.mjs
 src/dashboard/**/.workflow-execution-timeline.*
+tmp/

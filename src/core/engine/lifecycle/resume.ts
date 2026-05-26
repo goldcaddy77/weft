@@ -11,6 +11,7 @@ import { loadWorkflowState } from '../storage-io.ts';
 import { decodeWorkflowState } from '../validation.ts';
 import { prepareResumeState } from './persist.ts';
 import {
+  enforceHistoryPolicyBeforeReplay,
   loadTerminalCleanupTrackedState,
   loadWorkflowStartHeaders,
   setWorkflowStartHeaders,
@@ -205,6 +206,14 @@ export async function resumeWorkflowFromStorage(
   // back to EMPTY_EVENT_HEAD (sequence -1) and overwriting existing entries.
   const eventLog = new EventLog(internals.storage, workflowId);
   const restoredHead = await eventLog.loadHead();
+
+  // History circuit breaker, pre-replay site: if the persisted history already
+  // exceeds maxEvents, terminate without replaying so the oversized log never
+  // stalls the shared event loop.
+  if (await enforceHistoryPolicyBeforeReplay(internals, workflowId, restoredHead, callbacks)) {
+    return callbacks.getHandle(workflowId);
+  }
+
   const workflowStartHeaders = await loadWorkflowStartHeaders(internals, workflowId, callbacks);
   await loadTerminalCleanupTrackedState(internals, workflowId, callbacks);
 

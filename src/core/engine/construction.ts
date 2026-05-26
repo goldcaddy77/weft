@@ -21,7 +21,11 @@ import type {
   RegistrationEntry,
   ResolvedOptions,
 } from './engine-internal-types.ts';
-import { normalizeRetentionDuration, normalizeRetentionPolicy } from './validation.ts';
+import {
+  normalizeHistoryPolicy,
+  normalizeRetentionDuration,
+  normalizeRetentionPolicy,
+} from './validation.ts';
 
 export type KnownWorkflowNames<TWorkflows extends object> = Extract<keyof TWorkflows, string>;
 declare const emptyWorkflowDefinitions: unique symbol;
@@ -140,6 +144,14 @@ function resolveNumericDefaults(
   };
 }
 
+function resolveHistoryFields(
+  options: EngineConstructorOptions | undefined,
+): Pick<ResolvedOptions, 'historyPolicy'> {
+  return {
+    historyPolicy: normalizeHistoryPolicy(options?.history, 'options.history'),
+  };
+}
+
 export function resolveEngineOptions(
   storage: WeftStorage,
   options: EngineConstructorOptions | undefined,
@@ -151,6 +163,7 @@ export function resolveEngineOptions(
     ...resolveBooleanDefaults(options),
     ...resolveNumericDefaults(options),
     ...resolveRetentionFields(options),
+    ...resolveHistoryFields(options),
   };
 }
 
