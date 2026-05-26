@@ -2,6 +2,7 @@ import type { BatchOperation } from '../../../storage/interface.ts';
 import { KEYS } from '../../../storage/interface.ts';
 import { createCheckpoint } from '../../checkpoint.ts';
 import { WorkflowStartedEvent } from '../../events.ts';
+import { assertPayloadWithinLimit } from '../../payload-size.ts';
 import { normalizeStorageTimestamp } from '../../scheduler.ts';
 import {
   StartWorkflowValidationError,
@@ -137,6 +138,11 @@ export async function startWorkflow(
         throw new WorkflowAlreadyExistsError(workflowId);
       }
     }
+
+    // Reject oversized input before any durable write, but after the
+    // duplicate-id checks above so a retried known id still reports
+    // WorkflowAlreadyExistsError rather than a payload-size error.
+    assertPayloadWithinLimit(input, internals.options.payloadSizePolicy.maxBytes, 'workflow input');
 
     const versionTuple = createWorkflowVersionTuple(internals, registration, callbacks);
 

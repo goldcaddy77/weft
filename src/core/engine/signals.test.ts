@@ -29,6 +29,7 @@ function createWorkflowState(workflowId: string, status: WorkflowState['status']
 
 function createSignalInternals(storage = new MemoryStorage()) {
   return {
+    options: { payloadSizePolicy: { maxBytes: null } },
     parkedInlineWorkflows: new Set<string>(),
     signalWaiters: new Map<string, () => void>(),
     signalWaitersByWorkflow: new Map(),

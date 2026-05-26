@@ -7,6 +7,7 @@ import type {
   DefinitionSchema,
   EngineOptions,
   NormalizedHistoryPolicy,
+  NormalizedPayloadSizePolicy,
   NormalizedRetentionPolicy,
   SearchAttributeSchema,
   WorkflowFunction,
@@ -37,6 +38,7 @@ export interface ResolvedOptions {
   retentionSweepIntervalMs: number;
   retentionSweepBatchSize: number;
   historyPolicy: NormalizedHistoryPolicy;
+  payloadSizePolicy: NormalizedPayloadSizePolicy;
   getNow: () => number;
 }
 
