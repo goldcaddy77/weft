@@ -13,6 +13,7 @@ import {
 import { HeartbeatManager } from './heartbeat.ts';
 import {
   buildRegisterMessage,
+  type InternalRemoteWorkerOptions,
   type PendingRegistration,
   type RemoteWorkerOptions,
 } from './options.ts';
@@ -105,7 +106,7 @@ export class RemoteWorker implements Disposable {
   /** Resolved worker id (provided or generated), stable for the instance lifetime. */
   #workerId: string;
 
-  constructor(options: RemoteWorkerOptions) {
+  constructor(options: InternalRemoteWorkerOptions) {
     this.#activityTable = resolveActivityTable(options);
     this.#workerId = options.workerId ?? crypto.randomUUID();
     this.#options = {
@@ -162,7 +163,7 @@ export class RemoteWorker implements Disposable {
       const ws = new WebSocket(this.#options.serverUrl);
       // Track the socket immediately (while still CONNECTING) so a re-entrant
       // connect() or a #failSocket() before `open` can close it instead of
-      // leaking it. The `connected` getter and #isReadyToSend() already gate on
+      // leaking it. The `connected` getter and #readySocket() already gate on
       // readyState === OPEN, so a CONNECTING socket here is correctly treated as
       // not-yet-usable.
       this.#ws = ws;
@@ -320,7 +321,7 @@ export class RemoteWorker implements Disposable {
     if (this.#pendingRegistration === null) return;
 
     const pending = this.#pendingRegistration;
-    // Null the pending registration first so #isReadyToSend() reports ready
+    // Null the pending registration first so #readySocket() reports ready
     // during the flush below.
     this.#pendingRegistration = null;
     this.#heartbeat.start();

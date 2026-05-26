@@ -51,11 +51,19 @@ export interface RemoteWorkerOptions {
   capabilities?: RemoteWorkerCapabilities;
   /** Activity interceptors to run around each activity execution on this worker. */
   interceptors?: ActivityInterceptor[];
+}
+
+/**
+ * Construction options including internal knobs that are deliberately kept off
+ * the public {@link RemoteWorkerOptions} surface. The `RemoteWorker` constructor
+ * accepts this wider type; only `RemoteWorkerOptions` is exported from the
+ * package, so consumers never see these fields.
+ */
+export interface InternalRemoteWorkerOptions extends RemoteWorkerOptions {
   /**
-   * Internal, test-only override for the unsent-task-result buffer ceiling.
-   * Defaults to `MAX_BUFFERED_TASK_RESULTS`. Lets a test exercise the
-   * backpressure decline branch with a small cap instead of fabricating a
-   * thousand buffered results. Not part of the supported public surface.
+   * Test-only override for the unsent-task-result buffer ceiling. Defaults to
+   * `MAX_BUFFERED_TASK_RESULTS`. Lets a test exercise the backpressure decline
+   * branch with a small cap instead of fabricating a thousand buffered results.
    */
   maxBufferedResults?: number;
 }
