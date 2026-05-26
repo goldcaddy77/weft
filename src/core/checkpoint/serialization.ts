@@ -4,6 +4,7 @@ import type { Checkpoint, Serializer } from '../types.ts';
 import {
   CURRENT_CHECKPOINT_SCHEMA_VERSION,
   CheckpointSchemaVersionError,
+  WORKER_REPLAY_SIGNATURE_FORMAT,
 } from '../types/checkpoint.ts';
 
 /**
@@ -64,11 +65,69 @@ export function validateCheckpointShape(value: unknown): asserts value is Checkp
   assertRecordField(record, 'locals');
   validateSessionStateLocals(record['locals'] as Record<string, unknown>);
   normalizeAccumulatedResults(record);
+  validateWorkerReplaySignatures(record);
   assertArrayField(record, 'pendingSignals');
   assertRecordField(record, 'searchAttributes');
   assertStringField(record, 'version');
   assertNumberField(record, 'createdAt');
   assertCurrentSchemaVersion(record);
+}
+
+function validateWorkerReplaySignatures(record: Record<string, unknown>): void {
+  if (!('workerReplaySignatures' in record) || record['workerReplaySignatures'] === undefined) {
+    return;
+  }
+
+  const signatures = record['workerReplaySignatures'];
+  if (!Array.isArray(signatures)) {
+    throw new Error('Invalid checkpoint: invalid "workerReplaySignatures" (expected array)');
+  }
+
+  for (const entry of signatures) {
+    validateWorkerReplaySignatureEntry(entry);
+  }
+}
+
+function validateWorkerReplaySignatureEntry(value: unknown): void {
+  if (!Array.isArray(value) || value.length !== 2) {
+    throw new Error('Invalid checkpoint: invalid "workerReplaySignatures" entry');
+  }
+
+  const [step, signature] = value;
+  validateWorkerReplaySignatureStep(step);
+  validateWorkerReplaySignatureRecord(assertWorkerReplaySignatureRecord(signature));
+}
+
+function validateWorkerReplaySignatureStep(step: unknown): void {
+  if (typeof step !== 'number' || !Number.isSafeInteger(step) || step < 0) {
+    throw new Error('Invalid checkpoint: invalid "workerReplaySignatures" step');
+  }
+}
+
+function assertWorkerReplaySignatureRecord(signature: unknown): Record<string, unknown> {
+  if (typeof signature !== 'object' || signature === null) {
+    throw new Error('Invalid checkpoint: invalid "workerReplaySignatures" signature');
+  }
+  return signature as Record<string, unknown>;
+}
+
+function validateWorkerReplaySignatureRecord(record: Record<string, unknown>): void {
+  if (record['format'] !== WORKER_REPLAY_SIGNATURE_FORMAT) {
+    throw new Error('Invalid checkpoint: invalid "workerReplaySignatures" format');
+  }
+  if (typeof record['operationType'] !== 'string') {
+    throw new Error('Invalid checkpoint: invalid "workerReplaySignatures" operationType');
+  }
+  if (typeof record['stableFieldsDigest'] !== 'string') {
+    throw new Error('Invalid checkpoint: invalid "workerReplaySignatures" stableFieldsDigest');
+  }
+  validateWorkerReplaySignatureByteLength(record['stableFieldsByteLength']);
+}
+
+function validateWorkerReplaySignatureByteLength(value: unknown): void {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error('Invalid checkpoint: invalid "workerReplaySignatures" stableFieldsByteLength');
+  }
 }
 
 function assertCheckpointRecord(value: unknown): Record<string, unknown> {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { deserializeCheckpoint, serializeCheckpoint } from '../core/checkpoint.ts';
 import type { OperationRequest, WorkerOutboundMessage } from '../core/types.ts';
 import {
   createWorkflowRunnerContext,
@@ -69,6 +70,26 @@ describe('handleRunMessage', () => {
     expect(result.type).toBe('failed');
     expect((result as { error: string }).error).toContain('workflow exploded');
     expect(result.type === 'failed' ? result.failureCategory : undefined).toBe('application');
+  });
+
+  it('cleans up state when the workflow handler throws before returning a generator', async () => {
+    const context = createWorkflowRunnerContext();
+
+    function synchronousThrowWorkflow(): AsyncGenerator {
+      throw new Error('handler exploded');
+    }
+
+    const result = await handleRunMessage(
+      context,
+      { workflowId: 'wf-sync-throw', workflowType: 'throwing-handler', input: null },
+      () => synchronousThrowWorkflow,
+    );
+
+    expect(result.type).toBe('failed');
+    expect((result as { error: string }).error).toContain('handler exploded');
+    expect(context.abortControllers.has('wf-sync-throw')).toBe(false);
+    expect(context.generators.has('wf-sync-throw')).toBe(false);
+    expect(context.replayStates.has('wf-sync-throw')).toBe(false);
   });
 
   it('classifies timeout-shaped worker run failures', async () => {
@@ -480,7 +501,186 @@ describe('handleResumeMessage', () => {
       result: { first: 'result-1', second: 'result-2' },
     } satisfies WorkerOutboundMessage);
   });
+
+  it('replays cached worker results from a checkpoint without re-emitting completed operations', async () => {
+    const firstContext = createWorkflowRunnerContext();
+    const firstOperation = createActivityOperation('wf-replay', 'step1', 'one');
+    const secondOperation = createActivityOperation('wf-replay', 'step2', 'two');
+
+    async function* replayWorkflow() {
+      const first: unknown = yield firstOperation;
+      const second: unknown = yield secondOperation;
+      return { first, second };
+    }
+
+    await handleRunMessage(
+      firstContext,
+      { workflowId: 'wf-replay', workflowType: 'replay', input: null },
+      () => replayWorkflow,
+    );
+    const checkpointBeforeRestart = await handleResumeMessage(firstContext, {
+      workflowId: 'wf-replay',
+      result: 'persisted-result',
+    });
+
+    expect(checkpointBeforeRestart.type).toBe('checkpoint');
+    if (checkpointBeforeRestart.type !== 'checkpoint') return;
+
+    const recoveredContext = createWorkflowRunnerContext();
+    const recoveredCheckpoint = await handleRunMessage(
+      recoveredContext,
+      {
+        workflowId: 'wf-replay',
+        workflowType: 'replay',
+        input: null,
+        checkpoint: checkpointBeforeRestart.checkpoint,
+      },
+      () => replayWorkflow,
+    );
+
+    expect(recoveredCheckpoint.type).toBe('checkpoint');
+    if (recoveredCheckpoint.type !== 'checkpoint') return;
+    expect(recoveredCheckpoint.operationRequest).toEqual(secondOperation);
+
+    const final = await handleResumeMessage(recoveredContext, {
+      workflowId: 'wf-replay',
+      result: 'second-result',
+    });
+    expect(final).toEqual({
+      type: 'completed',
+      workflowId: 'wf-replay',
+      result: { first: 'persisted-result', second: 'second-result' },
+    } satisfies WorkerOutboundMessage);
+  });
+
+  it('fails closed when a cached worker result has no replay signature', async () => {
+    const context = createWorkflowRunnerContext();
+    const operation = createActivityOperation('wf-missing-signature', 'step1', 'one');
+
+    async function* replayWorkflow() {
+      const result: unknown = yield operation;
+      return result;
+    }
+
+    await handleRunMessage(
+      context,
+      { workflowId: 'wf-missing-signature', workflowType: 'replay', input: null },
+      () => replayWorkflow,
+    );
+    const checkpointMessage = await handleResumeMessage(context, {
+      workflowId: 'wf-missing-signature',
+      result: 'persisted-result',
+    });
+    expect(checkpointMessage.type).toBe('completed');
+
+    const checkpoint = deserializeCheckpoint(
+      serializeCheckpoint({
+        workflowId: 'wf-missing-signature',
+        step: 1,
+        locals: {},
+        accumulatedResults: [[0, 'persisted-result']],
+        pendingSignals: [],
+        searchAttributes: {},
+        version: 'worker',
+        schemaVersion: 2,
+        createdAt: Date.now(),
+      }),
+    );
+
+    const recovered = await handleRunMessage(
+      createWorkflowRunnerContext(),
+      {
+        workflowId: 'wf-missing-signature',
+        workflowType: 'replay',
+        input: null,
+        checkpoint: bytesToArrayBuffer(serializeCheckpoint(checkpoint)),
+      },
+      () => replayWorkflow,
+    );
+
+    expect(recovered).toMatchObject({
+      type: 'failed',
+      workflowId: 'wf-missing-signature',
+      failureCategory: 'system',
+    });
+  });
+
+  it('fails closed when a cached worker result signature no longer matches the yielded operation', async () => {
+    const context = createWorkflowRunnerContext();
+    const originalOperation = createActivityOperation('wf-mismatch', 'step1', 'original');
+    const changedOperation = createActivityOperation('wf-mismatch', 'step1', 'changed');
+
+    async function* originalWorkflow() {
+      const first: unknown = yield originalOperation;
+      yield createActivityOperation('wf-mismatch', 'step2', 'next');
+      return first;
+    }
+
+    await handleRunMessage(
+      context,
+      { workflowId: 'wf-mismatch', workflowType: 'replay', input: null },
+      () => originalWorkflow,
+    );
+    const checkpointBeforeRestart = await handleResumeMessage(context, {
+      workflowId: 'wf-mismatch',
+      result: 'persisted-result',
+    });
+    expect(checkpointBeforeRestart.type).toBe('checkpoint');
+    if (checkpointBeforeRestart.type !== 'checkpoint') return;
+
+    async function* changedWorkflow() {
+      const first: unknown = yield changedOperation;
+      yield createActivityOperation('wf-mismatch', 'step2', 'next');
+      return first;
+    }
+
+    const recovered = await handleRunMessage(
+      createWorkflowRunnerContext(),
+      {
+        workflowId: 'wf-mismatch',
+        workflowType: 'replay',
+        input: null,
+        checkpoint: checkpointBeforeRestart.checkpoint,
+      },
+      () => changedWorkflow,
+    );
+
+    expect(recovered).toMatchObject({
+      type: 'failed',
+      workflowId: 'wf-mismatch',
+      failureCategory: 'system',
+    });
+  });
 });
+
+function createActivityOperation(
+  workflowId: string,
+  activityName: string,
+  input: unknown,
+): OperationRequest {
+  return {
+    id: `${workflowId}:${activityName}`,
+    workflowId,
+    kind: 'activity',
+    queue: 'default',
+    activityName,
+    input,
+    attempt: 1,
+    retryPolicy: {
+      maxAttempts: 3,
+      initialBackoff: 1000,
+      backoffMultiplier: 2,
+      maxBackoff: 30_000,
+    },
+    scheduledAt: Date.now(),
+  };
+}
+
+function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
 
 describe('handleCancelMessage', () => {
   it('aborts the controller for a running workflow', async () => {
@@ -561,6 +761,7 @@ describe('handleCancelMessage', () => {
 
     expect(context.generators.has('wf-cleanup')).toBe(false);
     expect(context.abortControllers.has('wf-cleanup')).toBe(false);
+    expect(context.replayStates.has('wf-cleanup')).toBe(false);
   });
 
   it('runs finally blocks in the workflow generator when cancelled', async () => {
@@ -703,8 +904,10 @@ describe('handleCancelMessage', () => {
 
     const originalController = context.abortControllers.get('wf-race');
     const originalGenerator = context.generators.get('wf-race');
+    const originalReplayState = context.replayStates.get('wf-race');
     expect(originalController).toBeDefined();
     expect(originalGenerator).toBeDefined();
+    expect(originalReplayState).toBeDefined();
 
     // Kick off cancel; it will park on `await generator.return()` because
     // the workflow's finally block is waiting on `disposerGate`.
@@ -724,10 +927,13 @@ describe('handleCancelMessage', () => {
 
     const newController = context.abortControllers.get('wf-race');
     const newGenerator = context.generators.get('wf-race');
+    const newReplayState = context.replayStates.get('wf-race');
     expect(newController).toBeDefined();
     expect(newGenerator).toBeDefined();
+    expect(newReplayState).toBeDefined();
     expect(newController).not.toBe(originalController);
     expect(newGenerator).not.toBe(originalGenerator);
+    expect(newReplayState).not.toBe(originalReplayState);
 
     // Release the slow disposer so cancel can finish cleanup.
     resolveDisposer();
@@ -738,6 +944,7 @@ describe('handleCancelMessage', () => {
     // prevented the stale cancel from deleting it.
     expect(context.abortControllers.get('wf-race')).toBe(newController);
     expect(context.generators.get('wf-race')).toBe(newGenerator);
+    expect(context.replayStates.get('wf-race')).toBe(newReplayState);
   });
 });
 

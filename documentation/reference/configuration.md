@@ -19,6 +19,7 @@ interface EngineOptions {
   broadcastEvents?: boolean;
   retention?: RetentionPolicy;
   compression?: CompressionOptions;
+  workflowExecutionMode?: 'inline' | 'worker';
   workerExecution?: WorkerExecutionOptions;
   activityExecution?: ActivityExecutionOptions;
   alerts?: AlertOptions[];
@@ -36,6 +37,7 @@ interface EngineOptions {
 | `broadcastEvents`                | `boolean`                  | `false`               | Enable `BroadcastChannel` for cross-worker event coordination. Lazily creates the channel on first use.                    |
 | `retention`                      | `RetentionPolicy`          | `undefined`           | Default retention policy for completed/failed/cancelled workflows                                                          |
 | `compression`                    | `CompressionOptions`       | `undefined`           | Enable framed storage payload compression for checkpoints and activity results.                                            |
+| `workflowExecutionMode`          | `'inline' \| 'worker'`     | legacy selection      | Explicitly choose inline or Worker workflow execution. Omit to preserve legacy behavior.                                   |
 | `workerExecution`                | `WorkerExecutionOptions`   | `undefined`           | Configuration for offloading workflow execution to Web Workers                                                             |
 | `activityExecution`              | `ActivityExecutionOptions` | `undefined`           | Configuration for activity execution behavior                                                                              |
 | `alerts`                         | `AlertOptions[]`           | `undefined`           | Metric alert thresholds that fire `AlertFiredEvent` / `AlertResolvedEvent`                                                 |
@@ -54,6 +56,62 @@ const engine = new Engine({
   compression: { algorithm: 'gzip', threshold: 4096 },
 });
 ```
+
+### Workflow Execution Mode
+
+Inline execution remains the default for trusted single-tenant deployments:
+
+```ts
+import { Engine } from 'weft';
+
+const trustedEngine = new Engine({
+  workflowExecutionMode: 'inline',
+});
+
+void trustedEngine;
+```
+
+Use Worker execution for untrusted multi-tenant workflow code. Explicit Worker mode requires `workerExecution` and applies hardened defaults for the Worker protocol:
+
+```ts
+import { Engine } from 'weft';
+
+const untrustedEngine = new Engine({
+  workflowExecutionMode: 'worker',
+  workerExecution: {
+    workerUrl: new URL('./workflow-worker.ts', import.meta.url),
+    poolSize: 4,
+  },
+});
+
+void untrustedEngine;
+```
+
+When `workflowExecutionMode` is omitted, Weft preserves the legacy selection rule: providing `workerExecution` selects Worker execution; omitting it selects inline execution. Explicit `workflowExecutionMode: 'inline'` rejects `workerExecution` so configuration cannot silently fall back to a different trust posture. Explicit `workflowExecutionMode: 'worker'` rejects construction unless `workerExecution.workerUrl` is available.
+
+Worker mode executes workflow generator turns outside the engine isolate. It protects engine liveness and engine heap access by driving the workflow through bounded `postMessage` turns, but it is not an operating-system sandbox. Workflow code still runs inside the Worker global realm and may access APIs exposed by that runtime, including Worker globals, imports, network APIs, filesystem APIs in Bun, and environment APIs when the runtime exposes them.
+
+#### `WorkerExecutionOptions`
+
+```ts
+interface WorkerExecutionOptions {
+  workerUrl: string | URL;
+  poolSize?: number;
+  smol?: boolean;
+  workflowTurnTimeoutMs?: number;
+  maxProtocolMessageBytes?: number;
+}
+```
+
+| Field                     | Type            | Default                             | Description                                                                                         |
+| ------------------------- | --------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `workerUrl`               | `string \| URL` | required                            | Worker entrypoint URL created by `createWorkerEntryUrl` or an equivalent bundle.                    |
+| `poolSize`                | `number`        | `4`                                 | Maximum concurrent workflow Workers.                                                                |
+| `smol`                    | `boolean`       | `false`                             | Pass Bun's smaller-memory Worker option when the runtime supports it.                               |
+| `workflowTurnTimeoutMs`   | `number`        | `1_000` in explicit Worker mode     | Host-enforced wall-clock budget for each Worker `run` or `resume` turn. Positive safe integer only. |
+| `maxProtocolMessageBytes` | `number`        | `1_048_576` in explicit Worker mode | Maximum encoded size of Weft-owned Worker protocol messages. Minimum accepted value is `4_096`.     |
+
+The Worker protocol byte limit is separate from `payloadSize.maxBytes`. Payload limits guard workflow inputs, signals, and activity results at API boundaries. `maxProtocolMessageBytes` guards Weft-owned Worker envelopes, checkpoints, and operation-result messages crossing `postMessage`.
 
 ---
 

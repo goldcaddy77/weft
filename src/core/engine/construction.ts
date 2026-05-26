@@ -15,6 +15,11 @@ import {
   type RegisteredWorkflowDefinition,
 } from '../types.ts';
 import { WorkerExecutionStrategy } from '../worker-execution-strategy.ts';
+import {
+  DEFAULT_WORKER_PROTOCOL_MESSAGE_BYTES,
+  DEFAULT_WORKER_TURN_TIMEOUT_MS,
+  MIN_WORKER_PROTOCOL_MESSAGE_BYTES,
+} from '../worker-protocol.ts';
 import type {
   EngineConstructorOptions,
   ExecutionStrategyBundle,
@@ -44,6 +49,17 @@ export type EngineCreateRuntimeOptions = EngineConstructorOptions & {
   acknowledgeUnknownWorkflowTypes?: boolean | undefined;
   allowLegacyData?: boolean | undefined;
 };
+
+export type NormalizedWorkerExecutionConfiguration =
+  | { mode: 'inline'; workerExecution: null }
+  | {
+      mode: 'worker';
+      workerExecution: NonNullable<EngineConstructorOptions['workerExecution']>;
+      workflowTurnTimeoutMs: number | undefined;
+      maxProtocolMessageBytes: number | undefined;
+      requireProtocolVersion: boolean;
+      discardOnCancel: boolean;
+    };
 
 export function definitionEntries<TDefinition extends object>(
   definitions: Record<string, TDefinition> | undefined,
@@ -170,6 +186,92 @@ export function resolveEngineOptions(
   };
 }
 
+export function normalizeWorkerExecutionConfiguration(
+  options: EngineConstructorOptions | undefined,
+): NormalizedWorkerExecutionConfiguration {
+  const workflowExecutionMode = normalizeWorkflowExecutionMode(options?.workflowExecutionMode);
+  const workerExecution = resolveWorkerExecutionForMode(options, workflowExecutionMode);
+  if (!workerExecution) {
+    return { mode: 'inline', workerExecution: null };
+  }
+
+  const hardened = workflowExecutionMode === 'worker';
+  return normalizeWorkerModeConfiguration(workerExecution, hardened);
+}
+
+function normalizeWorkflowExecutionMode(
+  value: unknown,
+): EngineConstructorOptions['workflowExecutionMode'] {
+  if (value === undefined || value === 'inline' || value === 'worker') {
+    return value;
+  }
+  throw new Error('options.workflowExecutionMode must be "inline" or "worker" when provided');
+}
+
+function resolveWorkerExecutionForMode(
+  options: EngineConstructorOptions | undefined,
+  workflowExecutionMode: EngineConstructorOptions['workflowExecutionMode'],
+): NonNullable<EngineConstructorOptions['workerExecution']> | null {
+  if (workflowExecutionMode === 'inline') {
+    if (options?.workerExecution !== undefined) {
+      throw new Error(
+        'options.workerExecution cannot be provided when workflowExecutionMode is "inline"',
+      );
+    }
+    return null;
+  }
+  if (workflowExecutionMode === 'worker' && options?.workerExecution === undefined) {
+    throw new Error('options.workerExecution is required when workflowExecutionMode is "worker"');
+  }
+  return options?.workerExecution ?? null;
+}
+
+function normalizeWorkerModeConfiguration(
+  workerExecution: NonNullable<EngineConstructorOptions['workerExecution']>,
+  hardened: boolean,
+): NormalizedWorkerExecutionConfiguration {
+  const workflowTurnTimeoutMs = normalizePositiveSafeIntegerOption(
+    workerExecution.workflowTurnTimeoutMs,
+    'options.workerExecution.workflowTurnTimeoutMs',
+    hardened ? DEFAULT_WORKER_TURN_TIMEOUT_MS : undefined,
+  );
+  const maxProtocolMessageBytes = normalizePositiveSafeIntegerOption(
+    workerExecution.maxProtocolMessageBytes,
+    'options.workerExecution.maxProtocolMessageBytes',
+    hardened ? DEFAULT_WORKER_PROTOCOL_MESSAGE_BYTES : undefined,
+  );
+  if (
+    maxProtocolMessageBytes !== undefined &&
+    maxProtocolMessageBytes < MIN_WORKER_PROTOCOL_MESSAGE_BYTES
+  ) {
+    throw new Error(
+      `options.workerExecution.maxProtocolMessageBytes must be at least ${MIN_WORKER_PROTOCOL_MESSAGE_BYTES}`,
+    );
+  }
+
+  return {
+    mode: 'worker',
+    workerExecution,
+    workflowTurnTimeoutMs,
+    maxProtocolMessageBytes,
+    requireProtocolVersion:
+      hardened || workflowTurnTimeoutMs !== undefined || maxProtocolMessageBytes !== undefined,
+    discardOnCancel: hardened || workflowTurnTimeoutMs !== undefined,
+  };
+}
+
+function normalizePositiveSafeIntegerOption(
+  value: unknown,
+  fieldName: string,
+  defaultValue: number | undefined,
+): number | undefined {
+  if (value === undefined) return defaultValue;
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${fieldName} must be a positive safe integer when provided`);
+  }
+  return value;
+}
+
 export function createExecutionStrategyBundle(parameters: {
   options: EngineConstructorOptions | undefined;
   getNow: () => number;
@@ -188,14 +290,26 @@ export function createExecutionStrategyBundle(parameters: {
     getRegistration,
     resolveWorkflowType,
   } = parameters;
-  if (options?.workerExecution) {
+  const workerExecutionConfiguration = normalizeWorkerExecutionConfiguration(options);
+  if (workerExecutionConfiguration.mode === 'worker') {
     const pool = new WorkerPool({
-      workerUrl: options.workerExecution.workerUrl,
-      concurrency: options.workerExecution.poolSize ?? 4,
-      smol: options.workerExecution.smol ?? false,
+      workerUrl: workerExecutionConfiguration.workerExecution.workerUrl,
+      concurrency: workerExecutionConfiguration.workerExecution.poolSize ?? 4,
+      smol: workerExecutionConfiguration.workerExecution.smol ?? false,
     });
+    const strategyOptions = {
+      broadcastEvents,
+      requireProtocolVersion: workerExecutionConfiguration.requireProtocolVersion,
+      discardOnCancel: workerExecutionConfiguration.discardOnCancel,
+      ...(workerExecutionConfiguration.workflowTurnTimeoutMs === undefined
+        ? {}
+        : { workflowTurnTimeoutMs: workerExecutionConfiguration.workflowTurnTimeoutMs }),
+      ...(workerExecutionConfiguration.maxProtocolMessageBytes === undefined
+        ? {}
+        : { maxProtocolMessageBytes: workerExecutionConfiguration.maxProtocolMessageBytes }),
+    };
     return {
-      strategy: new WorkerExecutionStrategy(pool, { broadcastEvents }),
+      strategy: new WorkerExecutionStrategy(pool, strategyOptions),
       inlineStrategy: null,
     };
   }

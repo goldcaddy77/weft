@@ -20,10 +20,16 @@ const simpleWorkflow = workflow({ name: 'simple' }).execute(async function* (
 ) {
   return undefined;
 });
+const infiniteLoopWorkflow = workflow({ name: 'infinite-loop' }).execute(async function* (
+  _ctx: WorkflowContext,
+) {
+  return undefined;
+});
 
 function registerWorkerExecutionTestWorkflows(engine: Engine): void {
   engine.register(waitSignalThenCompleteWorkflow);
   engine.register(simpleWorkflow);
+  engine.register(infiniteLoopWorkflow);
 }
 
 async function countStoredSignals(
@@ -51,6 +57,17 @@ describe('worker execution signal suspension', () => {
     const workerEngine = new Engine({
       storage,
       workerExecution: { workerUrl, poolSize: 1 },
+    });
+    registerWorkerExecutionTestWorkflows(workerEngine);
+    engine = workerEngine;
+    return workerEngine;
+  }
+
+  function createHardenedWorkerEngine(storage = new MemoryStorage()): Engine {
+    const workerEngine = new Engine({
+      storage,
+      workflowExecutionMode: 'worker',
+      workerExecution: { workerUrl, poolSize: 1, workflowTurnTimeoutMs: 25 },
     });
     registerWorkerExecutionTestWorkflows(workerEngine);
     engine = workerEngine;
@@ -139,6 +156,30 @@ describe('worker execution signal suspension', () => {
     workerEngine[Symbol.dispose]();
 
     expect(workerEngine[ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING]()).toBe(0);
+  });
+
+  it('times out a real infinite-loop Worker workflow and runs a later workflow', async () => {
+    const workerEngine = createHardenedWorkerEngine();
+
+    const loopingHandle = await workerEngine.start('infinite-loop', null, {
+      id: 'worker-infinite-loop',
+    });
+
+    await expect(
+      withTimeout(loopingHandle.result(), 1000, 'infinite-loop timeout'),
+    ).rejects.toThrow('Worker workflow turn timed out');
+
+    const simpleHandle = await workerEngine.start(
+      'simple',
+      { label: 'after-loop' },
+      { id: 'worker-after-loop' },
+    );
+    await expect(
+      withTimeout(simpleHandle.result(), 1000, 'post-timeout workflow'),
+    ).resolves.toEqual({
+      input: { label: 'after-loop' },
+      computed: 42,
+    });
   });
 });
 

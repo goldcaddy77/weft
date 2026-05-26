@@ -27,6 +27,7 @@ Creates a new engine instance. All options are optional -- sensible defaults are
 | `broadcastEvents`                | `boolean`                  | `false`               | Enable `BroadcastChannel` for cross-worker event coordination                  |
 | `retention`                      | `RetentionPolicy`          | `undefined`           | Default retention policy for completed/failed/cancelled workflows              |
 | `compression`                    | `CompressionOptions`       | `undefined`           | Enable framed storage payload compression for checkpoints and activity results |
+| `workflowExecutionMode`          | `'inline' \| 'worker'`     | legacy selection      | Explicitly choose inline or Worker workflow execution                          |
 | `workerExecution`                | `WorkerExecutionOptions`   | `undefined`           | Configuration for offloading workflow execution to Web Workers                 |
 | `activityExecution`              | `ActivityExecutionOptions` | `undefined`           | Configuration for activity execution behavior                                  |
 | `alerts`                         | `AlertOptions[]`           | `undefined`           | Metric alert thresholds that fire `AlertFiredEvent` / `AlertResolvedEvent`     |
@@ -330,13 +331,14 @@ interface EngineOptions {
   broadcastEvents?: boolean;
   retention?: RetentionPolicy;
   compression?: CompressionOptions;
+  workflowExecutionMode?: 'inline' | 'worker';
   workerExecution?: WorkerExecutionOptions;
   activityExecution?: ActivityExecutionOptions;
   alerts?: AlertOptions[];
 }
 ```
 
-See [Configuration](./configuration.md) for defaults. See [types.md](./types.md) for the full field descriptions of worker options.
+See [Configuration](./configuration.md) for defaults and Worker execution hardening options. Explicit `workflowExecutionMode: 'worker'` is the untrusted workflow posture; inline execution remains available for trusted deployments.
 
 ### `StartOptions`
 

@@ -27,6 +27,14 @@ registrations.set('simple', async function* (_ctx, input) {
   return { input, computed: 42 };
 });
 
+registrations.set('infinite-loop', async function* () {
+  let keepRunning = true;
+  while (keepRunning) {
+    keepRunning = Date.now() >= 0;
+  }
+  return 'unreachable';
+});
+
 registrations.set('with-activity', async function* (_ctx, input) {
   const result: unknown = yield {
     id: 'op-1',

@@ -372,10 +372,26 @@ interface Checkpoint {
   workflowId: WorkflowId;
   step: number;
   locals: Record<string, unknown>;
+  accumulatedResults: Array<[number, unknown]>;
+  workerReplaySignatures?: Array<[number, WorkerReplayOperationSignature]>;
   pendingSignals: string[];
   searchAttributes: Record<string, SearchAttributeValue>;
   version: string;
+  schemaVersion: number;
   createdAt: number;
+}
+```
+
+`workerReplaySignatures` is written by Worker-mode execution only. It lets Worker recovery verify a cached operation result against the operation currently yielded by the workflow before reusing that result. Inline execution ignores the field when it is absent.
+
+### `WorkerReplayOperationSignature`
+
+```ts
+interface WorkerReplayOperationSignature {
+  format: 'weft-worker-operation-signature-v1';
+  operationType: string;
+  stableFieldsDigest: string;
+  stableFieldsByteLength: number;
 }
 ```
 
@@ -494,13 +510,14 @@ interface EngineOptions {
   broadcastEvents?: boolean;
   retention?: RetentionPolicy;
   compression?: CompressionOptions;
+  workflowExecutionMode?: 'inline' | 'worker';
   workerExecution?: WorkerExecutionOptions;
   activityExecution?: ActivityExecutionOptions;
   alerts?: AlertOptions[];
 }
 ```
 
-See [Configuration](./configuration.md) for detailed field descriptions and defaults.
+See [Configuration](./configuration.md) for detailed field descriptions and defaults. `workflowExecutionMode: 'worker'` requires `workerExecution` and applies Worker turn timeout and protocol-message bounds for untrusted workflow code; `workflowExecutionMode: 'inline'` rejects `workerExecution`.
 
 ### `CompressionOptions`
 

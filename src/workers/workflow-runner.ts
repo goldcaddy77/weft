@@ -1,9 +1,17 @@
+import {
+  advanceCheckpoint,
+  createCheckpoint,
+  deserializeCheckpoint,
+  serializeCheckpoint,
+} from '../core/checkpoint.ts';
 import { WorkflowAtomicStateHandle } from '../core/context/state-namespace.ts';
 import {
   classifyErrorAsFailureCategory,
   errorFromFailedOperationOutcome,
 } from '../core/failure-categories.ts';
 import type {
+  Checkpoint,
+  FailureCategory,
   OperationOutcome,
   OperationRequest,
   WorkerOutboundMessage,
@@ -12,6 +20,11 @@ import type {
   WorkflowSessionState,
   WorkflowStateNamespace,
 } from '../core/types.ts';
+import {
+  createWorkerReplayOperationSignature,
+  type WorkerReplayOperationSignature,
+  workerReplayOperationSignaturesEqual,
+} from '../core/worker-protocol.ts';
 
 // ---------------------------------------------------------------------------
 // Worker-side workflow context
@@ -87,12 +100,23 @@ function createWorkerStateNamespace(message: RunMessageShape): WorkflowStateName
 export interface WorkflowRunnerContext {
   generators: Map<string, AsyncGenerator>;
   abortControllers: Map<string, AbortController>;
+  replayStates: Map<string, WorkerReplayState>;
+}
+
+interface WorkerReplayState {
+  checkpoint: Checkpoint;
+  accumulatedResults: Map<number, unknown>;
+  signatures: Map<number, WorkerReplayOperationSignature>;
+  nextStepIndex: number;
+  pendingStepIndex: number | null;
+  maxProtocolMessageBytes: number | undefined;
 }
 
 export function createWorkflowRunnerContext(): WorkflowRunnerContext {
   return {
     generators: new Map(),
     abortControllers: new Map(),
+    replayStates: new Map(),
   };
 }
 
@@ -106,6 +130,8 @@ export async function handleRunMessage(
     workflowId: string;
     workflowType: string;
     input: unknown;
+    checkpoint?: ArrayBuffer;
+    maxProtocolMessageBytes?: number;
     executionStateOwnerId?: string;
     deadline?: number;
     headers?: [string, string][];
@@ -128,14 +154,14 @@ export async function handleRunMessage(
   const controller = new AbortController();
   context.abortControllers.set(message.workflowId, controller);
 
-  const workerContext = createWorkerWorkflowContext(message, controller);
-  const generator = handler(workerContext, message.input);
-
   try {
+    const workerContext = createWorkerWorkflowContext(message, controller);
+    const generator = handler(workerContext, message.input);
+    context.replayStates.set(message.workflowId, createReplayState(message));
     const step = await generator.next();
-    return processGeneratorStep(context, message.workflowId, generator, step);
+    return await processGeneratorStep(context, message.workflowId, generator, step);
   } catch (error) {
-    cleanup(context, message.workflowId);
+    cleanupWorkflowRunnerState(context, message.workflowId);
     return {
       type: 'failed',
       workflowId: message.workflowId,
@@ -153,11 +179,17 @@ export async function handleRunMessage(
 
 export async function handleResumeMessage(
   context: WorkflowRunnerContext,
-  message: { workflowId: string; result: unknown; operationResult?: OperationOutcome },
+  message: {
+    workflowId: string;
+    result: unknown;
+    operationResult?: OperationOutcome;
+    maxProtocolMessageBytes?: number;
+  },
 ): Promise<WorkerOutboundMessage> {
   const generator = context.generators.get(message.workflowId);
+  const replayState = context.replayStates.get(message.workflowId);
 
-  if (!generator) {
+  if (!generator || !replayState) {
     return {
       type: 'failed',
       workflowId: message.workflowId,
@@ -166,22 +198,20 @@ export async function handleResumeMessage(
     };
   }
 
-  const operationFailureCategory =
-    message.operationResult?.status === 'failed'
-      ? message.operationResult.failureCategory
-      : undefined;
+  const outcome = operationOutcomeFromResumeMessage(message);
+  const operationFailureCategory = operationFailureCategoryFromOutcome(outcome);
 
   try {
     // If the operation failed, throw the error into the generator so the
     // workflow can handle it via try/catch rather than silently continuing.
-    const outcome = message.operationResult;
-    const step =
-      outcome?.status === 'failed'
-        ? await generator.throw(errorFromFailedOperationOutcome(outcome))
-        : await generator.next(message.result);
-    return processGeneratorStep(context, message.workflowId, generator, step);
+    recordOperationOutcome(replayState, outcome);
+    if (message.maxProtocolMessageBytes !== undefined) {
+      replayState.maxProtocolMessageBytes = message.maxProtocolMessageBytes;
+    }
+    const step = await resumeGeneratorWithOutcome(generator, outcome, message.result);
+    return await processGeneratorStep(context, message.workflowId, generator, step);
   } catch (error) {
-    cleanup(context, message.workflowId);
+    cleanupWorkflowRunnerState(context, message.workflowId);
     return {
       type: 'failed',
       workflowId: message.workflowId,
@@ -191,6 +221,30 @@ export async function handleResumeMessage(
         classifyErrorAsFailureCategory(error, { defaultErrorCategory: 'application' }),
     };
   }
+}
+
+function operationOutcomeFromResumeMessage(message: {
+  result: unknown;
+  operationResult?: OperationOutcome;
+}): OperationOutcome {
+  return message.operationResult ?? { status: 'completed', value: message.result };
+}
+
+function operationFailureCategoryFromOutcome(
+  outcome: OperationOutcome,
+): FailureCategory | undefined {
+  return outcome.status === 'failed' ? outcome.failureCategory : undefined;
+}
+
+async function resumeGeneratorWithOutcome(
+  generator: AsyncGenerator,
+  outcome: OperationOutcome,
+  result: unknown,
+): Promise<IteratorResult<unknown>> {
+  if (outcome.status === 'failed') {
+    return await generator.throw(errorFromFailedOperationOutcome(outcome));
+  }
+  return await generator.next(result);
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +274,7 @@ export async function handleCancelMessage(
 ): Promise<void> {
   const capturedController = context.abortControllers.get(message.workflowId);
   const capturedGenerator = context.generators.get(message.workflowId);
+  const capturedReplayState = context.replayStates.get(message.workflowId);
 
   if (capturedController) {
     capturedController.abort();
@@ -242,40 +297,191 @@ export async function handleCancelMessage(
   if (context.abortControllers.get(message.workflowId) === capturedController) {
     context.abortControllers.delete(message.workflowId);
   }
+  if (context.replayStates.get(message.workflowId) === capturedReplayState) {
+    context.replayStates.delete(message.workflowId);
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function processGeneratorStep(
+async function processGeneratorStep(
   context: WorkflowRunnerContext,
   workflowId: string,
   generator: AsyncGenerator,
   step: IteratorResult<unknown>,
-): WorkerOutboundMessage {
-  if (step.done) {
-    cleanup(context, workflowId);
+): Promise<WorkerOutboundMessage> {
+  const replayState = context.replayStates.get(workflowId);
+  if (!replayState) {
     return {
-      type: 'completed',
+      type: 'failed',
       workflowId,
-      result: step.value,
+      error: `No replay state for workflow: ${workflowId}`,
+      failureCategory: 'system',
     };
   }
 
-  // The yielded value is an OperationRequest describing the next operation
-  context.generators.set(workflowId, generator);
+  let currentStep = step;
+  while (true) {
+    if (currentStep.done) {
+      cleanupWorkflowRunnerState(context, workflowId);
+      return {
+        type: 'completed',
+        workflowId,
+        result: currentStep.value,
+      };
+    }
+
+    const operationRequest = currentStep.value as OperationRequest;
+    const stepIndex = replayState.nextStepIndex;
+    const signature = await createWorkerReplayOperationSignature(
+      operationRequest,
+      replayState.maxProtocolMessageBytes ?? Number.MAX_SAFE_INTEGER,
+    );
+
+    if (replayState.accumulatedResults.has(stepIndex)) {
+      const persistedSignature = replayState.signatures.get(stepIndex);
+      if (!persistedSignature) {
+        cleanupWorkflowRunnerState(context, workflowId);
+        return {
+          type: 'failed',
+          workflowId,
+          error: `Worker checkpoint is missing replay signature for step ${stepIndex}`,
+          failureCategory: 'system',
+        };
+      }
+      if (!workerReplayOperationSignaturesEqual(signature, persistedSignature)) {
+        cleanupWorkflowRunnerState(context, workflowId);
+        return {
+          type: 'failed',
+          workflowId,
+          error: `Worker checkpoint replay signature mismatch at step ${stepIndex}`,
+          failureCategory: 'system',
+        };
+      }
+
+      replayState.nextStepIndex = stepIndex + 1;
+      currentStep = await replayGeneratorStep(
+        generator,
+        replayState.accumulatedResults.get(stepIndex),
+      );
+      continue;
+    }
+
+    const persistedPendingSignature = replayState.signatures.get(stepIndex);
+    if (persistedPendingSignature) {
+      if (!workerReplayOperationSignaturesEqual(signature, persistedPendingSignature)) {
+        cleanupWorkflowRunnerState(context, workflowId);
+        return {
+          type: 'failed',
+          workflowId,
+          error: `Worker checkpoint replay signature mismatch at pending step ${stepIndex}`,
+          failureCategory: 'system',
+        };
+      }
+    } else {
+      replayState.signatures.set(stepIndex, signature);
+      replayState.checkpoint = advanceWorkerCheckpoint(replayState);
+    }
+    replayState.pendingStepIndex = stepIndex;
+    context.generators.set(workflowId, generator);
+    return {
+      type: 'checkpoint',
+      workflowId,
+      checkpoint: toArrayBuffer(serializeCheckpoint(replayState.checkpoint)),
+      operationRequest,
+    };
+  }
+}
+
+const WORKER_OPERATION_FAILURE_MARKER = '__weftWorkerOperationFailure';
+
+interface StoredWorkerOperationFailure {
+  [WORKER_OPERATION_FAILURE_MARKER]: true;
+  outcome: Extract<OperationOutcome, { status: 'failed' }>;
+}
+
+function createReplayState(message: {
+  workflowId: string;
+  checkpoint?: ArrayBuffer;
+  maxProtocolMessageBytes?: number;
+}): WorkerReplayState {
+  const checkpoint =
+    message.checkpoint && message.checkpoint.byteLength > 0
+      ? deserializeCheckpoint(new Uint8Array(message.checkpoint))
+      : createCheckpoint(message.workflowId, 'worker');
   return {
-    type: 'checkpoint',
-    workflowId,
-    checkpoint: new ArrayBuffer(0),
-    operationRequest: step.value as OperationRequest,
+    checkpoint,
+    accumulatedResults: new Map(checkpoint.accumulatedResults),
+    signatures: new Map(checkpoint.workerReplaySignatures ?? []),
+    nextStepIndex: 0,
+    pendingStepIndex: null,
+    maxProtocolMessageBytes: message.maxProtocolMessageBytes,
   };
 }
 
-function cleanup(context: WorkflowRunnerContext, workflowId: string): void {
+function recordOperationOutcome(
+  replayState: WorkerReplayState,
+  outcome: OperationOutcome | undefined,
+): void {
+  const pendingStepIndex = replayState.pendingStepIndex;
+  if (pendingStepIndex === null || !outcome) return;
+
+  replayState.accumulatedResults.set(
+    pendingStepIndex,
+    outcome.status === 'failed'
+      ? ({
+          [WORKER_OPERATION_FAILURE_MARKER]: true,
+          outcome,
+        } satisfies StoredWorkerOperationFailure)
+      : outcome.value,
+  );
+  replayState.nextStepIndex = pendingStepIndex + 1;
+  replayState.pendingStepIndex = null;
+}
+
+async function replayGeneratorStep(
+  generator: AsyncGenerator,
+  value: unknown,
+): Promise<IteratorResult<unknown>> {
+  if (isStoredWorkerOperationFailure(value)) {
+    return await generator.throw(errorFromFailedOperationOutcome(value.outcome));
+  }
+  return await generator.next(value);
+}
+
+function isStoredWorkerOperationFailure(value: unknown): value is StoredWorkerOperationFailure {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as Record<string, unknown>)[WORKER_OPERATION_FAILURE_MARKER] === true
+  );
+}
+
+function advanceWorkerCheckpoint(replayState: WorkerReplayState): Checkpoint {
+  const advanced = advanceCheckpoint(replayState.checkpoint, replayState.checkpoint.locals, {
+    accumulatedResults: [...replayState.accumulatedResults],
+  });
+  return {
+    ...advanced,
+    workerReplaySignatures: [...replayState.signatures],
+  };
+}
+
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
+export function cleanupWorkflowRunnerState(
+  context: WorkflowRunnerContext,
+  workflowId: string,
+): void {
   context.generators.delete(workflowId);
   context.abortControllers.delete(workflowId);
+  context.replayStates.delete(workflowId);
 }
 
 function formatError(error: unknown): string {

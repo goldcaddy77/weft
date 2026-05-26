@@ -1,8 +1,8 @@
 # Web Worker Execution Model
 
-Weft uses the standard `Worker` API---not `node:worker_threads`, but the _web standard_ `Worker`---to isolate workflow and activity execution from the main thread.
+Weft uses the standard `Worker` API---not `node:worker_threads`, but the _web standard_ `Worker`---to isolate workflow and activity execution from the main thread when you configure Worker execution.
 
-The main thread runs the HTTP server, the API router, and the scheduler. It does _not_ execute workflows or activities. Those run in separate Web Workers, each with its own event loop, its own memory, and its own failure boundary.
+The main thread runs the HTTP server, the API router, and the scheduler. With `workflowExecutionMode: 'worker'`, workflow generator turns run in separate Web Workers with their own event loop, memory, and failure boundary. Inline execution remains available for trusted deployments.
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -13,7 +13,7 @@ The main thread runs the HTTP server, the API router, and the scheduler. It does
 │  Scheduler            ← Timer/retry polling   │
 │  BroadcastChannel     ← Coordination          │
 │                                              │
-│  Does NOT execute workflows or activities     │
+│  Worker mode keeps workflow turns out         │
 └──────────────┬──────────────┬────────────────┘
                │              │
      ┌─────────▼──────┐ ┌────▼───────────┐
@@ -31,7 +31,7 @@ The main thread runs the HTTP server, the API router, and the scheduler. It does
 
 Four reasons, in order of importance.
 
-**Fault isolation.** If a workflow throws an unhandled error or crashes its worker, the failure stays contained to _that_ worker---not the HTTP server. The main thread detects the crash, marks the workflow as failed, and discards the worker so the pool never reuses it. Your API stays responsive even when workflow code misbehaves. (A CPU-bound infinite loop still ties up the worker it runs on; Weft contains crashes and thrown errors, but does not yet ship a runaway-loop watchdog that preempts a wedged worker.)
+**Fault isolation.** If a workflow throws an unhandled error, crashes its worker, or wedges a Worker turn past the configured wall-clock budget, the failure stays contained to that Worker---not the HTTP server. The main thread marks every workflow whose generator state lived in that Worker as failed, discards the Worker so the pool never reuses it, and can acquire a replacement Worker for later workflows.
 
 **True parallelism.** JavaScript is single-threaded per event loop. Web Workers give you actual OS threads. A workflow computing something CPU-heavy doesn't block other workflows or the API server.
 
@@ -41,15 +41,15 @@ Four reasons, in order of importance.
 
 ## The boundary is `ExecutionStrategy`, not the Worker itself
 
-Workflows are user-supplied code, so "where does the workflow generator step?" is a trust decision. Weft makes that decision in exactly one place: `ExecutionStrategy` (`src/core/execution-strategy.ts`). It is the untrusted-workflow isolation boundary, and the Worker is _today's_ transport for it---not the boundary itself. `InlineExecutionStrategy` steps the generator in the engine's own isolate (trusted workflows only); `WorkerExecutionStrategy` steps it inside a Web Worker, talking to the engine purely through `postMessage`, so untrusted code never runs in the engine isolate. Because the interface returns `void` and couples only through serializable messages, the same seam could later host an out-of-process or remote workflow worker without changing the engine.
+Workflows are user-supplied code, so "where does the workflow generator step?" is a trust decision. Weft makes that decision in exactly one place: `ExecutionStrategy` (`src/core/execution-strategy.ts`). It is the untrusted-workflow isolation boundary, and the Worker is _today's_ transport for it---not the boundary itself. `InlineExecutionStrategy` steps the generator in the engine's own isolate (trusted workflows only); `WorkerExecutionStrategy` steps it inside a Web Worker, talking to the engine through bounded `postMessage` turns, so untrusted code never runs in the engine isolate. Because the interface returns `void` and couples only through serializable messages, the same boundary could later host an out-of-process or remote workflow worker without changing the engine.
 
-That future transport is _not_ the RemoteWorker WebSocket protocol ([remote-worker-protocol.md](../reference/remote-worker-protocol.md)): that protocol is one-shot activity dispatch and is unsuitable for the stateful checkpoint/resume cycle a workflow needs. The full security contract---memory isolation, no engine-heap access, and crash containment, with its honest caveats---lives in the runtime reference under "`ExecutionStrategy` is the untrusted-workflow isolation boundary."
+That future transport is _not_ the RemoteWorker WebSocket protocol ([remote-worker-protocol.md](../reference/remote-worker-protocol.md)): that protocol is one-shot activity dispatch and is unsuitable for the stateful checkpoint/resume cycle a workflow needs. The security contract is engine-isolate protection, Worker-pool containment, bounded Weft-owned protocol messages, and deterministic replay from Worker checkpoints that carry replay signatures.
 
 ## Replacing the Temporal sandbox
 
 Temporal's TypeScript SDK uses Webpack bundling to create a sandboxed execution environment for workflows. The sandbox strips out non-deterministic APIs, prevents importing Node.js modules, intercepts `console.log`, and introduces module resolution failures in monorepos. The result: workflow code _looks_ like TypeScript but runs in a restricted subset of JavaScript.
 
-Weft achieves the same safety guarantees---fault isolation and memory separation---through Web Workers instead. Workers are OS-level process boundaries. They provide true isolation without restricting the language:
+Weft gets engine-isolate protection and crash containment through Web Workers instead. Workers provide a separate JavaScript realm and event loop without restricting the language:
 
 - **`console.log` works.** No special logger required.
 - **Any npm package works.** No module resolution restrictions. No Webpack errors.
@@ -57,7 +57,7 @@ Weft achieves the same safety guarantees---fault isolation and memory separation
 - **Stack traces point to your source files.** Not to Webpack-generated bundle code.
 - **No build step for workflows.** Changes take effect immediately. No Webpack rebuild.
 
-The fundamental insight: you don't need to hobble the language to get safety. You just need OS-level process boundaries.
+The important distinction is what the Worker boundary does and does not promise. It keeps workflow generator turns out of the engine isolate, gives the engine a Worker to terminate on timeout or crash, and bounds Weft-owned protocol messages. It does not prove message authorship inside the Worker realm and it does not lock down Worker globals, imports, network access, filesystem access in Bun, or memory outside Weft's protocol envelopes.
 
 ## Communicating with Workers
 
@@ -73,10 +73,13 @@ const worker = new Worker(new URL('./workflow-runner.ts', import.meta.url), {
 worker.postMessage(
   {
     type: 'run',
+    protocolVersion: 1,
+    turnId: 1,
     workflowId: 'wf-abc123',
     workflowType: 'order',
     checkpoint: checkpointBlob, // ArrayBuffer — transferred, not copied
     input: { orderId: 'order-456' },
+    maxProtocolMessageBytes: 1_048_576,
   },
   [checkpointBlob], // Transfer list: zero-copy
 );
@@ -104,7 +107,7 @@ self.onmessage = async (event) => {
 };
 ```
 
-The main thread listens for results and dispatches accordingly---checkpoints get persisted, completions get recorded, failures get logged.
+The main thread listens for results and dispatches accordingly---checkpoints get persisted, completions get recorded, failures get logged. In hardened Worker mode, the host also requires the expected protocol version and turn id before a message can settle the current Worker turn, and it repeats message-size checks before forwarding the message to the engine.
 
 ```typescript partial
 worker.onmessage = (event) => {

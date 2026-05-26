@@ -8,7 +8,12 @@ import {
   serializeCheckpoint,
   validateCheckpointRoundTrip,
 } from './checkpoint.ts';
-import { CURRENT_CHECKPOINT_SCHEMA_VERSION, type Checkpoint, type Serializer } from './types.ts';
+import {
+  CURRENT_CHECKPOINT_SCHEMA_VERSION,
+  WORKER_REPLAY_SIGNATURE_FORMAT,
+  type Checkpoint,
+  type Serializer,
+} from './types.ts';
 
 describe('createCheckpoint', () => {
   it('produces step 0, empty locals, empty signals, empty searchAttributes', () => {
@@ -105,6 +110,27 @@ describe('advanceCheckpoint', () => {
     checkpoint = advanceCheckpoint(checkpoint, { c: 3 });
     expect(checkpoint.step).toBe(3);
   });
+
+  it('preserves Worker replay signatures while advancing', () => {
+    const checkpoint: Checkpoint = {
+      ...createCheckpoint('wf-1', '1.0.0'),
+      workerReplaySignatures: [
+        [
+          0,
+          {
+            format: WORKER_REPLAY_SIGNATURE_FORMAT,
+            operationType: 'activity',
+            stableFieldsDigest: 'abc123',
+            stableFieldsByteLength: 42,
+          },
+        ],
+      ],
+    };
+
+    const advanced = advanceCheckpoint(checkpoint, { done: true });
+
+    expect(advanced.workerReplaySignatures).toEqual(checkpoint.workerReplaySignatures);
+  });
 });
 
 describe('serializeCheckpoint / deserializeCheckpoint', () => {
@@ -160,6 +186,29 @@ describe('serializeCheckpoint / deserializeCheckpoint', () => {
     const restored = deserializeCheckpoint(bytes);
 
     expect(restored.locals).toEqual(checkpoint.locals);
+  });
+
+  it('round-trips Worker replay signatures without changing the schema version', () => {
+    const checkpoint: Checkpoint = {
+      ...createCheckpoint('wf-worker-replay', '1.0.0'),
+      accumulatedResults: [[0, 'cached-result']],
+      workerReplaySignatures: [
+        [
+          0,
+          {
+            format: WORKER_REPLAY_SIGNATURE_FORMAT,
+            operationType: 'activity',
+            stableFieldsDigest: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+            stableFieldsByteLength: 128,
+          },
+        ],
+      ],
+    };
+
+    const restored = deserializeCheckpoint(serializeCheckpoint(checkpoint));
+
+    expect(restored.schemaVersion).toBe(CURRENT_CHECKPOINT_SCHEMA_VERSION);
+    expect(restored.workerReplaySignatures).toEqual(checkpoint.workerReplaySignatures);
   });
 
   it('preserves the representative checkpoint byte encoding', () => {
@@ -430,6 +479,34 @@ describe('validateCheckpointShape (via deserializeCheckpoint)', () => {
       version: '1.0.0',
     });
     expect(() => deserializeCheckpoint(bytes)).toThrow('createdAt');
+  });
+
+  it('throws when Worker replay signatures have invalid entries', () => {
+    const { encode } = require('./codec.ts');
+    const bytes = encode({
+      workflowId: 'wf-invalid-worker-replay',
+      step: 0,
+      locals: {},
+      accumulatedResults: [],
+      workerReplaySignatures: [
+        [
+          'not-a-step',
+          {
+            format: WORKER_REPLAY_SIGNATURE_FORMAT,
+            operationType: 'activity',
+            stableFieldsDigest: 'abc123',
+            stableFieldsByteLength: 42,
+          },
+        ],
+      ],
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
+      createdAt: Date.now(),
+    });
+
+    expect(() => deserializeCheckpoint(bytes)).toThrow('workerReplaySignatures');
   });
 });
 

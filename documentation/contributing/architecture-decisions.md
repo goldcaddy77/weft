@@ -10,9 +10,9 @@ This is the foundational divergence from Temporal and it shapes everything else.
 
 ## Web Worker Execution Model
 
-Workflows and activities run in Web Workers (the web standard `Worker`, not `node:worker_threads`), giving you fault isolation, true parallelism, and portability between Bun and the browser. If a workflow crashes, it takes down _its_ worker---not the HTTP server. `BroadcastChannel` handles cross-worker coordination. The `smol: true` option keeps memory tight when running many concurrent workflows.
+Workflows can run in Web Workers (the web standard `Worker`, not `node:worker_threads`) when `workflowExecutionMode: 'worker'` is configured, giving untrusted workflow code an engine-isolate boundary, fault containment, true parallelism, and portability between Bun and the browser. If a workflow crashes or exceeds its Worker turn budget, it takes down that Worker---not the HTTP server. `BroadcastChannel` handles cross-worker coordination. The `smol: true` option keeps memory tight when running many concurrent workflows.
 
-This replaces Temporal's Webpack-based sandbox with OS-level process boundaries. `console.log` works, any npm package works, `debugger` works, and there's no build step for workflows. See [Web Workers](../architecture/web-workers.md).
+This replaces Temporal's Webpack-based workflow sandbox with a Worker transport boundary. `console.log` works, any npm package works, `debugger` works, and there's no build step for workflows. The Worker boundary protects engine liveness and engine heap access; it does not lock down Worker globals, network, filesystem, imports, or runtime memory outside Weft-owned protocol envelopes. See [Web Workers](../architecture/web-workers.md).
 
 ## EventTarget-Based Event System
 
