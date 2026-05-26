@@ -209,6 +209,8 @@ export { CompressedStorage } from './storage/compressed-storage';
 // Storage — interface, KEYS, and zero-native-dep backends only.
 // Heavy or runtime-bound backends are subpath-only:
 //   weft/storage/sqlite | weft/storage/lmdb | weft/storage/turso
+export { storageDeleteRange } from './storage/delete-range';
+export type { DeleteRangeOptions } from './storage/delete-range';
 export {
   KEYS,
   requireStorageCapability,

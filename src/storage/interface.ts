@@ -1,5 +1,6 @@
 import { requireStorageCapability, type StorageCapabilities } from './capabilities.ts';
 import { DEFAULT_SCOPE } from './default-scope.ts';
+import type { DeleteRangeOptions } from './delete-range.ts';
 import {
   storageCountCore,
   storageDeletePrefixCore,
@@ -59,11 +60,12 @@ export interface ScanOptions {
  * KV-oriented storage interface. All storage adapters implement this.
  *
  * Required methods are `get`, `put`, `delete`, `scan`, and `batch`. Optional
- * fast paths are `conditionalBatch`, `has`, `deletePrefix`, `keys`, `count`,
- * `scoped`, and `query`. Adapters that omit optional methods get generic
- * fallbacks via `storageHas`, `storageKeys`, `storageCount`,
- * `storageDeletePrefix`, and `storageConditionalBatch`. Callers should use
- * those wrappers rather than calling optional methods directly.
+ * fast paths are `conditionalBatch`, `has`, `deletePrefix`, `deleteRange`,
+ * `keys`, `count`, `scoped`, and `query`. Adapters that omit optional methods
+ * get generic fallbacks via `storageHas`, `storageKeys`, `storageCount`,
+ * `storageDeletePrefix`, `storageDeleteRange`, and `storageConditionalBatch`.
+ * Callers should use those wrappers rather than calling optional methods
+ * directly.
  *
  * @example
  * ```ts
@@ -97,6 +99,7 @@ export interface Storage extends Disposable {
   ): Promise<boolean>;
   has?(key: string): Promise<boolean>;
   deletePrefix?(prefix: string): Promise<number>;
+  deleteRange?(prefix: string, options: DeleteRangeOptions): Promise<number>;
   keys?(prefix: string, options?: ScanOptions): AsyncIterable<string>;
   count?(prefix: string): Promise<number>;
   scoped?(prefix: string): Storage;

@@ -434,3 +434,74 @@ describe('IndexedDBStorage', () => {
     });
   });
 });
+
+describe('IndexedDBStorage deleteRange edge cases', () => {
+  async function seed(prefix: string, keys: string[]): Promise<IndexedDBStorage> {
+    const storage = new IndexedDBStorage(`test-${crypto.randomUUID()}`);
+    await storage.batch(keys.map((key) => ({ type: 'put' as const, key, value: encode(key) })));
+    void prefix;
+    return storage;
+  }
+
+  it('resolves equal lower bounds (gt and gte at the same key) to the stricter exclusive side', async () => {
+    const storage = await seed('k:', ['k:a', 'k:b', 'k:c']);
+    // gt and gte both at k:a: exclusive wins, so k:a survives.
+    expect(await storage.deleteRange('k:', { gt: 'k:a', gte: 'k:a' })).toBe(2);
+    expect(await storage.get('k:a')).not.toBeNull();
+    expect(await storage.get('k:b')).toBeNull();
+    expect(await storage.get('k:c')).toBeNull();
+  });
+
+  it('resolves equal upper bounds (lt and lte at the same key) to the stricter exclusive side', async () => {
+    const storage = await seed('k:', ['k:a', 'k:b', 'k:c']);
+    // lt and lte both at k:c: exclusive wins, so k:c survives.
+    expect(await storage.deleteRange('k:', { lt: 'k:c', lte: 'k:c' })).toBe(2);
+    expect(await storage.get('k:a')).toBeNull();
+    expect(await storage.get('k:b')).toBeNull();
+    expect(await storage.get('k:c')).not.toBeNull();
+  });
+
+  it('keeps the prefix exclusive end exclusive even when lte equals it', async () => {
+    const storage = await seed('k:', ['k:a', 'k:b']);
+    const prefixEnd = 'k;'; // resolvePrefixRangeEnd('k:')
+    // An inclusive upper bound at the exclusive prefix end must not pull in keys
+    // outside the prefix; both in-prefix keys are still deleted.
+    expect(await storage.deleteRange('k:', { lte: prefixEnd })).toBe(2);
+    expect(await storage.get('k:a')).toBeNull();
+    expect(await storage.get('k:b')).toBeNull();
+  });
+
+  it('deletes nothing for an impossible range without throwing DataError', async () => {
+    const storage = await seed('k:', ['k:a', 'k:b']);
+    expect(await storage.deleteRange('k:', { gt: 'k:z', lt: 'k:a' })).toBe(0);
+    expect(await storage.get('k:a')).not.toBeNull();
+    expect(await storage.get('k:b')).not.toBeNull();
+  });
+
+  it('deletes nothing for a half-open empty range (gt === lt at the same key)', async () => {
+    // Exercises the second null clause in resolveDeleteRangeBounds: equal bounds
+    // with an open side collapse to an empty interval.
+    const storage = await seed('k:', ['k:a', 'k:b']);
+    expect(await storage.deleteRange('k:', { gt: 'k:a', lt: 'k:a' })).toBe(0);
+    expect(await storage.get('k:a')).not.toBeNull();
+    expect(await storage.get('k:b')).not.toBeNull();
+  });
+
+  it('lets gte win when it is stricter (higher) than gt', async () => {
+    const storage = await seed('k:', ['k:a', 'k:b', 'k:c']);
+    // gt='k:a' is wider; gte='k:b' is tighter and inclusive — k:b and k:c go.
+    expect(await storage.deleteRange('k:', { gt: 'k:a', gte: 'k:b' })).toBe(2);
+    expect(await storage.get('k:a')).not.toBeNull();
+    expect(await storage.get('k:b')).toBeNull();
+    expect(await storage.get('k:c')).toBeNull();
+  });
+
+  it('deletes the lowest keys first under a limit', async () => {
+    const storage = await seed('k:', ['k:1', 'k:2', 'k:3', 'k:4']);
+    expect(await storage.deleteRange('k:', { gte: 'k:', limit: 2 })).toBe(2);
+    expect(await storage.get('k:1')).toBeNull();
+    expect(await storage.get('k:2')).toBeNull();
+    expect(await storage.get('k:3')).not.toBeNull();
+    expect(await storage.get('k:4')).not.toBeNull();
+  });
+});

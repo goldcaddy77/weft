@@ -20,6 +20,7 @@
  *
  * @module weft/storage
  */
+import { storageDeleteRange } from './delete-range';
 import {
   KEYS,
   requireStorageCapability,
@@ -139,6 +140,20 @@ const exportedScopedStorageFactory = scopedStorage;
 const exportedStorageConditionalBatch = storageConditionalBatch;
 
 /**
+ * Re-exported {@link storageDeleteRange}. See the original declaration for full docs.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, storageDeleteRange } from 'weft/storage';
+ * await using storage = new MemoryStorage();
+ * await storage.put('ev:wf:0000000001', new Uint8Array([1]));
+ * const deleted = await storageDeleteRange(storage, 'ev:wf:', { lte: 'ev:wf:0000000001' });
+ * void deleted;
+ * ```
+ */
+const exportedStorageDeleteRange = storageDeleteRange;
+
+/**
  * Re-exported {@link requireStorageCapability}. See the original declaration for full docs.
  *
  * @example
@@ -189,6 +204,7 @@ const exportedTextValueStore = textValueStore;
 const exportedWithCodec = withCodec;
 
 export type { JSONValue } from '../core/json.ts';
+export type { DeleteRangeOptions } from './delete-range';
 export type {
   BatchOperation,
   ConditionalBatchCondition,
@@ -216,6 +232,7 @@ export {
   exportedScopedStorage as ScopedStorage,
   exportedScopedStorageFactory as scopedStorage,
   exportedStorageConditionalBatch as storageConditionalBatch,
+  exportedStorageDeleteRange as storageDeleteRange,
   exportedStorageValuesEqual as storageValuesEqual,
   exportedTextValueStore as textValueStore,
   exportedWithCodec as withCodec,

@@ -1,5 +1,6 @@
 import { createClient, type Client, type InValue } from '@libsql/client';
 
+import { normalizeDeleteRangeOptions, type DeleteRangeOptions } from './delete-range';
 import {
   storageValuesEqual,
   type BatchOperation,
@@ -18,6 +19,7 @@ import {
   SQLITE_SELECT_KEY_PRESENCE,
   SQLITE_SELECT_VALUE_BY_KEY,
   SQLITE_UPSERT_VALUE_BY_KEY,
+  buildSqliteKeyRangeDelete,
   buildSqliteKeyRangeSelect,
   buildSqliteKeyValueRangeSelect,
   buildSqlitePrefixRangeParameters,
@@ -80,7 +82,7 @@ export class TursoStorage implements Storage {
     // configs (local `file:` and remote primary) is read-your-writes per
     // connection — `session`, since a separate instance/replica may lag. Scans
     // run inside a libSQL transaction (snapshot); batch() and the range
-    // deletePrefix are single transactional statements.
+    // deletePrefix and deleteRange are single transactional statements.
     return {
       readAfterWrite: 'session',
       scanConsistency: 'snapshot',
@@ -147,6 +149,19 @@ export class TursoStorage implements Storage {
     const result = await this.#client.execute({
       sql: SQLITE_DELETE_KEYS_BY_PREFIX,
       args: [rangeStart, rangeEnd],
+    });
+
+    return result.rowsAffected;
+  }
+
+  async deleteRange(prefix: string, options: DeleteRangeOptions): Promise<number> {
+    await this.#ensureTable();
+
+    const normalized = normalizeDeleteRangeOptions(options);
+    const { parameters, sql } = buildSqliteKeyRangeDelete(prefix, normalized);
+    const result = await this.#client.execute({
+      sql,
+      args: parameters,
     });
 
     return result.rowsAffected;

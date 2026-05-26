@@ -318,7 +318,7 @@ describe('HTTPStorage', () => {
     }
   });
 
-  it('derives has/keys/count/deletePrefix from scan and batch end to end', async () => {
+  it('derives has/keys/count/deletePrefix/deleteRange from scan and batch end to end', async () => {
     const rawStorage = new MemoryStorage();
     const engine = new Engine({ storage: rawStorage });
     const restoreFetch = installFetch((input, init) =>
@@ -351,6 +351,17 @@ describe('HTTPStorage', () => {
       expect(decode(await storage.get('wfx'))).toBe('adjacent');
       expect(decode(await storage.get('other'))).toBe('c');
       expect(await storage.deletePrefix('missing:')).toBe(0);
+
+      // deleteRange derives from scan+batch too: delete only the in-range keys.
+      await storage.batch([
+        { type: 'put', key: 'ev:wf:01', value: encode('1') },
+        { type: 'put', key: 'ev:wf:02', value: encode('2') },
+        { type: 'put', key: 'ev:wf:03', value: encode('3') },
+      ]);
+      expect(await storage.deleteRange('ev:wf:', { lt: 'ev:wf:03' })).toBe(2);
+      expect(await storage.get('ev:wf:01')).toBeNull();
+      expect(await storage.get('ev:wf:02')).toBeNull();
+      expect(decode(await storage.get('ev:wf:03'))).toBe('3');
     } finally {
       restoreFetch();
     }

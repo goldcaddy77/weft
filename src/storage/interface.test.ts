@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
+import { normalizeDeleteRangeOptions, storageDeleteRange } from './delete-range.ts';
 import type { Storage } from './interface.ts';
 import {
   decodeStorageKeyComponent,
@@ -191,6 +192,177 @@ describe('storage helper fallbacks', () => {
     expect(keysCalls).toBe(1);
     expect(countCalls).toBe(1);
     expect(deletePrefixCalls).toBe(1);
+  });
+});
+
+describe('normalizeDeleteRangeOptions', () => {
+  it('throws when no bound is present', () => {
+    expect(() => normalizeDeleteRangeOptions({})).toThrow(/at least one of gt\/gte\/lt\/lte/);
+    expect(() => normalizeDeleteRangeOptions({ limit: 5 })).toThrow(
+      /at least one of gt\/gte\/lt\/lte/,
+    );
+  });
+
+  it('throws when a bound is not a string', () => {
+    for (const bound of ['gt', 'gte', 'lt', 'lte'] as const) {
+      expect(() => normalizeDeleteRangeOptions({ [bound]: 3 } as never)).toThrow(
+        'deleteRange bounds must be strings',
+      );
+    }
+  });
+
+  it('throws when limit is not a finite non-negative integer', () => {
+    const message = 'deleteRange limit must be a finite non-negative integer';
+    for (const limit of [
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      '2' as never,
+      null as never,
+    ]) {
+      expect(() => normalizeDeleteRangeOptions({ lt: 'z', limit })).toThrow(message);
+    }
+  });
+
+  it('accepts limit 0 and normalizes -0 to 0', () => {
+    expect(normalizeDeleteRangeOptions({ lt: 'z', limit: 0 }).limit).toBe(0);
+    expect(Object.is(normalizeDeleteRangeOptions({ lt: 'z', limit: -0 }).limit, 0)).toBe(true);
+  });
+
+  it('copies only the five accepted fields, dropping reverse and unknown keys', () => {
+    const normalized = normalizeDeleteRangeOptions({
+      gt: 'a',
+      lte: 'z',
+      limit: 4,
+      reverse: true,
+      extra: 'nope',
+    } as never);
+    expect(normalized).toEqual({ gt: 'a', lte: 'z', limit: 4 } as never);
+    expect('reverse' in normalized).toBe(false);
+  });
+});
+
+describe('storageDeleteRange', () => {
+  it('deletes only in-range keys through the fallback and returns the count', async () => {
+    const storage = createCoreStorageAdapter();
+    for (const sequence of [1, 2, 3, 4, 5]) {
+      await storage.put(`ev:wf:${String(sequence).padStart(2, '0')}`, new Uint8Array([sequence]));
+    }
+
+    // Strictly below sequence 3 → deletes 01 and 02.
+    expect(await storageDeleteRange(storage, 'ev:wf:', { lt: 'ev:wf:03' })).toBe(2);
+    expect(await storage.get('ev:wf:01')).toBeNull();
+    expect(await storage.get('ev:wf:02')).toBeNull();
+    expect(await storage.get('ev:wf:03')).not.toBeNull();
+    expect(await storage.get('ev:wf:05')).not.toBeNull();
+  });
+
+  it('returns 0 when nothing matches', async () => {
+    const storage = createCoreStorageAdapter();
+    await storage.put('ev:wf:05', new Uint8Array([5]));
+    expect(await storageDeleteRange(storage, 'ev:wf:', { lt: 'ev:wf:03' })).toBe(0);
+    expect(await storage.get('ev:wf:05')).not.toBeNull();
+  });
+
+  it('respects inclusive vs exclusive bounds', async () => {
+    const seed = async (storage: Storage) => {
+      for (const sequence of [1, 2, 3]) {
+        await storage.put(`k:${sequence}`, new Uint8Array([sequence]));
+      }
+    };
+
+    const exclusive = createCoreStorageAdapter();
+    await seed(exclusive);
+    expect(await storageDeleteRange(exclusive, 'k:', { gt: 'k:1', lt: 'k:3' })).toBe(1); // only k:2
+    expect(await exclusive.get('k:1')).not.toBeNull();
+    expect(await exclusive.get('k:3')).not.toBeNull();
+
+    const inclusive = createCoreStorageAdapter();
+    await seed(inclusive);
+    expect(await storageDeleteRange(inclusive, 'k:', { gte: 'k:1', lte: 'k:3' })).toBe(3);
+  });
+
+  it('deletes the lowest keys first when limit caps the delete', async () => {
+    const storage = createCoreStorageAdapter();
+    for (const sequence of [1, 2, 3, 4]) {
+      await storage.put(`k:${sequence}`, new Uint8Array([sequence]));
+    }
+    expect(await storageDeleteRange(storage, 'k:', { gte: 'k:1', limit: 2 })).toBe(2);
+    expect(await storage.get('k:1')).toBeNull();
+    expect(await storage.get('k:2')).toBeNull();
+    expect(await storage.get('k:3')).not.toBeNull();
+    expect(await storage.get('k:4')).not.toBeNull();
+  });
+
+  it('returns 0 for limit 0 and deletes nothing', async () => {
+    const storage = createCoreStorageAdapter();
+    await storage.put('k:1', new Uint8Array([1]));
+    expect(await storageDeleteRange(storage, 'k:', { gte: 'k:', limit: 0 })).toBe(0);
+    expect(await storage.get('k:1')).not.toBeNull();
+  });
+
+  it('returns 0 for an impossible range', async () => {
+    const storage = createCoreStorageAdapter();
+    await storage.put('k:1', new Uint8Array([1]));
+    expect(await storageDeleteRange(storage, 'k:', { gt: 'k:c', lt: 'k:a' })).toBe(0);
+    expect(await storage.get('k:1')).not.toBeNull();
+  });
+
+  it('ignores a reverse flag smuggled through a wider options object', async () => {
+    const storage = createCoreStorageAdapter();
+    for (const sequence of [1, 2, 3, 4]) {
+      await storage.put(`k:${sequence}`, new Uint8Array([sequence]));
+    }
+    // reverse must not flip which keys the limit selects: still the lowest two.
+    await storageDeleteRange(storage, 'k:', { gte: 'k:1', limit: 2, reverse: true } as never);
+    expect(await storage.get('k:1')).toBeNull();
+    expect(await storage.get('k:2')).toBeNull();
+    expect(await storage.get('k:3')).not.toBeNull();
+    expect(await storage.get('k:4')).not.toBeNull();
+  });
+
+  it('throws on invalid options (empty bounds, non-string bound, bad limit)', async () => {
+    const storage = createCoreStorageAdapter();
+    await expect(storageDeleteRange(storage, 'k:', {})).rejects.toThrow(
+      /at least one of gt\/gte\/lt\/lte/,
+    );
+    await expect(storageDeleteRange(storage, 'k:', { lt: 3 } as never)).rejects.toThrow(
+      'deleteRange bounds must be strings',
+    );
+    await expect(storageDeleteRange(storage, 'k:', { lt: 'z', limit: -1 })).rejects.toThrow(
+      'deleteRange limit must be a finite non-negative integer',
+    );
+  });
+
+  it('uses the adapter native deleteRange when present', async () => {
+    let deleteRangeCalls = 0;
+    const storage: Storage = {
+      capabilities: () => ({
+        readAfterWrite: 'linearizable',
+        scanConsistency: 'snapshot',
+        atomicBatch: true,
+        conditionalBatch: true,
+        boundedRangeDelete: true,
+      }),
+      get: async () => null,
+      put: async () => {},
+      delete: async () => {},
+      scan: async function* () {
+        throw new Error('scan should not run when native deleteRange is available');
+      },
+      batch: async () => {
+        throw new Error('batch should not run when native deleteRange is available');
+      },
+      deleteRange: async (prefix: string) => {
+        deleteRangeCalls++;
+        return prefix === 'ev:wf:' ? 2 : 0;
+      },
+      [Symbol.dispose]: () => {},
+    };
+
+    expect(await storageDeleteRange(storage, 'ev:wf:', { lt: 'ev:wf:03' })).toBe(2);
+    expect(deleteRangeCalls).toBe(1);
   });
 });
 
