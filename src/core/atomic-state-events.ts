@@ -171,7 +171,7 @@ const fallbackObservableSymbol = Symbol.for('observable') as typeof Symbol.obser
  * import { AtomicState, OBSERVABLE_SYMBOL } from 'weft';
  * import { MemoryStorage } from 'weft/storage/memory';
  *
- * const state = new AtomicState<number>(new MemoryStorage(), 'state:workflow:default:count');
+ * const state = new AtomicState<number>(new MemoryStorage(), 'state:workflow-scope:default:count');
  * const observable = state[OBSERVABLE_SYMBOL]();
  * void observable;
  * ```
@@ -217,7 +217,7 @@ export class AtomicStateChangeEvent<T> extends Event {
  * ```ts
  * import { AtomicStateConflictEvent } from 'weft';
  *
- * const event = new AtomicStateConflictEvent('state:workflow:default:count', 2);
+ * const event = new AtomicStateConflictEvent('state:workflow-scope:default:count', 2);
  * console.log(event.stateKey, event.attempt);
  * ```
  */
@@ -239,7 +239,7 @@ export class AtomicStateConflictEvent extends Event {
  * ```ts
  * import { AtomicStateExhaustedEvent } from 'weft';
  *
- * const event = new AtomicStateExhaustedEvent('state:workflow:default:count', 10);
+ * const event = new AtomicStateExhaustedEvent('state:workflow-scope:default:count', 10);
  * console.log(event.stateKey, event.attempts);
  * ```
  */

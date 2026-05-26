@@ -109,7 +109,7 @@ The built-in scopes use encoded storage keys:
 
 ```text
 state:execution:${ownerWorkflowId}:${key}
-state:workflow:default:${workflowType}:${key}
+state:workflow-scope:default:${workflowType}:${key}
 ```
 
 Execution-scoped state is deleted when the owning execution is purged or terminal cleanup runs. Workflow-scoped state persists until you explicitly delete it.

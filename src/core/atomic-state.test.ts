@@ -155,13 +155,25 @@ describe('AtomicState', () => {
 // key rename, not a data migration. If this changes, it must be a deliberate,
 // versioned storage migration — not an accident.
 describe('workflow-scoped state default-scope invariant', () => {
-  it('keys workflow-shared state under state:workflow:<DEFAULT_SCOPE>:, never at root', () => {
+  it('keys workflow-shared state under state:workflow-scope:<DEFAULT_SCOPE>:, never at root', () => {
     const dataKey = atomicStateDataKey({ type: 'workflow', workflowType: 'invoice' }, 'cursor');
-    expect(dataKey).toBe(`state:workflow:${DEFAULT_SCOPE}:invoice:cursor`);
-    expect(dataKey.startsWith(`state:workflow:${DEFAULT_SCOPE}:`)).toBe(true);
+    expect(dataKey).toBe(`state:workflow-scope:${DEFAULT_SCOPE}:invoice:cursor`);
+    expect(dataKey.startsWith(`state:workflow-scope:${DEFAULT_SCOPE}:`)).toBe(true);
     // The key must carry the scope component — not collapse to a root-level
-    // `state:workflow:invoice:cursor` form.
-    expect(dataKey).not.toBe('state:workflow:invoice:cursor');
+    // `state:workflow-scope:invoice:cursor` form.
+    expect(dataKey).not.toBe('state:workflow-scope:invoice:cursor');
+  });
+
+  it('cannot alias a legacy state:workflow:<tenantId>: key even when the tenant id equals DEFAULT_SCOPE', () => {
+    // Pre-removal, workflow-shared state was keyed `state:workflow:<tenantId>:…`.
+    // A deployment whose tenant id happened to equal DEFAULT_SCOPE ('default')
+    // would alias into the new global namespace if we reused the `state:workflow:`
+    // prefix. The `state:workflow-scope:` segment makes that structurally
+    // impossible: the new key never starts with the legacy prefix.
+    const dataKey = atomicStateDataKey({ type: 'workflow', workflowType: 'invoice' }, 'cursor');
+    const legacyKeyForTenantNamedDefault = `state:workflow:${DEFAULT_SCOPE}:invoice:cursor`;
+    expect(dataKey).not.toBe(legacyKeyForTenantNamedDefault);
+    expect(dataKey.startsWith('state:workflow:')).toBe(false);
   });
 
   it('keeps execution-scoped state owner-partitioned and distinct from workflow scope', () => {
@@ -170,6 +182,6 @@ describe('workflow-scoped state default-scope invariant', () => {
       'cursor',
     );
     expect(executionKey).toBe('state:execution:wf-1:cursor');
-    expect(executionKey.startsWith('state:workflow:')).toBe(false);
+    expect(executionKey.startsWith('state:workflow-scope:')).toBe(false);
   });
 });

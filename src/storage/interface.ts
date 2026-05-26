@@ -365,19 +365,20 @@ function formatSortableTimestamp(timestamp: number): string {
 }
 
 /**
- * Constant scope prefix under which all workflow-type-shared durable state is
- * written. Weft is single-tenant: workflow-owned data is namespaced under this
- * one stable scope rather than at the storage root, so a future re-partition
- * (should real multi-tenancy ever return) is a key rename, not a data
- * migration. This is the single source of truth — every key builder and
- * `atomicStateDataKey` imports this value; never inline the literal elsewhere.
+ * Constant scope under which all workflow-type-shared durable state is written.
+ * Weft is single-tenant: workflow-owned data is namespaced under this one stable
+ * scope (via the `state:workflow-scope:` prefix in {@link KEYS.stateWorkflow}),
+ * so a future re-partition is a key rename, not a data migration. The renamed
+ * prefix is deliberately distinct from the legacy `state:workflow:<tenantId>:…`
+ * layout so a historical tenant id equal to this value cannot alias into the new
+ * namespace. Single source of truth — never inline the literal elsewhere.
  *
  * @example
  * ```ts
  * import { KEYS, DEFAULT_SCOPE } from 'weft/storage/interface';
  *
  * const key = KEYS.stateWorkflow('invoice', 'cursor');
- * console.log(key.startsWith(`state:workflow:${DEFAULT_SCOPE}:`)); // true
+ * console.log(key.startsWith(`state:workflow-scope:${DEFAULT_SCOPE}:`)); // true
  * ```
  */
 export const DEFAULT_SCOPE = 'default';
@@ -461,7 +462,9 @@ export const KEYS = {
   stateExecution: (ownerWorkflowId: string, key: string) =>
     `state:execution:${encodeStorageKeyComponent(ownerWorkflowId)}:${encodeStorageKeyComponent(key)}`,
   stateWorkflow: (workflowType: string, key: string) =>
-    `state:workflow:${DEFAULT_SCOPE}:${encodeStorageKeyComponent(workflowType)}:${encodeStorageKeyComponent(key)}`,
+    // `state:workflow-scope:` (not the legacy `state:workflow:<tenantId>:`) so a
+    // historical tenant id equal to DEFAULT_SCOPE cannot alias into this namespace.
+    `state:workflow-scope:${DEFAULT_SCOPE}:${encodeStorageKeyComponent(workflowType)}:${encodeStorageKeyComponent(key)}`,
   streamChunkPrefix: (workflowId: string, key: string) =>
     `blob:${encodeStorageKeyComponent(workflowId)}:${key}:chunk:`,
   streamChunk: (workflowId: string, key: string, chunkIndex: number) =>

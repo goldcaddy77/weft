@@ -1019,6 +1019,57 @@ describe('Engine', () => {
     engine2[Symbol.dispose]();
   });
 
+  // Acceptance-critical: a workflow persisted before multi-tenancy was removed
+  // carries a legacy `tenant` field on its state record. Such a record must not
+  // just decode — it must fully RESUME on a tenancy-free engine (decode → find
+  // registration → deserialize checkpoint → relaunch handler → run to result).
+  it('recovers and resumes a workflow whose persisted state carries a legacy tenant field', async () => {
+    const storage = new MemoryStorage();
+    const workflowId = 'legacy-tenant-resume';
+
+    const registerWorkflow = (engine: Engine) => {
+      engine.register(
+        workflow({ name: 'legacy-tenant-wait' }).execute(async function* (ctx: WorkflowContext) {
+          const value = yield* ctx.waitForSignal<string>('go');
+          return `resumed:${value}`;
+        }),
+      );
+    };
+
+    const engine1 = new Engine({ storage });
+    registerWorkflow(engine1);
+    await engine1.start('legacy-tenant-wait', null, { id: workflowId });
+    await flush();
+    engine1[Symbol.dispose]();
+    await flush();
+
+    // Simulate a pre-removal persisted record by re-writing the state blob with
+    // a `tenant` field grafted on, exactly as an older engine would have stored.
+    const persisted = decode((await storage.get(KEYS.workflow(workflowId)))!) as Record<
+      string,
+      unknown
+    >;
+    persisted['tenant'] = { id: 'acme', attributes: { region: 'us-east-1' } };
+    await storage.put(KEYS.workflow(workflowId), encode(persisted));
+
+    const engine2 = new Engine({ storage });
+    registerWorkflow(engine2);
+    const recoveredHandles = await engine2.recoverAll();
+    expect(recoveredHandles).toHaveLength(1);
+
+    await engine2.signal(workflowId, 'go', 'value');
+    await expect(recoveredHandles[0]!.result()).resolves.toBe('resumed:value');
+
+    // The legacy field must not survive onto the resumed/persisted state.
+    const resumedState = decode((await storage.get(KEYS.workflow(workflowId)))!) as Record<
+      string,
+      unknown
+    >;
+    expect('tenant' in resumedState).toBe(false);
+
+    engine2[Symbol.dispose]();
+  });
+
   it('cleans up a signal waiter when a buffered signal scan fails after registration', async () => {
     const workflowId = 'signal-waiter-cleanup';
     const storage = new MemoryStorage();

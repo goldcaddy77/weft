@@ -263,7 +263,7 @@ describe('KEYS', () => {
       `state:execution:${encodedWorkflowId}:cursor%3A1`,
     );
     expect(KEYS.stateWorkflow('invoice:review', 'cursor:1')).toBe(
-      'state:workflow:default:invoice%3Areview:cursor%3A1',
+      'state:workflow-scope:default:invoice%3Areview:cursor%3A1',
     );
     expect(KEYS.streamChunk(workflowId, 'stream', 7)).toBe(
       `blob:${encodedWorkflowId}:stream:chunk:0000000007`,

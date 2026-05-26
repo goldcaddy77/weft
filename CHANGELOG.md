@@ -36,7 +36,12 @@ records is no longer written. The checkpoint schema version is unchanged
 persisted record is tolerated and dropped on read, so existing workflows and
 schedules still decode and resume. State written under a previously configured
 tenant partition (`state:workflow:<tenantId>:…`, `state:tenant:<tenantId>:…`) is
-intentionally not migrated.
+intentionally not migrated: migrating legacy partitions to the default scope
+requires operator involvement and should be planned as a separate operation.
+Workflow-shared state now lives under the `state:workflow-scope:` prefix, which
+is deliberately distinct from the legacy `state:workflow:<tenantId>:` layout so a
+historical tenant id equal to the default scope cannot alias into the new global
+namespace.
 
 Retained: `ScopedStorage` (the generic prefix-namespacing primitive) is
 unchanged. Workflow-owned state is still written under a constant default scope
