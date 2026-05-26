@@ -1,4 +1,9 @@
 import {
+  normalizeDeleteRangeOptions,
+  resolveDeleteRangeBounds,
+  type DeleteRangeOptions,
+} from './delete-range';
+import {
   matchesScanOptions,
   resolvePrefixRangeEnd,
   storageValuesEqual,
@@ -133,7 +138,8 @@ export class IndexedDBStorage implements Storage {
   capabilities(): StorageCapabilities {
     // IndexedDB transactional same-origin store: same-instance reads observe
     // committed writes (linearizable); batch() runs in one readwrite
-    // transaction; deletePrefix uses an IDBKeyRange delete. scan() iterates a
+    // transaction; deletePrefix and deleteRange use IDBKeyRange deletes
+    // (deleteRange cursor-deletes when a limit caps it). scan() iterates a
     // live cursor in a readonly transaction that auto-commits whenever the
     // microtask queue drains between async steps, so a concurrent external write
     // CAN appear mid-iteration — the honest scan level is best-effort, not
@@ -207,6 +213,57 @@ export class IndexedDBStorage implements Storage {
         deletedCount = countRequest.result;
         store.delete(range);
       };
+
+      transaction.oncomplete = () => resolve(deletedCount);
+      transaction.onerror = () => reject(transaction.error);
+    });
+  }
+
+  async deleteRange(prefix: string, options: DeleteRangeOptions): Promise<number> {
+    const normalized = normalizeDeleteRangeOptions(options);
+    // resolveDeleteRangeBounds returns null for an impossible range, so we skip
+    // building an IDBKeyRange that would otherwise throw DataError.
+    const bounds = resolveDeleteRangeBounds(prefix, normalized);
+    if (bounds === null) {
+      return 0;
+    }
+    const range = IDBKeyRange.bound(
+      bounds.lower.key,
+      bounds.upper.key,
+      bounds.lower.open,
+      bounds.upper.open,
+    );
+
+    const database = await this.#databasePromise;
+    const { limit } = normalized;
+
+    return new Promise<number>((resolve, reject) => {
+      const transaction = database.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      let deletedCount = 0;
+
+      if (limit === undefined) {
+        // No cap: count then range-delete in one shot, like deletePrefix.
+        const countRequest = store.count(range);
+        countRequest.onsuccess = () => {
+          deletedCount = countRequest.result;
+          store.delete(range);
+        };
+      } else {
+        // Capped: walk a forward (ascending) cursor and delete the lowest N keys.
+        const cursorRequest = store.openCursor(range, 'next');
+        cursorRequest.onsuccess = () => {
+          const cursor = cursorRequest.result;
+          if (cursor === null || deletedCount >= limit) {
+            return;
+          }
+          cursor.delete();
+          deletedCount++;
+          if (deletedCount < limit) {
+            cursor.continue();
+          }
+        };
+      }
 
       transaction.oncomplete = () => resolve(deletedCount);
       transaction.onerror = () => reject(transaction.error);

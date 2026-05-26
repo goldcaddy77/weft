@@ -5,6 +5,7 @@ import {
 } from '../core/codec.ts';
 import type { JSONValue } from '../core/json.ts';
 
+import { storageDeleteRange, type DeleteRangeOptions } from './delete-range.ts';
 import {
   storageCount,
   storageDeletePrefix,
@@ -147,6 +148,9 @@ export interface TypedStorage<Value> extends Disposable {
   batch(operations: TypedBatchOperation<Value>[]): Promise<void>;
   has(key: string): Promise<boolean>;
   deletePrefix(prefix: string): Promise<number>;
+  // Optional: keeps adding deleteRange a non-breaking change for external
+  // implementers of this publicly-exported interface.
+  deleteRange?(prefix: string, options: DeleteRangeOptions): Promise<number>;
   keys(prefix: string, options?: ScanOptions): AsyncIterable<string>;
   count(prefix: string): Promise<number>;
 }
@@ -201,6 +205,11 @@ class CodecStorage<Value> implements TypedStorage<Value> {
 
   async deletePrefix(prefix: string): Promise<number> {
     return storageDeletePrefix(this.#storage, prefix);
+  }
+
+  async deleteRange(prefix: string, options: DeleteRangeOptions): Promise<number> {
+    // Keys and bounds are value-agnostic, so the codec is not involved.
+    return storageDeleteRange(this.#storage, prefix, options);
   }
 
   keys(prefix: string, options?: ScanOptions): AsyncIterable<string> {

@@ -75,7 +75,8 @@ export class CompressedStorage implements Storage {
     // Compression transforms value bytes, so a caller-supplied expectedValue
     // can never byte-match the compressed stored value — conditionalBatch is
     // semantically broken through this decorator (and not forwarded). The
-    // decorator also does not forward deletePrefix. Both are forced false; the
+    // decorator also does not forward deletePrefix or deleteRange. Both are
+    // forced false; the
     // visibility/atomicity properties are unchanged by per-value compression, so
     // they pass through from the inner store. This is the opaque-value invariant
     // enforced at the type level.

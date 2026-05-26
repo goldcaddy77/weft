@@ -1,3 +1,4 @@
+import { normalizeDeleteRangeOptions, type DeleteRangeOptions } from './delete-range';
 import {
   matchesScanOptions,
   resolvePrefixRangeEnd,
@@ -44,7 +45,8 @@ export class MemoryStorage implements Storage {
     // In-process Map with synchronous mutation: every read observes every prior
     // write (linearizable). scan() materializes a sorted key snapshot before
     // yielding, so concurrent mutation is not observed mid-iteration. batch()
-    // applies synchronously (atomic). deletePrefix is a range-bounded delete.
+    // applies synchronously (atomic). deletePrefix and deleteRange are
+    // range-bounded deletes.
     return {
       readAfterWrite: 'linearizable',
       scanConsistency: 'snapshot',
@@ -140,6 +142,23 @@ export class MemoryStorage implements Storage {
     }
 
     return keys.length;
+  }
+
+  async deleteRange(prefix: string, options: DeleteRangeOptions): Promise<number> {
+    const normalized = normalizeDeleteRangeOptions(options);
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
+    const keys = this.#collectSortedKeys(prefix, prefixEnd).filter((key) =>
+      matchesScanOptions(key, normalized),
+    );
+
+    // limit deletes the lowest (ascending) keys first; #collectSortedKeys is sorted ascending.
+    const bounded = normalized.limit === undefined ? keys : keys.slice(0, normalized.limit);
+
+    for (const key of bounded) {
+      this.#data.delete(key);
+    }
+
+    return bounded.length;
   }
 
   async *keys(prefix: string, options: ScanOptions = {}): AsyncIterable<string> {

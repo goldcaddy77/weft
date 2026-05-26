@@ -1,7 +1,9 @@
 import { decodeBase64ToBytes, encodeBytesToBase64, isRecord } from './byte-encoding.ts';
+import { normalizeDeleteRangeOptions, type DeleteRangeOptions } from './delete-range.ts';
 import {
   storageCountCore,
   storageDeletePrefixCore,
+  storageDeleteRangeCore,
   storageHasCore,
   storageKeysCore,
 } from './derived-operations.ts';
@@ -200,7 +202,7 @@ export class HTTPStorage implements Storage {
     // server's backend, which the client cannot detect; default to `false` so a
     // gated feature fails fast locally instead of via a remote 501. Operators
     // who verified remote CAS opt in via `remoteConditionalBatch: true`.
-    // deletePrefix uses the derived scan-and-delete fallback, so
+    // deletePrefix and deleteRange use the derived scan-and-delete fallback, so
     // boundedRangeDelete is false.
     return {
       readAfterWrite: 'eventual',
@@ -322,6 +324,10 @@ export class HTTPStorage implements Storage {
 
   deletePrefix(prefix: string): Promise<number> {
     return storageDeletePrefixCore(this, prefix);
+  }
+
+  deleteRange(prefix: string, options: DeleteRangeOptions): Promise<number> {
+    return storageDeleteRangeCore(this, prefix, normalizeDeleteRangeOptions(options));
   }
 
   scoped(prefix: string): Storage {

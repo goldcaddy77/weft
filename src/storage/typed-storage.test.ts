@@ -84,6 +84,31 @@ describe('withCodec', () => {
     expect(await storage.count('items:')).toBe(0);
   });
 
+  it('withCodec(storage, codec) forwards deleteRange, honoring bounds without touching the codec', async () => {
+    const storage = withCodec(
+      createCoreStorageAdapter(),
+      jsonCodec(
+        z.object({
+          value: z.string(),
+        }).parse,
+      ),
+    );
+
+    await storage.batch([
+      { type: 'put', key: 'ev:wf:01', value: { value: '1' } },
+      { type: 'put', key: 'ev:wf:02', value: { value: '2' } },
+      { type: 'put', key: 'ev:wf:03', value: { value: '3' } },
+    ]);
+
+    if (!storage.deleteRange) {
+      throw new Error('Typed storage should expose deleteRange(prefix, options).');
+    }
+
+    expect(await storage.deleteRange('ev:wf:', { lt: 'ev:wf:03' })).toBe(2);
+    expect(await collect(storage.keys('ev:wf:'))).toEqual(['ev:wf:03']);
+    expect(await storage.get('ev:wf:03')).toEqual({ value: '3' });
+  });
+
   it('withCodec(storage, codec) forwards put, delete, has, and dispose through the codec wrapper', async () => {
     const underlyingStorage = createCoreStorageAdapter();
     const storage = withCodec(
