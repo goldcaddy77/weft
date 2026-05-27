@@ -18,13 +18,20 @@
 
 import { afterEach, describe, expect, it } from 'bun:test';
 
+import { flushPortableMicrotasks, yieldToPortableEventLoop } from '../../testing/event-loop.ts';
 import { restoreRealTimers, waitForever } from '../../testing/fake-timers.test-support.ts';
 import { TestEngine } from '../../testing/test-engine.ts';
 import type { WorkflowContext } from '../types.ts';
 import { workflow } from '../types.ts';
 
+// Give the engine several event-loop turns to dispatch activities and settle
+// promises. One yieldToPortableEventLoop() turn is not enough when the engine
+// needs to schedule, dispatch, and checkpoint within a single flush.
 async function flush(): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  for (let i = 0; i < 5; i++) {
+    await yieldToPortableEventLoop();
+    await flushPortableMicrotasks(5);
+  }
 }
 
 afterEach(() => {
@@ -159,7 +166,9 @@ describe('timeout race', () => {
     const fast = async () => 'fast-result';
     const slow = async () => {
       slowCalls++;
-      // Simulated slow activity that still resolves, but after fast
+      // Yield one event-loop turn via MessageChannel so fast is unambiguously
+      // first to settle without depending on real wall-clock time.
+      await yieldToPortableEventLoop();
       return 'slow-result';
     };
 
@@ -291,7 +300,8 @@ describe('parallel fan-out (ctx.all)', () => {
     expect(okCalls).toBe(1);
     expect(failCalls).toBe(1);
 
-    // Simulate process restart — new engine shares storage
+    // Simulate process restart: recover() copies engine1's storage snapshot into
+    // a fresh engine that does not share the same storage instance.
     const engine2 = engine1.recover();
     const replayWorkflowDef2 = workflow({ name: 'replay-partial' }).execute(replayWorkflow);
     engine2.register(replayWorkflowDef2);
