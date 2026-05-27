@@ -86,6 +86,7 @@ import {
   createTerminationCallbacks as createTerminationCallbacksForEngine,
   createUpdateCallbacks as createUpdateCallbacksForEngine,
 } from './callback-creators.ts';
+import { registerCancelHandler } from './cancel-handlers.ts';
 import {
   getCheckpointAt as getCheckpointStateAt,
   getEvents as getWorkflowEvents,
@@ -416,6 +417,8 @@ export class Engine<
       broadcastEvents: resolvedOptions.broadcastEvents,
       getRegistration: getInternals(this).registrations.get.bind(getInternals(this).registrations),
       resolveWorkflowType: this.#resolveWorkflowTypeTarget.bind(this),
+      registerCancelHandler: (workflowId, handler) =>
+        registerCancelHandler(getInternals(this), workflowId, handler),
     });
     getInternals(this).storage = storage;
     getInternals(this).abortController = new AbortController();
@@ -485,6 +488,7 @@ export class Engine<
     getInternals(this).workflowReviewIds = new Map();
     getInternals(this).parkedInlineWorkflows = new Set();
     getInternals(this).terminalizingWorkflows = new Set();
+    getInternals(this).cancelHandlersByWorkflow = new Map();
     getInternals(this).reviewTimerIds = new Map();
     getInternals(this).pendingWebhooks = new Set();
     getInternals(this).pendingTimelineEntries = new Map();

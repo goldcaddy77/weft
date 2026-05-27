@@ -25,6 +25,7 @@ import {
   writeRetainedTerminalSearchAttributes,
 } from '../attributes-tags.ts';
 import { TERMINAL_CLEANUP_DELAY_MS } from '../bulk-operations.ts';
+import { takeCancelHandlers, type CancelHandler } from '../cancel-handlers.ts';
 import { getWorkflowExecutionStartedAt } from '../handles.ts';
 import { dropQueuedInlineWorkflowStart } from '../inline-launch-queue.ts';
 import type { EngineInternals } from '../internals.ts';
@@ -37,6 +38,31 @@ import {
   finalizeScheduledWorkflowTerminal,
   type TerminationCallbacks,
 } from './cleanup.ts';
+
+async function runCancelHandlers(
+  handlers: CancelHandler[],
+  callbacks: Pick<TerminationCallbacks, 'handleCleanupError'>,
+  workflowId: string,
+): Promise<void> {
+  for (const handler of handlers) {
+    try {
+      await handler();
+    } catch (error) {
+      callbacks.handleCleanupError('cancel-handler', error, workflowId);
+    }
+  }
+}
+
+async function runCancellationHandlersForStatus(
+  internals: EngineInternals,
+  workflowId: string,
+  status: 'cancelled' | 'timed-out',
+  callbacks: Pick<TerminationCallbacks, 'handleCleanupError'>,
+): Promise<void> {
+  const cancelHandlers = takeCancelHandlers(internals, workflowId);
+  if (status !== 'cancelled') return;
+  await runCancelHandlers(cancelHandlers, callbacks, workflowId);
+}
 
 export async function cancelWorkflow(
   internals: EngineInternals,
@@ -64,6 +90,7 @@ export async function terminateWorkflow(
   internals.terminalizingWorkflows.add(workflowId);
   dropQueuedInlineWorkflowStart(internals, workflowId);
   internals.strategy.cancelWorkflow(workflowId);
+  await runCancellationHandlersForStatus(internals, workflowId, status, callbacks);
 
   try {
     const attributeBytes = await internals.storage.get(KEYS.attribute(workflowId));

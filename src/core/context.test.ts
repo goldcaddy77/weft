@@ -62,6 +62,28 @@ function expectRequest<T extends ContextOperationRequest['type']>(
 }
 
 describe('Context', () => {
+  describe('ctx.onCancel', () => {
+    it('throws when cancellation hooks are not available for the execution mode', () => {
+      const context = createContext();
+
+      expect(() => context.onCancel(() => {})).toThrow(
+        'ctx.onCancel() is only supported for inline workflow execution',
+      );
+    });
+
+    it('registers a cancellation handler when supported by the engine', () => {
+      const handlers: Array<() => Promise<void> | void> = [];
+      const context = createContext({
+        registerCancelHandler: (cancelHandler) => handlers.push(cancelHandler),
+      });
+      const cancellationHandler = () => {};
+
+      context.onCancel(cancellationHandler);
+
+      expect(handlers).toEqual([cancellationHandler]);
+    });
+  });
+
   describe('ctx.run', () => {
     it('yields an activity request', () => {
       const context = createContext();
