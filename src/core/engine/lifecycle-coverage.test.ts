@@ -502,6 +502,7 @@ describe('engine lifecycle coverage helpers', () => {
       workflowId,
       state,
       checkpoint,
+      serializeCheckpoint(checkpoint),
       registration as never,
       createLifecycleCallbacks() as never,
     );

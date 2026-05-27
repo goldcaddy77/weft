@@ -131,11 +131,13 @@ export async function prepareResumeState(
   workflowId: string,
   state: WorkflowState,
   checkpoint: Checkpoint,
+  checkpointBytes: Uint8Array,
   registration: RegistrationEntry,
   callbacks: LifecycleCallbacks,
 ): Promise<{
   state: WorkflowState;
   checkpoint: Checkpoint;
+  serializedCheckpoint: Uint8Array;
   versionTuple: WorkflowVersionTuple;
 }> {
   const preparedExecutionState = derivePreparedExecutionState(
@@ -167,6 +169,9 @@ export async function prepareResumeState(
   return {
     state: preparedExecutionState.state,
     checkpoint: preparedExecutionState.checkpoint,
+    serializedCheckpoint: preparedExecutionState.shouldPersistPreparedState
+      ? serializeCheckpoint(preparedExecutionState.checkpoint)
+      : checkpointBytes,
     versionTuple: preparedExecutionState.versionTuple,
   };
 }

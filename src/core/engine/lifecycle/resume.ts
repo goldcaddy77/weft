@@ -207,6 +207,7 @@ export async function resumeWorkflowFromStorage(
     workflowId,
     state,
     checkpoint,
+    checkpointBytes,
     registration,
     callbacks,
   );
@@ -234,7 +235,7 @@ export async function resumeWorkflowFromStorage(
     performSerializedResume(internals, {
       workflowId,
       resumeCheckpoint,
-      serializedCheckpoint: checkpointBytes,
+      serializedCheckpoint: preparedResumeState.serializedCheckpoint,
       registeredVersionTuple,
       restoredHead,
       workflowStartHeaders,
