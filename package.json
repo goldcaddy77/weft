@@ -1,6 +1,6 @@
 {
   "name": "weft",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A Bun-native durable execution engine with pluggable key-value storage.",
   "keywords": [
     "bun",
