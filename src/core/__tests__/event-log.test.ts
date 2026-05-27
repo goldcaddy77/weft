@@ -6,6 +6,9 @@ import { describe, expect, it, mock } from 'bun:test';
 
 import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
+import { encode } from '../codec.ts';
+import { readEventHead } from '../event-log-shared.ts';
+import { verifyEventLog } from '../event-log-verify.ts';
 import type { WorkflowLogEntry } from '../event-log.ts';
 import { EMPTY_EVENT_HEAD, EventLog } from '../event-log.ts';
 
@@ -313,6 +316,38 @@ describe('EventLog.verify()', () => {
     // Entry 1 carries prevHash='0000000000000000' (genesis) but the verifier
     // expects it to match hash(entry0_bytes). That mismatch is detected first.
     expect(result).toEqual({ valid: false, firstInvalidSequence: 1 });
+  });
+
+  it('treats an invalid stored head record as an empty head', async () => {
+    const storage = makeStorage();
+    await storage.put(KEYS.eventHead('wf-invalid-head'), encode({ nope: true }));
+
+    await expect(readEventHead(storage, 'wf-invalid-head')).resolves.toEqual(EMPTY_EVENT_HEAD);
+  });
+
+  it('reports corruption when the head says the log is empty but surviving entries exist', async () => {
+    const storage = makeStorage();
+    const log = makeLog(storage, 'wf-head-mismatch');
+    await log.append({ type: 'event', payload: 'x' });
+    await storage.put(KEYS.eventHead('wf-head-mismatch'), encode(EMPTY_EVENT_HEAD));
+
+    await expect(verifyEventLog(storage, 'wf-head-mismatch')).resolves.toEqual({
+      valid: false,
+      firstInvalidSequence: 0,
+    });
+  });
+
+  it('reports corruption when the head claims a surviving tail but the scan is empty', async () => {
+    const storage = makeStorage();
+    await storage.put(
+      KEYS.eventHead('wf-missing-tail'),
+      encode({ sequence: 3, lastHash: 'abcdef0123456789' }),
+    );
+
+    await expect(verifyEventLog(storage, 'wf-missing-tail')).resolves.toEqual({
+      valid: false,
+      firstInvalidSequence: 3,
+    });
   });
 });
 

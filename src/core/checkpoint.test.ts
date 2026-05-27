@@ -529,6 +529,90 @@ describe('validateCheckpointShape (via deserializeCheckpoint)', () => {
     expect(() => deserializeCheckpoint(bytes)).toThrow('workerReplaySignatures');
   });
 
+  it('validates every Worker replay signature field individually', () => {
+    const { encode } = require('./codec.ts');
+    const cases = [
+      {
+        workerReplaySignatures: 'not-an-array',
+      },
+      {
+        workerReplaySignatures: [[0, null]],
+      },
+      {
+        workerReplaySignatures: [['step-only']],
+      },
+      {
+        workerReplaySignatures: [
+          [
+            0,
+            {
+              format: 'wrong-format',
+              operationType: 'activity',
+              stableFieldsDigest: 'abc123',
+              stableFieldsByteLength: 42,
+            },
+          ],
+        ],
+      },
+      {
+        workerReplaySignatures: [
+          [
+            0,
+            {
+              format: WORKER_REPLAY_SIGNATURE_FORMAT,
+              operationType: 42,
+              stableFieldsDigest: 'abc123',
+              stableFieldsByteLength: 42,
+            },
+          ],
+        ],
+      },
+      {
+        workerReplaySignatures: [
+          [
+            0,
+            {
+              format: WORKER_REPLAY_SIGNATURE_FORMAT,
+              operationType: 'activity',
+              stableFieldsDigest: 42,
+              stableFieldsByteLength: 42,
+            },
+          ],
+        ],
+      },
+      {
+        workerReplaySignatures: [
+          [
+            0,
+            {
+              format: WORKER_REPLAY_SIGNATURE_FORMAT,
+              operationType: 'activity',
+              stableFieldsDigest: 'abc123',
+              stableFieldsByteLength: -1,
+            },
+          ],
+        ],
+      },
+    ];
+
+    for (const testCase of cases) {
+      const bytes = encode({
+        workflowId: 'wf-invalid-worker-replay-fields',
+        step: 0,
+        locals: {},
+        accumulatedResults: [],
+        pendingSignals: [],
+        searchAttributes: {},
+        version: '1.0.0',
+        schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
+        createdAt: Date.now(),
+        ...testCase,
+      });
+
+      expect(() => deserializeCheckpoint(bytes)).toThrow('workerReplaySignatures');
+    }
+  });
+
   it('throws when Worker replay failures have invalid entries', () => {
     const { encode } = require('./codec.ts');
     const bytes = encode({
@@ -554,6 +638,59 @@ describe('validateCheckpointShape (via deserializeCheckpoint)', () => {
     });
 
     expect(() => deserializeCheckpoint(bytes)).toThrow('workerReplayFailures');
+  });
+
+  it('validates every Worker replay failure field individually', () => {
+    const { encode } = require('./codec.ts');
+    const cases = [
+      { workerReplayFailures: 'not-an-array' },
+      { workerReplayFailures: [[0, null]] },
+      { workerReplayFailures: [['step-only']] },
+      { workerReplayFailures: [[0, { status: 'completed', error: 'activity failed' }]] },
+      { workerReplayFailures: [[0, { status: 'failed', error: 42 }]] },
+      {
+        workerReplayFailures: [[0, { status: 'failed', error: 'activity failed', errorName: 42 }]],
+      },
+      {
+        workerReplayFailures: [
+          [0, { status: 'failed', error: 'activity failed', failureCategory: 'not-real' }],
+        ],
+      },
+    ];
+
+    for (const testCase of cases) {
+      const bytes = encode({
+        workflowId: 'wf-invalid-worker-replay-failure-fields',
+        step: 0,
+        locals: {},
+        accumulatedResults: [],
+        pendingSignals: [],
+        searchAttributes: {},
+        version: '1.0.0',
+        schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
+        createdAt: Date.now(),
+        ...testCase,
+      });
+
+      expect(() => deserializeCheckpoint(bytes)).toThrow('workerReplayFailures');
+    }
+  });
+
+  it('throws when schemaVersion is not an integer number', () => {
+    const { encode } = require('./codec.ts');
+    const bytes = encode({
+      workflowId: 'wf-invalid-schema-version',
+      step: 0,
+      locals: {},
+      accumulatedResults: [],
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      schemaVersion: '2',
+      createdAt: Date.now(),
+    });
+
+    expect(() => deserializeCheckpoint(bytes)).toThrow('schemaVersion');
   });
 });
 

@@ -314,15 +314,7 @@ async function processGeneratorStep(
   generator: AsyncGenerator,
   step: IteratorResult<unknown>,
 ): Promise<WorkerOutboundMessage> {
-  const replayState = context.replayStates.get(workflowId);
-  if (!replayState) {
-    return {
-      type: 'failed',
-      workflowId,
-      error: `No replay state for workflow: ${workflowId}`,
-      failureCategory: 'system',
-    };
-  }
+  const replayState = context.replayStates.get(workflowId)!;
 
   let currentStep = step;
   while (true) {

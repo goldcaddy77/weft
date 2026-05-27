@@ -67,6 +67,23 @@ describe('Worker protocol message accounting', () => {
     );
   });
 
+  it('accounts for Map and Set members through the encoded envelope path', () => {
+    const baseline = estimateWorkerProtocolMessageBytes({
+      type: 'completed',
+      workflowId: 'wf-map-set',
+      result: {},
+    });
+    const nestedCollections = estimateWorkerProtocolMessageBytes({
+      type: 'completed',
+      workflowId: 'wf-map-set',
+      result: {
+        cache: new Map([[new Date('2026-01-01T00:00:00.000Z'), new Set(['a', 'b'])]]),
+      },
+    });
+
+    expect(nestedCollections).toBeGreaterThan(baseline);
+  });
+
   it('validates outbound message shape before host forwarding', () => {
     expect(() =>
       assertWorkerOutboundMessageShape({
@@ -176,6 +193,29 @@ describe('Worker replay operation signatures', () => {
     );
 
     expect(first).toEqual(second);
+  });
+
+  it('includes Map entry keys and values when hashing replay signatures', async () => {
+    const withMap = await createWorkerReplayOperationSignature(
+      {
+        type: 'activity',
+        operationId: 'activity-map',
+        activityName: 'persist-map',
+        input: new Map([[{ key: 'alpha' }, { value: 'one' }]]),
+      },
+      MIN_WORKER_PROTOCOL_MESSAGE_BYTES,
+    );
+    const withoutMap = await createWorkerReplayOperationSignature(
+      {
+        type: 'activity',
+        operationId: 'activity-map',
+        activityName: 'persist-map',
+        input: new Map([[{ key: 'alpha' }, { value: 'two' }]]),
+      },
+      MIN_WORKER_PROTOCOL_MESSAGE_BYTES,
+    );
+
+    expect(withMap.stableFieldsDigest).not.toBe(withoutMap.stableFieldsDigest);
   });
 
   it('produces signatures for every workflow context operation variant', async () => {
