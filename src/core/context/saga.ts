@@ -14,6 +14,8 @@ export function* saga<TFinalOutput = unknown>(
   }> = [];
 
   let lastOutput: unknown;
+  // Guards against double-compensation: whichever path runs first (step failure
+  // or cancellation) claims the flag, and the other path skips entirely.
   let compensationRun = false;
 
   context.onCancel(async () => {
@@ -70,6 +72,10 @@ export function* saga<TFinalOutput = unknown>(
   return lastOutput as TFinalOutput;
 }
 
+// Called from the onCancel handler, where the generator coroutine has been aborted and
+// cannot be driven — direct await is intentional. This is best-effort: compensators here
+// do not run through context.run, so they are not checkpointed or replayed. Step-failure
+// compensation (above) uses context.run and is durable; cancel-path compensation is not.
 async function compensateCompleted(
   completed: Array<{ definition: ErasedActivityDefinition; input: unknown; output: unknown }>,
 ): Promise<void> {
