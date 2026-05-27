@@ -43,34 +43,12 @@ if (parsedArguments.command === 'serve') {
 
   if (parsedArguments.workflows) {
     const { loadRegistrationsFromModule } = await import('./diagnostics/validate.ts');
-    const { registerOnRuntimeEngine, runtimeWorkflowEngine } =
-      await import('./core/runtime-workflow-engine.ts');
+    const { registerModuleExports } = await import('./cli/serve-registrations.ts');
 
     const loaded = await loadRegistrationsFromModule(parsedArguments.workflows);
-
-    for (const [workflowType, registration] of Object.entries(loaded.registrations)) {
-      const definition = { ...registration, name: workflowType };
-      registerOnRuntimeEngine(runtimeWorkflowEngine(engine), definition);
-    }
-
-    for (const activityDefinition of loaded.activities as unknown[]) {
-      if (typeof activityDefinition === 'function') {
-        engine.register(activityDefinition as never);
-      } else {
-        const definition = activityDefinition as Record<string, unknown> & {
-          name: string;
-          execute: (...args: unknown[]) => unknown;
-        };
-        const { name, ...activityMetadata } = definition;
-        const callable = Object.assign(async function activityCallable(...args: unknown[]) {
-          return definition.execute(...args);
-        }, activityMetadata);
-        Object.defineProperty(callable, 'name', { value: name });
-        engine.register(callable as never);
-      }
-    }
+    registerModuleExports(engine, loaded.registrations, loaded.activities);
   } else {
-    console.error('No workflow module provided; starting inspect-only server.');
+    console.log('No --workflows module provided; starting in inspect-only mode.');
   }
 
   let dashboard: unknown = null;
