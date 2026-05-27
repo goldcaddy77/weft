@@ -141,12 +141,17 @@ If an `as` cast is genuinely necessary (e.g., deserializing from storage where t
 - REST `EngineFailure` responses are masked by the canonical `shapeRestFault` path as `{ error: "Internal server error" }` with status `500`; JSON-RPC still receives the operation fault object. Preserve that split when refactoring operation helpers.
 - Schedule operations use their operation-catalog access policies across REST and JSON-RPC. Do not reintroduce tenant-claim access checks; multi-tenancy has been removed from the core, and legacy tenant fields are tolerated only as persisted-data cleanup.
 - Storage adapters must report `capabilities()` honestly. Gate only `conditionalBatch` with `requireStorageCapability`; treat `boundedRangeDelete` as an operational hint and route bounded deletes through `storageDeleteRange()` so unbounded range deletion is impossible.
+- History policy changes must keep `history.maxEvents` as a lifetime circuit breaker and `history.retentionWindow` as storage reclamation only. Event-log compaction writes the watermark atomically with checkpoint commits; archival is best-effort after deletion and must not be described as a durability guarantee.
+- Payload-size policy changes must reject oversized workflow inputs, signal payloads, and activity results before durable writes. Keep `payloadSize.maxBytes` separate from storage compression and Worker `maxProtocolMessageBytes`.
+- Worker execution changes must preserve explicit trust posture: `workflowExecutionMode: 'worker'` is the hardened untrusted path with turn timeouts and bounded protocol messages; `workflowExecutionMode: 'inline'` rejects `workerExecution`.
 - Task polling and shutdown changes must cover already-aborted request signals, disconnects during parked long-polls, task retention for dead pollers, and `server.stop()` disposal of queued timers/waiters.
 
 ### Testing Approach
 
 - Tests use Bun's built-in test runner with `describe`, `it`, `expect`.
 - Test files are typically colocated with sources using the `.test.ts` suffix.
+- Test-only support modules under `src/` must use `.test-support.ts` or another build-excluded test-only pattern. After renaming or adding support modules, run `bun run build` so the post-build guard catches forbidden `bun:test`, `fake-indexeddb`, or `jsdom` imports in `dist/`.
+- Shared browser-storage tests rely on the Bun `[test].preload` in `tests/test-preload.ts` for `fake-indexeddb`. Do not reintroduce per-file IndexedDB shim imports unless the file is a helper that can run outside the test preload.
 - Oxlint rules are relaxed for test files (`*.test.ts`, `*.spec.ts`, `test/**`, `__tests__/**`). You can use `any`, non-null assertions, unused variables, and other patterns that would normally be flagged.
 - A separate `tsconfig.test.json` is available with relaxed TypeScript settings for tests.
 
