@@ -5,6 +5,7 @@ import { EventLog, type EventHeadRecord } from '../../event-log.ts';
 import { WorkflowResumedEvent } from '../../events.ts';
 import type { Checkpoint, WorkflowState } from '../../types.ts';
 import { type WorkflowVersionTuple } from '../../workflow-version-tuple.ts';
+import { createCancelHandlerRegistration, resetCancelHandlers } from '../cancel-handlers.ts';
 import { getWorkflowExecutionStartedAt, type WorkflowHandle } from '../handles.ts';
 import type { EngineInternals } from '../internals.ts';
 import { loadWorkflowState } from '../storage-io.ts';
@@ -70,6 +71,7 @@ function relaunchInlineWorkflowAfterResume(
   const accumulatedResults = new Map<number, unknown>(resumeCheckpoint.accumulatedResults);
   const workflowAbort = new AbortController();
 
+  resetCancelHandlers(internals, workflowId);
   const context = new Context({
     workflowId,
     workflowType: latestState.type,
@@ -81,6 +83,7 @@ function relaunchInlineWorkflowAfterResume(
     accumulatedResults,
     locals: resumeCheckpoint.locals,
     searchAttributes: resumeCheckpoint.searchAttributes,
+    registerCancelHandler: createCancelHandlerRegistration(internals, workflowId),
     ...(registration.searchAttributes && {
       searchAttributeSchema: registration.searchAttributes,
     }),

@@ -432,6 +432,13 @@ export class Context implements WorkflowContext {
   expose(accessors: Record<string, () => unknown>): void {
     contextUpdates.expose(getInternals(this), accessors);
   }
+  onCancel(handler: () => Promise<void> | void): void {
+    const internals = getInternals(this);
+    if (internals.registerCancelHandler === undefined) {
+      throw new Error('ctx.onCancel() is only supported for inline workflow execution');
+    }
+    internals.registerCancelHandler(handler);
+  }
   streamUrl(reference: StreamReference): string {
     return `/v1/workflows/${encodeURIComponent(reference.workflowId)}/streams/${encodeURIComponent(reference.key)}`;
   }

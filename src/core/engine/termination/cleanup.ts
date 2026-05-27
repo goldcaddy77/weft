@@ -246,6 +246,7 @@ export function cleanupTerminalWorkflowMemory(
   internals.pendingTimelineEntries.delete(workflowId);
   internals.parkedInlineWorkflows.delete(workflowId);
   internals.workflowVersionTuples.delete(workflowId);
+  internals.cancelHandlersByWorkflow.delete(workflowId);
   // Drop any remaining feed-listener buckets for this workflow.
   // Transports normally unsubscribe when their subscription ends,
   // but a crashed or leaked connection would otherwise retain its

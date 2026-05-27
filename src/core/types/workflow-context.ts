@@ -191,6 +191,12 @@ export interface WorkflowContext<
   runAll<const TBranches extends Record<string, WorkflowRunAllBranch>>(
     branches: TBranches,
   ): WorkflowOperation<RunAllResult<TBranches>>;
+  /**
+   * Run a compensating transaction. In inline execution, if cancellation
+   * interrupts an active saga, completed steps compensate in reverse order on a
+   * best-effort, in-memory path. Cancellation compensation runs outside the
+   * durable activity pipeline and is not replayed after engine restart.
+   */
   saga<TFinalOutput = unknown>(steps: ErasedSagaStep[]): WorkflowOperation<TFinalOutput>;
   startChild<TResult = unknown>(
     workflowType: string,
@@ -297,4 +303,31 @@ export interface WorkflowContext<
   onQuery(name: string, handler: (input: unknown) => unknown): void;
   expose(accessors: Record<string, () => unknown>): void;
   streamUrl(reference: StreamReference): string;
+  /**
+   * Register a best-effort teardown handler that runs when this workflow is
+   * cancelled, before the workflow is finalized.
+   * Handlers run in registration order; async handlers are awaited; failures
+   * are swallowed — the workflow still finalizes as cancelled.
+   *
+   * **Best-effort only**: handlers run outside the durable effect log and are
+   * not retried. Side effects in handlers are not replay-safe, and registered
+   * handlers are not restored after an engine restart.
+   *
+   * **Worker-pool mode**: this method throws when the engine uses a remote
+   * worker pool so teardown does not silently drop.
+   *
+   * @example
+   * ```ts
+   * import { workflow, type WorkflowContext } from 'weft';
+   *
+   * const myWorkflow = workflow({ name: 'my-workflow' }).execute(async function* (ctx: WorkflowContext) {
+   *   ctx.onCancel(async () => {
+   *     await releaseLocks();
+   *   });
+   *   yield* ctx.run(longRunningActivity);
+   * });
+   * void myWorkflow;
+   * ```
+   */
+  onCancel(handler: () => Promise<void> | void): void;
 }

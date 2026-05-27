@@ -14,6 +14,7 @@ import type {
   WorkflowState,
 } from '../../types.ts';
 import { type WorkflowVersionTuple } from '../../workflow-version-tuple.ts';
+import { createCancelHandlerRegistration, resetCancelHandlers } from '../cancel-handlers.ts';
 import { WorkflowTypeNotRegisteredForRecoveryError } from '../errors.ts';
 import { getWorkflowExecutionStartedAt, type WorkflowHandle } from '../handles.ts';
 import type { EngineInternals } from '../internals.ts';
@@ -412,6 +413,7 @@ function launchInlineWorkflowFromCheckpoint(
   const accumulatedResults = new Map<number, unknown>(checkpoint.accumulatedResults);
   const workflowAbort = new AbortController();
 
+  resetCancelHandlers(internals, workflowId);
   const context = new Context({
     workflowId,
     workflowType: state.type,
@@ -422,6 +424,7 @@ function launchInlineWorkflowFromCheckpoint(
     executionStateOwnerId: state.executionStateOwnerId ?? workflowId,
     accumulatedResults,
     searchAttributes: checkpoint.searchAttributes,
+    registerCancelHandler: createCancelHandlerRegistration(internals, workflowId),
     ...(registration.searchAttributes && {
       searchAttributeSchema: registration.searchAttributes,
     }),

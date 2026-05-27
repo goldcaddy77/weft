@@ -280,6 +280,7 @@ export function createExecutionStrategyBundle(parameters: {
   broadcastEvents: boolean;
   getRegistration: (workflowType: string) => RegistrationEntry | undefined;
   resolveWorkflowType: (target: string | Function) => string;
+  registerCancelHandler?: (workflowId: string, handler: () => Promise<void> | void) => () => void;
 }): ExecutionStrategyBundle {
   const {
     options,
@@ -289,6 +290,7 @@ export function createExecutionStrategyBundle(parameters: {
     broadcastEvents,
     getRegistration,
     resolveWorkflowType,
+    registerCancelHandler,
   } = parameters;
   const workerExecutionConfiguration = normalizeWorkerExecutionConfiguration(options);
   if (workerExecutionConfiguration.mode === 'worker') {
@@ -319,6 +321,7 @@ export function createExecutionStrategyBundle(parameters: {
     maxNestingDepth,
     development,
     resolveWorkflowType,
+    ...(registerCancelHandler !== undefined && { registerCancelHandler }),
   });
   return { strategy: inlineStrategy, inlineStrategy };
 }

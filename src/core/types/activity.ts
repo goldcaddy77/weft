@@ -236,6 +236,8 @@ export interface ActivityDefinition<
    * Optional compensation function. When defined and a saga step that ran this
    * activity needs to be rolled back, the engine calls `compensate(input, output)`
    * in reverse order for every step that completed before the failure.
+   * Inline cancellation-triggered compensation is best-effort and runs outside
+   * the durable activity pipeline; it is not replayed after an engine restart.
    *
    * `input` is the original input passed to `execute`.
    * `output` is the value returned by `execute` for that invocation.

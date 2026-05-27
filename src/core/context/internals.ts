@@ -23,6 +23,7 @@ export interface ContextInternals {
   nestingDepth: number;
   executionStateOwnerId: string;
   resolveWorkflowType: ((target: string | Function) => string) | undefined;
+  registerCancelHandler: ((handler: () => Promise<void> | void) => () => void) | undefined;
 }
 
 const INTERNALS = new WeakMap<Context, ContextInternals>();
@@ -53,6 +54,7 @@ export function initializeInternals(
     nestingDepth: options.nestingDepth ?? 0,
     executionStateOwnerId: options.executionStateOwnerId ?? options.workflowId,
     resolveWorkflowType: options.resolveWorkflowType,
+    registerCancelHandler: options.registerCancelHandler,
   };
   INTERNALS.set(context, internals);
 }
