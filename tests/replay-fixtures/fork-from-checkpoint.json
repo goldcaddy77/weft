@@ -86,6 +86,8 @@
     "ev:wf-fork-original:0000000002": "h6R0eXBls3dvcmtmbG93OmNoZWNrcG9pbnSqd29ya2Zsb3dJZLB3Zi1mb3JrLW9yaWdpbmFsqHNlcXVlbmNlAqhwcmV2SGFzaLBjNTQ4NDNjMDczZDM0Mjg5p3BheWxvYWSBpHN0ZXADqXRpbWVzdGFtcACsdmVyc2lvblR1cGxlga93b3JrZmxvd1ZlcnNpb26hMQ==",
     "ev:wf-fork-original:head": "gqhzZXF1ZW5jZQKobGFzdEhhc2iwMWIyZTY0OWQ5YWQxNjdlMw==",
     "idx:weft:forkedFrom:s:wf-fork-original:00000000-0000-4000-8000-000000000003": "",
+    "sigseq:v1:00000000-0000-4000-8000-000000000003": "AQ==",
+    "sigseq:v1:wf-fork-original": "AQ==",
     "wf-cleanup-needed:00000000-0000-4000-8000-000000000003": "",
     "wf-cleanup-needed:wf-fork-original": "",
     "wf-cleanup:0000000000060000:terminal-cleanup%3Apreserve-output%3A00000000-0000-4000-8000-000000000009": "sHdmLWZvcmstb3JpZ2luYWw=",

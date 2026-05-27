@@ -180,6 +180,7 @@ export async function cleanupWorkflowStorage(
   const prefixes: string[] = [
     KEYS.activityReconciliationPrefix(workflowId),
     KEYS.signalAcceptedResponsePrefix(workflowId),
+    KEYS.signalSequence(workflowId),
     `sig:${encodedWorkflowId}:`,
     `state:execution:${encodedWorkflowId}:`,
     `tool-effect:${encodedWorkflowId}:`,

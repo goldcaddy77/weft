@@ -2,6 +2,7 @@ import { describe, expect, it, mock } from 'bun:test';
 
 import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
+import { sleepForTesting } from '../../testing/fake-timers.test-support.ts';
 import { encode } from '../codec.ts';
 import type { SignalReceivedInterception } from '../interceptor/interception-contexts.ts';
 import type { WorkflowState } from '../types.ts';
@@ -217,6 +218,70 @@ describe('engine signals', () => {
     ).toEqual({
       found: false,
     });
+  });
+
+  it('buffers anonymous signals when conditionalBatch is unavailable', async () => {
+    const storage = new NoConditionalBatchMemoryStorage();
+    const internals = createSignalInternals(storage);
+    const callbacks = createSignalCallbacks();
+
+    await signal(
+      internals as never,
+      'workflow-anonymous-no-conditional',
+      'release',
+      'first',
+      callbacks,
+    );
+    await signal(
+      internals as never,
+      'workflow-anonymous-no-conditional',
+      'release',
+      'second',
+      callbacks,
+    );
+
+    expect(
+      await consumeSignal(internals as never, 'workflow-anonymous-no-conditional', 'release'),
+    ).toEqual({
+      found: true,
+      payload: 'first',
+    });
+    expect(
+      await consumeSignal(internals as never, 'workflow-anonymous-no-conditional', 'release'),
+    ).toEqual({
+      found: true,
+      payload: 'second',
+    });
+  });
+
+  it('serializes anonymous sequence allocation when conditionalBatch is unavailable', async () => {
+    class SlowSequenceStorage extends NoConditionalBatchMemoryStorage {
+      override async get(key: string): Promise<Uint8Array | null> {
+        if (key === KEYS.signalSequence('workflow-anonymous-concurrent')) {
+          await sleepForTesting(5);
+        }
+
+        return super.get(key);
+      }
+    }
+
+    const storage = new SlowSequenceStorage();
+    const internals = createSignalInternals(storage);
+    const callbacks = createSignalCallbacks();
+
+    await Promise.all([
+      signal(internals as never, 'workflow-anonymous-concurrent', 'release', 'first', callbacks),
+      signal(internals as never, 'workflow-anonymous-concurrent', 'release', 'second', callbacks),
+    ]);
+
+    const signalKeys: string[] = [];
+    for await (const [key] of storage.scan('sig:workflow-anonymous-concurrent:release:')) {
+      signalKeys.push(key);
+    }
+
+    expect(signalKeys).toHaveLength(2);
+    expect(signalKeys[0]).toContain('anonymous%3A0000000000000000%3A');
+    expect(signalKeys[1]).toContain('anonymous%3A0000000000000001%3A');
   });
 
   it('rejects oversize signalIds before persistence', async () => {
