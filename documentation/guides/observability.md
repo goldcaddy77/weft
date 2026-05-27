@@ -2,6 +2,9 @@
 
 Your workflows are running in production. Something is slow, but you can't tell whether it's the payment activity, the shipping call, or the sleep between them. You need traces, spans, and metrics—without instrumenting every workflow by hand. Weft's observability module is a pre-built [interceptor](./interceptors.md) that gives you all of this out of the box.
 
+> [!NOTE]
+> The observability interceptor shape is available for trials, but [OpenTelemetry](https://opentelemetry.io/) metric names are experimental before 1.0. Treat metric names and label sets as release-note-sensitive until the stability contract graduates them.
+
 ## Quick setup
 
 Import the factory, pass the engine as the `eventTarget`, and register the interceptor.

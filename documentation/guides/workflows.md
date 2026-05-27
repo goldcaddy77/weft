@@ -8,6 +8,9 @@ That is what a Weft workflow gives you.
 
 If you are not familiar with generators, Weft provides a simpler entry point. Write a plain `async` function that uses `ctx.step()` for each durable operation, then wrap it with `compileStepWorkflow(...)` before passing it to `.execute(...)`:
 
+> [!NOTE]
+> The generator workflow API is the primary engine surface. [`ctx.step()`](../reference/api-context.md#step-based-workflows) and [`compileStepWorkflow(...)`](../reference/api-context.md#step-based-workflows) are experimental sugar before 1.0; use them when they improve readability, but expect the generator API to define the stable semantics first.
+
 ```typescript partial
 import { Engine, workflow, compileStepWorkflow, type StepWorkflowContext } from 'weft';
 

@@ -2,6 +2,9 @@
 
 You've built your workflows and tested them locally. Now you need to expose them over the network—accept HTTP requests to start workflows, send signals, query status, and stream results over WebSockets. Weft's server module wraps `Bun.serve()` with a complete REST API and WebSocket support.
 
+> [!NOTE]
+> [`serve()`](../reference/api-server.md#serve) and the `/v1` REST surface are candidate-stable, provisional surfaces. [MCP discovery](../reference/api-server.md#mcp-server), the bundled dashboard, and the exact [OpenTelemetry](./observability.md) metric names remain experimental until the Tier-0 failure-semantics work finishes and the launch contract is frozen.
+
 ## Starting the server
 
 The `serve()` function takes an engine and optional network configuration, and returns a `WeftServer` handle.
