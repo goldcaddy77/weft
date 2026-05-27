@@ -477,5 +477,16 @@ function extractStandardSchemaIssues(result: unknown): Array<{ message: string }
   if (result === null || typeof result !== 'object' || !('issues' in result)) return null;
   const { issues } = result as { issues: unknown };
   if (!Array.isArray(issues)) return null;
-  return issues as Array<{ message: string }>;
+  const normalized: Array<{ message: string }> = [];
+  for (const issue of issues) {
+    if (
+      issue !== null &&
+      typeof issue === 'object' &&
+      'message' in issue &&
+      typeof issue.message === 'string'
+    ) {
+      normalized.push({ message: issue.message });
+    }
+  }
+  return normalized;
 }

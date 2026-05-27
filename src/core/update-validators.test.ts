@@ -175,6 +175,44 @@ describe('update validators (pre-acceptance)', () => {
     engine[Symbol.dispose]();
   });
 
+  it('validator runs on the submitCoordinatedUpdate path (HTTP server path)', async () => {
+    const setPrice = update<{ price: number }, { accepted: boolean }>('setPrice');
+    const engine = makeEngine();
+
+    engine.register(
+      workflow({ name: 'price-guard' }).execute(async function* (ctx: WorkflowContext) {
+        ctx.onUpdate(setPrice, (payload) => ({ accepted: true, echo: payload }), {
+          validator: (v) => {
+            const price = (v as Record<string, unknown>)['price'];
+            if (typeof price !== 'number' || price < 0) {
+              throw new Error('price must be a non-negative number');
+            }
+          },
+        });
+        await waitForever();
+      }),
+    );
+
+    const handle = await engine.start('price-guard', null);
+    await flush();
+
+    // Invalid payload via coordinated path
+    const err = await engine
+      .submitCoordinatedUpdate(handle.id, 'setPrice', { price: -5 })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UpdateValidationError);
+    expect((err as UpdateValidationError).updateName).toBe('setPrice');
+    expect((err as UpdateValidationError).issues[0]?.message).toBe(
+      'price must be a non-negative number',
+    );
+
+    // Valid payload succeeds via coordinated path
+    const result = await engine.submitCoordinatedUpdate(handle.id, 'setPrice', { price: 99 });
+    expect(result.result).toEqual({ accepted: true, echo: { price: 99 } });
+
+    engine[Symbol.dispose]();
+  });
+
   it('UpdateValidationError carries updateName and issues', () => {
     const err = new UpdateValidationError('my-update', [
       { message: 'field x is required' },
