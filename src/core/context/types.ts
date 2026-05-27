@@ -184,9 +184,11 @@ export interface ContextOptions {
   sleepReferenceTime?: number;
   resolveWorkflowType?: (target: string | Function) => string;
   /**
-   * Called by `ctx.onCancel()` to persist the handler outside the context
-   * lifecycle. The engine stores these handlers durably so they survive a
-   * `parkWorkflow` / `#cleanup` cycle and still fire on cancellation.
+   * Called by `ctx.onCancel()` to register the handler outside the context
+   * lifecycle. The engine holds these handlers in memory (keyed by workflow ID)
+   * so they survive a `parkWorkflow` / `#cleanup` cycle within the same engine
+   * process and still fire on cancellation. Handlers do not survive an engine
+   * restart — they are re-registered by replaying the workflow's generator.
    */
   registerCancelHandler?: (handler: () => Promise<void> | void) => void;
 }

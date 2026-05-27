@@ -69,6 +69,9 @@ export function* saga<TFinalOutput = unknown>(
     }
   }
 
+  // Saga completed normally — disable the cancel-path compensator so it does
+  // not fire if the workflow is cancelled after this saga returns.
+  compensationRun = true;
   return lastOutput as TFinalOutput;
 }
 

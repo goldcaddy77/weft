@@ -581,4 +581,45 @@ describe('ctx.saga() — cancellation compensation', () => {
 
     engine2[Symbol.dispose]();
   });
+
+  // -------------------------------------------------------------------------
+  // 11. Completed saga does not compensate when the workflow is cancelled
+  //     after the saga finishes normally (regression: compensationRun was not
+  //     set on the normal-completion path, causing spurious compensation).
+  // -------------------------------------------------------------------------
+
+  it('does not compensate when the workflow is cancelled after the saga completed normally', async () => {
+    const engine = new Engine();
+    let compensatorCalls = 0;
+
+    const step = makeActivity({
+      name: 'saga-step',
+      execute: (_input: string) => 'done',
+      compensate: (_input, _output) => {
+        compensatorCalls++;
+      },
+    });
+
+    const sagaThenWaitWorkflow = workflow({ name: 'saga-then-wait' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
+      yield* ctx.saga([{ definition: step, input: 'x' }]);
+      // Saga completed normally — now park waiting for a signal that never arrives.
+      yield* ctx.waitForSignal('never');
+    });
+    engine.register(sagaThenWaitWorkflow);
+
+    const handle = await engine.start('saga-then-wait', null);
+    await flush();
+
+    // Cancel the workflow while it is parked after the saga completed normally.
+    await engine.cancel(handle.id);
+
+    await expect(handle.result()).rejects.toThrow('Workflow cancelled');
+
+    // Compensators must NOT run — the saga finished successfully before cancel.
+    expect(compensatorCalls).toBe(0);
+
+    engine[Symbol.dispose]();
+  });
 });

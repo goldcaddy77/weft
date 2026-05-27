@@ -77,12 +77,14 @@ export async function terminateWorkflow(
 ): Promise<void> {
   internals.terminalizingWorkflows.add(workflowId);
   dropQueuedInlineWorkflowStart(internals, workflowId);
-  // Snapshot and remove handlers before cancelWorkflow so any concurrent cancel
-  // attempt sees an empty list and cannot cause duplicate handler invocations.
+  // Snapshot and remove handlers before strategy.cancelWorkflow so any concurrent
+  // cancel attempt sees an empty list and cannot cause duplicate invocations.
+  // We do NOT run the handlers yet — they must only fire if the state transition
+  // succeeds (i.e. the workflow was still running/pending). Running them first
+  // would violate the contract when the workflow is already terminal.
   const cancelHandlers = internals.cancelHandlersByWorkflow.get(workflowId) ?? [];
   internals.cancelHandlersByWorkflow.delete(workflowId);
   internals.strategy.cancelWorkflow(workflowId);
-  await runCancelHandlers(cancelHandlers, callbacks, workflowId);
 
   try {
     const attributeBytes = await internals.storage.get(KEYS.attribute(workflowId));
@@ -113,6 +115,9 @@ export async function terminateWorkflow(
     if (!terminationResult) {
       return;
     }
+    // State transition succeeded — the workflow was running/pending and is now
+    // terminal. Only now do we run teardown handlers.
+    await runCancelHandlers(cancelHandlers, callbacks, workflowId);
 
     const { previousState, updatedAt } = terminationResult;
     const elapsed = updatedAt - getWorkflowExecutionStartedAt(previousState);
