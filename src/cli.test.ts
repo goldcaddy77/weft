@@ -1209,11 +1209,20 @@ describe('CLI direct execution', () => {
   });
 
   it('validates the bundled examples through the CLI entrypoint and exits 0', async () => {
-    const childProcess = Bun.spawn(['bun', './src/cli-main.ts', 'validate', 'examples/**/*.ts'], {
-      cwd: process.cwd(),
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
+    const childProcess = Bun.spawn(
+      [
+        'bun',
+        './src/cli-main.ts',
+        'validate',
+        'examples/*.ts',
+        'examples/order-processing/src/**/*.ts',
+      ],
+      {
+        cwd: process.cwd(),
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    );
 
     const exitCode = await childProcess.exited;
     const stdout = await new Response(childProcess.stdout).text();
@@ -1223,6 +1232,7 @@ describe('CLI direct execution', () => {
     expect(stderr).toBe('');
     expect(stdout).toContain('examples/hello-world.ts');
     expect(stdout).toContain('examples/customer-profile.ts');
+    expect(stdout).toContain('examples/order-processing/src/workflows/order.ts');
     expect(stdout).toContain('No issues found.');
   });
 });
@@ -1509,7 +1519,7 @@ describe('executeValidate', () => {
 
   it('returns exitCode 0 for the bundled examples validation gate', async () => {
     const result = await executeValidate({
-      entryPaths: ['examples/**/*.ts'],
+      entryPaths: ['examples/*.ts', 'examples/order-processing/src/**/*.ts'],
       json: false,
     });
 
@@ -1523,7 +1533,10 @@ describe('executeValidate', () => {
 
   it('expands absolute glob patterns for bundled example validation', async () => {
     const result = await executeValidate({
-      entryPaths: [join(process.cwd(), 'examples/**/*.ts')],
+      entryPaths: [
+        join(process.cwd(), 'examples/*.ts'),
+        join(process.cwd(), 'examples/order-processing/src/**/*.ts'),
+      ],
       json: false,
     });
 
@@ -1534,7 +1547,7 @@ describe('executeValidate', () => {
 
   it('normalizes Windows-style glob separators for bundled example validation', async () => {
     const result = await executeValidate({
-      entryPaths: [String.raw`examples\**\*.ts`],
+      entryPaths: [String.raw`examples\*.ts`, String.raw`examples\order-processing\src\**\*.ts`],
       json: false,
     });
 
@@ -1545,7 +1558,11 @@ describe('executeValidate', () => {
 
   it('deduplicates validate entries when a glob and explicit path match the same file', async () => {
     const result = await executeValidate({
-      entryPaths: ['examples/**/*.ts', 'examples/hello-world.ts'],
+      entryPaths: [
+        'examples/*.ts',
+        'examples/order-processing/src/**/*.ts',
+        'examples/hello-world.ts',
+      ],
       json: true,
     });
 

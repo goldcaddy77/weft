@@ -16,7 +16,14 @@ coveragePathIgnorePatterns = ["scripts/check-coverage.ts"]
 # without this it runs thousands of stale tests from those worktrees. Ignoring
 # them here fixes every `bun test` invocation — the pre-commit hook, `--watch`,
 # and bare `bun test` runs from the project root alike.
-pathIgnorePatterns = ["**/tmp/worktrees/**", "**/.claude/worktrees/**"]
+# Standalone example packages have their own dependency graph and CI jobs. Keep
+# their package-local tests out of root discovery; each example can override
+# this from a nearer bunfig.toml when run from its own directory.
+pathIgnorePatterns = [
+  "**/tmp/worktrees/**",
+  "**/.claude/worktrees/**",
+  "examples/checkout/**",
+]
 # Runs once before any test file in the shared test process. Installs
 # globalThis.indexedDB (via fake-indexeddb) so the storage suites and their
 # fault harness reach the global without each test file importing the shim and
