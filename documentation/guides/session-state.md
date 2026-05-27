@@ -50,7 +50,7 @@ engine.register(
 
 ## Running Sticky Activities
 
-`run(fn, input?, options?)` executes a function as a generator-yielding durable operation that's automatically routed through sticky worker execution. This is the typical path for activities that need to be co-located with their session state---cache-heavy lookups, connection-aware calls, or anything where moving between workers would lose useful warm context.
+`run(fn, input?, options?)` executes a function as a generator-yielding durable operation that's automatically routed through sticky worker execution. This is the typical path for activities that need to be co-located with their session state—cache-heavy lookups, connection-aware calls, or anything where moving between workers would lose useful warm context.
 
 ```ts partial
 async function* example(ctx: Context) {

@@ -1,6 +1,6 @@
 # Testing
 
-Durable workflows are inherently hard to test. They span time---sleeps, retries, timeouts---and depend on external services. You don't want your test suite waiting 30 real seconds for a timer to fire or hitting a real payment API. Weft's testing module gives you deterministic time control, activity mocking, and crash-recovery simulation.
+Durable workflows are inherently hard to test. They span time—sleeps, retries, timeouts—and depend on external services. You don't want your test suite waiting 30 real seconds for a timer to fire or hitting a real payment API. Weft's testing module gives you deterministic time control, activity mocking, and crash-recovery simulation.
 
 ## TestEngine
 
@@ -25,7 +25,7 @@ const engine = new TestEngine({ startTime: 1700000000000 });
 
 ## Advancing time
 
-The killer feature. `advanceTime()` moves the virtual clock forward, firing any timers---both `TimeControl` timers and the engine's durable scheduler timers---that fall within the window.
+The killer feature. `advanceTime()` moves the virtual clock forward, firing any timers—both `TimeControl` timers and the engine's durable scheduler timers—that fall within the window.
 
 ```typescript partial
 // Workflow sleeps for 1 hour
@@ -38,14 +38,14 @@ engine.register(
 
 const handle = await engine.start('delayed', null);
 
-// Jump forward---no real waiting
+// Jump forward—no real waiting
 await engine.advanceTime('1 hour');
 
 const result = await handle.result();
 expect(result).toBe('done');
 ```
 
-`advanceTime()` accepts any `Duration`---a number in milliseconds or a string like `'5m'`, `'2 hours'`, `'30s'`. After advancing, it ticks the scheduler and allows microtasks to settle.
+`advanceTime()` accepts any `Duration`—a number in milliseconds or a string like `'5m'`, `'2 hours'`, `'30s'`. After advancing, it ticks the scheduler and allows microtasks to settle.
 
 Check the current virtual time with `engine.now`:
 
@@ -73,7 +73,7 @@ const mockCharge = engine.mock(charge, (order) => ({
 }));
 ```
 
-The mock is type-safe---the implementation must match the original function's signature.
+The mock is type-safe—the implementation must match the original function's signature.
 
 ## MockHandle
 
@@ -130,7 +130,7 @@ await Bun.sleep(10);
 const recovered = engine.recover();
 recovered.register(workflow({ name: 'resilient' }).execute(resilientWorkflow));
 
-// The workflow resumes from the checkpoint---step1 doesn't re-execute
+// The workflow resumes from the checkpoint—step1 doesn't re-execute
 ```
 
 The recovered engine has its own `TimeControl` initialized to the current engine's virtual time.

@@ -1,6 +1,6 @@
 # Observability
 
-Your workflows are running in production. Something is slow, but you can't tell whether it's the payment activity, the shipping call, or the sleep between them. You need traces, spans, and metrics---without instrumenting every workflow by hand. Weft's observability module is a pre-built [interceptor](./interceptors.md) that gives you all of this out of the box.
+Your workflows are running in production. Something is slow, but you can't tell whether it's the payment activity, the shipping call, or the sleep between them. You need traces, spans, and metrics—without instrumenting every workflow by hand. Weft's observability module is a pre-built [interceptor](./interceptors.md) that gives you all of this out of the box.
 
 ## Quick setup
 

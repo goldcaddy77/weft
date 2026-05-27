@@ -1,6 +1,6 @@
 # Development Setup
 
-Weft is a Bun-native project. Everything---from the runtime to the test runner to the build tool---is Bun. If you're coming from a Node.js background, most things will feel familiar, but a few conventions are different enough to be worth calling out up front.
+Weft is a Bun-native project. Everything—from the runtime to the test runner to the build tool—is Bun. If you're coming from a Node.js background, most things will feel familiar, but a few conventions are different enough to be worth calling out up front.
 
 ## Prerequisites
 
@@ -10,7 +10,7 @@ You need [Bun](https://bun.sh) installed. The minimum version is 1.3.13, but I'd
 curl -fsSL https://bun.sh/install | bash
 ```
 
-Verify with `bun --version`. That's the only prerequisite---no Docker, no separate database, no global CLI tools.
+Verify with `bun --version`. That's the only prerequisite—no Docker, no separate database, no global CLI tools.
 
 ## Getting started
 
@@ -48,7 +48,7 @@ bun ./dist/index.js
 
 ## Testing
 
-Bun's built-in test runner handles everything. Tests use `describe`, `it`, and `expect`---same ergonomics as Jest, no extra dependencies.
+Bun's built-in test runner handles everything. Tests use `describe`, `it`, and `expect`—same ergonomics as Jest, no extra dependencies.
 
 ```bash
 bun test                  # Run all tests
@@ -64,7 +64,7 @@ bun test --parallel       # Parallel execution across files
 
 ### Testing conventions
 
-Test files live next to the source they test, using the `.test.ts` suffix. A separate `tsconfig.test.json` provides relaxed TypeScript settings for test code. Oxlint rules are also relaxed for test files (`*.test.ts`, `*.spec.ts`, `test/**`, `__tests__/**`)---you can freely use `any`, non-null assertions, unused variables, and other patterns that would normally be flagged in production code.
+Test files live next to the source they test, using the `.test.ts` suffix. A separate `tsconfig.test.json` provides relaxed TypeScript settings for test code. Oxlint rules are also relaxed for test files (`*.test.ts`, `*.spec.ts`, `test/**`, `__tests__/**`)—you can freely use `any`, non-null assertions, unused variables, and other patterns that would normally be flagged in production code.
 
 ## Code quality
 
@@ -121,7 +121,7 @@ Three hooks are active:
 - **post-checkout** installs dependencies when `package.json` or `bun.lock` changed between branches and surfaces relevant config changes.
 - **post-merge** installs or cleans dependencies when they changed during the merge and shows merge stats.
 
-You don't need to configure any of this---`bun install` sets up Husky automatically via the `prepare` script.
+You don't need to configure any of this—`bun install` sets up Husky automatically via the `prepare` script.
 
 ## Import organization
 
@@ -158,7 +158,7 @@ A few things worth knowing about the tooling setup:
 
 - **bunfig.toml** targets Bun for builds with sourcemaps and minification enabled.
 - **TypeScript** uses Bun types. Node type libraries are not included by default.
-- **ESM + TypeScript** is the module format. Source files are TypeScript modules; the build output targets Bun. Use standard TS/ESM imports---no special runtime helpers needed.
+- **ESM + TypeScript** is the module format. Source files are TypeScript modules; the build output targets Bun. Use standard TS/ESM imports—no special runtime helpers needed.
 - **Environment variables** are validated through Zod schemas in `src/environment.ts`. The `environment` object is the single source of truth for configuration. If you need to add a new variable, add it to `.env.example` first, then update the schema.
 
 That covers the day-to-day workflow. If the tests pass, the linter is happy, and the types check out, you're good to open a pull request.

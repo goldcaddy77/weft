@@ -4,7 +4,7 @@ A workflow that runs forever is a workflow that consumes resources forever. Acti
 
 ## Setting an execution timeout
 
-Pass `executionTimeout` when starting a workflow. It accepts any `Duration`---a number in milliseconds or a human-readable string.
+Pass `executionTimeout` when starting a workflow. It accepts any `Duration`—a number in milliseconds or a human-readable string.
 
 ```typescript partial
 const handle = await engine.start('order', orderData, {
@@ -20,14 +20,14 @@ Inside a workflow, `ctx.executionTimeRemaining` returns the milliseconds left be
 
 ```typescript partial
 async function* orderWorkflow(ctx: Context, order: Order) {
-  const payment = yield* ctx.run(charge, order);
+  const payment = yield* ctx.run('charge', order);
 
   // Only run the slow path if we have time
   if (ctx.executionTimeRemaining > 60_000) {
-    yield* ctx.run(enrichOrderData, order);
+    yield* ctx.run('enrichOrderData', order);
   }
 
-  yield* ctx.run(ship, { order, payment });
+  yield* ctx.run('ship', { order, payment });
   return { payment, shipped: true };
 }
 ```
@@ -64,6 +64,6 @@ The `timeoutType` distinguishes between `'execution'` (total wall-clock cap) and
 
 ## Cleanup
 
-Deadline keys are deleted when a workflow reaches any terminal state---completed, failed, cancelled, or timed out. The engine deletes the deadline key as part of the terminal-state batch write.
+Deadline keys are deleted when a workflow reaches any terminal state—completed, failed, cancelled, or timed out. The engine deletes the deadline key as part of the terminal-state batch write.
 
 Activities that already accept `{ signal }` automatically respect workflow timeouts with no code changes. Review waits are also bounded by the workflow timeout. The `ctx.signal` property exposes a combined timeout-plus-cancellation signal, so everything downstream just works.

@@ -41,25 +41,31 @@ Each durable method is a generator. Inside a workflow, call them with `yield*`:
 
 ```ts partial
 async function* example(context: Context) {
-  const result = yield* context.run(myActivity, { first: 'arg1', second: 'arg2' });
+  const result = yield* context.run('myActivity', { first: 'arg1', second: 'arg2' });
 }
 ```
 
 ### `run()`
 
 ```ts partial
-*run<TResult>(
-  fn: (input: unknown) => Promise<TResult> | TResult,
-  input?: unknown,
-  options?: ActivityCallOptions
-): Generator<ContextOperationRequest, TResult, unknown>
+// Without per-call options:
+*run<TName extends keyof TActivities & string>(
+  name: TName,
+  ...rest: ActivityArgsFor<TActivities[TName]>
+): WorkflowOperation<ActivityResultFor<TActivities[TName]>>
+
+// With a trailing ActivityCallOptions:
+*run<TName extends keyof TActivities & string>(
+  name: TName,
+  ...rest: [...ActivityArgsFor<TActivities[TName]>, ActivityCallOptions]
+): WorkflowOperation<ActivityResultFor<TActivities[TName]>>
 ```
 
-Execute an activity function durably. The engine checkpoints before the call and records the result. On replay, cached results are returned without re-executing the activity.
+Execute a registered activity durably by name. The engine checkpoints before the call and records the result. On replay, cached results are returned without re-executing the activity. The `name` is the activity's registered name—the durable dispatch key Weft uses for local dispatch and for remote dispatch alike. When the workflow is typed through its `.activities({ ... })` registry, `TActivities` carries the declared names, so `name` autocompletes and the input and result types are inferred (the exported `ActivityArgsFor` and `ActivityResultFor` helpers let you spell those types out by hand). An optional `ActivityCallOptions` argument may follow the input to override retry, timeout, queue, or idempotency for a single call.
 
 | Parameter | Type                  | Description                            |
 | --------- | --------------------- | -------------------------------------- |
-| `fn`      | `Function`            | The activity function to execute       |
+| `name`    | `string`              | The registered activity name to run    |
 | `input`   | `unknown`             | Single input value passed to activity  |
 | `options` | `ActivityCallOptions` | Optional per-invocation activity rules |
 
@@ -67,11 +73,11 @@ Execute an activity function durably. The engine checkpoints before the call and
 
 ```ts partial
 async function* orderWorkflow(context: Context, order: Order) {
-  const receipt = yield* context.run(chargeCard, {
+  const receipt = yield* context.run('chargeCard', {
     cardToken: order.cardToken,
     total: order.total,
   });
-  yield* context.run(sendConfirmation, { email: order.email, receipt });
+  yield* context.run('sendConfirmation', { email: order.email, receipt });
   return receipt;
 }
 ```
@@ -142,7 +148,7 @@ Suspend the workflow until a named update is received. Similar to `waitForSignal
 ): Generator<ContextOperationRequest, unknown[], unknown>
 ```
 
-Run multiple durable operations in parallel. All operations must complete before the workflow continues. Rejection mirrors `Promise.all`---any branch fails, the whole operation fails. But timing is different: `ctx.all` waits for every sibling to settle before throwing the error. That delay is deliberate; it lets successful branches get persisted.
+Run multiple durable operations in parallel. All operations must complete before the workflow continues. Rejection mirrors `Promise.all`—any branch fails, the whole operation fails. But timing is different: `ctx.all` waits for every sibling to settle before throwing the error. That delay is deliberate; it lets successful branches get persisted.
 
 | Parameter    | Type          | Description                                                         |
 | ------------ | ------------- | ------------------------------------------------------------------- |
@@ -150,15 +156,15 @@ Run multiple durable operations in parallel. All operations must complete before
 
 **Returns:** An array of results in the same order as the input operations.
 
-**Failure semantics.** When any branch rejects, every fulfilled branch's value is written to the parent's in-memory cache entry before the error is thrown into the workflow generator. The entry becomes durable on the next checkpoint write (the workflow's next yield). If the workflow catches the rejection and yields again, that next yield persists the partial entry; a resumed run replays at the same step and reuses fulfilled slots without re-dispatch. If the workflow fails terminally without yielding again, the partial entry is **not** persisted---no resumed run can reuse it. This partial-preservation guarantee requires the default inline execution strategy; `workerExecution` cannot persist fulfilled branch slots after a sibling branch fails and reports that unsupported boundary explicitly.
+**Failure semantics.** When any branch rejects, every fulfilled branch's value is written to the parent's in-memory cache entry before the error is thrown into the workflow generator. The entry becomes durable on the next checkpoint write (the workflow's next yield). If the workflow catches the rejection and yields again, that next yield persists the partial entry; a resumed run replays at the same step and reuses fulfilled slots without re-dispatch. If the workflow fails terminally without yielding again, the partial entry is **not** persisted—no resumed run can reuse it. This partial-preservation guarantee requires the default inline execution strategy; `workerExecution` cannot persist fulfilled branch slots after a sibling branch fails and reports that unsupported boundary explicitly.
 
 See the [parallel execution guide](../guides/parallel-execution.md) for the full contract, including the deterministic-branch-order requirement and the explicit catch-and-yield boundary.
 
 ```ts partial
 async function* example(context: Context) {
   const [user, inventory] = yield* context.all([
-    context.run(fetchUser, userId),
-    context.run(checkInventory, sku),
+    context.run('fetchUser', userId),
+    context.run('checkInventory', sku),
   ]);
 }
 ```
@@ -179,13 +185,13 @@ Run multiple durable operations in parallel, returning the result of whichever c
 
 **Returns:** The result of the first operation to complete.
 
-**Loser results are abandoned.** Losers are aborted and their results discarded---Weft does not preserve them. Design branches to be idempotent or pair them with compensation, because the engine will not clean up after a loser.
+**Loser results are abandoned.** Losers are aborted and their results discarded—Weft does not preserve them. Design branches to be idempotent or pair them with compensation, because the engine will not clean up after a loser.
 
 ```ts partial
 async function* example(context: Context) {
   const result = yield* context.race([
-    context.run(fetchFromPrimary, key),
-    context.run(fetchFromFallback, key),
+    context.run('fetchFromPrimary', key),
+    context.run('fetchFromFallback', key),
   ]);
 }
 ```
@@ -221,13 +227,13 @@ async function* example(context: Context) {
 
 Run multiple named activity branches in parallel. Returns a record mapping each branch name to its result.
 
-| Parameter  | Type                                              | Description                                                         |
-| ---------- | ------------------------------------------------- | ------------------------------------------------------------------- |
-| `branches` | `Record<string, [Function] \| [Function, input]>` | Named branches, each a tuple of `[function]` or `[function, input]` |
+| Parameter  | Type                                              | Description                                                             |
+| ---------- | ------------------------------------------------- | ----------------------------------------------------------------------- |
+| `branches` | `Record<string, [Function] \| [Function, input]>` | Named branches, each a tuple of `[activityFn]` or `[activityFn, input]` |
 
 **Returns:** A record with the same keys, each holding the branch's result.
 
-**Failure semantics.** Same partial-persistence contract as `ctx.all`. Branch identity is the **ordered key list** (not just the set of keys)---adding, removing, or reordering keys between attempts throws `BranchTopologyChangedError` to surface the non-determinism instead of silently mismatching slots.
+**Failure semantics.** Same partial-persistence contract as `ctx.all`. Branch identity is the **ordered key list** (not just the set of keys)—adding, removing, or reordering keys between attempts throws `BranchTopologyChangedError` to surface the non-determinism instead of silently mismatching slots.
 
 ```ts partial
 async function* example(context: Context) {
@@ -341,7 +347,7 @@ async function* paymentWorkflow(ctx: WorkflowContext, payment: PaymentRequest) {
     return { status: 'rejected' };
   }
 
-  const charge = yield* ctx.run(chargeCard, payment);
+  const charge = yield* ctx.run('chargeCard', payment);
   return { status: 'charged', charge };
 }
 ```
@@ -381,7 +387,7 @@ async function* parentWorkflow(ctx: WorkflowContext, order: Order) {
     yield* ctx.startChild('send-notification', { email: order.email, receipt });
   } catch (error) {
     // Handle child failure gracefully
-    yield* ctx.run(logFailure, error);
+    yield* ctx.run('logFailure', error);
   }
 
   return { receipt, status: 'completed' };
@@ -486,7 +492,7 @@ engine.register(
     const typeCharges = ctx.state.workflow<number>('chargeCount', { initial: 0 });
     yield* typeCharges.increment();
 
-    const receipt = yield* ctx.run(chargeCard, order.token);
+    const receipt = yield* ctx.run('chargeCard', order.token);
     return { status: 'charged', receipt };
   }),
 );

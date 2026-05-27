@@ -106,11 +106,11 @@ Each `ctx.step()` call is a checkpoint boundary. `compileStepWorkflow(...)` comp
 
 ## How It Works
 
-The workflow is a **generator function**---notice the `function*` and the `yield*` keywords. If you haven't used generators much, here's the mental model: every `yield*` is a checkpoint boundary. The engine runs the generator until it hits a `yield*`, records the result of that operation, and saves the workflow's position to storage. If the process dies and restarts, the engine loads the last checkpoint and resumes from that exact point.
+The workflow is a **generator function**—notice the `function*` and the `yield*` keywords. If you haven't used generators much, here's the mental model: every `yield*` is a checkpoint boundary. The engine runs the generator until it hits a `yield*`, records the result of that operation, and saves the workflow's position to storage. If the process dies and restarts, the engine loads the last checkpoint and resumes from that exact point.
 
-There's no replay happening here. Weft doesn't re-execute your workflow from the beginning and try to match up results. It literally picks up where it left off. That's why you don't need to worry about determinism---your workflow code can use `Date.now()`, `Math.random()`, or anything else. The only rule is that side effects go inside activities (the functions you pass to `ctx.run()`).
+There's no replay happening here. Weft doesn't re-execute your workflow from the beginning and try to match up results. It literally picks up where it left off. That's why you don't need to worry about determinism—your workflow code can use `Date.now()`, `Math.random()`, or anything else. The only rule is that side effects go inside activities (the registered functions behind the names you pass to `ctx.run()`).
 
-`ctx.run(activity, input)` is how you run an **activity** through its durable dispatch boundary. You can pass either the activity definition (as the example does) or the activity's name string. Either way, remote workers receive an activity name plus serialized input — not your in-process closure — which is why activities have to be registered with the engine before a workflow can dispatch to them.
+`ctx.run('name', input)` is how you run an **activity** through its durable dispatch boundary. You pass the activity's registered name (the example does, and your editor autocompletes it from the `.activities({ ... })` block) plus a serializable input. Remote workers receive that name and the serialized input—not your in-process closure—which is why activities have to be registered with the engine before a workflow can dispatch to them.
 
 > [!NOTE]
 > **Checkpoint:** a serialized snapshot of the workflow's current position and local variables. Each durable operation creates a checkpoint boundary, so recovery resumes from the latest saved boundary instead of starting over.
@@ -128,9 +128,9 @@ Durable sleeps are one of the things that make this interesting. A normal `setTi
 ```typescript partial
 engine.register(
   workflow({ name: 'onboarding' }).execute(async function* (ctx, input: { name: string }) {
-    const greeting = yield* ctx.run(helloWorldFormatGreeting, { name: input.name });
+    const greeting = yield* ctx.run('formatGreeting', { name: input.name });
     yield* ctx.sleep('1h');
-    yield* ctx.run(helloWorldSendNotification, { message: `${input.name} completed onboarding` });
+    yield* ctx.run('sendNotification', { message: `${input.name} completed onboarding` });
     return { greeting, onboarded: true };
   }),
 );
@@ -140,7 +140,7 @@ engine.register(
 
 ## Waiting for Signals
 
-Workflows often need to wait for something external---a user clicking "approve," a webhook arriving, a payment confirmation. Signals handle this.
+Workflows often need to wait for something external—a user clicking "approve," a webhook arriving, a payment confirmation. Signals handle this.
 
 ```typescript partial
 const approvalSignal = signal<{ approved: boolean }>('approval');
@@ -162,7 +162,7 @@ console.log(result);
 // { orderId: "order-1", approved: true }
 ```
 
-`yield* ctx.waitForSignal('approval')` pauses the workflow until someone sends a signal with that name. The workflow can wait for hours, days, or weeks---the checkpoint is in storage, costing nothing while it waits. When the signal arrives, the engine loads the checkpoint and resumes.
+`yield* ctx.waitForSignal('approval')` pauses the workflow until someone sends a signal with that name. The workflow can wait for hours, days, or weeks—the checkpoint is in storage, costing nothing while it waits. When the signal arrives, the engine loads the checkpoint and resumes.
 
 A **signal** is fire-and-forget from the sender's perspective. If the caller needs a synchronous answer back from the workflow, use an update instead; if the caller only needs to inspect state, use a query.
 
@@ -186,7 +186,7 @@ engine.register(triple);
 
 engine.register(
   workflow({ name: 'parallel' }).execute(async function* (ctx, input: number) {
-    const [doubled, tripled] = yield* ctx.all([ctx.run(double, input), ctx.run(triple, input)]);
+    const [doubled, tripled] = yield* ctx.all([ctx.run('double', input), ctx.run('triple', input)]);
     return { doubled, tripled };
   }),
 );

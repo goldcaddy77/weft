@@ -1,6 +1,6 @@
 # Web Worker Execution Model
 
-Weft uses the standard `Worker` API---not `node:worker_threads`, but the _web standard_ `Worker`---to isolate workflow and activity execution from the main thread when you configure Worker execution.
+Weft uses the standard `Worker` API—not `node:worker_threads`, but the _web standard_ `Worker`—to isolate workflow and activity execution from the main thread when you configure Worker execution.
 
 The main thread runs the HTTP server, the API router, and the scheduler. With `workflowExecutionMode: 'worker'`, workflow generator turns run in separate Web Workers with their own event loop, memory, and failure boundary. Inline execution remains available for trusted deployments.
 
@@ -31,17 +31,17 @@ The main thread runs the HTTP server, the API router, and the scheduler. With `w
 
 Four reasons, in order of importance.
 
-**Fault isolation.** If a workflow throws an unhandled error, crashes its worker, or wedges a Worker turn past the configured wall-clock budget, the failure stays contained to that Worker---not the HTTP server. The main thread marks every workflow whose generator state lived in that Worker as failed, discards the Worker so the pool never reuses it, and can acquire a replacement Worker for later workflows.
+**Fault isolation.** If a workflow throws an unhandled error, crashes its worker, or wedges a Worker turn past the configured wall-clock budget, the failure stays contained to that Worker—not the HTTP server. The main thread marks every workflow whose generator state lived in that Worker as failed, discards the Worker so the pool never reuses it, and can acquire a replacement Worker for later workflows.
 
 **True parallelism.** JavaScript is single-threaded per event loop. Web Workers give you actual OS threads. A workflow computing something CPU-heavy doesn't block other workflows or the API server.
 
-**Portability.** The `Worker` API is identical in Bun and in browsers. The same isolation model works in both environments with zero code changes. This is the core "web native" win---you're not locked into a server-only execution model.
+**Portability.** The `Worker` API is identical in Bun and in browsers. The same isolation model works in both environments with zero code changes. This is the core "web native" win—you're not locked into a server-only execution model.
 
 **Memory control.** Bun's `smol: true` option for Workers reduces the memory footprint per worker, which is useful when running many concurrent workflows on a single machine.
 
 ## The boundary is `ExecutionStrategy`, not the Worker itself
 
-Workflows are user-supplied code, so "where does the workflow generator step?" is a trust decision. Weft makes that decision in exactly one place: `ExecutionStrategy` (`src/core/execution-strategy.ts`). It is the untrusted-workflow isolation boundary, and the Worker is _today's_ transport for it---not the boundary itself. `InlineExecutionStrategy` steps the generator in the engine's own isolate (trusted workflows only); `WorkerExecutionStrategy` steps it inside a Web Worker, talking to the engine through bounded `postMessage` turns, so untrusted code never runs in the engine isolate. Because the interface returns `void` and couples only through serializable messages, the same boundary could later host an out-of-process or remote workflow worker without changing the engine.
+Workflows are user-supplied code, so "where does the workflow generator step?" is a trust decision. Weft makes that decision in exactly one place: `ExecutionStrategy` (`src/core/execution-strategy.ts`). It is the untrusted-workflow isolation boundary, and the Worker is _today's_ transport for it—not the boundary itself. `InlineExecutionStrategy` steps the generator in the engine's own isolate (trusted workflows only); `WorkerExecutionStrategy` steps it inside a Web Worker, talking to the engine through bounded `postMessage` turns, so untrusted code never runs in the engine isolate. Because the interface returns `void` and couples only through serializable messages, the same boundary could later host an out-of-process or remote workflow worker without changing the engine.
 
 That future transport is _not_ the RemoteWorker WebSocket protocol ([remote-worker-protocol.md](../reference/remote-worker-protocol.md)): that protocol is one-shot activity dispatch and is unsuitable for the stateful checkpoint/resume cycle a workflow needs. The security contract is engine-isolate protection, Worker-pool containment, bounded Weft-owned protocol messages, and deterministic replay from Worker checkpoints that carry replay signatures.
 
@@ -85,7 +85,7 @@ worker.postMessage(
 );
 ```
 
-Note the transfer list on that `postMessage` call. When you pass an `ArrayBuffer` in the transfer list, ownership moves to the receiving thread---no copy happens. For a 10KB checkpoint, this is O(1) instead of O(n). At scale, those zero-copy transfers add up fast.
+Note the transfer list on that `postMessage` call. When you pass an `ArrayBuffer` in the transfer list, ownership moves to the receiving thread—no copy happens. For a 10KB checkpoint, this is O(1) instead of O(n). At scale, those zero-copy transfers add up fast.
 
 The worker side is equally straightforward.
 
@@ -107,7 +107,7 @@ self.onmessage = async (event) => {
 };
 ```
 
-The main thread listens for results and dispatches accordingly---checkpoints get persisted, completions get recorded, failures get logged. In hardened Worker mode, the host also requires the expected protocol version and turn id before a message can settle the current Worker turn, and it repeats message-size checks before forwarding the message to the engine.
+The main thread listens for results and dispatches accordingly—checkpoints get persisted, completions get recorded, failures get logged. In hardened Worker mode, the host also requires the expected protocol version and turn id before a message can settle the current Worker turn, and it repeats message-size checks before forwarding the message to the engine.
 
 ```typescript partial
 worker.onmessage = (event) => {
@@ -130,7 +130,7 @@ worker.onmessage = (event) => {
 
 ## BroadcastChannel for coordination
 
-**`BroadcastChannel`** is a web standard for pub/sub messaging between same-origin contexts---windows, tabs, workers. In Bun, it works across Workers. You create a named channel, and any Worker subscribed to that channel name receives messages posted to it.
+**`BroadcastChannel`** is a web standard for pub/sub messaging between same-origin contexts—windows, tabs, workers. In Bun, it works across Workers. You create a named channel, and any Worker subscribed to that channel name receives messages posted to it.
 
 Weft uses `BroadcastChannel` for engine-wide coordination without direct Worker-to-Worker references.
 
@@ -153,11 +153,11 @@ This replaces what would otherwise be complex direct Worker references or a shar
 
 ## Memory management with WeakRef and friends
 
-Long-running processes like workflow engines are prime targets for memory leaks. Weft uses three primitives---`WeakRef`, `WeakMap`, and `FinalizationRegistry`---to eliminate entire categories of them.
+Long-running processes like workflow engines are prime targets for memory leaks. Weft uses three primitives—`WeakRef`, `WeakMap`, and `FinalizationRegistry`—to eliminate entire categories of them.
 
 ### Checkpoint cache
 
-When a workflow is actively being advanced, we cache its deserialized checkpoint in memory to avoid repeated deserialization. But we don't want to hold every checkpoint forever---that's a memory leak for an engine running thousands of workflows.
+When a workflow is actively being advanced, we cache its deserialized checkpoint in memory to avoid repeated deserialization. But we don't want to hold every checkpoint forever—that's a memory leak for an engine running thousands of workflows.
 
 ```typescript partial
 class CheckpointCache {
@@ -195,7 +195,7 @@ A regular `Map<string, GeneratorState>` would hold strong references to every ch
 
 ### Activity registry
 
-Activity functions are registered by reference, with metadata (name, retry policy, queue) attached. A `WeakMap` ties metadata to the function object itself. If the function is garbage collected---say, a dynamically registered activity in a hot-reload scenario---the metadata is automatically cleaned up.
+Activity functions are registered by reference, with metadata (name, retry policy, queue) attached. A `WeakMap` ties metadata to the function object itself. If the function is garbage collected—say, a dynamically registered activity in a hot-reload scenario—the metadata is automatically cleaned up.
 
 ```typescript partial
 class ActivityRegistry {

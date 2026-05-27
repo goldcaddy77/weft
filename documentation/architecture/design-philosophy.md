@@ -26,7 +26,7 @@ Platform primitives beat library abstractions for three reasons.
 
 First, _they're already debugged_. `AbortController` has been battle-tested across every major browser engine and Bun's runtime. Your hand-rolled cancellation token has been tested by your team. The error surface is incomparable.
 
-Second, _they compose with everything else_. When Weft uses `AbortSignal` for cancellation, it automatically works with `fetch`, with `Bun.serve`, with any library that accepts an `AbortSignal`. A custom cancellation type would need adapters for each of those---and the adapters would be the source of bugs.
+Second, _they compose with everything else_. When Weft uses `AbortSignal` for cancellation, it automatically works with `fetch`, with `Bun.serve`, with any library that accepts an `AbortSignal`. A custom cancellation type would need adapters for each of those—and the adapters would be the source of bugs.
 
 Third, _they're optimized at the engine level_. `EventTarget` in Bun is a native C++ implementation. `structuredClone` uses the same fast path as `postMessage`. `WeakRef` integrates directly with the garbage collector. No userland code can match those integration points.
 

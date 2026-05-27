@@ -6,19 +6,19 @@ The question was: what database should a durable execution engine use by default
 
 Weft uses SQLite via `bun:sqlite` as its default storage backend. Not Postgres. Not MySQL. Not Redis. SQLite.
 
-The reasoning is straightforward. `bun:sqlite` ships _inside_ the Bun runtime. It compiles into single binaries with `bun build --compile`---zero configuration, zero native addons, zero external processes. And it gives us SQL, which is invaluable for the dashboard, ad-hoc debugging queries, and the list/filter API.
+The reasoning is straightforward. `bun:sqlite` ships _inside_ the Bun runtime. It compiles into single binaries with `bun build --compile`—zero configuration, zero native addons, zero external processes. And it gives us SQL, which is invaluable for the dashboard, ad-hoc debugging queries, and the list/filter API.
 
 For development, this means `bun add weft` and you're running. No Docker Compose, no connection strings, no database server to manage. For small-to-medium production deployments, SQLite in WAL mode handles the load without operational complexity.
 
 ## LMDB as the high-performance option
 
-For teams running Weft at high scale---north of 30,000 workflows per second---LMDB is available as an alternative. LMDB's memory-mapped, zero-copy reads are unbeatable for hot-path operations like task claiming.
+For teams running Weft at high scale—north of 30,000 workflows per second—LMDB is available as an alternative. LMDB's memory-mapped, zero-copy reads are unbeatable for hot-path operations like task claiming.
 
 Here's how the options compare.
 
 |                          | SQLite (bun:sqlite)        | LMDB (lmdb-js)                           |
 | ------------------------ | -------------------------- | ---------------------------------------- |
-| **Built into Bun**       | Yes                        | No---npm dependency with native addon    |
+| **Built into Bun**       | Yes                        | No—npm dependency with native addon      |
 | **Compiles into binary** | Automatically              | Needs native addon bundled               |
 | **Read performance**     | ~100K reads/sec            | ~1M+ reads/sec (memory-mapped zero-copy) |
 | **Write performance**    | ~50K writes/sec (WAL mode) | ~100K+ writes/sec (batched async)        |
@@ -32,7 +32,7 @@ The tradeoff is clear: LMDB is faster for pure key-value workloads, but SQLite g
 
 ## Why not Postgres or MySQL
 
-Embedded beats networked for this workload. A Temporal-style architecture requires a separate database server, which means network round-trips on every storage operation. Weft's SQLite reads complete in ~10 microseconds (in-process). A networked database read takes ~1 millisecond---100x slower. That difference compounds across every checkpoint write, every task claim, every timer check.
+Embedded beats networked for this workload. A Temporal-style architecture requires a separate database server, which means network round-trips on every storage operation. Weft's SQLite reads complete in ~10 microseconds (in-process). A networked database read takes ~1 millisecond—100x slower. That difference compounds across every checkpoint write, every task claim, every timer check.
 
 The durable execution hot path is _many small reads and writes_, not complex relational queries. An embedded database eliminates the network entirely.
 
@@ -56,7 +56,7 @@ interface Storage {
 > [!NOTE]
 > The full interface in `src/storage/interface.ts` extends `Disposable` and includes additional optional methods: `conditionalBatch`, `has`, `deletePrefix`, `keys`, `count`, and `scoped`.
 
-The `scan` method returns entries in key order, which is the foundation of the entire key layout design. The `batch` method provides atomic multi-key writes---critical for operations like "update the checkpoint and schedule the next operation" in a single transaction.
+The `scan` method returns entries in key order, which is the foundation of the entire key layout design. The `batch` method provides atomic multi-key writes—critical for operations like "update the checkpoint and schedule the next operation" in a single transaction.
 
 ## Key layout conventions
 
@@ -75,7 +75,7 @@ upd:{workflow_id}:{update_id}                  → pending update request
 upr:{update_id}                                → update response
 ```
 
-This layout means `scan("op:default:")` returns all operations on the "default" queue in scheduled order. The core hot path---claiming the next task from a queue---is a single range scan, whether that's implemented as a SQLite `SELECT ... WHERE key >= ? AND key < ?` or an LMDB `cursor.getRange()`.
+This layout means `scan("op:default:")` returns all operations on the "default" queue in scheduled order. The core hot path—claiming the next task from a queue—is a single range scan, whether that's implemented as a SQLite `SELECT ... WHERE key >= ? AND key < ?` or an LMDB `cursor.getRange()`.
 
 ## SQLite implementation details
 
@@ -103,7 +103,7 @@ PRAGMA temp_store = MEMORY;      -- Keep temporary tables in memory
 PRAGMA wal_autocheckpoint = 10000;
 ```
 
-WAL mode is essential. It allows unlimited concurrent readers while writes happen---the workflow engine reads checkpoints constantly while periodically writing new ones.
+WAL mode is essential. It allows unlimited concurrent readers while writes happen—the workflow engine reads checkpoints constantly while periodically writing new ones.
 
 ## IndexedDB for browsers
 

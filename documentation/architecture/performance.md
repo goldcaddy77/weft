@@ -30,15 +30,15 @@ Every platform primitive Weft uses was chosen partly for correctness and partly 
 | Primitive                       | Performance Impact                                                                                           |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `Transferable` in `postMessage` | Zero-copy checkpoint transfer between threads. A 10KB checkpoint moves in O(1) instead of O(n) copy.         |
-| `WeakRef` checkpoint cache      | GC-friendly caching---memory usage stays bounded under load instead of growing linearly with workflow count. |
+| `WeakRef` checkpoint cache      | GC-friendly caching—memory usage stays bounded under load instead of growing linearly with workflow count.   |
 | `FinalizationRegistry`          | Automatic cleanup of dead cache entries. No periodic sweep needed, no timer overhead.                        |
 | `Symbol.dispose` / `using`      | Deterministic resource release. Prevents file handle leaks, dangling database connections, orphaned Workers. |
 | `AbortSignal.any()`             | Single signal for compound cancellation. No manual bookkeeping of multiple abort sources.                    |
 | `structuredClone` with transfer | Zero-copy deep clone when transferring data to Workers.                                                      |
 | `Promise.withResolvers()`       | Avoids closure allocation for deferred promises. Marginal per-call, significant at 50K+ workflows/sec.       |
-| `EventTarget` over EventEmitter | Native C++ implementation in Bun---lower overhead than userland EventEmitter for dispatch.                   |
+| `EventTarget` over EventEmitter | Native C++ implementation in Bun—lower overhead than userland EventEmitter for dispatch.                     |
 | `#private` fields               | V8/JSC can optimize access to private fields more aggressively than string-keyed properties.                 |
-| `BroadcastChannel`              | Kernel-level IPC between Workers---faster than manual postMessage routing through the main thread.           |
+| `BroadcastChannel`              | Kernel-level IPC between Workers—faster than manual postMessage routing through the main thread.             |
 | `WITHOUT ROWID` tables          | SQLite stores data directly in the B-tree for KV workloads. Eliminates rowid lookup indirection.             |
 | Prepared statements             | SQL compilation happens once, execution happens millions of times. Critical for the task-claim hot path.     |
 
@@ -60,4 +60,4 @@ These are the benchmarks Weft is built to hit.
 - **100x faster on workflow recovery** (O(1) versus O(n) replay)
 - **5x lower memory per workflow** (~2KB versus ~50KB+)
 
-The recovery target is the headline. A Temporal workflow with 10,000 events in its history takes proportionally longer to recover---replay must re-execute the entire history. A Weft workflow with 10,000 completed activities recovers in the same time as one with 10. One checkpoint read, one resume. Done.
+The recovery target is the headline. A Temporal workflow with 10,000 events in its history takes proportionally longer to recover—replay must re-execute the entire history. A Weft workflow with 10,000 completed activities recovers in the same time as one with 10. One checkpoint read, one resume. Done.

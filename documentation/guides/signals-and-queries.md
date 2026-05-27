@@ -4,7 +4,7 @@ Sometimes a workflow needs to wait for something that is not an activity result 
 
 ## Waiting for a signal
 
-Inside a workflow, `yield* ctx.waitForSignal(handle)` pauses execution until a signal with that name arrives. The workflow is checkpointed at the pause point---it costs nothing to wait, even for days.
+Inside a workflow, `yield* ctx.waitForSignal(handle)` pauses execution until a signal with that name arrives. The workflow is checkpointed at the pause point—it costs nothing to wait, even for days.
 
 ```typescript partial
 const approvalSignal = signal<{ approved: boolean }>('approval');
@@ -15,9 +15,9 @@ engine.register(
     const approval = yield* ctx.waitForSignal(approvalSignal);
 
     if (approval.approved) {
-      yield* ctx.run(fulfillOrder, { orderId: input.orderId });
+      yield* ctx.run('fulfillOrder', { orderId: input.orderId });
     } else {
-      yield* ctx.run(cancelOrder, { orderId: input.orderId });
+      yield* ctx.run('cancelOrder', { orderId: input.orderId });
     }
 
     return { orderId: input.orderId, approved: approval.approved };
@@ -55,7 +55,7 @@ Signals are persisted to [storage](storage.md) when they are sent. This means:
 
 - If a signal arrives _before_ the workflow reaches its `waitForSignal` call, it is buffered in storage and delivered immediately when the workflow gets there.
 - If the process crashes after a signal is sent but before it is consumed, the signal survives the restart and is delivered on recovery.
-- Signals are fire-and-forget from the sender's perspective---`engine.signal()` resolves as soon as the signal is persisted, without waiting for the workflow to consume it.
+- Signals are fire-and-forget from the sender's perspective—`engine.signal()` resolves as soon as the signal is persisted, without waiting for the workflow to consume it.
 
 This durability guarantee is what makes signals safe for human-in-the-loop workflows. You do not need to worry about race conditions between signal delivery and workflow execution.
 
@@ -80,7 +80,7 @@ engine.register(
     const finance = yield* ctx.waitForSignal(financeApproval);
     if (!finance.approved) return { orderId: input.orderId, status: 'rejected-by-finance' };
 
-    yield* ctx.run(fulfillOrder, { orderId: input.orderId });
+    yield* ctx.run('fulfillOrder', { orderId: input.orderId });
     return { orderId: input.orderId, status: 'approved' };
   }),
 );
@@ -113,4 +113,4 @@ Each item is a `WorkflowSummary` with the workflow's `id`, `type`, `status`, `ve
 
 For richer state inspection, workflows can set search attributes via `ctx.setAttribute()` and `ctx.setAttributes()`, which are indexed and queryable. See the [workflows guide](workflows.md) for details on search attributes.
 
-Signals turn your workflows into interactive, event-driven processes. Combined with [durable timers](durable-timers.md), you can model arbitrarily complex human-in-the-loop processes---approval chains, escalation deadlines, SLA monitoring---all within a single workflow function.
+Signals turn your workflows into interactive, event-driven processes. Combined with [durable timers](durable-timers.md), you can model arbitrarily complex human-in-the-loop processes—approval chains, escalation deadlines, SLA monitoring—all within a single workflow function.

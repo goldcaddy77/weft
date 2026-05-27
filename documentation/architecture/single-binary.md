@@ -50,4 +50,4 @@ bun build --compile src/my-app.ts --outfile my-app
 # my-app includes Weft engine + your workflow code in one binary
 ```
 
-The third mode is the interesting one for production. Your entire application---server, engine, workflows, activities, dashboard---compiles into a single file that you `scp` to a server and run. No container orchestration, no dependency management, no "works on my machine."
+The third mode is the interesting one for production. Your entire application—server, engine, workflows, activities, dashboard—compiles into a single file that you `scp` to a server and run. No container orchestration, no dependency management, no "works on my machine."

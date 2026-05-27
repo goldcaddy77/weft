@@ -1,8 +1,8 @@
 # Web Standards as the Foundation
 
-Weft is built entirely on web standards. Not as a marketing claim---as a literal architectural constraint. Every layer of the engine maps to a standard that exists in browsers, in Bun, and often in Deno and Cloudflare Workers too.
+Weft is built entirely on web standards. Not as a marketing claim—as a literal architectural constraint. Every layer of the engine maps to a standard that exists in browsers, in Bun, and often in Deno and Cloudflare Workers too.
 
-The payoff is portability. Any code that only touches the engine layer---generators, `structuredClone`, `AbortController`, UUIDs---runs identically everywhere. Platform-specific code is confined to the storage and server layers, where it belongs.
+The payoff is portability. Any code that only touches the engine layer—generators, `structuredClone`, `AbortController`, UUIDs—runs identically everywhere. Platform-specific code is confined to the storage and server layers, where it belongs.
 
 ## The stack
 
@@ -29,7 +29,7 @@ Here's how the layers break down.
 └─────────────────────────────────────────────────────────────┘
 ```
 
-The engine row is the key. Everything there is a web standard that works in any JavaScript runtime. The server and browser rows are where platform-specific implementations live---but they implement the same interfaces.
+The engine row is the key. Everything there is a web standard that works in any JavaScript runtime. The server and browser rows are where platform-specific implementations live—but they implement the same interfaces.
 
 The wire protocol uses JSON over HTTP, WebSocket, stdio, and [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) transports. MessagePack is the default codec for checkpoint storage, not an alternative HTTP body format.
 
@@ -39,16 +39,16 @@ Every need in the engine maps to a specific web standard, with optional Bun-spec
 
 | Need                    | Web Standard                                 | Bun Enhancement                                |
 | ----------------------- | -------------------------------------------- | ---------------------------------------------- |
-| IDs                     | `crypto.randomUUID()`                        | ---                                            |
+| IDs                     | `crypto.randomUUID()`                        | —                                              |
 | Serialization           | `structuredClone()`                          | Fast path for `postMessage`                    |
-| Cancellation            | `AbortController` / `AbortSignal`            | ---                                            |
+| Cancellation            | `AbortController` / `AbortSignal`            | —                                              |
 | Timers                  | `setTimeout` (non-durable)                   | Stored as operations in the database (durable) |
 | Parallelism             | `Worker` (Web Workers)                       | OS threads with shared I/O                     |
 | Inter-thread messaging  | `postMessage` / `MessageChannel`             | Transferable optimizations                     |
 | Pub/sub between threads | `BroadcastChannel`                           | Cross-worker event dispatch                    |
 | HTTP server             | `fetch` event handler                        | `Bun.serve()` with native performance          |
-| Streaming               | `ReadableStream` / `WritableStream`          | ---                                            |
-| Binary encoding         | `TextEncoder` / `TextDecoder`, `ArrayBuffer` | ---                                            |
+| Streaming               | `ReadableStream` / `WritableStream`          | —                                              |
+| Binary encoding         | `TextEncoder` / `TextDecoder`, `ArrayBuffer` | —                                              |
 
 A few of these deserve explanation.
 

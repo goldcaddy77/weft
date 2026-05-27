@@ -334,9 +334,9 @@ async function sendAlert(input: { symbol: string; price: number }): Promise<void
 
 // Workflow
 async function* priceAlertWorkflow(context, symbol: string) {
-  const price = yield* context.run(fetchPrice, symbol);
+  const price = yield* context.run('fetchPrice', symbol);
   if (price > 100) {
-    yield* context.run(sendAlert, { symbol, price });
+    yield* context.run('sendAlert', { symbol, price });
   }
   yield* context.sleep('1h');
   return price;
