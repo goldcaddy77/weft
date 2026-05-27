@@ -135,7 +135,7 @@ const { charge, ship } = proxyActivities<typeof activities>({
 });
 const result = await charge(order); // "Go to definition" → proxy type, not implementation
 
-// Weft: zero ceremony — reference the activity by its registered name
+// Weft: zero ceremony—reference the activity by its registered name
 const result = yield * ctx.run('charge', order); // autocompletes from the registered activities
 ```
 
@@ -163,7 +163,7 @@ There is no `continueAsNew`, no history limit, no manual state serialization. A 
 
 **The Temporal problem.** In the TypeScript SDK, you cannot call activity functions directly. You must create proxy objects via `proxyActivities<T>()` which generate type stubs that know how to schedule activities. This exists because the sandbox cannot import activity code. It creates confusion about what is a real function call versus a scheduled remote operation. "Go to definition" navigates to the proxy type, not the actual implementation.
 
-**The Weft answer.** `yield* ctx.run('activityName', input)`. You name the activity—the same name it was registered under—and pass one serializable input value. There is no proxy object to construct and no generated type stub: the name _is_ the durable dispatch key, the one thing that travels to a remote worker, and your editor autocompletes it from the activities you registered. The `yield*` makes the durable boundary explicit—no proxies, no codegen, no magic.
+**The Weft answer.** `yield* ctx.run('activityName', input)`. You name the activity—the same name it was registered under—and pass one serializable input value. There is no proxy object to construct and no generated type stub: the name is the durable dispatch key, what a remote worker receives alongside the serialized input to pick the right activity. When the workflow is typed through its `.activities({ ... })` registry, your editor autocompletes that name and infers the input and result types. The `yield*` makes the durable boundary explicit—no proxies, no codegen, no magic.
 
 Activities can declare their own operational characteristics with a colocated configuration pattern.
 
@@ -186,7 +186,7 @@ export const charge = activity({
 });
 
 async function* example(ctx: Context) {
-  // In the workflow — configuration travels with the activity:
+  // In the workflow—configuration travels with the activity:
   const payment = yield* ctx.run('charge', order);
   // But you CAN override per-invocation:
   const payment = yield* ctx.run('charge', order, { timeout: '60s' });
@@ -219,4 +219,4 @@ A workflow that processed 1,000 large API responses but only keeps the final sum
 
 All ten of these problems trace back to the same root cause: replay-based recovery. Temporal replays your workflow code to reconstruct state, which requires determinism, which requires a sandbox, which requires Webpack bundling, which breaks your tooling, which forces proxy indirection, which loses type safety. Each constraint cascades into the next.
 
-Weft's checkpoint-based architecture cuts the chain at the root. No replay means no determinism requirement. No determinism requirement means no sandbox. No sandbox means no Webpack. No Webpack means no proxy indirection. No proxy indirection means activities are dispatched by name with full type safety—no generated stubs to keep in sync. One architectural decision, ten problems eliminated.
+Weft's checkpoint-based architecture cuts the chain at the root. No replay means no determinism requirement. No determinism requirement means no sandbox. No sandbox means no Webpack. No Webpack means no proxy indirection. No proxy indirection means activities are dispatched by registered name, with names, inputs, and results inferred from a typed activity registry—no generated stubs to keep in sync. One architectural decision, ten problems eliminated.

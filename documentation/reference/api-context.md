@@ -50,12 +50,11 @@ async function* example(context: Context) {
 ```ts partial
 *run<TName extends keyof TActivities & string>(
   name: TName,
-  input?: ActivityInputFor<TName>,
-  options?: ActivityCallOptions
-): Generator<ContextOperationRequest, ActivityResultFor<TName>, unknown>
+  ...rest: ActivityArgsFor<TActivities[TName]>
+): WorkflowOperation<ActivityResultFor<TActivities[TName]>>
 ```
 
-Execute a registered activity durably by name. The engine checkpoints before the call and records the result. On replay, cached results are returned without re-executing the activity. The `name` is the activity's registered name—the durable dispatch key that also travels to remote workers—and it autocompletes from the activities you declared, so the input and result types are inferred for you.
+Execute a registered activity durably by name. The engine checkpoints before the call and records the result. On replay, cached results are returned without re-executing the activity. The `name` is the activity's registered name—the durable dispatch key Weft uses for local dispatch and for remote dispatch alike. When the workflow is typed through its `.activities({ ... })` registry, `TActivities` carries the declared names, so `name` autocompletes and the input and result types are inferred (the exported `ActivityArgsFor` and `ActivityResultFor` helpers let you spell those types out by hand). An optional `ActivityCallOptions` argument may follow the input to override retry, timeout, queue, or idempotency for a single call.
 
 | Parameter | Type                  | Description                            |
 | --------- | --------------------- | -------------------------------------- |

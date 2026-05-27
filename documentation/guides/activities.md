@@ -4,7 +4,7 @@ Your [workflow](workflows.md) is the orchestrator. It decides _what_ happens and
 
 ## Calling an activity
 
-You invoke an activity with `yield* ctx.run('activityName', input)`. The first argument is the activity's registered name, and your editor autocompletes it from the names you declared. The durable operation is keyed by that name: in remote-worker mode, the worker receives the name and a serialized input payload, and your in-process closure never travels over the WebSocket. Naming the activity—rather than passing a function reference—keeps local and remote dispatch identical, because the name is the only thing that crosses the boundary either way.
+You invoke an activity with `yield* ctx.run('activityName', input)`. The first argument is the activity's registered name. The durable operation is keyed by that name: in remote-worker mode, the worker receives the name and a serialized input payload, and your in-process closure never travels over the WebSocket. `ctx.run` also accepts the activity function itself, but this guide uses the name string throughout—it is the form remote workers actually dispatch on, so local and remote behavior stay identical. When you build the workflow with a typed `.activities({ ... })` block (see below), your editor autocompletes the name and infers its input and result types.
 
 ```typescript partial
 const greet = activity({
