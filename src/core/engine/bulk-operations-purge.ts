@@ -15,6 +15,7 @@ import type {
   WorkflowState,
 } from '../types.ts';
 import { buildWorkflowTagIndexOperations, normalizeWorkflowTags } from '../workflow-tags.ts';
+import { forgetCommittedCheckpointBytes } from './checkpoint-commit-snapshots.ts';
 import type { EngineInternals } from './internals.ts';
 import { streamWorkflowStates } from './listing.ts';
 import { createTerminalCleanupTimerId } from './state-utilities.ts';
@@ -205,6 +206,7 @@ export async function purgeWorkflow(
     ...buildWorkflowVisibilityIndexTransition(workflowId, state, null).batchOps,
   );
   await internals.storage.batch(deleteOperations);
+  forgetCommittedCheckpointBytes(internals, workflowId);
   internals.checkpoints.delete(workflowId);
   internals.heartbeatDetails.delete(workflowId);
   internals.eventLogHeads.delete(workflowId);

@@ -388,11 +388,14 @@ export class Engine<
       }
 
       if (options.recover === true) {
-        const recoverOptions =
-          options.acknowledgeUnknownWorkflowTypes === undefined
-            ? undefined
-            : { acknowledgeUnknownWorkflowTypes: options.acknowledgeUnknownWorkflowTypes };
-        await engine.recoverAll(recoverOptions);
+        await engine.recoverAll({
+          ...(options.acknowledgeUnknownWorkflowTypes !== undefined
+            ? { acknowledgeUnknownWorkflowTypes: options.acknowledgeUnknownWorkflowTypes }
+            : {}),
+          ...(options.requireConcurrentResumeSafety !== undefined
+            ? { requireConcurrentResumeSafety: options.requireConcurrentResumeSafety }
+            : {}),
+        });
       }
     } catch (error) {
       // Constructor side effects (broadcast channel, scheduler, dispatchers,

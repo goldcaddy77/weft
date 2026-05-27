@@ -152,10 +152,18 @@ export const storageBackends: StorageBackendDescriptor[] = [
   {
     name: 'TursoStorage',
     factory: () => {
-      const storage = new TursoStorage({ url: 'file::memory:' });
+      const fixture = createDiskBackedTestFixture({
+        prefix: 'turso-test',
+        suffix: '.db',
+        sidecarSuffixes: sqliteDatabaseSidecarSuffixes,
+      });
+      const storage = new TursoStorage({ url: `file:${fixture.path}` });
       return {
         storage,
-        cleanup: () => storage[Symbol.dispose](),
+        cleanup: () => {
+          storage[Symbol.dispose]();
+          fixture.cleanup();
+        },
       };
     },
   },

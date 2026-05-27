@@ -2,6 +2,7 @@ import type { BatchOperation } from '../../../storage/interface.ts';
 import { KEYS, encodeStorageKeyComponent } from '../../../storage/interface.ts';
 import { CleanupWarningEvent } from '../../events.ts';
 import type { WorkflowState, WorkflowStatus } from '../../types.ts';
+import { forgetCommittedCheckpointBytes } from '../checkpoint-commit-snapshots.ts';
 import type { EngineInternals } from '../internals.ts';
 import { parseTerminalCleanupTimerId, workflowFeedListenerKey } from '../state-utilities.ts';
 
@@ -240,6 +241,7 @@ export function cleanupTerminalWorkflowMemory(
   callbacks: Pick<TerminationCallbacks, 'swallowPromiseRejection'>,
 ): void {
   internals.workflowsNeedingTerminalCleanup.delete(workflowId);
+  forgetCommittedCheckpointBytes(internals, workflowId);
   internals.checkpoints.delete(workflowId);
   internals.heartbeatDetails.delete(workflowId);
   internals.eventLogHeads.delete(workflowId);

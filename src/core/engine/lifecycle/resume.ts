@@ -6,6 +6,7 @@ import { WorkflowResumedEvent } from '../../events.ts';
 import type { Checkpoint, WorkflowState } from '../../types.ts';
 import { type WorkflowVersionTuple } from '../../workflow-version-tuple.ts';
 import { createCancelHandlerRegistration, resetCancelHandlers } from '../cancel-handlers.ts';
+import { rememberCommittedCheckpointBytes } from '../checkpoint-commit-snapshots.ts';
 import { getWorkflowExecutionStartedAt, type WorkflowHandle } from '../handles.ts';
 import type { EngineInternals } from '../internals.ts';
 import { loadWorkflowState } from '../storage-io.ts';
@@ -23,6 +24,7 @@ import {
 type SerializedResumeArgs = {
   workflowId: string;
   resumeCheckpoint: Checkpoint;
+  serializedCheckpoint: Uint8Array;
   registeredVersionTuple: WorkflowVersionTuple;
   restoredHead: EventHeadRecord;
   workflowStartHeaders: Map<string, string> | undefined;
@@ -42,14 +44,23 @@ function commitSerializedResumeState(
     SerializedResumeArgs,
     | 'workflowId'
     | 'resumeCheckpoint'
+    | 'serializedCheckpoint'
     | 'registeredVersionTuple'
     | 'restoredHead'
     | 'workflowStartHeaders'
     | 'callbacks'
   >,
 ): void {
-  const { workflowId, resumeCheckpoint, registeredVersionTuple, restoredHead, callbacks } = args;
+  const {
+    workflowId,
+    resumeCheckpoint,
+    serializedCheckpoint,
+    registeredVersionTuple,
+    restoredHead,
+    callbacks,
+  } = args;
   internals.checkpoints.set(workflowId, resumeCheckpoint);
+  rememberCommittedCheckpointBytes(internals, workflowId, serializedCheckpoint);
   internals.workflowVersionTuples.set(workflowId, registeredVersionTuple);
   internals.eventLogHeads.set(workflowId, restoredHead);
   setWorkflowStartHeaders(internals, workflowId, args.workflowStartHeaders, callbacks);
@@ -223,6 +234,7 @@ export async function resumeWorkflowFromStorage(
     performSerializedResume(internals, {
       workflowId,
       resumeCheckpoint,
+      serializedCheckpoint: checkpointBytes,
       registeredVersionTuple,
       restoredHead,
       workflowStartHeaders,

@@ -1,36 +1,26 @@
-import type { BatchOperation } from '../../../storage/interface.ts';
-import { KEYS } from '../../../storage/interface.ts';
+import { KEYS, requireStorageCapability } from '../../../storage/interface.ts';
 import { deserializeCheckpoint, serializeCheckpoint } from '../../checkpoint.ts';
-import { encode } from '../../codec.ts';
 import { Context } from '../../context.ts';
 import { EMPTY_EVENT_HEAD } from '../../event-log.ts';
 import { WorkflowRecoverySkippedEvent, WorkflowStartedEvent } from '../../events.ts';
-import { buildIndexOperations } from '../../search-attributes.ts';
-import type {
-  Checkpoint,
-  ForkLineage,
-  ForkOptions,
-  SearchAttributeValue,
-  WorkflowState,
-} from '../../types.ts';
-import { type WorkflowVersionTuple } from '../../workflow-version-tuple.ts';
+import type { Checkpoint, ForkOptions, WorkflowState } from '../../types.ts';
 import { createCancelHandlerRegistration, resetCancelHandlers } from '../cancel-handlers.ts';
+import { forgetCommittedCheckpointBytes } from '../checkpoint-commit-snapshots.ts';
 import { WorkflowTypeNotRegisteredForRecoveryError } from '../errors.ts';
 import { getWorkflowExecutionStartedAt, type WorkflowHandle } from '../handles.ts';
 import type { EngineInternals } from '../internals.ts';
-import {
-  encodeWorkflowStartHeaders,
-  normalizeForkStep,
-  selectPersistedWorkflowStartHeaders,
-} from '../state-utilities.ts';
+import { normalizeForkStep, selectPersistedWorkflowStartHeaders } from '../state-utilities.ts';
 import { loadWorkflowState } from '../storage-io.ts';
 import { decodeWorkflowState } from '../validation.ts';
-import { buildWorkflowVisibilityIndexOperations } from '../workflow-indexes.ts';
+import {
+  buildForkBatchOperations,
+  buildForkSearchAttributes,
+  createForkLineage,
+  createForkedWorkflowState,
+} from './fork-helpers.ts';
 import { createWorkflowVersionTuple, derivePreparedExecutionState } from './persist.ts';
 import { resumeWorkflowFromStorage } from './resume.ts';
 import {
-  EMPTY_STORAGE_VALUE,
-  FORK_LINEAGE_ATTRIBUTE,
   createWorkflowHandle,
   enforceHistoryPolicyBeforeReplayById,
   loadWorkflowStartHeaders,
@@ -130,6 +120,14 @@ export async function recoverAll(
   callbacks: LifecycleCallbacks,
   options?: RecoverAllOptions,
 ): Promise<WorkflowHandle[]> {
+  if (options?.requireConcurrentResumeSafety === true) {
+    requireStorageCapability(
+      internals.storage,
+      'conditionalBatch',
+      'concurrent resume checkpoint commits',
+    );
+  }
+
   const preflight = await preflightRecoverAll(internals, callbacks);
   const handles: WorkflowHandle[] = [];
 
@@ -265,12 +263,14 @@ export async function fork(
 
   let forkStarted = false;
   try {
+    const forkCheckpointBytes = serializeCheckpoint(forkCheckpoint);
     await internals.storage.batch(
       buildForkBatchOperations(
         internals,
         workflowId,
         forkState,
         forkCheckpoint,
+        forkCheckpointBytes,
         persistedWorkflowStartHeaders,
         callbacks,
       ),
@@ -289,112 +289,13 @@ export async function fork(
     return handle;
   } finally {
     if (!forkStarted) {
+      forgetCommittedCheckpointBytes(internals, workflowId);
       internals.checkpoints.delete(workflowId);
       internals.workflowVersionTuples.delete(workflowId);
       internals.eventLogHeads.delete(workflowId);
       internals.workflowHeaders.delete(workflowId);
     }
   }
-}
-
-export function createForkLineage(
-  _internals: EngineInternals,
-  sourceWorkflowId: string,
-  checkpoint: Checkpoint,
-  _callbacks: LifecycleCallbacks,
-): ForkLineage {
-  return {
-    workflowId: sourceWorkflowId,
-    step: checkpoint.step,
-  };
-}
-
-export function buildForkSearchAttributes(
-  _internals: EngineInternals,
-  checkpoint: Checkpoint,
-  lineage: ForkLineage,
-  _callbacks: LifecycleCallbacks,
-): Record<string, SearchAttributeValue> {
-  return {
-    ...checkpoint.searchAttributes,
-    [FORK_LINEAGE_ATTRIBUTE]: lineage.workflowId,
-  };
-}
-
-export function createForkedWorkflowState(
-  _internals: EngineInternals,
-  workflowId: string,
-  sourceState: WorkflowState,
-  versionTuple: WorkflowVersionTuple,
-  lineage: ForkLineage,
-  forkedAt: number,
-  _callbacks: LifecycleCallbacks,
-): WorkflowState {
-  return {
-    id: workflowId,
-    type: sourceState.type,
-    status: 'running',
-    input: sourceState.input,
-    version: versionTuple.workflowVersion,
-    executionStateOwnerId: workflowId,
-    createdAt: forkedAt,
-    startedAt: forkedAt,
-    updatedAt: forkedAt,
-    ...(versionTuple.agentVersion !== undefined && {
-      agentVersion: versionTuple.agentVersion,
-    }),
-    ...(versionTuple.toolVersions !== undefined && {
-      toolVersions: versionTuple.toolVersions,
-    }),
-    forkedFrom: lineage,
-  };
-}
-
-export function buildForkBatchOperations(
-  _internals: EngineInternals,
-  workflowId: string,
-  state: WorkflowState,
-  checkpoint: Checkpoint,
-  workflowStartHeaders: Map<string, string> | undefined,
-  _callbacks: LifecycleCallbacks,
-): BatchOperation[] {
-  const operations: BatchOperation[] = [
-    { type: 'put', key: KEYS.workflow(workflowId), value: encode(state) },
-    {
-      type: 'put',
-      key: KEYS.checkpoint(workflowId),
-      value: serializeCheckpoint(checkpoint),
-    },
-    ...buildWorkflowVisibilityIndexOperations(workflowId, null, state).batchOps,
-  ];
-
-  if (Object.keys(checkpoint.searchAttributes).length > 0) {
-    operations.push(
-      {
-        type: 'put',
-        key: KEYS.attribute(workflowId),
-        value: encode(checkpoint.searchAttributes),
-      },
-      ...buildIndexOperations(workflowId, {}, checkpoint.searchAttributes),
-    );
-  }
-
-  if (workflowStartHeaders && workflowStartHeaders.size > 0) {
-    operations.push(
-      {
-        type: 'put',
-        key: KEYS.workflowHeaders(workflowId),
-        value: encodeWorkflowStartHeaders(workflowStartHeaders),
-      },
-      {
-        type: 'put',
-        key: KEYS.terminalCleanupNeeded(workflowId),
-        value: EMPTY_STORAGE_VALUE,
-      },
-    );
-  }
-
-  return operations;
 }
 
 function launchInlineWorkflowFromCheckpoint(

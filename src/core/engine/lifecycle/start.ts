@@ -13,6 +13,7 @@ import {
 } from '../../start-workflow-validation.ts';
 import type { Checkpoint, Duration, StartOptions, TimerEntry, WorkflowState } from '../../types.ts';
 import { type WorkflowVersionTuple } from '../../workflow-version-tuple.ts';
+import { forgetCommittedCheckpointBytes } from '../checkpoint-commit-snapshots.ts';
 import { WorkflowAlreadyExistsError, WorkflowNotRegisteredError } from '../errors.ts';
 import { type WorkflowHandle } from '../handles.ts';
 import type { EngineInternals } from '../internals.ts';
@@ -96,6 +97,7 @@ async function persistStartBatch(
 }
 
 function rollbackTransientStartState(internals: EngineInternals, workflowId: string): void {
+  forgetCommittedCheckpointBytes(internals, workflowId);
   internals.checkpoints.delete(workflowId);
   internals.workflowHeaders.delete(workflowId);
   internals.workflowVersionTuples.delete(workflowId);
