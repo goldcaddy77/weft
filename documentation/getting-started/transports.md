@@ -2,7 +2,7 @@
 
 Weft exposes runtime operations over four operation-catalog transports, plus a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) surface for external MCP clients. The operation-catalog transports route through the same operation registry, so the operation you call and the result you get back are the same regardless of which one you pick. MCP is different: it maps registered workflows and workflow resources into the Model Context Protocol.
 
-## REST (`/v1/*`)
+## REST (`/api/v1/*`)
 
 The default. Every cataloged operation has a REST binding with a conventional HTTP method and path. Use REST when:
 
@@ -12,7 +12,7 @@ The default. Every cataloged operation has a REST binding with a conventional HT
 
 Discovery: `GET /openapi.json` returns the full OpenAPI 3.1 contract.
 
-## JSON-RPC over HTTP (`POST /jsonrpc`)
+## JSON-RPC over HTTP (`POST /api/jsonrpc`)
 
 One endpoint, all operations, named by method. Use JSON-RPC HTTP when:
 
@@ -44,7 +44,7 @@ function isJsonRpcEnvelope(value: unknown): value is JsonRpcEnvelope {
   return true;
 }
 
-const response = await fetch('http://localhost:7233/jsonrpc', {
+const response = await fetch('http://localhost:7233/api/jsonrpc', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -74,7 +74,7 @@ console.log('Started workflow:', envelope.result.id);
 
 Discovery: `GET /openrpc.json` returns the OpenRPC 1.3.2 contract. You can also call `rpc.discover` over JSON-RPC itself—it returns the same document.
 
-## JSON-RPC over WebSocket (`WS /jsonrpc`)
+## JSON-RPC over WebSocket (`WS /api/jsonrpc`)
 
 Same JSON-RPC protocol, persistent connection. Use WebSocket when:
 
@@ -98,7 +98,7 @@ Enable it explicitly in `serve()`—it is not started automatically. Local proce
 
 Use MCP when an MCP client should treat Weft workflows as durable tools and resources.
 
-Remote MCP discovery is available at `GET /.well-known/mcp.json`. In production, configure `serve({ publicOrigin })` or `serve({ trustedHosts })` first because the discovery document emits absolute endpoint URLs. The document points clients at `POST /mcp`, `GET /mcp`, and `DELETE /mcp` when you start the Weft server. `initialize` creates a session and returns `Mcp-Session-Id`; subsequent POST, GET, and DELETE requests send that header plus the negotiated `Mcp-Protocol-Version`. POST carries client-to-server JSON-RPC messages, GET opens the server-to-client event stream, and DELETE closes the session.
+Remote MCP discovery is available at `GET /.well-known/mcp.json`. In production, configure `serve({ publicOrigin })` or `serve({ trustedHosts })` first because the discovery document emits absolute endpoint URLs. The document points clients at `POST /api/mcp`, `GET /api/mcp`, and `DELETE /api/mcp` when you start the Weft server. `initialize` creates a session and returns `Mcp-Session-Id`; subsequent POST, GET, and DELETE requests send that header plus the negotiated `Mcp-Protocol-Version`. POST carries client-to-server JSON-RPC messages, GET opens the server-to-client event stream, and DELETE closes the session.
 
 Local MCP is exposed through the `weft-mcp` binary. It runs an embedded Weft engine over newline-delimited stdio frames. Admission is mandatory: pass `--startup-token <token>` and send `weft.authenticate` as the first frame, or use `--allow-unauthenticated-local-admin` only for trusted local process boundaries.
 
@@ -119,4 +119,4 @@ A few endpoints are intentionally REST-only or unauthenticated:
 - `GET /v1/health` — anonymous liveness probe for load balancers
 - `GET /v1/metrics` — Prometheus exposition format (`text/plain`); the JSON-shaped form is `weft.system.metrics` on the catalog
 
-SSE (`GET /v1/workflows/:id/sse`) is transport-specific—the JSON-RPC analogue is WebSocket subscription notifications.
+SSE (`GET /api/v1/workflows/:id/sse`) is transport-specific—the JSON-RPC analogue is WebSocket subscription notifications.

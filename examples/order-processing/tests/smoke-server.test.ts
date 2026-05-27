@@ -27,11 +27,20 @@ describe('order-processing server smoke check', () => {
         publicOrigin: 'http://localhost',
       });
 
+      // Health stays at the origin root (not under /api).
       const healthResponse = await fetch(new URL('/v1/health', server.url));
       expect(healthResponse.ok).toBe(true);
 
-      const dashboardResponse = await fetch(new URL('/ui', server.url));
+      // The functional API moved under /api.
+      const apiHealthResponse = await fetch(new URL('/api/v1/health', server.url));
+      expect(apiHealthResponse.ok).toBe(true);
+
+      // The dashboard shell is served from the origin root.
+      const dashboardResponse = await fetch(new URL('/', server.url));
       expect(dashboardResponse.ok).toBe(true);
+      // Bundled-asset reachability is exercised by the repo-root dashboard asset
+      // smoke test; the bundler emits cwd-relative asset URLs, so asserting them
+      // here (run from the example's own cwd) is environment-fragile.
     } finally {
       await rm(temporaryDirectory, { force: true, recursive: true });
     }

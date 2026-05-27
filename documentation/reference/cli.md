@@ -97,7 +97,7 @@ The generated file augments the public `weft` module with `WorkflowRegistry` ent
 
 | Flag        | Short | Default | Description                                                                                      |
 | ----------- | ----- | ------- | ------------------------------------------------------------------------------------------------ |
-| `--server`  |       |         | Base URL of a running Weft server. The CLI appends `/v1/registry` to the supplied path.          |
+| `--server`  |       |         | Base URL of a running Weft server. The CLI appends `/api/v1/registry` to the supplied path.      |
 | `--from`    |       |         | Local registry snapshot JSON file. Mutually exclusive with `--server`.                           |
 | `--token`   |       |         | Bearer token for `--server`. Falls back to `WEFT_TOKEN`; persistent credentials are unsupported. |
 | `--out`     | `-o`  |         | Required output `.d.ts` file. The parent directory must already exist.                           |
