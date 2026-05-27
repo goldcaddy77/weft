@@ -69,6 +69,7 @@ await Bun.build({
     './src/storage/auto.ts',
     './src/testing/index.ts',
     './src/worker/protocol.ts',
+    './src/cli-main.ts',
     './src/mcp/index.ts',
     './src/mcp/cli.ts',
     './src/observability/index.ts',
