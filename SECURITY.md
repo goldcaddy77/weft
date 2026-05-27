@@ -31,6 +31,8 @@ Out-of-scope:
 
 Email: **hello@stevekinney.net**
 
+Alternatively, you can [open a private security advisory on GitHub](https://github.com/stevekinney/weft/security/advisories/new) — GitHub routes the report to the maintainer without exposing your contact details publicly.
+
 Include in your report:
 
 1. A clear description of the vulnerability and the affected component.
