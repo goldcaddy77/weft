@@ -170,14 +170,14 @@ For named concurrent branches where each needs its own error handling, use `ctx.
 ```typescript partial
 async function* example(ctx: Context) {
   const results = yield* ctx.runAll({
-    payment: ['charge', order],
-    inventory: ['reserveInventory', order.items],
-    email: ['sendConfirmation', order],
+    payment: [charge, order],
+    inventory: [reserveInventory, order.items],
+    email: [sendConfirmation, order],
   });
   // results.payment, results.inventory, results.email
 }
 ```
 
-Both `ctx.all()` and `ctx.runAll()` create a single checkpoint boundary—all branches complete before the workflow advances.
+Unlike `ctx.run`, each `ctx.runAll` branch is a tuple whose first element is the activity function itself (optionally followed by its input); the record key is the branch name. Both `ctx.all()` and `ctx.runAll()` create a single checkpoint boundary—all branches complete before the workflow advances.
 
 Activities are where the real world meets your durable logic. Keep them focused, make them idempotent where possible, and let Weft handle the retries.

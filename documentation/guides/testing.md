@@ -112,12 +112,12 @@ One-shots are consumed in order; once exhausted, the base implementation runs. S
 ```typescript partial
 engine.register(
   workflow({ name: 'resilient' }).execute(async function* (ctx) {
-    const step1 = yield* ctx.run('doFirstThing');
+    const step1 = yield* ctx.run(doFirstThing);
 
     // Simulate crash here
     // step1 is checkpointed, so recovery picks up after it
 
-    const step2 = yield* ctx.run('doSecondThing', step1);
+    const step2 = yield* ctx.run(doSecondThing, step1);
     return step2;
   }),
 );

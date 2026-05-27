@@ -48,9 +48,16 @@ async function* example(context: Context) {
 ### `run()`
 
 ```ts partial
+// Without per-call options:
 *run<TName extends keyof TActivities & string>(
   name: TName,
   ...rest: ActivityArgsFor<TActivities[TName]>
+): WorkflowOperation<ActivityResultFor<TActivities[TName]>>
+
+// With a trailing ActivityCallOptions:
+*run<TName extends keyof TActivities & string>(
+  name: TName,
+  ...rest: [...ActivityArgsFor<TActivities[TName]>, ActivityCallOptions]
 ): WorkflowOperation<ActivityResultFor<TActivities[TName]>>
 ```
 
@@ -220,9 +227,9 @@ async function* example(context: Context) {
 
 Run multiple named activity branches in parallel. Returns a record mapping each branch name to its result.
 
-| Parameter  | Type                                      | Description                                                                 |
-| ---------- | ----------------------------------------- | --------------------------------------------------------------------------- |
-| `branches` | `Record<string, [name] \| [name, input]>` | Named branches, each a tuple of `[activityName]` or `[activityName, input]` |
+| Parameter  | Type                                              | Description                                                             |
+| ---------- | ------------------------------------------------- | ----------------------------------------------------------------------- |
+| `branches` | `Record<string, [Function] \| [Function, input]>` | Named branches, each a tuple of `[activityFn]` or `[activityFn, input]` |
 
 **Returns:** A record with the same keys, each holding the branch's result.
 
@@ -231,8 +238,8 @@ Run multiple named activity branches in parallel. Returns a record mapping each 
 ```ts partial
 async function* example(context: Context) {
   const results = yield* context.runAll({
-    email: ['sendEmail', { email: user.email, subject: 'Welcome!' }],
-    slack: ['notifySlack', { channel: '#signups', name: user.name }],
+    email: [sendEmail, { email: user.email, subject: 'Welcome!' }],
+    slack: [notifySlack, { channel: '#signups', name: user.name }],
   });
   // results.email, results.slack
 }
