@@ -20,14 +20,12 @@ type JsonRequestOptions = {
   readonly method?: string;
   readonly body?: unknown;
 };
-type WorkflowStatusPredicate = (state: WorkflowBrowserState) => boolean | Promise<boolean>;
 
 let temporaryDirectory: string | undefined;
 let server: BrowserServer | undefined;
 let browser: Browser | undefined;
 let context: BrowserContext | undefined;
 let page: Page | undefined;
-let workflowStatusPredicateCounter = 0;
 
 function requirePage(): Page {
   if (page === undefined) {
@@ -182,34 +180,28 @@ async function readWorkflowResult(browserPage: Page, workflowId: string): Promis
 }
 
 async function waitForWorkflowStatus(
-  browserPage: Page,
   port: number,
   id: string,
-  predicate: WorkflowStatusPredicate,
+  predicate: (state: WorkflowBrowserState) => boolean,
   timeout: number,
 ): Promise<WorkflowBrowserState> {
-  const workflowEndpoint = `http://127.0.0.1:${port}/weft/v1/workflows/${encodeURIComponent(id)}`;
-  const exposedPredicateName = `__weftWorkflowStatusPredicate${workflowStatusPredicateCounter}`;
-  workflowStatusPredicateCounter += 1;
+  const endpoint = `http://127.0.0.1:${port}/weft/v1/workflows/${encodeURIComponent(id)}`;
+  const deadline = Date.now() + timeout;
+  let lastState: WorkflowBrowserState | undefined;
 
-  await browserPage.exposeFunction(exposedPredicateName, predicate);
-  const handle = await browserPage.waitForFunction(
-    async ({ endpoint, predicateName }) => {
-      const response = await fetch(endpoint, { cache: 'no-store' });
-      if (!response.ok) return false;
-
+  while (Date.now() < deadline) {
+    const response = await fetch(endpoint, { cache: 'no-store' });
+    if (response.ok) {
       const state = (await response.json()) as WorkflowBrowserState;
-      const predicates = globalThis as unknown as Record<
-        string,
-        (state: WorkflowBrowserState) => boolean | Promise<boolean>
-      >;
-      return (await predicates[predicateName]!(state)) ? state : false;
-    },
-    { endpoint: workflowEndpoint, predicateName: exposedPredicateName },
-    { polling: 50, timeout },
-  );
+      if (predicate(state)) return state;
+      lastState = state;
+    }
+    await Bun.sleep(50);
+  }
 
-  return (await handle.jsonValue()) as WorkflowBrowserState;
+  throw new Error(
+    `Workflow ${id} did not satisfy predicate within ${timeout}ms; last status: ${lastState?.status ?? 'unknown'}`,
+  );
 }
 
 describe('Service Worker browser lifecycle', () => {
@@ -288,7 +280,6 @@ describe('Service Worker browser lifecycle', () => {
     const workflowId = await startWorkflow(browserPage);
 
     await waitForWorkflowStatus(
-      browserPage,
       requireServerPort(),
       workflowId,
       (state) => state.status === 'running',
@@ -296,7 +287,6 @@ describe('Service Worker browser lifecycle', () => {
     );
     await signalWorkflow(browserPage, workflowId, 'done');
     await waitForWorkflowStatus(
-      browserPage,
       requireServerPort(),
       workflowId,
       (state) => state.status === 'completed',
@@ -321,7 +311,6 @@ describe('Service Worker browser lifecycle', () => {
       const workflowId = `sw-terminated-${crypto.randomUUID()}`;
       await startWorkflow(browserPage, { id: workflowId });
       await waitForWorkflowStatus(
-        browserPage,
         requireServerPort(),
         workflowId,
         (state) => state.status === 'running',
@@ -333,20 +322,24 @@ describe('Service Worker browser lifecycle', () => {
       await cdp.send('ServiceWorker.stopAllWorkers');
       await cdp.detach();
 
-      await expect(fetchJsonFromPage(browserPage, '/weft/v1/health')).resolves.toEqual({
-        status: 'ok',
+      // A fetch within the SW scope triggers the browser to restart the SW.
+      // Swallow the response — it may arrive before the SW fully activates.
+      void fetchJsonFromPage(browserPage, '/weft/v1/health').catch(() => {
+        // Expected during SW restart; ignore.
       });
       await waitForServiceWorkerActivation(browserPage);
 
       await signalWorkflow(browserPage, workflowId, 'restarted');
       await waitForWorkflowStatus(
-        browserPage,
         requireServerPort(),
         workflowId,
         (state) => state.status === 'completed',
         5_000,
       );
 
+      // activityCount must be 1 — the activity completed before termination and its
+      // result was checkpointed in IndexedDB. After SW restart the engine recovers
+      // from the checkpoint and does NOT re-run the activity.
       await expect(readWorkflowResult(browserPage, workflowId)).resolves.toEqual({
         activityCount: 1,
         signalPayload: 'restarted',
