@@ -6,6 +6,7 @@ import {
   buildOperationEntry,
   buildSseChannel,
   buildSseMessages,
+  buildWebSocketChannel,
   buildWebSocketMessages,
 } from './asyncapi-channels.ts';
 import type { ErasedOperation } from './operation-catalog.ts';
@@ -74,6 +75,24 @@ describe('AsyncAPI channel builders', () => {
     );
 
     expect(channel).not.toHaveProperty('bindings');
+  });
+
+  it('advertises the WebSocket channel address under the external /api prefix', () => {
+    const channel = buildWebSocketChannel(operation('weft.workflows.events'));
+    expect(channel['address']).toBe('/api/jsonrpc');
+  });
+
+  it('advertises SSE channel addresses under the external /api prefix', () => {
+    const channel = buildSseChannel(
+      operation('weft.workflows.streams.sse'),
+      '/v1/workflows/{id}/streams/sse',
+    );
+    expect(channel['address']).toBe('/api/v1/workflows/{id}/streams/sse');
+  });
+
+  it('leaves the synthetic unbound SSE address unprefixed (not a wire endpoint)', () => {
+    const channel = buildSseChannel(operation('weft.workflows.streams.sse'), undefined);
+    expect(channel['address']).toBe('/x-weft-unbound/weft/workflows/streams/sse');
   });
 
   it('builds message payloads as JSON Schema objects', () => {

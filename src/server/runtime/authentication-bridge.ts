@@ -17,6 +17,7 @@ import {
   type WebSocketData,
 } from '../json-rpc-websocket-runtime.ts';
 import type { OpenApiSecuritySchemeName } from '../openapi.ts';
+import { API_PREFIX } from '../route-model.ts';
 import type { ServerContext } from './context.ts';
 import { handleTaskPollRequest, handleTaskResultRequest } from './task-polling.ts';
 import { reassignOrExpireTask } from './task-reconciliation.ts';
@@ -84,12 +85,42 @@ export async function authenticateRequest(
   };
 }
 
+/**
+ * Strip the external {@link API_PREFIX} from a request so all downstream
+ * matching — WebSocket-upgrade regexes, the `/mcp` and `/jsonrpc` literals,
+ * REST bindings, direct routes, and the authentication allowlist — operates on
+ * canonical root-relative paths (`/api/v1/workflows` → `/v1/workflows`).
+ *
+ * Only `${API_PREFIX}/<non-empty>` is stripped. Bare `/api` and `/api/` are
+ * left untouched so they fall through to the canonical 404 rather than aliasing
+ * the root. Paths that don't start with the prefix — including the root-stable
+ * carve-outs (`/v1/health`, `/openrpc.json`, `/.well-known/*`, …) — are
+ * returned unchanged.
+ *
+ * The rewritten request is constructed via `new Request(url, request)` so the
+ * method, headers, body, signal, and duplex flag are copied intact; only the
+ * URL changes.
+ */
+function stripApiPrefix(request: Request): Request {
+  const url = new URL(request.url);
+  const prefixedRoot = `${API_PREFIX}/`;
+  if (!url.pathname.startsWith(prefixedRoot) || url.pathname === prefixedRoot) {
+    return request;
+  }
+  url.pathname = url.pathname.slice(API_PREFIX.length);
+  return new Request(url, request);
+}
+
 export async function handleServerFetchRequest(
   server: ReturnType<typeof Bun.serve>,
   context: ServerContext,
   options: ServerFetchOptions,
-  request: Request,
+  originalRequest: Request,
 ): Promise<Response | undefined> {
+  // Strip the external `/api` prefix before anything else (auth, WS upgrade,
+  // `/mcp` & `/jsonrpc` literals, REST/direct dispatch) so every downstream
+  // matcher stays canonical and root-relative.
+  const request = stripApiPrefix(originalRequest);
   const url = new URL(request.url);
 
   const authentication = await authenticateRequest(context, request);

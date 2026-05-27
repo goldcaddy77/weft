@@ -22,6 +22,7 @@ import type { UnknownRestBinding } from './rest-bindings.ts';
 import { createLiveOperationRegistry, createLiveRestBindings } from './rest-bindings.ts';
 import {
   DIRECT_HTTP_ROUTES,
+  externalApiPath,
   toOpenApiPath,
   type DirectHttpRouteDefinition,
   type DirectRouteResponseContent,
@@ -296,7 +297,10 @@ function tryRegisterBinding(
   if (operation === undefined) return;
   if (!isDiscoverable(operation)) return;
 
-  const openApiPath = toOpenApiPath(binding.path);
+  // Operation-backed REST endpoints are served under the external `/api`
+  // prefix; direct routes (health/metrics/spec/well-known) stay at the origin
+  // root and are emitted unprefixed by `emitDirectRoutes`.
+  const openApiPath = externalApiPath(toOpenApiPath(binding.path));
   if (!paths[openApiPath]) paths[openApiPath] = {};
 
   paths[openApiPath][binding.method.toLowerCase()] = buildBindingEntry(

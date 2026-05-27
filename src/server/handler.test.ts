@@ -208,7 +208,7 @@ describe('handleRequest', () => {
     expect(response.status).toBe(200);
     const body = (await json(response)) as { openapi: string; paths: Record<string, unknown> };
     expect(body.openapi).toBe('3.1.0');
-    expect(body.paths['/v1/workflows']).toBeDefined();
+    expect(body.paths['/api/v1/workflows']).toBeDefined();
   });
 
   it('GET /openrpc.json returns the OpenRPC document', async () => {

@@ -17,13 +17,35 @@ describe('OpenAPI document generation', () => {
     expect(document).toHaveProperty('tags');
 
     const paths = document['paths'] as Record<string, Record<string, Record<string, unknown>>>;
-    expect(paths['/v1/workflows/{id}/signal/{name}']?.['post']?.['parameters']).toBeDefined();
-    expect(paths['/v1/workflows']?.['post']).toHaveProperty('requestBody');
+    expect(paths['/api/v1/workflows/{id}/signal/{name}']?.['post']?.['parameters']).toBeDefined();
+    expect(paths['/api/v1/workflows']?.['post']).toHaveProperty('requestBody');
 
     const components = document['components'] as Record<string, unknown> | undefined;
     expect(
       document['security'] !== undefined || components?.['securitySchemes'] !== undefined,
     ).toBe(true);
+  });
+
+  it('emits operation bindings under /api/v1 and keeps root-stable direct routes unprefixed', () => {
+    const paths = document['paths'] as Record<string, unknown>;
+    const pathKeys = Object.keys(paths);
+
+    // Every operation-backed REST binding is advertised under `/api`.
+    expect(pathKeys).toContain('/api/v1/workflows');
+    expect(pathKeys.some((key) => key.startsWith('/api/v1/'))).toBe(true);
+
+    // Root-stable direct routes are NOT moved under `/api` (RFC 9264 /
+    // observability convention). These probes must resolve at the origin root.
+    // Note `/v1/metrics` (Prometheus, direct route, stays) is distinct from the
+    // JSON metrics *operation* at `/v1/metrics/json`, which legitimately moves
+    // to `/api/v1/metrics/json`; so we assert on the exact root-stable keys.
+    expect(pathKeys).toContain('/v1/health');
+    expect(pathKeys).toContain('/v1/metrics');
+    expect(pathKeys).not.toContain('/api/v1/health');
+    expect(pathKeys).not.toContain('/api/v1/metrics');
+
+    // The externalApiPath guard prevents double-prefixing.
+    expect(pathKeys.some((key) => key.startsWith('/api/api'))).toBe(false);
   });
 
   it('uses default title and version', () => {
@@ -60,7 +82,7 @@ describe('OpenAPI document generation', () => {
 
   it('correctly extracts path parameters', () => {
     const paths = document['paths'] as Record<string, Record<string, Record<string, unknown>>>;
-    const signalPath = paths['/v1/workflows/{id}/signal/{name}'];
+    const signalPath = paths['/api/v1/workflows/{id}/signal/{name}'];
     expect(signalPath).toBeDefined();
 
     const operation = signalPath!['post']!;
@@ -73,7 +95,7 @@ describe('OpenAPI document generation', () => {
 
   it('marks step parameter as integer type', () => {
     const paths = document['paths'] as Record<string, Record<string, Record<string, unknown>>>;
-    const checkpointPath = paths['/v1/workflows/{id}/checkpoints/{step}'];
+    const checkpointPath = paths['/api/v1/workflows/{id}/checkpoints/{step}'];
     expect(checkpointPath).toBeDefined();
 
     const operation = checkpointPath!['get']!;
@@ -87,7 +109,7 @@ describe('OpenAPI document generation', () => {
 
   it('marks replay step parameter as integer type', () => {
     const paths = document['paths'] as Record<string, Record<string, Record<string, unknown>>>;
-    const replayPath = paths['/v1/workflows/{id}/replay/{step}'];
+    const replayPath = paths['/api/v1/workflows/{id}/replay/{step}'];
     expect(replayPath).toBeDefined();
 
     const operation = replayPath!['get']!;
@@ -108,7 +130,7 @@ describe('OpenAPI document generation', () => {
 
   it('adds requestBody for POST/PUT/PATCH routes', () => {
     const paths = document['paths'] as Record<string, Record<string, Record<string, unknown>>>;
-    const startPath = paths['/v1/workflows'];
+    const startPath = paths['/api/v1/workflows'];
     expect(startPath).toBeDefined();
     const operation = startPath!['post']!;
     expect(operation).toHaveProperty('requestBody');
@@ -116,7 +138,7 @@ describe('OpenAPI document generation', () => {
 
   it('does not add requestBody for POST bindings whose inputs come from the path only', () => {
     const paths = document['paths'] as Record<string, Record<string, Record<string, unknown>>>;
-    const pausePath = paths['/v1/schedules/{id}/pause'];
+    const pausePath = paths['/api/v1/schedules/{id}/pause'];
     expect(pausePath).toBeDefined();
 
     const operation = pausePath!['post']!;
@@ -191,10 +213,10 @@ describe('OpenAPI document generation', () => {
 
   it('documents storage REST bindings with their non-JSON wire formats', () => {
     const paths = document['paths'] as Record<string, Record<string, Record<string, unknown>>>;
-    const storageItemPath = paths['/v1/storage/{key}'];
-    const storageScanPath = paths['/v1/storage'];
-    const storageBatchPath = paths['/v1/storage/-/batch'];
-    const storageConditionalBatchPath = paths['/v1/storage/-/conditional-batch'];
+    const storageItemPath = paths['/api/v1/storage/{key}'];
+    const storageScanPath = paths['/api/v1/storage'];
+    const storageBatchPath = paths['/api/v1/storage/-/batch'];
+    const storageConditionalBatchPath = paths['/api/v1/storage/-/conditional-batch'];
 
     const getOperation = storageItemPath!['get']!;
     const getResponses = getOperation['responses'] as Record<string, Record<string, unknown>>;
@@ -279,7 +301,7 @@ describe('emitBindings — body-accepting methods', () => {
       const paths: Record<string, Record<string, unknown>> = {};
       emitBindings(paths, new Set(), [binding], registry);
 
-      const entry = paths['/v1/test/bodysuffix']?.[method.toLowerCase()] as
+      const entry = paths['/api/v1/test/bodysuffix']?.[method.toLowerCase()] as
         | Record<string, unknown>
         | undefined;
       expect(entry).toBeDefined();
@@ -312,7 +334,9 @@ describe('emitBindings — body-accepting methods', () => {
     const paths: Record<string, Record<string, unknown>> = {};
     emitBindings(paths, new Set(), [binding], registry);
 
-    const entry = paths['/v1/test/getread/{id}']?.['get'] as Record<string, unknown> | undefined;
+    const entry = paths['/api/v1/test/getread/{id}']?.['get'] as
+      | Record<string, unknown>
+      | undefined;
     expect(entry).toBeDefined();
     expect(entry).not.toHaveProperty('requestBody');
   });
@@ -445,7 +469,7 @@ describe('emitBindings — body-accepting methods', () => {
     const paths: Record<string, Record<string, unknown>> = {};
     emitBindings(paths, new Set(), [binding], registry);
 
-    const pathItem = paths['/v1/test/throwingoutput/{key}'] as
+    const pathItem = paths['/api/v1/test/throwingoutput/{key}'] as
       | Record<string, Record<string, unknown>>
       | undefined;
     const getOperation = pathItem?.['get'];

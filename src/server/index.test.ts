@@ -19,7 +19,7 @@ import { resetPublicOriginWarningForTesting } from './api-catalog.ts';
 import { DeadlineTracker } from './deadline-tracker.ts';
 import * as handlerModule from './handler.ts';
 import type { WeftServer } from './index.ts';
-import { serve, wireEventBroadcasting } from './index.ts';
+import { DASHBOARD_PAGE_ROUTES, serve, wireEventBroadcasting } from './index.ts';
 import { createOperationRegistry, executeOperation } from './operation-catalog.ts';
 import {
   createGetTaskDiagnosticsOperation,
@@ -181,7 +181,10 @@ describe('serve', () => {
         discovery?: { tools?: { method?: string } };
       };
       const endpoint = discovery.transports?.streamableHttp?.url;
-      expect(endpoint).toBe(`${server.url}/mcp`);
+      // The MCP endpoint is advertised under the external `/api` prefix; the
+      // front door strips it back to canonical `/mcp` before routing, so
+      // fetching `endpoint` below exercises the full round-trip.
+      expect(endpoint).toBe(`${server.url}/api/mcp`);
       expect(discovery.transports?.streamableHttp?.methods).toEqual(['POST', 'GET', 'DELETE']);
 
       const authorization = { Authorization: `Bearer ${apiKey}` };
@@ -275,23 +278,41 @@ describe('serve', () => {
     expect(body.status).toBe('ok');
   });
 
-  it('serves dashboard routes when a dashboard asset is configured', async () => {
+  const dashboardBody = '<html><body>dashboard</body></html>';
+  const makeDashboard = (): Response =>
+    new Response(dashboardBody, { headers: { 'Content-Type': 'text/html' } });
+
+  it('serves the dashboard at the origin root', async () => {
     engine = createEngine();
-    server = serve({
-      engine,
-      port: 0,
-      dashboard: new Response('<html><body>dashboard</body></html>', {
-        headers: { 'Content-Type': 'text/html' },
-      }),
-    });
+    server = serve({ engine, port: 0, dashboard: makeDashboard() });
 
-    const rootResponse = await fetch(`${server.url}/ui`);
-    const nestedResponse = await fetch(`${server.url}/ui/assets/app.js`);
-
+    const rootResponse = await fetch(`${server.url}/`);
     expect(rootResponse.status).toBe(200);
     expect(await rootResponse.text()).toContain('dashboard');
-    expect(nestedResponse.status).toBe(200);
-    expect(await nestedResponse.text()).toContain('dashboard');
+  });
+
+  it('serves the dashboard shell at every known top-level page route', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0, dashboard: makeDashboard() });
+
+    // Enumerating DASHBOARD_PAGE_ROUTES is the enforcement mechanism that keeps
+    // the server route list in sync with the SPA ROUTE_TABLE: a hard reload of
+    // any dashboard page must resolve to the shell.
+    for (const route of DASHBOARD_PAGE_ROUTES) {
+      // `/workflows/*` is a deep-link pattern; exercise it with a concrete id.
+      const path = route.endsWith('/*') ? `${route.slice(0, -2)}/abc123` : route;
+      const response = await fetch(`${server.url}${path}`);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain('dashboard');
+    }
+  });
+
+  it('does not serve the dashboard for unknown root paths (no blanket catch-all)', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0, dashboard: makeDashboard() });
+
+    const response = await fetch(`${server.url}/nonsense`);
+    expect(response.status).toBe(404);
   });
 
   it('handles workflow API routes (POST /v1/workflows)', async () => {
@@ -308,6 +329,67 @@ describe('serve', () => {
     const body = (await response.json()) as { id: string };
     expect(typeof body.id).toBe('string');
     expect(body.id.length).toBeGreaterThan(0);
+  });
+
+  it('routes /api/v1/workflows to the same handler as /v1/workflows (POST body preserved)', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    // The front door strips `/api` before routing; the POST body must survive
+    // the request rebuild.
+    const response = await fetch(`${server.url}/api/v1/workflows`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'echo', input: 'hello' }),
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { id: string };
+    expect(typeof body.id).toBe('string');
+    expect(body.id.length).toBeGreaterThan(0);
+  });
+
+  it('keeps health and metrics at the origin root and exposes them as /api aliases', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0, dashboard: makeDashboard() });
+
+    // Canonical root-stable forms.
+    const health = await fetch(`${server.url}/v1/health`);
+    const metrics = await fetch(`${server.url}/v1/metrics`);
+    expect(health.status).toBe(200);
+    expect(metrics.status).toBe(200);
+    // Undocumented public aliases via canonicalization — pinned so the behavior
+    // is intentional, not accidental exposure behind a different auth surface.
+    const aliasHealth = await fetch(`${server.url}/api/v1/health`);
+    const aliasMetrics = await fetch(`${server.url}/api/v1/metrics`);
+    expect(aliasHealth.status).toBe(200);
+    expect(aliasMetrics.status).toBe(200);
+  });
+
+  it('serves discovery documents at the origin root (not under /api)', async () => {
+    engine = createEngine();
+    // `/.well-known/mcp.json` emits absolute URLs, so it needs a public origin.
+    server = serve({ engine, port: 0, publicOrigin: 'http://discovery.test' });
+
+    for (const path of [
+      '/openapi.json',
+      '/openrpc.json',
+      '/asyncapi.json',
+      '/.well-known/mcp.json',
+    ]) {
+      const response = await fetch(`${server.url}${path}`);
+      expect(response.status).toBe(200);
+    }
+  });
+
+  it('returns 404 for bare /api and /api/ (no aliasing of the root)', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0, dashboard: makeDashboard() });
+
+    const bareApi = await fetch(`${server.url}/api`);
+    const bareApiSlash = await fetch(`${server.url}/api/`);
+    expect(bareApi.status).toBe(404);
+    expect(bareApiSlash.status).toBe(404);
   });
 
   it('stops cleanly via stop()', async () => {

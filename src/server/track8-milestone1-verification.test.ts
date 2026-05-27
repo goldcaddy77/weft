@@ -205,6 +205,6 @@ describe('Track 8 — end-to-end serve() → REST pipeline', () => {
     expect(response.status).toBe(200);
     const doc = (await response.json()) as { openapi?: string; paths?: Record<string, unknown> };
     expect(doc.openapi).toMatch(/^3\.1/);
-    expect(doc.paths?.['/v1/workflows/{id}']).toBeDefined();
+    expect(doc.paths?.['/api/v1/workflows/{id}']).toBeDefined();
   });
 });
