@@ -2,6 +2,9 @@
 
 Weft provides a command-line interface for running the server and diagnosing database state.
 
+> [!NOTE]
+> [`serve`](#serve-default) and [`doctor`](#doctor) are the candidate-stable CLI commands for the pre-1.0 launch plan. [`conformance`](#conformance), [`codegen`](#codegen), and other specialized commands are useful, but their flags and output contracts remain experimental until the Tier-0 contract and 1.0 stability policy land.
+
 ## Usage
 
 ```bash

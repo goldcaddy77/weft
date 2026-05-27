@@ -26,17 +26,20 @@ This works under Bun and Node. The path lives under `${tmpdir()}/weft-default/<c
 
 Use the narrowest adapter that matches where the engine runs:
 
-| Backend                | Environment       | Persistence | Optional dep     | Notes                                     |
-| ---------------------- | ----------------- | ----------- | ---------------- | ----------------------------------------- |
-| `MemoryStorage`        | All               | No          | None             | Tests/demos only—data lost on restart.    |
-| `SQLiteStorage` (Bun)  | Bun               | Yes         | None             | Default for the Bun runtime.              |
-| `SQLiteStorage` (Node) | Node >= 22        | Yes         | None             | Default for the Node runtime.             |
-| `LMDBStorage`          | Bun/Node          | Yes         | `lmdb`           | High-throughput memory-mapped key-value.  |
-| `TursoStorage`         | Bun/Node          | Yes         | `@libsql/client` | libSQL/Turso for edge or serverless.      |
-| `IndexedDBStorage`     | Browser           | Yes         | None             | Browser native; no SQL passthrough.       |
-| `WebExtensionStorage`  | Browser extension | Yes         | None             | `chrome.storage` / `browser.storage`.     |
-| `HTTPStorage`          | All               | Remote      | None             | Connects to a remote Weft storage API.    |
-| `CompressedStorage`    | All               | Wrapper     | None             | Wraps another adapter; compresses values. |
+| Backend                | Environment       | Persistence | Stability tier                 | Optional dep     | Notes                                     |
+| ---------------------- | ----------------- | ----------- | ------------------------------ | ---------------- | ----------------------------------------- |
+| `MemoryStorage`        | All               | No          | Candidate-stable for tests/dev | None             | Tests/demos only—data lost on restart.    |
+| `SQLiteStorage` (Bun)  | Bun               | Yes         | Candidate-stable, provisional  | None             | Default for the Bun runtime.              |
+| `SQLiteStorage` (Node) | Node >= 22        | Yes         | Candidate-stable, provisional  | None             | Default for the Node runtime.             |
+| `LMDBStorage`          | Bun/Node          | Yes         | Candidate-stable, provisional  | `lmdb`           | High-throughput memory-mapped key-value.  |
+| `TursoStorage`         | Bun/Node          | Yes         | Experimental                   | `@libsql/client` | Stable tier is pending conformance proof. |
+| `IndexedDBStorage`     | Browser           | Yes         | Experimental                   | None             | Browser native; no SQL passthrough.       |
+| `WebExtensionStorage`  | Browser extension | Yes         | Experimental                   | None             | `chrome.storage` / `browser.storage`.     |
+| `HTTPStorage`          | All               | Remote      | Experimental                   | None             | Connects to a remote Weft storage API.    |
+| `CompressedStorage`    | All               | Wrapper     | Experimental                   | None             | Wraps another adapter; compresses values. |
+
+> [!NOTE]
+> Candidate-stable is provisional while the [Tier-0 Behavioral Contract](../architecture/tier-0-behavioral-contract.md) is still shaping failure semantics. The storage adapters above keep their current capability contracts, but Tier-0 work may still add guarded failure modes when a deployment asks for behavior a backend cannot provide.
 
 ## Advanced: choosing a backend explicitly
 
