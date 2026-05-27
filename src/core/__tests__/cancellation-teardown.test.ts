@@ -623,3 +623,38 @@ describe('ctx.saga() — cancellation compensation', () => {
     engine2[Symbol.dispose]();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Race condition: handlers must not fire on an already-terminal workflow
+// ---------------------------------------------------------------------------
+
+describe('cancel-handler race condition', () => {
+  it('does not run cancel handlers when the workflow is already terminal', async () => {
+    let handlerCallCount = 0;
+
+    const racingWorkflow = workflow({ name: 'racing-cancel-wf' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
+      ctx.onCancel(() => {
+        handlerCallCount++;
+      });
+      yield* ctx.waitForSignal('never');
+    });
+
+    const engine = new Engine();
+    engine.register(racingWorkflow);
+
+    const handle = await engine.start('racing-cancel-wf', null, { id: 'race-wf' });
+    await flush();
+
+    // Fire two concurrent cancels — only the first should commit the state
+    // transition; the second must see the already-terminal state and skip handlers.
+    await Promise.allSettled([engine.cancel(handle.id), engine.cancel(handle.id)]);
+    await expect(handle.result()).rejects.toThrow('Workflow cancelled');
+
+    // Handler must fire exactly once — not twice due to the race.
+    expect(handlerCallCount).toBe(1);
+
+    engine[Symbol.dispose]();
+  });
+});

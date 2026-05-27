@@ -90,7 +90,6 @@ export async function terminateWorkflow(
   internals.terminalizingWorkflows.add(workflowId);
   dropQueuedInlineWorkflowStart(internals, workflowId);
   internals.strategy.cancelWorkflow(workflowId);
-  await runCancellationHandlersForStatus(internals, workflowId, status, callbacks);
 
   try {
     const attributeBytes = await internals.storage.get(KEYS.attribute(workflowId));
@@ -121,6 +120,9 @@ export async function terminateWorkflow(
     if (!terminationResult) {
       return;
     }
+    // Run teardown handlers only after the state transition succeeds — this
+    // prevents handlers from firing when the workflow was already terminal.
+    await runCancellationHandlersForStatus(internals, workflowId, status, callbacks);
 
     const { previousState, updatedAt } = terminationResult;
     const elapsed = updatedAt - getWorkflowExecutionStartedAt(previousState);
