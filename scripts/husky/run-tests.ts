@@ -344,41 +344,44 @@ export type RunTestSuiteDependencies = {
   sweepStaleDirectories: () => Promise<void>;
 };
 
-const realDependencies: RunTestSuiteDependencies = {
-  runCommand: async (args) => {
-    // The run is captured (`.quiet()`), so output appears only on failure. Emit
-    // a heartbeat dot every few seconds so the longest hook step doesn't look
-    // like a hung process while it runs.
-    const heartbeat = setInterval(() => process.stderr.write('.'), 3000);
-    try {
-      const result = await $`bun ${args}`.quiet().nothrow();
-      return {
-        exitCode: result.exitCode,
-        stdout: result.stdout.toString(),
-        stderr: result.stderr.toString(),
-      };
-    } finally {
-      clearInterval(heartbeat);
-      process.stderr.write('\n');
-    }
-  },
-  makeRunDirectory: () => mkdtemp(join(tmpdir(), 'weft-precommit-')),
-  readReport: async (path) => {
-    try {
-      return await Bun.file(path).text();
-    } catch {
-      return undefined;
-    }
-  },
-  removeDirectory: (path) => rm(path, { recursive: true, force: true }),
-  sweepStaleDirectories: () => sweepStalePrecommitDirectories(),
-};
+export function createRealDependencies(): RunTestSuiteDependencies {
+  return {
+    runCommand: async (args) => {
+      // The run is captured (`.quiet()`), so output appears only on failure. Emit
+      // a heartbeat dot every few seconds so the longest hook step doesn't look
+      // like a hung process while it runs.
+      const heartbeat = setInterval(() => process.stderr.write('.'), 3000);
+      try {
+        const result = await $`bun ${args}`.quiet().nothrow();
+        return {
+          exitCode: result.exitCode,
+          stdout: result.stdout.toString(),
+          stderr: result.stderr.toString(),
+        };
+      } finally {
+        clearInterval(heartbeat);
+        process.stderr.write('\n');
+      }
+    },
+    makeRunDirectory: () => mkdtemp(join(tmpdir(), 'weft-precommit-')),
+    readReport: async (path) => {
+      try {
+        return await Bun.file(path).text();
+      } catch {
+        return undefined;
+      }
+    },
+    removeDirectory: (path) => rm(path, { recursive: true, force: true }),
+    sweepStaleDirectories: () => sweepStalePrecommitDirectories(),
+  };
+}
 
-const STALE_DIRECTORY_AGE_MS = 24 * 60 * 60 * 1000;
+const realDependencies: RunTestSuiteDependencies = createRealDependencies();
+
+export const STALE_DIRECTORY_AGE_MS = 24 * 60 * 60 * 1000;
 
 /** Remove `weft-precommit-*` dirs in tmpdir older than a day; ignore all errors. */
-async function sweepStalePrecommitDirectories(): Promise<void> {
-  const base = tmpdir();
+export async function sweepStalePrecommitDirectories(base = tmpdir()): Promise<void> {
   let entries: string[];
   try {
     entries = await readdir(base);

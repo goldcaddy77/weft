@@ -1200,6 +1200,12 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_REFRESH = new Map<string, CoverageAllowanc
     },
   ],
   [
+    'scripts/husky/run-tests.ts',
+    {
+      functions: 3,
+    },
+  ],
+  [
     'src/cli/conformance.ts',
     {
       functions: 1,
@@ -1215,7 +1221,12 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_REFRESH = new Map<string, CoverageAllowanc
     'src/core/atomic-state.ts',
     { functions: 1, lines: new Set([413, 414, 415, 416, 417, 418, 419, 420]) },
   ],
-  ['src/core/checkpoint/serialization.ts', { lines: new Set([115, 116, 117, 123, 124, 125]) }],
+  [
+    'src/core/checkpoint/serialization.ts',
+    {
+      lines: new Set([115, 116, 117]),
+    },
+  ],
   ['src/core/context/speculative-child.ts', { lines: new Set([25]) }],
   [
     'src/core/context/state-namespace.ts',
@@ -1360,6 +1371,14 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_REFRESH = new Map<string, CoverageAllowanc
       ]),
     },
   ],
+  ['src/core/worker-execution-ownership.ts', { functions: 1 }],
+  ['src/core/worker-listener-registry.ts', { functions: 1 }],
+  [
+    'src/core/worker-protocol.ts',
+    {
+      functions: 2,
+    },
+  ],
   ['src/server/openapi.ts', { lines: new Set([334, 356]) }],
   [
     'src/server/operation-catalog/workflow-adapter.ts',
@@ -1420,6 +1439,7 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_REFRESH = new Map<string, CoverageAllowanc
       ]),
     },
   ],
+  ['src/storage/indexeddb.ts', { functions: 1 }],
   [
     'src/storage/scoped-storage.ts',
     {
@@ -1513,7 +1533,12 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_REFRESH = new Map<string, CoverageAllowanc
     'src/worker/registry/summary.ts',
     { functions: 1, lines: new Set([134, 135, 136, 137, 138, 139]) },
   ],
-  ['src/workers/workflow-runner.ts', { functions: 1, lines: new Set([74, 75, 76, 77]) }],
+  [
+    'src/workers/workflow-runner.ts',
+    {
+      lines: new Set([386]),
+    },
+  ],
 ]);
 
 const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([

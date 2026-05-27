@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { mkdir, mkdtemp, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   buildTestCommand,
+  createRealDependencies,
   discoverTestFiles,
   extractJunitFailureExcerpts,
   formatFailingTests,
@@ -10,6 +14,8 @@ import {
   parseJunitFailures,
   renderTestOutcome,
   runTestSuite,
+  STALE_DIRECTORY_AGE_MS,
+  sweepStalePrecommitDirectories,
   tailBound,
   TEST_TIMEOUT_MS,
   type RunTestSuiteDependencies,
@@ -421,5 +427,88 @@ describe('runTestSuite (injected dependencies)', () => {
     expect(outcome.kind).toBe('failed');
     // Only the full run, no isolation run.
     expect(commands).toHaveLength(1);
+  });
+});
+
+describe('real dependency helpers', () => {
+  const cleanupPaths = new Set<string>();
+
+  afterEach(async () => {
+    for (const path of cleanupPaths) {
+      await rm(path, { recursive: true, force: true });
+    }
+    cleanupPaths.clear();
+  });
+
+  it('runCommand captures stdout, stderr, and exit code while flushing the heartbeat newline', async () => {
+    const dependencies = createRealDependencies();
+    const stderrWrite = mock((_chunk: string) => true);
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = stderrWrite as typeof process.stderr.write;
+
+    try {
+      const result = await dependencies.runCommand([
+        '-e',
+        'console.log("stdout-line"); console.error("stderr-line"); process.exit(7);',
+      ]);
+
+      expect(result).toEqual({
+        exitCode: 7,
+        stdout: 'stdout-line\n',
+        stderr: 'stderr-line\n',
+      });
+      expect(stderrWrite).toHaveBeenCalledWith('\n');
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+  });
+
+  it('readReport returns file text and undefined for missing files', async () => {
+    const dependencies = createRealDependencies();
+    const directory = await mkdtemp(join(tmpdir(), 'weft-run-tests-read-'));
+    cleanupPaths.add(directory);
+    const reportPath = join(directory, 'report.xml');
+    await writeFile(reportPath, '<testsuites />', 'utf8');
+
+    await expect(dependencies.readReport(reportPath)).resolves.toBe('<testsuites />');
+    await expect(dependencies.readReport(join(directory, 'missing.xml'))).resolves.toBeUndefined();
+  });
+
+  it('removeDirectory deletes a directory tree', async () => {
+    const dependencies = createRealDependencies();
+    const directory = await mkdtemp(join(tmpdir(), 'weft-run-tests-remove-'));
+    const nested = join(directory, 'nested');
+    await mkdir(nested);
+    await writeFile(join(nested, 'report.xml'), '<testsuites />', 'utf8');
+
+    await dependencies.removeDirectory(directory);
+
+    cleanupPaths.delete(directory);
+    await expect(Bun.file(join(nested, 'report.xml')).exists()).resolves.toBe(false);
+  });
+
+  it('sweepStalePrecommitDirectories deletes only old matching directories', async () => {
+    const freshDirectory = await mkdtemp(join(tmpdir(), 'weft-precommit-'));
+    const staleDirectory = await mkdtemp(join(tmpdir(), 'weft-precommit-'));
+    const unrelatedDirectory = await mkdtemp(join(tmpdir(), 'weft-not-precommit-'));
+    cleanupPaths.add(freshDirectory);
+    cleanupPaths.add(staleDirectory);
+    cleanupPaths.add(unrelatedDirectory);
+
+    const staleTimestamp = new Date(Date.now() - STALE_DIRECTORY_AGE_MS - 60_000);
+    await utimes(staleDirectory, staleTimestamp, staleTimestamp);
+
+    await sweepStalePrecommitDirectories();
+
+    await expect(stat(staleDirectory)).rejects.toThrow();
+    await expect(stat(freshDirectory)).resolves.toBeDefined();
+    await expect(stat(unrelatedDirectory)).resolves.toBeDefined();
+
+    cleanupPaths.delete(staleDirectory);
+  });
+
+  it('sweepStalePrecommitDirectories ignores unreadable base directories', async () => {
+    const missingDirectory = join(tmpdir(), `weft-precommit-missing-${crypto.randomUUID()}`);
+    await expect(sweepStalePrecommitDirectories(missingDirectory)).resolves.toBeUndefined();
   });
 });

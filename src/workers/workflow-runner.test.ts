@@ -328,6 +328,43 @@ describe('handleRunMessage', () => {
       initial: 0,
     });
   });
+
+  it('routes worker-side workflow state through operation requests', async () => {
+    const context = createWorkflowRunnerContext();
+
+    async function* stateWorkflow(
+      ctx: {
+        state: {
+          workflow<T>(
+            key: string,
+            options?: { initial?: T },
+          ): { get(): Generator<unknown, T | undefined, unknown> };
+        };
+      },
+      _input: unknown,
+    ) {
+      return yield* ctx.state.workflow<number>('counter', { initial: 0 }).get();
+    }
+
+    const result = await handleRunMessage(
+      context,
+      {
+        workflowId: 'wf-worker-workflow-state',
+        workflowType: 'state-test',
+        input: null,
+      },
+      () => stateWorkflow,
+    );
+
+    expect(result.type).toBe('checkpoint');
+    if (result.type !== 'checkpoint') return;
+    expect(result.operationRequest).toMatchObject({
+      type: 'state-read',
+      scope: { type: 'workflow', workflowType: 'state-test' },
+      key: 'counter',
+      initial: 0,
+    });
+  });
 });
 
 describe('handleResumeMessage', () => {
@@ -780,6 +817,77 @@ describe('handleResumeMessage', () => {
       workflowId: 'wf-marker-collision',
       result: userResult,
     } satisfies WorkerOutboundMessage);
+  });
+
+  it('updates replay maxProtocolMessageBytes from resume messages before issuing the next checkpoint', async () => {
+    const context = createWorkflowRunnerContext();
+    const firstOperation = createActivityOperation('wf-max-protocol', 'step1', 'one');
+    const secondOperation = createActivityOperation('wf-max-protocol', 'step2', {
+      payload: 'x'.repeat(5_000),
+    });
+
+    async function* replayWorkflow() {
+      yield firstOperation;
+      yield secondOperation;
+    }
+
+    await handleRunMessage(
+      context,
+      { workflowId: 'wf-max-protocol', workflowType: 'replay', input: null },
+      () => replayWorkflow,
+    );
+
+    const result = await handleResumeMessage(context, {
+      workflowId: 'wf-max-protocol',
+      result: 'done',
+      maxProtocolMessageBytes: 4_096,
+    });
+
+    expect(result).toMatchObject({
+      type: 'failed',
+      workflowId: 'wf-max-protocol',
+      failureCategory: 'application',
+    });
+    expect(result.type === 'failed' ? result.error : '').toContain('exceeding limit 4096');
+  });
+
+  it('fails closed when a pending worker replay signature no longer matches the yielded operation', async () => {
+    const originalCheckpoint = createWorkflowRunnerContext();
+
+    async function* originalWorkflow() {
+      yield createActivityOperation('wf-pending-mismatch', 'step1', 'original');
+      yield createActivityOperation('wf-pending-mismatch', 'step2', 'next');
+    }
+
+    const checkpoint = await handleRunMessage(
+      originalCheckpoint,
+      { workflowId: 'wf-pending-mismatch', workflowType: 'replay', input: null },
+      () => originalWorkflow,
+    );
+    expect(checkpoint.type).toBe('checkpoint');
+    if (checkpoint.type !== 'checkpoint') return;
+
+    async function* changedWorkflow() {
+      yield createActivityOperation('wf-pending-mismatch', 'step1', 'changed');
+      yield createActivityOperation('wf-pending-mismatch', 'step2', 'next');
+    }
+
+    const recovered = await handleRunMessage(
+      createWorkflowRunnerContext(),
+      {
+        workflowId: 'wf-pending-mismatch',
+        workflowType: 'replay',
+        input: null,
+        checkpoint: checkpoint.checkpoint,
+      },
+      () => changedWorkflow,
+    );
+
+    expect(recovered).toMatchObject({
+      type: 'failed',
+      workflowId: 'wf-pending-mismatch',
+      failureCategory: 'system',
+    });
   });
 });
 
