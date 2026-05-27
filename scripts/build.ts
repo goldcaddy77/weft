@@ -168,4 +168,72 @@ await Bun.build({
 
 await $`bunx tsc --declaration --emitDeclarationOnly --project tsconfig.build.json`;
 
+// Guard: nothing test-only may ship in the published package. Test-support
+// helpers under src/ that import dev-only modules used to leak into dist/
+// because the build excludes by filename suffix (*.test-support.ts), not by
+// reachability — a plainly named helper would compile and ship an import of a
+// devDependency a consumer never installs. Renaming the offenders to
+// *.test-support.ts fixed it; this assertion keeps it fixed.
+//
+// We match real module specifiers (import/export-from/require/dynamic-import),
+// not raw substrings, and we compare by package root so `bun:test` and any
+// subpath like `fake-indexeddb/auto` are both caught. Comments are stripped
+// first, because `tsc` emits JSDoc into `.d.ts` files — a shipped doc example
+// like `import { JSDOM } from 'jsdom'` is a mention, not a real dependency, and
+// must not fail the build. The forbidden set is curated rather than derived
+// from every devDependency: several devDependencies (better-sqlite3, svelte,
+// valibot) are deliberately present in dist/, so a blanket "no devDependency in
+// dist" rule would false-positive on them. These three are the test-only
+// modules with no legitimate path into shipped output; add to the list if a new
+// test-only runtime dependency is introduced.
+async function assertNoTestOnlyDependenciesInDist(): Promise<void> {
+  const forbiddenPackageRoots = ['bun:test', 'fake-indexeddb', 'jsdom'];
+
+  // Capture the specifier from every form that pulls in a module: `from '…'`,
+  // `require('…')`, dynamic `import('…')`, and bare side-effect `import '…'`
+  // (the form the original leak used — `import 'fake-indexeddb/auto'`).
+  const specifierPattern =
+    /(?:\bfrom\s*|\brequire\s*\(\s*|\bimport\s*\(\s*|\bimport\s+)(["'])([^"']+)\1/g;
+
+  // Remove block and line comments so a token inside JSDoc/comments (which tsc
+  // copies into `.d.ts`) is not mistaken for a real import. Build output never
+  // contains a `//` or `/* */` sequence inside a string literal, so this is
+  // safe for emitted code even though it would be unsound on arbitrary source.
+  const stripComments = (source: string): string =>
+    source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+  const packageRootOf = (specifier: string): string => {
+    if (specifier.startsWith('@')) {
+      const [scope, name] = specifier.split('/');
+      return name ? `${scope}/${name}` : specifier;
+    }
+    return specifier.split('/')[0];
+  };
+
+  const offenders: { file: string; specifier: string }[] = [];
+  const distGlob = new Bun.Glob('dist/**/*.{js,d.ts}');
+
+  for await (const distPath of distGlob.scan('.')) {
+    const contents = stripComments(await Bun.file(distPath).text());
+    for (const [, , specifier] of contents.matchAll(specifierPattern)) {
+      if (forbiddenPackageRoots.includes(packageRootOf(specifier))) {
+        offenders.push({ file: distPath, specifier });
+      }
+    }
+  }
+
+  if (offenders.length > 0) {
+    console.error('Build produced dist/ artifacts that import test-only dependencies:');
+    for (const { file, specifier } of offenders) {
+      console.error(`  ${file} imports "${specifier}"`);
+    }
+    console.error(
+      'Rename the offending helper to *.test-support.ts so the build excludes it from dist/.',
+    );
+    process.exit(1);
+  }
+}
+
+await assertNoTestOnlyDependenciesInDist();
+
 console.log('Build complete!');
