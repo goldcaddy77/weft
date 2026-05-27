@@ -12,6 +12,7 @@ import { Engine } from '../core/engine.ts';
 import { runtimeWorkflowEngine } from '../core/runtime-workflow-engine.ts';
 import { parseDuration } from '../core/scheduler.ts';
 import type { Duration } from '../core/types.ts';
+import { activity as defineActivity } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import type { ChaosScenario, FailureCategory } from './chaos.ts';
 import { withChaos } from './chaos.ts';
@@ -202,7 +203,20 @@ export class TestEngine extends Engine {
     activity: (() => Promise<TResult> | TResult) | ((input: TInput) => Promise<TResult> | TResult),
     implementation: MockActivityFunction<TInput, TResult>,
   ): MockHandle<TInput, TResult> {
-    return this.#mocks.mock(activity, implementation);
+    const handle = this.#mocks.mock(activity, implementation);
+    const activityName = activity.name || 'anonymous';
+    const mockedActivity = defineActivity({
+      name: activityName,
+      execute: async (input: TInput) => {
+        const mocked = this.#mocks.get(activity);
+        if (mocked) {
+          return (await mocked.implementation(input)) as TResult;
+        }
+        return await activity(input);
+      },
+    });
+    (this.register as (definition: typeof mockedActivity) => unknown)(mockedActivity);
+    return handle;
   }
 
   // ---------------------------------------------------------------------------
