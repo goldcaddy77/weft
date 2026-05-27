@@ -74,7 +74,10 @@ describe('Context', () => {
     it('registers a cancellation handler when supported by the engine', () => {
       const handlers: Array<() => Promise<void> | void> = [];
       const context = createContext({
-        registerCancelHandler: (cancelHandler) => handlers.push(cancelHandler),
+        registerCancelHandler: (cancelHandler) => {
+          handlers.push(cancelHandler);
+          return () => {};
+        },
       });
       const cancellationHandler = () => {};
 

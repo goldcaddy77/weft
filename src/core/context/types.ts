@@ -188,5 +188,5 @@ export interface ContextOptions {
    * the transient context instance. The handler survives inline parking, but
    * it is not persisted or restored after engine restart.
    */
-  registerCancelHandler?: (handler: () => Promise<void> | void) => void;
+  registerCancelHandler?: (handler: () => Promise<void> | void) => () => void;
 }

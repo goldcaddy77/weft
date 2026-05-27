@@ -6,7 +6,7 @@ export function registerCancelHandler(
   internals: EngineInternals,
   workflowId: string,
   handler: CancelHandler,
-): void {
+): () => void {
   internals.cancelHandlersByWorkflow ??= new Map();
   let handlers = internals.cancelHandlersByWorkflow.get(workflowId);
   if (handlers === undefined) {
@@ -14,12 +14,26 @@ export function registerCancelHandler(
     internals.cancelHandlersByWorkflow.set(workflowId, handlers);
   }
   handlers.push(handler);
+
+  return () => {
+    const currentHandlers = internals.cancelHandlersByWorkflow.get(workflowId);
+    if (currentHandlers === undefined) return;
+
+    const handlerIndex = currentHandlers.indexOf(handler);
+    if (handlerIndex !== -1) {
+      currentHandlers.splice(handlerIndex, 1);
+    }
+
+    if (currentHandlers.length === 0) {
+      internals.cancelHandlersByWorkflow.delete(workflowId);
+    }
+  };
 }
 
 export function createCancelHandlerRegistration(
   internals: EngineInternals,
   workflowId: string,
-): (handler: CancelHandler) => void {
+): (handler: CancelHandler) => () => void {
   return (handler) => registerCancelHandler(internals, workflowId, handler);
 }
 

@@ -280,7 +280,7 @@ export function createExecutionStrategyBundle(parameters: {
   broadcastEvents: boolean;
   getRegistration: (workflowType: string) => RegistrationEntry | undefined;
   resolveWorkflowType: (target: string | Function) => string;
-  registerCancelHandler?: (workflowId: string, handler: () => Promise<void> | void) => void;
+  registerCancelHandler?: (workflowId: string, handler: () => Promise<void> | void) => () => void;
 }): ExecutionStrategyBundle {
   const {
     options,

@@ -18,10 +18,16 @@ export function* saga<TFinalOutput = unknown>(
   let compensationRun = false;
   let sagaActive = true;
 
-  getInternals(context).registerCancelHandler?.(async () => {
+  const unregisterCancelHandler = getInternals(context).registerCancelHandler?.(async () => {
     if (!sagaActive || compensationRun) return;
     compensationRun = true;
-    await compensateCompleted(completed);
+    try {
+      await compensateCompleted(completed);
+    } finally {
+      sagaActive = false;
+      completed.length = 0;
+      unregisterCancelHandler?.();
+    }
   });
 
   for (const step of steps) {
@@ -65,13 +71,19 @@ export function* saga<TFinalOutput = unknown>(
         }
       }
 
-      sagaActive = false;
+      finishSaga();
       throw stepError;
     }
   }
 
-  sagaActive = false;
+  finishSaga();
   return lastOutput as TFinalOutput;
+
+  function finishSaga(): void {
+    sagaActive = false;
+    completed.length = 0;
+    unregisterCancelHandler?.();
+  }
 }
 
 async function compensateCompleted(

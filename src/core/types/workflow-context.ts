@@ -192,10 +192,10 @@ export interface WorkflowContext<
     branches: TBranches,
   ): WorkflowOperation<RunAllResult<TBranches>>;
   /**
-   * Run a compensating transaction. If cancellation interrupts an active saga,
-   * completed steps compensate in reverse order on a best-effort, in-memory
-   * path. Cancellation compensation runs outside the durable activity pipeline
-   * and is not replayed after engine restart.
+   * Run a compensating transaction. In inline execution, if cancellation
+   * interrupts an active saga, completed steps compensate in reverse order on a
+   * best-effort, in-memory path. Cancellation compensation runs outside the
+   * durable activity pipeline and is not replayed after engine restart.
    */
   saga<TFinalOutput = unknown>(steps: ErasedSagaStep[]): WorkflowOperation<TFinalOutput>;
   startChild<TResult = unknown>(

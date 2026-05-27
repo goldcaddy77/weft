@@ -41,7 +41,7 @@ export interface InlineExecutionDependencies {
   resolveWorkflowType?: (target: string | Function) => string;
   maxNestingDepth: number;
   development?: boolean;
-  registerCancelHandler?: (workflowId: string, handler: () => Promise<void> | void) => void;
+  registerCancelHandler?: (workflowId: string, handler: () => Promise<void> | void) => () => void;
 }
 
 type InlineWorkflowRegistration = NonNullable<
