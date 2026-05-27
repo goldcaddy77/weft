@@ -4,8 +4,10 @@
  * These tests prove that Weft's timing/parallel/structural primitives
  * match Temporal's documented sample patterns:
  *   - Durable sleep that does not resolve until the timer boundary is crossed.
- *   - Timeout race: ctx.race([activity, timer]) resolves to whichever branch
- *     settles first.
+ *   - Timeout race: workflow-level executionTimeout fires when work exceeds
+ *     the deadline; ctx.race between two activities resolves to the first
+ *     to complete. Note: ctx.sleep is a top-level durable operation and
+ *     cannot be a branch inside ctx.race.
  *   - Parallel fan-out: ctx.all resolves all branches; partial-failure
  *     semantics match the documented contract.
  *   - Child workflows: parent starts child, awaits result; child failure
@@ -14,16 +16,20 @@
  * All timing uses TestEngine.advanceTime — real sleeps are forbidden.
  */
 
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 
-import { sleepForTesting } from '../../testing/fake-timers.test-support.ts';
+import { restoreRealTimers, waitForever } from '../../testing/fake-timers.test-support.ts';
 import { TestEngine } from '../../testing/test-engine.ts';
 import type { WorkflowContext } from '../types.ts';
 import { workflow } from '../types.ts';
 
 async function flush(): Promise<void> {
-  await sleepForTesting(10);
+  await new Promise<void>((resolve) => setTimeout(resolve, 10));
 }
+
+afterEach(() => {
+  restoreRealTimers();
+});
 
 // ---------------------------------------------------------------------------
 // 1. Durable sleep
@@ -116,7 +122,7 @@ describe('timeout race', () => {
     const engine = new TestEngine({ startTime: 0 });
 
     const neverReturning = async () => {
-      await new Promise<never>(() => {});
+      await waitForever();
       return 'never';
     };
 
@@ -171,6 +177,8 @@ describe('timeout race', () => {
 
     // fast completes first, so it wins
     expect(result).toBe('fast-result');
+    // slow still ran (both branches dispatched)
+    expect(slowCalls).toBe(1);
 
     engine[Symbol.dispose]();
   });
@@ -386,14 +394,11 @@ describe('child workflows (ctx.startChild)', () => {
       input: unknown,
     ) {
       const { childId } = input as { childId: string };
-      const childResultPromise = ctx.startChild<{ approved: boolean }>(
+      const result = yield* ctx.startChild<{ approved: boolean }>(
         'signalable-child',
         {},
-        {
-          id: childId,
-        },
+        { id: childId },
       );
-      const result = yield* childResultPromise;
       return result;
     });
     engine.register(signalingParent);
