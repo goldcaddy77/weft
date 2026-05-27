@@ -31,7 +31,7 @@ import * as durableOperations from './durable-operations.ts';
 import { getInternals, initializeInternals } from './internals.ts';
 import type { ContextOperationRequest } from './operation-request.ts';
 import * as parallelOperations from './parallel-operations.ts';
-import { createRunActivityRequest } from './run-operation.ts';
+import { runActivityWithRetry } from './run-operation.ts';
 import * as sagaHelpers from './saga.ts';
 import * as speculateOperations from './speculate-operations.ts';
 import {
@@ -189,15 +189,7 @@ export class Context implements WorkflowContext {
       | (((input: TInput) => Promise<TResult> | TResult) & { execute?: never }),
     ...rest: unknown[]
   ): Generator<ContextOperationRequest, TResult, unknown> {
-    const { request, step, hasCachedResult, cachedResult } = createRunActivityRequest<TResult>(
-      this,
-      activity,
-      rest,
-    );
-    if (hasCachedResult) return cachedResult as TResult;
-    const result = yield request;
-    this.accumulatedResults.set(step, result);
-    return result as TResult;
+    return yield* runActivityWithRetry(this, activity, rest);
   }
   *sleep(duration: Duration): Generator<ContextOperationRequest, void, unknown> {
     return yield* durableOperations.sleep(this, getInternals(this), duration);

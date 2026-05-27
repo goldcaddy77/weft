@@ -242,6 +242,23 @@ describe('activity operation helpers', () => {
     ).rejects.toThrow('No activity worker dispatcher available for "missing-dispatcher"');
   });
 
+  it('rehydrates worker activity failure names', async () => {
+    const internals = createInternals({
+      activityWorkerDispatcher: {
+        execute: async () => ({
+          operationId: 'op-validation',
+          status: 'failed',
+          error: 'validation failed',
+          errorName: 'ValidationError',
+        }),
+      },
+    });
+
+    await expect(
+      invokeWorkerActivity(internals as never, 'op-validation', 'validate', 'payload', 1),
+    ).rejects.toMatchObject({ name: 'ValidationError', message: 'validation failed' });
+  });
+
   it('copies activity-interceptor headers onto the operation before returning', async () => {
     const operation = createActivityOperation({
       fn: () => 'activity-result',

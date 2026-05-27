@@ -197,7 +197,11 @@ export async function invokeWorkerActivity(
     attempt,
   });
   if (result.status === 'failed') {
-    throw new Error(result.error);
+    const error = new Error(result.error);
+    if (result.errorName !== undefined) {
+      error.name = result.errorName;
+    }
+    throw error;
   }
 
   return result.value;
