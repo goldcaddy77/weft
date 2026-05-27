@@ -1206,6 +1206,31 @@ describe('WorkerExecutionStrategy', () => {
       expect(mockPool.discard).toHaveBeenCalledWith(firstWorker());
     });
 
+    it('discards the worker when it emits a messageerror event', async () => {
+      setup(1, {
+        workflowTurnTimeoutMs: 100,
+        maxProtocolMessageBytes: 4_096,
+        requireProtocolVersion: true,
+      });
+
+      strategy.startWorkflow({
+        workflowId: 'wf-messageerror',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+      await sleepForTesting(10);
+
+      dispatchToMockWorker(firstWorker(), 'messageerror', new MessageEvent('messageerror'));
+
+      expect(firstMessage()).toMatchObject({
+        type: 'failed',
+        workflowId: 'wf-messageerror',
+        failureCategory: 'system',
+      });
+      expect(mockPool.discard).toHaveBeenCalledWith(firstWorker());
+    });
+
     it('fails an oversized run message before acquiring a worker', async () => {
       setup(1, {
         maxProtocolMessageBytes: 4_096,
@@ -1293,6 +1318,38 @@ describe('WorkerExecutionStrategy', () => {
         type: 'failed',
         workflowId: 'wf-large-active-resume',
         failureCategory: 'resource',
+      });
+    });
+
+    it('clears the active turn and discards the worker when resume postMessage throws', async () => {
+      setup(1, {
+        maxProtocolMessageBytes: 4_096,
+        requireProtocolVersion: true,
+      });
+
+      strategy.startWorkflow({
+        workflowId: 'wf-resume-postmessage-throws',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+      await sleepForTesting(10);
+
+      firstWorker().postMessage.mockImplementationOnce(() => {
+        throw new Error('resume postMessage failed');
+      });
+
+      strategy.resumeWorkflow({
+        workflowId: 'wf-resume-postmessage-throws',
+        checkpoint: new ArrayBuffer(0),
+        operationResult: { status: 'completed', value: null },
+      });
+
+      expect(mockPool.discard).toHaveBeenCalledWith(firstWorker());
+      expect(firstMessage()).toMatchObject({
+        type: 'failed',
+        workflowId: 'wf-resume-postmessage-throws',
+        failureCategory: 'system',
       });
     });
 

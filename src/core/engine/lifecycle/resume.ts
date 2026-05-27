@@ -64,9 +64,6 @@ function relaunchInlineWorkflowAfterResume(
   >,
 ): void {
   const { workflowId, resumeCheckpoint, registration, callbacks } = args;
-  if (!internals.inlineStrategy) {
-    return;
-  }
   // Keep the final running-state check and the re-entry into user code
   // in the same serialized section so cancel/timeout cannot commit a
   // terminal state and still let a parked workflow continue.
@@ -98,8 +95,9 @@ function relaunchInlineWorkflowAfterResume(
   }
 
   const generator = registration.handler(context, latestState.input);
-  internals.inlineStrategy.adoptWorkflow(workflowId, generator, context, workflowAbort);
-  internals.inlineStrategy.continueWorkflow(workflowId, undefined);
+  const inlineStrategy = internals.inlineStrategy!;
+  inlineStrategy.adoptWorkflow(workflowId, generator, context, workflowAbort);
+  inlineStrategy.continueWorkflow(workflowId, undefined);
 }
 
 function relaunchWorkerWorkflowAfterResume(

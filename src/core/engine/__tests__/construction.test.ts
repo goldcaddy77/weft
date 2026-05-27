@@ -182,6 +182,25 @@ describe('normalizeWorkerExecutionConfiguration', () => {
     ).toThrow('cannot be provided');
   });
 
+  it('allows explicit inline mode without worker configuration', () => {
+    expect(
+      normalizeWorkerExecutionConfiguration({
+        workflowExecutionMode: 'inline',
+      }),
+    ).toEqual({
+      mode: 'inline',
+      workerExecution: null,
+    });
+  });
+
+  it('rejects unknown workflow execution modes', () => {
+    expect(() =>
+      normalizeWorkerExecutionConfiguration({
+        workflowExecutionMode: 'remote' as never,
+      }),
+    ).toThrow('workflowExecutionMode');
+  });
+
   for (const value of [
     Number.NaN,
     Infinity,

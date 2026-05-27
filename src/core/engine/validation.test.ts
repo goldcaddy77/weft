@@ -119,6 +119,13 @@ describe('engine validation helpers', () => {
     ).toBe('system');
   });
 
+  it('drops an unrecognized non-null failure category while decoding persisted state', () => {
+    expect(
+      decodeWorkflowState(encode(createWorkflowState({ failureCategory: 'bogus' as never })))
+        .failureCategory,
+    ).toBeUndefined();
+  });
+
   it('validates schedule identifiers and bulk filter numbers', () => {
     expect(isValidScheduleIdentifier(42)).toBe(false);
     expect(isValidScheduleIdentifier('')).toBe(false);
