@@ -115,6 +115,8 @@ type StorageCapabilities = {
 
 The engine depends on four guarantees. **`atomicBatch`** keeps a checkpoint commit all-or-nothing. **`readAfterWrite`** lets a resume observe the checkpoint it just wrote. **`scanConsistency`** keeps visibility and index scans from seeing torn writes. **`conditionalBatch`** backs compare-and-swap state, including storage-backed workflow state and operations that must commit only if the current value still matches the caller's expectation.
 
+The Tier-0 failure-semantics contract relies on this capability split for activity reconciliation, signal idempotency, and checkpoint ownership. See [Tier-0 Behavioral Contract](../architecture/tier-0-behavioral-contract.md) for the implementation gates.
+
 The honest profile per built-in adapter:
 
 | Adapter               | readAfterWrite | scanConsistency | atomicBatch | conditionalBatch | boundedRangeDelete |
@@ -154,6 +156,7 @@ wf:{id}:ckpt                                  -- latest checkpoint
 wf:{id}:ckpt:{step}                           -- checkpoint history
 op:{queue}:{scheduled}:{id}                   -- operation (sorted by queue + time)
 ev:{workflowId}:{seq}                         -- event (sorted by workflow + sequence)
+ev:{workflowId}:watermark                     -- compaction watermark for truncated events
 sig:{workflowId}:{name}:{id}                  -- signal
 wf-deadline:{deadline}:{workflowId}           -- timeout deadline
 attr:{workflowId}                             -- search attributes
@@ -165,6 +168,12 @@ upr:{updateId}                                -- update response
 This listing covers the primary keys. The full canonical list—including `wf:{id}:timeline:`, `schedule:`, `op:inflight:`, `tag:`, `upk:` (idempotency), `budget:`, `archive:`, `state:execution:`, `state:workflow:`, `blob:`, and others—is in `KEYS` in `src/storage/interface.ts`.
 
 All timestamps are zero-padded to 16 digits for correct lexicographic ordering. So `scan("op:default:")` returns all operations on the "default" queue in scheduled order—the core hot path is a single range scan, regardless of backend.
+
+### Event-log compaction
+
+Long-running workflows can reclaim old event-log records with `new Engine({ history: { retentionWindow } })`. The canonical checkpoint is the compacted state used for resume, so compaction deletes only records older than a confirmed checkpoint and writes `ev:{workflowId}:watermark` atomically with that checkpoint commit. Verification starts from the watermark and still checks the surviving tail against the event-log head, so a compacted log is not treated as corrupt merely because its prefix was intentionally removed.
+
+Compaction is bounded and incremental. The watermark only moves forward, so raising `retentionWindow` later cannot restore records that were already deleted. `history.maxEvents` still counts lifetime event-log sequence; compaction reclaims storage but does not make the workflow semantically younger. When `archive` is configured, compacted ranges are exported after deletion commits; archive failures do not roll back the checkpoint.
 
 ## Per-backend configuration
 

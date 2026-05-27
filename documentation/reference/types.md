@@ -518,20 +518,26 @@ interface EngineOptions {
   storage?: Storage;
   development?: boolean;
   serializer?: Serializer;
+  retention?: RetentionPolicy;
+  retentionSweepInterval?: Duration;
+  retentionSweepBatchSize?: number;
+  history?: HistoryPolicy;
+  archive?: ArchiveAdapter;
+  payloadSize?: PayloadSizePolicy;
+  compression?: CompressionOptions;
   checkpointHistory?: number;
   checkpointSizeWarningThreshold?: number;
   maxNestingDepth?: number;
   broadcastEvents?: boolean;
-  retention?: RetentionPolicy;
-  compression?: CompressionOptions;
   workflowExecutionMode?: 'inline' | 'worker';
   workerExecution?: WorkerExecutionOptions;
   activityExecution?: ActivityExecutionOptions;
   alerts?: AlertOptions[];
+  interceptors?: readonly Interceptor[];
 }
 ```
 
-See [Configuration](./configuration.md) for detailed field descriptions and defaults. `workflowExecutionMode: 'worker'` requires `workerExecution` and applies Worker turn timeout and protocol-message bounds for untrusted workflow code; `workflowExecutionMode: 'inline'` rejects `workerExecution`.
+See [Configuration](./configuration.md) for detailed field descriptions and defaults. `history.maxEvents` is the lifetime history circuit breaker; `history.retentionWindow` compacts event-log storage behind a checkpoint watermark; `archive` is a best-effort post-commit sink for compacted ranges; `payloadSize.maxBytes` rejects oversized workflow inputs, signal payloads, and activity results before durable writes. `workflowExecutionMode: 'worker'` requires `workerExecution` and applies Worker turn timeout and protocol-message bounds for untrusted workflow code; `workflowExecutionMode: 'inline'` rejects `workerExecution`.
 
 ### `CompressionOptions`
 

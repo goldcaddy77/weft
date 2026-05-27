@@ -235,6 +235,8 @@ A small `Storage` interface over string keys and `Uint8Array` values: five requi
 
 Bring your own backend by implementing the interface—five methods is enough.
 
+For long-running workflows, `history.retentionWindow` can compact old event-log records behind the latest checkpoint while preserving verification through a durable watermark. `history.maxEvents` remains a lifetime circuit breaker even after compaction. Use `payloadSize.maxBytes` when operators need an admission-time cap on workflow inputs, signal payloads, and activity results before those values reach storage.
+
 ### Server Mode
 
 `serve()` wraps `Bun.serve()` to expose your engine over HTTP and WebSocket with a versioned REST API.
