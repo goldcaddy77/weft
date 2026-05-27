@@ -6,7 +6,7 @@ import { WorkflowResumedEvent } from '../../events.ts';
 import type { Checkpoint, WorkflowState } from '../../types.ts';
 import { type WorkflowVersionTuple } from '../../workflow-version-tuple.ts';
 import { getWorkflowExecutionStartedAt, type WorkflowHandle } from '../handles.ts';
-import type { EngineInternals } from '../internals.ts';
+import { appendCancelHandler, type EngineInternals } from '../internals.ts';
 import { loadWorkflowState } from '../storage-io.ts';
 import { decodeWorkflowState } from '../validation.ts';
 import { prepareResumeState } from './persist.ts';
@@ -88,15 +88,7 @@ function relaunchInlineWorkflowAfterResume(
     ...(latestState.executionDeadline !== undefined && {
       deadline: latestState.executionDeadline,
     }),
-    registerCancelHandler: (handler) => {
-      const map = internals.cancelHandlersByWorkflow;
-      let handlers = map.get(workflowId);
-      if (handlers === undefined) {
-        handlers = [];
-        map.set(workflowId, handlers);
-      }
-      handlers.push(handler);
-    },
+    registerCancelHandler: (handler) => appendCancelHandler(internals, workflowId, handler),
   });
 
   if (internals.options.development) {

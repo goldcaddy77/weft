@@ -267,10 +267,46 @@ describe('ctx.onCancel()', () => {
 
     engine[Symbol.dispose]();
   });
+
+  // -------------------------------------------------------------------------
+  // 8. Handler fires after fork (launchInlineWorkflowFromCheckpoint path)
+  // -------------------------------------------------------------------------
+
+  it('runs the handler when a forked workflow is cancelled', async () => {
+    const storage = new MemoryStorage();
+    const ran: string[] = [];
+
+    const forkableWorkflow = workflow({ name: 'on-cancel-fork' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
+      ctx.onCancel(() => void ran.push('fork-cancel'));
+      yield* ctx.waitForSignal('never');
+    });
+
+    const engine1 = new Engine({ storage });
+    engine1.register(forkableWorkflow);
+
+    await engine1.start('on-cancel-fork', null, { id: 'fork-source' });
+    await flush();
+    engine1[Symbol.dispose]();
+
+    const engine2 = new Engine({ storage });
+    engine2.register(forkableWorkflow);
+
+    const forkHandle = await engine2.fork('fork-source');
+    await flush();
+
+    await engine2.cancel(forkHandle.id);
+
+    await expect(forkHandle.result()).rejects.toThrow('Workflow cancelled');
+    expect(ran).toEqual(['fork-cancel']);
+
+    engine2[Symbol.dispose]();
+  });
 });
 
 // ---------------------------------------------------------------------------
-// 8. saga compensation on cancel — in-progress saga compensates already-
+// 9. saga compensation on cancel — in-progress saga compensates already-
 //    completed steps in reverse order when the workflow is cancelled.
 // ---------------------------------------------------------------------------
 

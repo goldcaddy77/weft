@@ -188,3 +188,24 @@ export function getInternals(engine: object): EngineInternals {
   }
   return internals;
 }
+
+/**
+ * Append a cancel handler for a workflow to the shared map, lazily creating
+ * the entry. No-ops silently if the workflow is already being terminated —
+ * cancellation has already snapshotted and deleted the map entry, so a
+ * late-registering handler would never run anyway.
+ */
+export function appendCancelHandler(
+  internals: EngineInternals,
+  workflowId: string,
+  handler: () => Promise<void> | void,
+): void {
+  if (internals.terminalizingWorkflows.has(workflowId)) return;
+  const map = internals.cancelHandlersByWorkflow;
+  let handlers = map.get(workflowId);
+  if (handlers === undefined) {
+    handlers = [];
+    map.set(workflowId, handlers);
+  }
+  handlers.push(handler);
+}

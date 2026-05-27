@@ -16,7 +16,7 @@ import type {
 import { type WorkflowVersionTuple } from '../../workflow-version-tuple.ts';
 import { WorkflowTypeNotRegisteredForRecoveryError } from '../errors.ts';
 import { getWorkflowExecutionStartedAt, type WorkflowHandle } from '../handles.ts';
-import type { EngineInternals } from '../internals.ts';
+import { appendCancelHandler, type EngineInternals } from '../internals.ts';
 import {
   encodeWorkflowStartHeaders,
   normalizeForkStep,
@@ -427,6 +427,7 @@ function launchInlineWorkflowFromCheckpoint(
     }),
     sleepReferenceTime: checkpoint.createdAt,
     ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
+    registerCancelHandler: (handler) => appendCancelHandler(internals, workflowId, handler),
   });
 
   if (internals.options.development) {

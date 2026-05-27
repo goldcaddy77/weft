@@ -139,7 +139,7 @@ import {
   resumeParkedInlineWorkflow as resumeParkedInlineWorkflowFromInternals,
   type InlineParkingCallbacks,
 } from './inline-parking.ts';
-import { getInternals, initializeInternals } from './internals.ts';
+import { appendCancelHandler, getInternals, initializeInternals } from './internals.ts';
 import {
   fork as forkFromLifecycle,
   recoverAll as recoverAllFromLifecycle,
@@ -417,13 +417,7 @@ export class Engine<
       getRegistration: getInternals(this).registrations.get.bind(getInternals(this).registrations),
       resolveWorkflowType: this.#resolveWorkflowTypeTarget.bind(this),
       registerCancelHandler: (workflowId, handler) => {
-        const map = getInternals(this).cancelHandlersByWorkflow;
-        let handlers = map.get(workflowId);
-        if (handlers === undefined) {
-          handlers = [];
-          map.set(workflowId, handlers);
-        }
-        handlers.push(handler);
+        appendCancelHandler(getInternals(this), workflowId, handler);
       },
     });
     getInternals(this).storage = storage;
