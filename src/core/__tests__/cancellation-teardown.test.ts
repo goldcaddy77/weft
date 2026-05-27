@@ -13,6 +13,7 @@ import { describe, expect, it } from 'bun:test';
 import { sleepForTesting } from '../../testing/fake-timers.test-support.ts';
 
 import { MemoryStorage } from '../../storage/memory.ts';
+import { TestEngine } from '../../testing/test-engine.ts';
 import { Engine } from '../engine.ts';
 import type { ActivityDefinition, WorkflowContext } from '../types.ts';
 import { workflow } from '../types.ts';
@@ -204,10 +205,72 @@ describe('ctx.onCancel()', () => {
 
     engine[Symbol.dispose]();
   });
+
+  // -------------------------------------------------------------------------
+  // 6. Handler registered after a park (post-resume) still fires on cancel
+  // -------------------------------------------------------------------------
+
+  it('runs a handler registered after the workflow resumes from a park', async () => {
+    const engine = new Engine();
+    const ran: string[] = [];
+
+    const postResumeWorkflow = workflow({ name: 'on-cancel-post-resume' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
+      // Park first — context is deleted from inline strategy during park.
+      yield* ctx.waitForSignal('resume');
+      // Register after resume — tests that the new context also has registerCancelHandler.
+      ctx.onCancel(() => void ran.push('post-resume'));
+      yield* ctx.waitForSignal('never');
+    });
+    engine.register(postResumeWorkflow);
+
+    const handle = await engine.start('on-cancel-post-resume', null);
+    await flush();
+
+    await engine.signal(handle.id, 'resume', null);
+    await flush();
+
+    await engine.cancel(handle.id);
+
+    await expect(handle.result()).rejects.toThrow('Workflow cancelled');
+    expect(ran).toEqual(['post-resume']);
+
+    engine[Symbol.dispose]();
+  });
+
+  // -------------------------------------------------------------------------
+  // 7. Handler fires on workflow timeout (terminateWorkflow covers both paths)
+  // -------------------------------------------------------------------------
+
+  it('runs the handler when the workflow times out', async () => {
+    const engine = new TestEngine({ startTime: 1_000 });
+    const ran: string[] = [];
+
+    const timedOutWorkflow = workflow({ name: 'on-cancel-timeout' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
+      ctx.onCancel(() => void ran.push('timeout-teardown'));
+      yield* ctx.waitForSignal('never');
+    });
+    engine.register(timedOutWorkflow);
+
+    const handle = await engine.start('on-cancel-timeout', null, {
+      executionTimeout: '1s',
+    });
+    await flush();
+
+    await engine.advanceTime('2s');
+
+    await expect(handle.result()).rejects.toThrow();
+    expect(ran).toEqual(['timeout-teardown']);
+
+    engine[Symbol.dispose]();
+  });
 });
 
 // ---------------------------------------------------------------------------
-// 6. saga compensation on cancel — in-progress saga compensates already-
+// 8. saga compensation on cancel — in-progress saga compensates already-
 //    completed steps in reverse order when the workflow is cancelled.
 // ---------------------------------------------------------------------------
 

@@ -88,6 +88,15 @@ function relaunchInlineWorkflowAfterResume(
     ...(latestState.executionDeadline !== undefined && {
       deadline: latestState.executionDeadline,
     }),
+    registerCancelHandler: (handler) => {
+      const map = internals.cancelHandlersByWorkflow;
+      let handlers = map.get(workflowId);
+      if (handlers === undefined) {
+        handlers = [];
+        map.set(workflowId, handlers);
+      }
+      handlers.push(handler);
+    },
   });
 
   if (internals.options.development) {

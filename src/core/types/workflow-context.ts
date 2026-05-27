@@ -298,9 +298,17 @@ export interface WorkflowContext<
   expose(accessors: Record<string, () => unknown>): void;
   streamUrl(reference: StreamReference): string;
   /**
-   * Register a handler to run when this workflow is cancelled. Handlers are
-   * called in registration order before the workflow is finalized as cancelled.
-   * Handler failures are swallowed — the workflow still finalizes as cancelled.
+   * Register a best-effort teardown handler that runs when this workflow is
+   * terminated (cancelled or timed out), before the workflow is finalized.
+   * Handlers run in registration order; async handlers are awaited; failures
+   * are swallowed — the workflow still finalizes as terminated.
+   *
+   * **Best-effort only**: handlers run outside the durable effect log and are
+   * not retried. Side effects in handlers are not replay-safe.
+   *
+   * **Worker-pool mode**: this method is a no-op when the engine uses a
+   * remote worker pool — register teardown logic via worker-side lifecycle
+   * hooks instead.
    *
    * @example
    * ```ts

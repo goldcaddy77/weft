@@ -77,10 +77,12 @@ export async function terminateWorkflow(
 ): Promise<void> {
   internals.terminalizingWorkflows.add(workflowId);
   dropQueuedInlineWorkflowStart(internals, workflowId);
+  // Snapshot and remove handlers before cancelWorkflow so any concurrent cancel
+  // attempt sees an empty list and cannot cause duplicate handler invocations.
   const cancelHandlers = internals.cancelHandlersByWorkflow.get(workflowId) ?? [];
+  internals.cancelHandlersByWorkflow.delete(workflowId);
   internals.strategy.cancelWorkflow(workflowId);
   await runCancelHandlers(cancelHandlers, callbacks, workflowId);
-  internals.cancelHandlersByWorkflow.delete(workflowId);
 
   try {
     const attributeBytes = await internals.storage.get(KEYS.attribute(workflowId));
