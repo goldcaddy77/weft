@@ -66,6 +66,7 @@ function cloneSpeculativeRuntimeState(
   childInternals.exposedValues = cloneMap(parentInternals.exposedValues);
   childInternals.memoCache = cloneMap(parentInternals.memoCache);
   childInternals.explainMode = parentInternals.explainMode;
+  childInternals.workflowInterceptor = parentInternals.workflowInterceptor;
 }
 
 export function createSpeculativeChild(parent: Context, createContext: CreateContext): Context {

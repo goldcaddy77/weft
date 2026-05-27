@@ -1,3 +1,4 @@
+import type { ComposedWorkflowInterceptor } from '../interceptor.ts';
 import type { SearchAttributeSchema, SearchAttributeValue } from '../types.ts';
 import type { Context, ContextOptions } from './index.ts';
 import { createCheckpointLocals } from './session-state.ts';
@@ -11,6 +12,7 @@ export interface ContextInternals {
   stateSession: Record<string, unknown> | undefined;
   searchAttributes: Record<string, SearchAttributeValue>;
   searchAttributeSchema: SearchAttributeSchema | undefined;
+  workflowInterceptor: ComposedWorkflowInterceptor | null | undefined;
   pendingAttributeChanges: Record<string, SearchAttributeValue> | undefined;
   updateHandlers: Map<string, (payload: unknown) => unknown> | undefined;
   queryHandlers: Map<string, (input: unknown) => unknown> | undefined;
@@ -42,6 +44,7 @@ export function initializeInternals(
     checkpointLocals: createCheckpointLocals(initialSessionState, options.locals),
     searchAttributes: options.searchAttributes ? { ...options.searchAttributes } : {},
     searchAttributeSchema: options.searchAttributeSchema,
+    workflowInterceptor: undefined,
     pendingAttributeChanges: undefined,
     updateHandlers: undefined,
     queryHandlers: undefined,

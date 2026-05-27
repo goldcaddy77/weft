@@ -5,7 +5,7 @@ import { MemoryStorage } from '../../storage/memory.ts';
 import { ActivityWorkerDispatcher } from '../../workers/activity-worker-dispatcher.ts';
 import { WorkerPool } from '../../workers/pool.ts';
 import { InlineExecutionStrategy } from '../inline-execution-strategy.ts';
-import type { Interceptor } from '../interceptor.ts';
+import type { ComposedWorkflowInterceptor, Interceptor } from '../interceptor.ts';
 import {
   DEFAULT_RETENTION_SWEEP_BATCH_SIZE,
   DEFAULT_RETENTION_SWEEP_INTERVAL_MS,
@@ -280,6 +280,7 @@ export function createExecutionStrategyBundle(parameters: {
   development: boolean;
   broadcastEvents: boolean;
   getRegistration: (workflowType: string) => RegistrationEntry | undefined;
+  getComposedWorkflowInterceptor?: () => ComposedWorkflowInterceptor | null;
   resolveWorkflowType: (target: string | Function) => string;
   registerCancelHandler?: (workflowId: string, handler: () => Promise<void> | void) => () => void;
 }): ExecutionStrategyBundle {
@@ -290,6 +291,7 @@ export function createExecutionStrategyBundle(parameters: {
     development,
     broadcastEvents,
     getRegistration,
+    getComposedWorkflowInterceptor,
     resolveWorkflowType,
     registerCancelHandler,
   } = parameters;
@@ -318,6 +320,7 @@ export function createExecutionStrategyBundle(parameters: {
   }
   const inlineStrategy = new InlineExecutionStrategy({
     getRegistration,
+    ...(getComposedWorkflowInterceptor !== undefined && { getComposedWorkflowInterceptor }),
     getNow,
     maxNestingDepth,
     development,
