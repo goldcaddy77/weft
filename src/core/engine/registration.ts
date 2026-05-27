@@ -6,6 +6,7 @@ import {
   type WorkflowDefinition,
 } from '../types.ts';
 import { clonePlain } from '../types/clone-plain.ts';
+import { validateWorkflowOrActivityName } from '../types/name-grammar.ts';
 import type { EngineInternals } from './internals.ts';
 import { normalizeRetentionPolicy } from './validation.ts';
 
@@ -109,6 +110,7 @@ function commitWorkflowDefinition(
   callbacks: RegistrationCallbacks,
 ): void {
   const name = definition.name;
+  validateWorkflowOrActivityName(name, 'workflow');
   assertConstraintsSupported(internals, name, definition);
   const entry = buildRegistrationEntry(name, definition);
   internals.registrations.set(name, entry);
