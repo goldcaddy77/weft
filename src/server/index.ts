@@ -5,6 +5,7 @@
  */
 
 import type { RetryPolicy } from '../core/types.ts';
+import { DASHBOARD_MOUNT_PATTERNS } from '../dashboard/route-table.ts';
 import type { PrometheusExporter } from '../observability/metrics.ts';
 import type { RoutingPolicy } from '../worker/registry.ts';
 import { WorkerRegistry } from '../worker/registry.ts';
@@ -41,6 +42,29 @@ export {
 } from './runtime/event-broadcasting.ts';
 
 /**
+ * Static route patterns at which the dashboard shell is served, derived
+ * directly from the SPA's route table (`DASHBOARD_MOUNT_PATTERNS` in
+ * `src/dashboard/route-table.ts`). Deriving from the single source of truth —
+ * rather than re-listing the routes here — means a new top-level dashboard
+ * page automatically gets a server mount, so a hard reload of it resolves to
+ * the shell instead of 404ing.
+ *
+ * They are intentionally specific (no blanket `/*`) so they cannot shadow the
+ * API served under the `/api` prefix or the root-stable discovery endpoints —
+ * those fall through to the `fetch` handler.
+ *
+ * @example
+ * ```ts
+ * import { DASHBOARD_PAGE_ROUTES } from 'weft/server';
+ *
+ * // The dashboard owns the origin root via these specific page routes.
+ * console.log(DASHBOARD_PAGE_ROUTES[0]); // '/'
+ * console.log(DASHBOARD_PAGE_ROUTES.includes('/workflows')); // true
+ * ```
+ */
+export const DASHBOARD_PAGE_ROUTES: readonly string[] = DASHBOARD_MOUNT_PATTERNS;
+
+/**
  * Configuration object for the `serve()` function.
  *
  * At minimum supply an `engine` and optionally a `port`.  Authentication,
@@ -70,7 +94,7 @@ export interface ServeOptions {
   hostname?: string;
   /** Enable Bun's development mode (HMR, source maps, detailed errors). */
   development?: boolean;
-  /** Dashboard HTML import for Bun's static route handler (e.g., `import dashboard from './index.html'`). */
+  /** Dashboard HTML import served at the root path `/` (e.g., `import dashboard from './index.html'`). */
   dashboard?: unknown;
   /** Authentication configuration. When provided, all non-public endpoints require valid credentials. */
   auth?: AuthConfig;
@@ -275,8 +299,21 @@ export function serve(options: ServeOptions): WeftServer {
 
   const routes: Record<string, unknown> = {};
   if (options.dashboard != null) {
-    routes['/ui'] = options.dashboard;
-    routes['/ui/*'] = options.dashboard;
+    // Mount the dashboard at its known top-level page routes — never a blanket
+    // `/*`. Bun matches the static `routes` map before the `fetch` fallback
+    // (where the entire API is dispatched), and `fetch` never runs for a path a
+    // route already matched. A global `/*` would therefore swallow `/api/...`
+    // and return the dashboard shell instead of the API response. These
+    // specific page routes can't collide with `/api/...` or the root-stable
+    // carve-outs, so `fetch` still owns everything else.
+    //
+    // `DASHBOARD_PAGE_ROUTES` is derived from the SPA's route table
+    // (`DASHBOARD_MOUNT_PATTERNS` in `src/dashboard/route-table.ts`), so a new
+    // top-level page automatically gets a server mount — there is no list to
+    // hand-maintain here.
+    for (const path of DASHBOARD_PAGE_ROUTES) {
+      routes[path] = options.dashboard;
+    }
   }
 
   const serverHolder: { current: ReturnType<typeof Bun.serve> | null } = { current: null };

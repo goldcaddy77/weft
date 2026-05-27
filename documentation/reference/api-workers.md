@@ -157,7 +157,7 @@ The worker sends heartbeats every 10 seconds after registration is acknowledged 
 import { RemoteWorker } from 'weft';
 
 const worker = new RemoteWorker({
-  serverUrl: 'ws://localhost:7233/v1/tasks/default/stream',
+  serverUrl: 'ws://localhost:7233/api/v1/tasks/default/stream',
   activities: {
     sendEmail: async (input) => {
       /* ... */
@@ -376,10 +376,10 @@ The read operations are reachable over
 ([HTTP](https://developer.mozilla.org/en-US/docs/Web/HTTP),
 [WebSocket](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API),
 [stdio](https://en.wikipedia.org/wiki/Standard_streams)) as
-[`weft.workers.list`](#get-v1workers) and
-[`weft.task.queues.list`](#get-v1task-queues). They take no input parameters.
+[`weft.workers.list`](#get-apiv1workers) and
+[`weft.task.queues.list`](#get-apiv1task-queues). They take no input parameters.
 
-### `GET /v1/workers`
+### `GET /api/v1/workers`
 
 Returns every connected worker with its queue assignment, advertised
 activities, concurrency, in-flight count, available capacity, connect
@@ -439,7 +439,7 @@ Workers are sorted by `id` ascending.
 - `draining`: drain state is set and the worker still has in-flight tasks.
 - `drained`: drain state is set and the worker has no in-flight tasks.
 
-### `POST /v1/workers/:workerId/drain`
+### `POST /api/v1/workers/:workerId/drain`
 
 Marks a connected worker as draining. Requires `system:admin`. The optional
 JSON request body may include a non-empty `reason`.
@@ -462,7 +462,7 @@ type WorkerDrainResponse = {
 
 The JSON-RPC operation name is `weft.workers.drain`.
 
-### `DELETE /v1/workers/:workerId/drain`
+### `DELETE /api/v1/workers/:workerId/drain`
 
 Clears the explicit drain marker for one worker. Requires `system:admin`.
 If a deployment-level drain still applies, the worker remains drained by
@@ -470,7 +470,7 @@ that deployment.
 
 The JSON-RPC operation name is `weft.workers.resume`.
 
-### `POST /v1/worker-deployments/:deploymentName/drain`
+### `POST /api/v1/worker-deployments/:deploymentName/drain`
 
 Marks every current and future worker that reports `deploymentName` as
 draining. Requires `system:admin`. The optional JSON request body may
@@ -490,14 +490,14 @@ type DeploymentDrainResponse = {
 
 The JSON-RPC operation name is `weft.worker.deployments.drain`.
 
-### `DELETE /v1/worker-deployments/:deploymentName/drain`
+### `DELETE /api/v1/worker-deployments/:deploymentName/drain`
 
 Clears the deployment-level drain marker. Requires `system:admin`. Any
 worker-specific drain markers remain in effect.
 
 The JSON-RPC operation name is `weft.worker.deployments.resume`.
 
-### `GET /v1/task-queues`
+### `GET /api/v1/task-queues`
 
 Returns per-queue health. The queue set is the union of three sources:
 
@@ -528,7 +528,7 @@ Queues are sorted by `queue` ascending.
 
 ### Dashboard view
 
-The bundled dashboard ships a "Workers" page at `/ui/workers` that
+The bundled dashboard ships a "Workers" page at `/workers` that
 renders workers, deployment aggregates, task queues, and drain controls
 side-by-side and polls every five seconds.
 Polling pauses while the tab is hidden and resumes when it becomes

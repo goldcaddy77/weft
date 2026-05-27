@@ -143,14 +143,14 @@ interface MetricDefinition {
 type MetricType = 'counter' | 'gauge' | 'histogram';
 ```
 
-Task metrics stay deliberately low-cardinality. Use `GET /v1/tasks/diagnostics` when you need workflow IDs, operation IDs, worker IDs, or queue-specific evidence for stuck work; keep metric labels suitable for aggregation.
+Task metrics stay deliberately low-cardinality. Use `GET /api/v1/tasks/diagnostics` when you need workflow IDs, operation IDs, worker IDs, or queue-specific evidence for stuck work; keep metric labels suitable for aggregation.
 
-### `GET /v1/tasks/diagnostics`
+### `GET /api/v1/tasks/diagnostics`
 
 Returns bounded task diagnostics for queued, in-flight, and recently resolved activity records. The REST endpoint is backed by the `weft.tasks.diagnostics` operation and requires `system:read`.
 
 ```http
-GET /v1/tasks/diagnostics?workflowId=checkout-123&queue=payments&limit=25
+GET /api/v1/tasks/diagnostics?workflowId=checkout-123&queue=payments&limit=25
 ```
 
 Query parameters:

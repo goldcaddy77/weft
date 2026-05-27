@@ -125,13 +125,13 @@ export class LongPollWorker implements Disposable {
     for (const activity of Object.keys(this.#options.activities)) {
       params.append('activity', activity);
     }
-    return `${this.#options.serverUrl}/v1/tasks/${encodeURIComponent(queue)}?${params.toString()}`;
+    return `${this.#options.serverUrl}/api/v1/tasks/${encodeURIComponent(queue)}?${params.toString()}`;
   }
 
   /** Build the task result URL. */
   #buildResultUrl(): string {
     const queue = this.#options.queue ?? DEFAULT_QUEUE;
-    return `${this.#options.serverUrl}/v1/tasks/${encodeURIComponent(queue)}/result`;
+    return `${this.#options.serverUrl}/api/v1/tasks/${encodeURIComponent(queue)}/result`;
   }
 
   async #pollLoop(): Promise<void> {

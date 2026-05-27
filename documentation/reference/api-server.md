@@ -51,7 +51,7 @@ interface ServeOptions {
 | `port`                         | `number`             | `7233`           | TCP port to listen on                                                    |
 | `hostname`                     | `string`             | `'0.0.0.0'`      | Hostname/IP to bind to                                                   |
 | `development`                  | `boolean`            | `false`          | Enable development mode with verbose error responses                     |
-| `dashboard`                    | `unknown`            | `undefined`      | Dashboard HTML/module import served at `/ui` when supplied               |
+| `dashboard`                    | `unknown`            | `undefined`      | Dashboard HTML/module import served at `/` when supplied                 |
 | `auth`                         | `AuthConfig`         | `undefined`      | Authentication configuration (JWT, mTLS, or custom)                      |
 | `visibilityPollIntervalMs`     | `number`             | `5000`           | Polling interval for task visibility timeout checks                      |
 | `workerReconnectGracePeriodMs` | `number`             | `100`            | Milliseconds before a disconnected worker's in-flight tasks are requeued |
@@ -128,14 +128,14 @@ The handler exposes the following routes under the `/v1` prefix:
 
 ### Workflows
 
-| Method   | Path                       | Description                                                                          |
-| -------- | -------------------------- | ------------------------------------------------------------------------------------ |
-| `POST`   | `/v1/workflows`            | Start a new workflow                                                                 |
-| `GET`    | `/v1/workflows`            | List workflows — see [Visibility filters](#list-workflows----query-parameters) below |
-| `GET`    | `/v1/workflows/aggregate`  | Group-by counts over the same filter shape                                           |
-| `GET`    | `/v1/workflows/:id`        | Get workflow state                                                                   |
-| `DELETE` | `/v1/workflows/:id`        | Cancel a workflow                                                                    |
-| `GET`    | `/v1/workflows/:id/result` | Await workflow result (30s default long-poll timeout, configurable up to 60s)        |
+| Method   | Path                           | Description                                                                          |
+| -------- | ------------------------------ | ------------------------------------------------------------------------------------ |
+| `POST`   | `/api/v1/workflows`            | Start a new workflow                                                                 |
+| `GET`    | `/api/v1/workflows`            | List workflows — see [Visibility filters](#list-workflows----query-parameters) below |
+| `GET`    | `/api/v1/workflows/aggregate`  | Group-by counts over the same filter shape                                           |
+| `GET`    | `/api/v1/workflows/:id`        | Get workflow state                                                                   |
+| `DELETE` | `/api/v1/workflows/:id`        | Cancel a workflow                                                                    |
+| `GET`    | `/api/v1/workflows/:id/result` | Await workflow result (30s default long-poll timeout, configurable up to 60s)        |
 
 #### Start Workflow -- Request Body
 
@@ -171,7 +171,7 @@ Results are ordered by `createdAt` descending with `id` ascending as the tiebrea
 
 #### Aggregate Workflows -- Query Parameters
 
-`GET /v1/workflows/aggregate` accepts every list-workflow filter parameter (except `limit`/`offset`, which are interpreted differently) plus:
+`GET /api/v1/workflows/aggregate` accepts every list-workflow filter parameter (except `limit`/`offset`, which are interpreted differently) plus:
 
 | Parameter  | Type     | Description                                                                                    |
 | ---------- | -------- | ---------------------------------------------------------------------------------------------- |
@@ -197,18 +197,18 @@ If an aggregate would materialize more than 100,000 distinct group keys the requ
 
 ### Signals
 
-| Method | Path                             | Description      |
-| ------ | -------------------------------- | ---------------- |
-| `POST` | `/v1/workflows/:id/signal/:name` | Deliver a signal |
+| Method | Path                                 | Description      |
+| ------ | ------------------------------------ | ---------------- |
+| `POST` | `/api/v1/workflows/:id/signal/:name` | Deliver a signal |
 
 Request body: `{ "payload": <any> }` (optional).
 
 ### Updates
 
-| Method | Path                             | Description                           |
-| ------ | -------------------------------- | ------------------------------------- |
-| `POST` | `/v1/workflows/:id/update/:name` | Send an update and await the response |
-| `GET`  | `/v1/updates/:updateId`          | Poll for an update result             |
+| Method | Path                                 | Description                           |
+| ------ | ------------------------------------ | ------------------------------------- |
+| `POST` | `/api/v1/workflows/:id/update/:name` | Send an update and await the response |
+| `GET`  | `/api/v1/updates/:updateId`          | Poll for an update result             |
 
 Update request body:
 
@@ -222,26 +222,26 @@ Update request body:
 
 ### Attributes
 
-| Method  | Path                           | Description                 |
-| ------- | ------------------------------ | --------------------------- |
-| `GET`   | `/v1/workflows/:id/attributes` | Get search attributes       |
-| `PATCH` | `/v1/workflows/:id/attributes` | Set/merge search attributes |
+| Method  | Path                               | Description                 |
+| ------- | ---------------------------------- | --------------------------- |
+| `GET`   | `/api/v1/workflows/:id/attributes` | Get search attributes       |
+| `PATCH` | `/api/v1/workflows/:id/attributes` | Set/merge search attributes |
 
 PATCH body: `{ "attributes": { "key": "value" } }`.
 
 ### Schedules
 
-| Method   | Path                       | Description        |
-| -------- | -------------------------- | ------------------ |
-| `POST`   | `/v1/schedules`            | Create a schedule  |
-| `GET`    | `/v1/schedules`            | List schedules     |
-| `GET`    | `/v1/schedules/:id`        | Get schedule state |
-| `PATCH`  | `/v1/schedules/:id`        | Update a schedule  |
-| `DELETE` | `/v1/schedules/:id`        | Cancel a schedule  |
-| `POST`   | `/v1/schedules/:id/pause`  | Pause a schedule   |
-| `POST`   | `/v1/schedules/:id/resume` | Resume a schedule  |
+| Method   | Path                           | Description        |
+| -------- | ------------------------------ | ------------------ |
+| `POST`   | `/api/v1/schedules`            | Create a schedule  |
+| `GET`    | `/api/v1/schedules`            | List schedules     |
+| `GET`    | `/api/v1/schedules/:id`        | Get schedule state |
+| `PATCH`  | `/api/v1/schedules/:id`        | Update a schedule  |
+| `DELETE` | `/api/v1/schedules/:id`        | Cancel a schedule  |
+| `POST`   | `/api/v1/schedules/:id/pause`  | Pause a schedule   |
+| `POST`   | `/api/v1/schedules/:id/resume` | Resume a schedule  |
 
-Use `POST /v1/schedules/:id/resume` to resume a paused schedule. There is no
+Use `POST /api/v1/schedules/:id/resume` to resume a paused schedule. There is no
 `/unpause` alias.
 
 Schedule read and mutation operations are also available over JSON-RPC as
@@ -268,12 +268,12 @@ filter can include `status`, `type`, `tags`, `attributes`, `limit`, and
 `offset`, matching the `engine.list()` filter shape used by the in-process
 API. On authenticated servers, callers must have the `workflows:admin` scope.
 
-| Method   | Path                        | Description                              |
-| -------- | --------------------------- | ---------------------------------------- |
-| `POST`   | `/v1/workflows/bulk/cancel` | Cancel multiple workflows                |
-| `POST`   | `/v1/workflows/bulk/signal` | Signal multiple workflows                |
-| `DELETE` | `/v1/workflows/bulk`        | Delete multiple terminal workflows       |
-| `PATCH`  | `/v1/workflows/bulk/tags`   | Add or remove tags on multiple workflows |
+| Method   | Path                            | Description                              |
+| -------- | ------------------------------- | ---------------------------------------- |
+| `POST`   | `/api/v1/workflows/bulk/cancel` | Cancel multiple workflows                |
+| `POST`   | `/api/v1/workflows/bulk/signal` | Signal multiple workflows                |
+| `DELETE` | `/api/v1/workflows/bulk`        | Delete multiple terminal workflows       |
+| `PATCH`  | `/api/v1/workflows/bulk/tags`   | Add or remove tags on multiple workflows |
 
 Run a preview first by sending `dryRun: true` and an optional `requestId`:
 
@@ -326,20 +326,20 @@ pending or running workflows.
 
 ### Checkpoints & Replay
 
-| Method | Path                            | Description                       |
-| ------ | ------------------------------- | --------------------------------- |
-| `GET`  | `/v1/workflows/:id/checkpoints` | List workflow checkpoints         |
-| `POST` | `/v1/workflows/:id/replay`      | Replay workflow from a checkpoint |
-| `POST` | `/v1/workflows/:id/fork`        | Fork a workflow from a checkpoint |
+| Method | Path                                | Description                       |
+| ------ | ----------------------------------- | --------------------------------- |
+| `GET`  | `/api/v1/workflows/:id/checkpoints` | List workflow checkpoints         |
+| `POST` | `/api/v1/workflows/:id/replay`      | Replay workflow from a checkpoint |
+| `POST` | `/api/v1/workflows/:id/fork`        | Fork a workflow from a checkpoint |
 
 ### Reviews
 
-| Method | Path                             | Description                                   |
-| ------ | -------------------------------- | --------------------------------------------- |
-| `GET`  | `/v1/reviews`                    | List human reviews, optionally with filters   |
-| `POST` | `/v1/reviews/:reviewId/decision` | Submit a review decision for a pending review |
+| Method | Path                                 | Description                                   |
+| ------ | ------------------------------------ | --------------------------------------------- |
+| `GET`  | `/api/v1/reviews`                    | List human reviews, optionally with filters   |
+| `POST` | `/api/v1/reviews/:reviewId/decision` | Submit a review decision for a pending review |
 
-`GET /v1/reviews` defaults to pending reviews only. Optional query parameters:
+`GET /api/v1/reviews` defaults to pending reviews only. Optional query parameters:
 
 - `status=pending|completed`
 - `workflowId=<workflow-id>`
@@ -347,7 +347,7 @@ pending or running workflows.
 
 Each response item includes a `status` discriminator. Pending entries expose the original review request metadata. Completed entries include the persisted reviewer decision plus the original request metadata.
 
-When server authentication is enabled, `GET /v1/reviews` requires the `reviews:read` scope.
+When server authentication is enabled, `GET /api/v1/reviews` requires the `reviews:read` scope.
 
 ### Discovery
 
@@ -363,9 +363,9 @@ The operation catalog is the unified, transport-neutral registry of every operat
 
 **`GET /openapi.json`** — OpenAPI 3.1 document describing every REST-bound operation. Useful for client codegen, request validation, and Swagger-style UIs. Schemas are generated from the same Zod definitions the server uses at runtime, so the document never drifts from the implementation.
 
-**`GET /openrpc.json`** — OpenRPC 1.3.2 document describing every JSON-RPC method. Pair this with `/jsonrpc` (WebSocket) or JSON-RPC-over-HTTP for typed RPC clients. The root-level `x-weft-mcp` extension identifies the live MCP discovery surface and marks MCP-exposable operation methods with method-level `x-weft-mcp` metadata.
+**`GET /openrpc.json`** — OpenRPC 1.3.2 document describing every JSON-RPC method. Pair this with `/api/jsonrpc` (WebSocket) or JSON-RPC-over-HTTP for typed RPC clients. The root-level `x-weft-mcp` extension identifies the live MCP discovery surface and marks MCP-exposable operation methods with method-level `x-weft-mcp` metadata.
 
-**`GET /.well-known/mcp.json`** — minimal MCP discovery document. It points remote clients at the Streamable HTTP MCP endpoint (`POST`, `GET`, and `DELETE /mcp`), names `tools/list` as the canonical live tool introspection method, and includes the `weft-mcp` stdio command for local clients.
+**`GET /.well-known/mcp.json`** — minimal MCP discovery document. It points remote clients at the Streamable HTTP MCP endpoint (`POST`, `GET`, and `DELETE /api/mcp`), names `tools/list` as the canonical live tool introspection method, and includes the `weft-mcp` stdio command for local clients.
 
 The OpenAPI and OpenRPC documents enumerate operations from the unified catalog. To see which transports an operation is bound to, look at the `tags` and binding metadata in the document. To see the input/output schemas for an operation, follow the `$ref` links into `components.schemas`.
 
@@ -375,13 +375,13 @@ The MCP server exposes Weft workflows to [Model Context Protocol](https://modelc
 
 Discovery starts at `GET /.well-known/mcp.json`. The document advertises the live Streamable HTTP endpoint, the local `weft-mcp` stdio command, and the live MCP methods clients should call for tool and resource introspection. In production, configure `serve({ publicOrigin })` or `serve({ trustedHosts })` before serving this route because it emits absolute endpoint URLs.
 
-| Method   | Path   | Description                                             |
-| -------- | ------ | ------------------------------------------------------- |
-| `POST`   | `/mcp` | Client-to-server MCP JSON-RPC messages                  |
-| `GET`    | `/mcp` | Server-to-client event stream for session notifications |
-| `DELETE` | `/mcp` | Close an MCP session identified by `Mcp-Session-Id`     |
+| Method   | Path       | Description                                             |
+| -------- | ---------- | ------------------------------------------------------- |
+| `POST`   | `/api/mcp` | Client-to-server MCP JSON-RPC messages                  |
+| `GET`    | `/api/mcp` | Server-to-client event stream for session notifications |
+| `DELETE` | `/api/mcp` | Close an MCP session identified by `Mcp-Session-Id`     |
 
-`POST /mcp` accepts `initialize` without an existing session and returns `Mcp-Session-Id`. Every subsequent POST, GET, or DELETE request sends that session id. Requests may also send `Mcp-Protocol-Version`; unsupported versions return `400`.
+`POST /api/mcp` accepts `initialize` without an existing session and returns `Mcp-Session-Id`. Every subsequent POST, GET, or DELETE request sends that session id. Requests may also send `Mcp-Protocol-Version`; unsupported versions return `400`.
 
 When server authentication is enabled, MCP requests pass through the same authentication bridge as REST and JSON-RPC before they reach the MCP dispatcher. The authenticated principal is bound to the MCP session created by `initialize`, and every subsequent request is authorized against that principal's scopes.
 
@@ -403,24 +403,24 @@ The `weft/mcp` subpath exports the server helpers for embedding, and the `weft-m
 
 Raw key-value access to the engine's storage layer, used by `HTTPStorage` and any client that wants to treat a Weft server as a remote storage backend. Callers operate directly on the unscoped keyspace, so the routes require the `storage:admin` scope.
 
-| Method   | Path                              | Description                            |
-| -------- | --------------------------------- | -------------------------------------- |
-| `GET`    | `/v1/storage/:key`                | Read a single value                    |
-| `PUT`    | `/v1/storage/:key`                | Write a single value                   |
-| `DELETE` | `/v1/storage/:key`                | Delete a single value                  |
-| `GET`    | `/v1/storage`                     | Scan keys by prefix (NDJSON stream)    |
-| `POST`   | `/v1/storage/-/batch`             | Apply a batch of put/delete operations |
-| `POST`   | `/v1/storage/-/conditional-batch` | Apply a compare-and-swap batch         |
+| Method   | Path                                  | Description                            |
+| -------- | ------------------------------------- | -------------------------------------- |
+| `GET`    | `/api/v1/storage/:key`                | Read a single value                    |
+| `PUT`    | `/api/v1/storage/:key`                | Write a single value                   |
+| `DELETE` | `/api/v1/storage/:key`                | Delete a single value                  |
+| `GET`    | `/api/v1/storage`                     | Scan keys by prefix (NDJSON stream)    |
+| `POST`   | `/api/v1/storage/-/batch`             | Apply a batch of put/delete operations |
+| `POST`   | `/api/v1/storage/-/conditional-batch` | Apply a compare-and-swap batch         |
 
 #### Authorization
 
 Every storage route requires authentication. Required scopes:
 
-| Routes                                                                        | Required scopes                                                            |
-| ----------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `GET /v1/storage/:key`, `GET /v1/storage`                                     | `storage:read` or `storage:admin`                                          |
-| `PUT /v1/storage/:key`, `DELETE /v1/storage/:key`, `POST /v1/storage/-/batch` | `storage:write` or `storage:admin`                                         |
-| `POST /v1/storage/-/conditional-batch`                                        | `storage:admin` alone, or both `storage:read` and `storage:write` together |
+| Routes                                                                                    | Required scopes                                                            |
+| ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `GET /api/v1/storage/:key`, `GET /api/v1/storage`                                         | `storage:read` or `storage:admin`                                          |
+| `PUT /api/v1/storage/:key`, `DELETE /api/v1/storage/:key`, `POST /api/v1/storage/-/batch` | `storage:write` or `storage:admin`                                         |
+| `POST /api/v1/storage/-/conditional-batch`                                                | `storage:admin` alone, or both `storage:read` and `storage:write` together |
 
 The conditional-batch route requires read access too because conditions compare against current values—a write-only caller would otherwise be able to probe key state through condition outcomes.
 
@@ -428,7 +428,7 @@ The conditional-batch route requires read access too because conditions compare 
 
 Raw storage routes operate on the unscoped keyspace, so the principal must hold `storage:admin` in addition to satisfying the per-route scopes above. Without it, the server returns 403 with a `Forbidden` fault.
 
-#### `GET /v1/storage/:key`
+#### `GET /api/v1/storage/:key`
 
 Read a value by key.
 
@@ -438,7 +438,7 @@ Read a value by key.
 - **Missing key** — `404 Not Found`, empty body.
 
 ```http
-GET /v1/storage/wf%3Acheckout-123 HTTP/1.1
+GET /api/v1/storage/wf%3Acheckout-123 HTTP/1.1
 Authorization: Bearer <token>
 ```
 
@@ -449,7 +449,7 @@ Content-Type: application/octet-stream
 <raw bytes>
 ```
 
-#### `PUT /v1/storage/:key`
+#### `PUT /api/v1/storage/:key`
 
 Write a value by key. Overwrites any existing value.
 
@@ -460,7 +460,7 @@ Write a value by key. Overwrites any existing value.
 - **Success response** — `204 No Content`.
 
 ```http
-PUT /v1/storage/wf%3Acheckout-123 HTTP/1.1
+PUT /api/v1/storage/wf%3Acheckout-123 HTTP/1.1
 Authorization: Bearer <token>
 Content-Type: application/octet-stream
 
@@ -471,7 +471,7 @@ Content-Type: application/octet-stream
 HTTP/1.1 204 No Content
 ```
 
-#### `DELETE /v1/storage/:key`
+#### `DELETE /api/v1/storage/:key`
 
 Delete a value by key. No-op if the key does not exist.
 
@@ -479,7 +479,7 @@ Delete a value by key. No-op if the key does not exist.
 - **Required scopes** — `storage:write` or `storage:admin`.
 - **Success response** — `204 No Content`.
 
-#### `GET /v1/storage`
+#### `GET /api/v1/storage`
 
 Stream key-value pairs whose keys start with a prefix.
 
@@ -494,7 +494,7 @@ Stream key-value pairs whose keys start with a prefix.
 The `HTTPStorage` client enforces a 64 MB total response cap on its side; if your scan would exceed that, narrow the prefix or paginate with `limit` and `gt`.
 
 ```http
-GET /v1/storage?prefix=wf%3A&limit=100 HTTP/1.1
+GET /api/v1/storage?prefix=wf%3A&limit=100 HTTP/1.1
 Authorization: Bearer <token>
 ```
 
@@ -506,7 +506,7 @@ Content-Type: application/x-ndjson
 {"key":"wf:checkout-456","value":"AwQF..."}
 ```
 
-#### `POST /v1/storage/-/batch`
+#### `POST /api/v1/storage/-/batch`
 
 Apply multiple put/delete operations as a single batch.
 
@@ -529,7 +529,7 @@ Apply multiple put/delete operations as a single batch.
 
 The interface-level guarantee: the operations are submitted to the underlying storage's `batch` primitive in a single call. Atomicity guarantees come from the backend—`SQLiteStorage`, `IndexedDBStorage`, `LMDBStorage`, and `TursoStorage` apply batches inside a transaction; see [the storage backend configuration notes](../guides/storage.md#per-backend-configuration) for per-backend behavior.
 
-#### `POST /v1/storage/-/conditional-batch`
+#### `POST /api/v1/storage/-/conditional-batch`
 
 Apply a compare-and-swap batch: validate every condition before applying any operation. If any condition fails, no operation runs.
 
@@ -565,11 +565,11 @@ The interface-level guarantee: all conditions are checked before any operation i
 
 WebSocket upgrade is supported on the following paths:
 
-| Path                      | Description                                                       |
-| ------------------------- | ----------------------------------------------------------------- |
-| `/v1/workflows/:id/watch` | Observe workflow lifecycle events                                 |
-| `/v1/tasks/:queue/stream` | Worker task stream                                                |
-| `/jsonrpc`                | JSON-RPC over WebSocket session for the unified operation catalog |
+| Path                          | Description                                                       |
+| ----------------------------- | ----------------------------------------------------------------- |
+| `/api/v1/workflows/:id/watch` | Observe workflow lifecycle events                                 |
+| `/api/v1/tasks/:queue/stream` | Worker task stream                                                |
+| `/api/jsonrpc`                | JSON-RPC over WebSocket session for the unified operation catalog |
 
 ### Error Responses
 

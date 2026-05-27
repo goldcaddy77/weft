@@ -170,19 +170,19 @@ async function loadSnapshotFromFile(path: string): Promise<Result<unknown>> {
 
 /**
  * Compose the registry URL from a user-supplied base. Appends
- * `/v1/registry` to whatever path is present, so
- * `--server http://host/base` reaches `http://host/base/v1/registry`.
- * If the supplied URL already ends with `/v1/registry` (with or
+ * `/api/v1/registry` to whatever path is present, so
+ * `--server http://host/base` reaches `http://host/base/api/v1/registry`.
+ * If the supplied URL already ends with `/api/v1/registry` (with or
  * without a trailing slash), the path is preserved as-is.
  */
 export function composeRegistryUrl(serverUrl: string): URL {
   const url = new URL(serverUrl);
   const trimmedPath = url.pathname.replace(/\/+$/, '');
-  if (trimmedPath.endsWith('/v1/registry')) {
+  if (trimmedPath.endsWith('/api/v1/registry')) {
     url.pathname = trimmedPath;
     return url;
   }
-  url.pathname = `${trimmedPath}/v1/registry`;
+  url.pathname = `${trimmedPath}/api/v1/registry`;
   return url;
 }
 

@@ -16,7 +16,7 @@
   let { workflow }: WorkflowTableRowProps = $props();
 
   function handleClick(): void {
-    navigate(`/ui/workflows/${encodeURIComponent(workflow.id)}`);
+    navigate(`/workflows/${encodeURIComponent(workflow.id)}`);
   }
 
   function handleKeydown(event: KeyboardEvent): void {

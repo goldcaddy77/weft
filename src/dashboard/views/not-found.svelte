@@ -5,7 +5,7 @@
   import Button from '../components/button.svelte';
 
   function handleGoHome(): void {
-    navigate('/ui');
+    navigate('/');
   }
 </script>
 

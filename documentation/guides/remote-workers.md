@@ -10,7 +10,7 @@ A `RemoteWorker` connects to the server, registers its available activities and 
 import { RemoteWorker } from 'weft';
 
 const worker = new RemoteWorker({
-  serverUrl: 'wss://weft-server:7233/v1/tasks/default/stream',
+  serverUrl: 'wss://weft-server:7233/api/v1/tasks/default/stream',
   activities: {
     transcribe: async (input) => {
       /* ... */
@@ -100,7 +100,7 @@ const loggingInterceptor: ActivityInterceptor = {
 };
 
 const worker = new RemoteWorker({
-  serverUrl: 'wss://weft-server:7233/v1/tasks/default/stream',
+  serverUrl: 'wss://weft-server:7233/api/v1/tasks/default/stream',
   activities: {
     transcribe: async (input) => {
       /* ... */
@@ -133,7 +133,7 @@ import { createObservabilityInterceptors } from 'weft';
 const { interceptor } = createObservabilityInterceptors();
 
 const worker = new RemoteWorker({
-  serverUrl: 'wss://weft-server:7233/v1/tasks/default/stream',
+  serverUrl: 'wss://weft-server:7233/api/v1/tasks/default/stream',
   activities: {
     /* ... */
   },

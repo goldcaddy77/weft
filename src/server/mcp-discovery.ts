@@ -11,6 +11,7 @@ import {
   MCP_TOOLS_LIST_METHOD,
 } from '../mcp/protocol.ts';
 import { VERSION } from '../version.ts';
+import { externalApiPath } from './route-model.ts';
 
 export {
   MCP_PROTOCOL_VERSION,
@@ -18,7 +19,13 @@ export {
   MCP_RESOURCES_LIST_METHOD,
   MCP_TOOLS_LIST_METHOD,
 };
+/** Root-stable discovery document path (RFC 9264 / well-known convention). */
 export const MCP_DISCOVERY_PATH = '/.well-known/mcp.json';
+/**
+ * Canonical, root-relative MCP streamable-HTTP path. Runtime routing matches
+ * this form (after the front door strips the `/api` prefix). The discovery
+ * document advertises the external `/api`-prefixed URL via `externalApiPath`.
+ */
 export const MCP_STREAMABLE_HTTP_PATH = '/mcp';
 export const MCP_STREAMABLE_HTTP_METHODS = ['POST', 'GET', 'DELETE'] as const;
 export const MCP_STDIO_COMMAND = 'weft-mcp';
@@ -77,7 +84,7 @@ export function generateMcpDiscovery(options: McpDiscoveryOptions): McpDiscovery
     },
     transports: {
       streamableHttp: {
-        url: `${origin}${MCP_STREAMABLE_HTTP_PATH}`,
+        url: `${origin}${externalApiPath(MCP_STREAMABLE_HTTP_PATH)}`,
         methods: MCP_STREAMABLE_HTTP_METHODS,
         sessionHeader: 'Mcp-Session-Id',
         protocolVersionHeader: 'Mcp-Protocol-Version',

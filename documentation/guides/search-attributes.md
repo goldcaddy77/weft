@@ -107,9 +107,9 @@ The `AttributeFilter` type supports `value` for exact match, plus `gt` (strict g
 The [server](./server.md) exposes these same queries over HTTP:
 
 ```
-GET /v1/workflows?attr.customerId=cust-123
-GET /v1/workflows?attr.region=us-east&attr.priority.gte=8
-GET /v1/workflows?attr.orderTotal.gte=100&attr.orderTotal.lte=500
+GET /api/v1/workflows?attr.customerId=cust-123
+GET /api/v1/workflows?attr.region=us-east&attr.priority.gte=8
+GET /api/v1/workflows?attr.orderTotal.gte=100&attr.orderTotal.lte=500
 ```
 
 ## How the index works
@@ -128,4 +128,4 @@ All index updates happen atomically at the checkpoint boundary. The engine diffs
 
 ## External mutation
 
-Attributes can also be set from _outside_ the workflow via `handle.setAttributes()` or `PATCH /v1/workflows/:id/attributes`. Index updates happen atomically in this case too. This is useful for administrative tagging—marking a workflow as "escalated" or "under review" without sending a signal.
+Attributes can also be set from _outside_ the workflow via `handle.setAttributes()` or `PATCH /api/v1/workflows/:id/attributes`. Index updates happen atomically in this case too. This is useful for administrative tagging—marking a workflow as "escalated" or "under review" without sending a signal.

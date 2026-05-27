@@ -208,7 +208,7 @@ describe('Track 8 discovery registry drift', () => {
     };
 
     expect(document.channels?.['weft/workflows/streams/sse']?.address).toBe(
-      '/v1/custom-streams/{id}/events',
+      '/api/v1/custom-streams/{id}/events',
     );
   });
 });

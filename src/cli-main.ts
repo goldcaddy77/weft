@@ -59,7 +59,7 @@ if (parsedArguments.command === 'serve') {
 
   console.log(`Weft running on ${server.url}`);
   if (dashboard !== null) {
-    console.log(`Dashboard: ${server.url}/ui`);
+    console.log(`Dashboard: ${server.url}`);
   }
   console.log(`Storage: ${parsedArguments.storage}`);
   console.log(`Database: ${parsedArguments.database}`);

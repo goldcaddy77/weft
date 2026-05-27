@@ -125,7 +125,7 @@ describe('API catalog linkset', () => {
       transports?: { streamableHttp?: { url?: string; methods?: string[] } };
       discovery?: { tools?: { method?: string; canonical?: boolean } };
     };
-    expect(body.transports?.streamableHttp?.url).toBe('https://api.example.com/mcp');
+    expect(body.transports?.streamableHttp?.url).toBe('https://api.example.com/api/mcp');
     expect(body.transports?.streamableHttp?.methods).toEqual(['POST', 'GET', 'DELETE']);
     expect(body.discovery?.tools).toEqual({ method: 'tools/list', canonical: true });
   });
@@ -140,7 +140,7 @@ describe('API catalog linkset', () => {
 
     expect(response.status).toBe(200);
     const body = (await response.json()) as { transports?: { streamableHttp?: { url?: string } } };
-    expect(body.transports?.streamableHttp?.url).toBe('https://api.example.com/mcp');
+    expect(body.transports?.streamableHttp?.url).toBe('https://api.example.com/api/mcp');
   });
 
   it('returns 421 for /.well-known/mcp.json when trustedHosts rejects the request Host', async () => {

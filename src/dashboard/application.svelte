@@ -75,9 +75,9 @@
     <NavigationBar class="navigation-bar">
       {#snippet start()}
         <a
-          href="/ui"
+          href="/"
           class="navigation-bar-brand"
-          onclick={(event: MouseEvent) => handleNavigationClick(event, '/ui')}
+          onclick={(event: MouseEvent) => handleNavigationClick(event, '/')}
         >
           {@html activity(20)}
           <span>Weft</span>
@@ -85,25 +85,25 @@
       {/snippet}
 
       <NavigationItem
-        href="/ui/workflows"
+        href="/workflows"
         active={currentMatch.view === 'workflow-list' ||
           currentMatch.view === 'workflow-detail'}
-        onclick={(event: MouseEvent) => handleNavigationClick(event, '/ui/workflows')}
+        onclick={(event: MouseEvent) => handleNavigationClick(event, '/workflows')}
       >
         Workflows
       </NavigationItem>
       <NavigationItem
-        href="/ui/reviews"
+        href="/reviews"
         active={currentMatch.view === 'human-review-queue'}
-        onclick={(event: MouseEvent) => handleNavigationClick(event, '/ui/reviews')}
+        onclick={(event: MouseEvent) => handleNavigationClick(event, '/reviews')}
       >
         {@html inbox(16)}
         Reviews
       </NavigationItem>
       <NavigationItem
-        href="/ui/workers"
+        href="/workers"
         active={currentMatch.view === 'workers-and-queues'}
-        onclick={(event: MouseEvent) => handleNavigationClick(event, '/ui/workers')}
+        onclick={(event: MouseEvent) => handleNavigationClick(event, '/workers')}
       >
         {@html cpu(16)}
         Workers

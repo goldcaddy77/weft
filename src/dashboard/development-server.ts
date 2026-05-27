@@ -36,5 +36,5 @@ const server = serve({
   dashboard,
 });
 
-console.log(`Weft dashboard running at ${server.url}/ui`);
+console.log(`Weft dashboard running at ${server.url}`);
 console.log(`API available at ${server.url}/v1/health`);
