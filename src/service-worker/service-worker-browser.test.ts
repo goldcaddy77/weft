@@ -111,13 +111,12 @@ async function fetchJsonFromPage<T>(
             }),
       });
       const text = await response.text();
-      const body = text.length === 0 ? null : JSON.parse(text);
 
       if (!response.ok) {
         throw new Error(`${method} ${requestPath} failed with ${response.status}: ${text}`);
       }
 
-      return body;
+      return text.length === 0 ? null : JSON.parse(text);
     },
     {
       bodyJson: Object.hasOwn(options, 'body') ? JSON.stringify(options.body) : null,
