@@ -132,11 +132,16 @@ function parseServeArguments(args: string[]): CliCommand {
       storage: { type: 'string', short: 's', default: 'sqlite' },
       ui: { type: 'boolean', default: true },
       help: { type: 'boolean', short: 'h', default: false },
+      workflows: { type: 'string', short: 'w' },
     },
     strict: true,
     allowPositionals: false,
     allowNegative: true,
   });
+
+  if (values.workflows === '') {
+    throw new Error('--workflows must be a non-empty path');
+  }
 
   return {
     command: 'serve',
@@ -145,6 +150,7 @@ function parseServeArguments(args: string[]): CliCommand {
     storage: parseStorageBackend(values.storage),
     ui: values.ui ?? true,
     help: values.help ?? false,
+    ...(values.workflows ? { workflows: values.workflows } : {}),
   };
 }
 
