@@ -1,7 +1,11 @@
 import { describe, expect, it, mock, spyOn } from 'bun:test';
 import { sleepForTesting, withTimeout } from '../testing/fake-timers.test-support.ts';
 
-import type { ScanOptions, Storage as WeftStorage } from '../storage/interface.ts';
+import type {
+  ScanOptions,
+  StorageCapabilities,
+  Storage as WeftStorage,
+} from '../storage/interface.ts';
 import { encodeStorageKeyComponent, KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { AtomicStateConflictEvent } from './atomic-state.ts';
@@ -125,6 +129,12 @@ class ConcurrentAttributeReadCountingStorage extends AttributeReadCountingStorag
   }
 }
 
+class EngineCreateNoConditionalBatchStorage extends MemoryStorage {
+  override capabilities(): StorageCapabilities {
+    return { ...super.capabilities(), conditionalBatch: false };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -212,6 +222,23 @@ describe('Engine', () => {
       'Hello, Ada!',
     );
     recoveredEngine[Symbol.dispose]();
+  });
+
+  it('Engine.create forwards requireConcurrentResumeSafety into recovery', async () => {
+    const storage = new EngineCreateNoConditionalBatchStorage();
+
+    await expect(
+      Engine.create({
+        storage,
+        recover: true,
+        requireConcurrentResumeSafety: true,
+      }),
+    ).rejects.toThrow(
+      'Feature "concurrent resume checkpoint commits" requires storage capability "conditionalBatch"',
+    );
+
+    const engine = await Engine.create({ storage, recover: true });
+    engine[Symbol.dispose]();
   });
 
   it('Engine.create({ recover: false }) skips recovery preflight', async () => {
@@ -5579,6 +5606,7 @@ describe('Engine', () => {
           );
           await realStorage.batch(operations);
         },
+        conditionalBatch: realStorage.conditionalBatch.bind(realStorage),
         [Symbol.dispose]() {
           realStorage[Symbol.dispose]();
         },

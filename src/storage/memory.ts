@@ -105,6 +105,10 @@ export class MemoryStorage implements Storage {
   }
 
   async batch(operations: BatchOperation[]): Promise<void> {
+    this.#applyBatchOperations(operations);
+  }
+
+  #applyBatchOperations(operations: BatchOperation[]): void {
     for (const operation of operations) {
       if (operation.type === 'put') {
         this.#data.set(operation.key, operation.value);
@@ -125,7 +129,7 @@ export class MemoryStorage implements Storage {
       }
     }
 
-    await this.batch(operations);
+    this.#applyBatchOperations(operations);
     return true;
   }
 

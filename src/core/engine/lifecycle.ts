@@ -49,10 +49,8 @@ export {
   buildForkSearchAttributes,
   createForkLineage,
   createForkedWorkflowState,
-  fork,
-  launchWorkflowFromCheckpoint,
-  recoverAll,
-  resume,
-} from './lifecycle/transition.ts';
+} from './lifecycle/fork-helpers.ts';
+
+export { fork, launchWorkflowFromCheckpoint, recoverAll, resume } from './lifecycle/transition.ts';
 
 export { resumeWorkflowFromStorage } from './lifecycle/resume.ts';

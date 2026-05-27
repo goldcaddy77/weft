@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from 'bun:test';
 
-import { KEYS } from '../../storage/interface.ts';
+import { KEYS, type StorageCapabilities } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { serializeCheckpoint } from '../checkpoint/serialization.ts';
 import { encode } from '../codec.ts';
@@ -98,6 +98,12 @@ function createWorkflowState(
   };
 }
 
+class NoConditionalBatchStorage extends MemoryStorage {
+  override capabilities(): StorageCapabilities {
+    return { ...super.capabilities(), conditionalBatch: false };
+  }
+}
+
 describe('engine lifecycle coverage helpers', () => {
   it('start delegates to startWorkflow with the engine lifecycle callbacks', async () => {
     const engine = new Engine();
@@ -159,6 +165,20 @@ describe('engine lifecycle coverage helpers', () => {
 
     expect(handles.map((handle) => handle.id)).toEqual(['workflow-pending-local']);
     expect(skippedEvents.map((event) => event.type)).toEqual(['workflow:recovery-skipped']);
+  });
+
+  it('recoverAll fails fast when concurrent resume safety is required without CAS storage', async () => {
+    const storage = new NoConditionalBatchStorage();
+
+    await expect(
+      recoverAll(
+        { registrations: new Map(), storage } as never,
+        createLifecycleCallbacks() as never,
+        { requireConcurrentResumeSafety: true },
+      ),
+    ).rejects.toThrow(
+      'Feature "concurrent resume checkpoint commits" requires storage capability "conditionalBatch"',
+    );
   });
 
   it('resume returns existing local handles for locally owned workflows', async () => {
@@ -762,6 +782,7 @@ describe('engine lifecycle coverage helpers', () => {
       'workflow-fork',
       forkedState,
       forkCheckpoint,
+      serializeCheckpoint(forkCheckpoint),
       new Map([['traceparent', '00-fork']]),
       createLifecycleCallbacks() as never,
     );

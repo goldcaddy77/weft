@@ -55,6 +55,28 @@ Earlier versions of Weft silently skipped unregistered workflow types during rec
 
 The default has flipped because abandoned workflows are almost always a bug, not an intent. If you _do_ intend it — see the next section — you have to say so explicitly.
 
+## Concurrent recovery: `requireConcurrentResumeSafety`
+
+If exactly one engine process owns recovery for a storage backend, the default recovery path is enough.
+If multiple processes may call `recoverAll()` against the same durable storage at the same time, opt into
+the concurrent-owner gate:
+
+```typescript partial
+const engine = await Engine.create({
+  storage,
+  workflows: { greet },
+  recover: true,
+  requireConcurrentResumeSafety: true,
+});
+```
+
+That flag fails fast unless the storage adapter reports `conditionalBatch: true`. Adapters with that
+capability commit checkpoints with a compare-and-swap guard on the previous canonical checkpoint bytes,
+so a stale owner cannot overwrite a newer checkpoint. Adapters without it are single-owner-only for
+recovery: they may still run normal checkpoint commits, but they do not claim safe concurrent ownership.
+This guard protects checkpoint commits; it does not make every recovery or dispatch side effect
+single-owner before the next checkpoint persists.
+
 ## Acknowledging drift: `acknowledgeUnknownWorkflowTypes`
 
 Sometimes drift is intentional: a rolling deploy where old pods are still serving the workflow type the new pod doesn't know; a storage migration where you're copying records into a partial registry; a one-shot operator script that doesn't need to drive every workflow type the database holds.
