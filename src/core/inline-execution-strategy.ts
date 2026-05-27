@@ -41,6 +41,7 @@ export interface InlineExecutionDependencies {
   resolveWorkflowType?: (target: string | Function) => string;
   maxNestingDepth: number;
   development?: boolean;
+  registerCancelHandler?: (workflowId: string, handler: () => Promise<void> | void) => void;
 }
 
 type InlineWorkflowRegistration = NonNullable<
@@ -66,6 +67,7 @@ function createInlineContextOptions(
   parameters: InlineStartWorkflowParameters,
   workflowAbort: AbortController,
 ): ContextOptions {
+  const { registerCancelHandler } = dependencies;
   return {
     workflowId: parameters.workflowId,
     workflowType: parameters.workflowType,
@@ -84,6 +86,9 @@ function createInlineContextOptions(
       searchAttributeSchema: registration.searchAttributes,
     }),
     ...(parameters.deadline !== undefined && { deadline: parameters.deadline }),
+    ...(registerCancelHandler !== undefined && {
+      registerCancelHandler: (handler) => registerCancelHandler(parameters.workflowId, handler),
+    }),
   };
 }
 

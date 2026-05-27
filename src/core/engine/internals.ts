@@ -145,6 +145,7 @@ export interface EngineInternals {
   workflowReviewIds: Map<string, Set<string>>;
   parkedInlineWorkflows: Set<string>;
   terminalizingWorkflows: Set<string>;
+  cancelHandlersByWorkflow: Map<string, Array<() => Promise<void> | void>>;
   reviewTimerIds: Map<string, string[]>;
   pendingWebhooks: Set<AbortController>;
   alertManager: AlertManager | null;

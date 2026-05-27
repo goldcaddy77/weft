@@ -297,4 +297,23 @@ export interface WorkflowContext<
   onQuery(name: string, handler: (input: unknown) => unknown): void;
   expose(accessors: Record<string, () => unknown>): void;
   streamUrl(reference: StreamReference): string;
+  /**
+   * Register a handler to run when this workflow is cancelled. Handlers are
+   * called in registration order before the workflow is finalized as cancelled.
+   * Handler failures are swallowed — the workflow still finalizes as cancelled.
+   *
+   * @example
+   * ```ts
+   * import { workflow, type WorkflowContext } from 'weft';
+   *
+   * const myWorkflow = workflow({ name: 'my-workflow' }).execute(async function* (ctx: WorkflowContext) {
+   *   ctx.onCancel(async () => {
+   *     await releaseLocks();
+   *   });
+   *   yield* ctx.run(longRunningActivity);
+   * });
+   * void myWorkflow;
+   * ```
+   */
+  onCancel(handler: () => Promise<void> | void): void;
 }

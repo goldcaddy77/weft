@@ -38,6 +38,20 @@ import {
   type TerminationCallbacks,
 } from './cleanup.ts';
 
+async function runCancelHandlers(
+  handlers: Array<() => Promise<void> | void>,
+  callbacks: Pick<TerminationCallbacks, 'handleCleanupError'>,
+  workflowId: string,
+): Promise<void> {
+  for (const handler of handlers) {
+    try {
+      await handler();
+    } catch (error) {
+      callbacks.handleCleanupError('cancel-handler', error, workflowId);
+    }
+  }
+}
+
 export async function cancelWorkflow(
   internals: EngineInternals,
   workflowId: string,
@@ -63,7 +77,10 @@ export async function terminateWorkflow(
 ): Promise<void> {
   internals.terminalizingWorkflows.add(workflowId);
   dropQueuedInlineWorkflowStart(internals, workflowId);
+  const cancelHandlers = internals.cancelHandlersByWorkflow.get(workflowId) ?? [];
   internals.strategy.cancelWorkflow(workflowId);
+  await runCancelHandlers(cancelHandlers, callbacks, workflowId);
+  internals.cancelHandlersByWorkflow.delete(workflowId);
 
   try {
     const attributeBytes = await internals.storage.get(KEYS.attribute(workflowId));

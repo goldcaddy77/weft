@@ -14,6 +14,13 @@ export function* saga<TFinalOutput = unknown>(
   }> = [];
 
   let lastOutput: unknown;
+  let compensationRun = false;
+
+  context.onCancel(async () => {
+    if (compensationRun) return;
+    compensationRun = true;
+    await compensateCompleted(completed);
+  });
 
   for (const step of steps) {
     const stepDefinition = step.definition;
@@ -30,25 +37,28 @@ export function* saga<TFinalOutput = unknown>(
       completed.push({ definition: stepDefinition, input: step.input, output });
       lastOutput = output;
     } catch (stepError) {
-      for (let index = completed.length - 1; index >= 0; index--) {
-        const completedStep = completed[index]!;
-        if (completedStep.definition.compensate !== undefined) {
-          const capturedInput = completedStep.input;
-          const capturedOutput = completedStep.output;
-          const capturedDefinition = completedStep.definition;
+      if (!compensationRun) {
+        compensationRun = true;
+        for (let index = completed.length - 1; index >= 0; index--) {
+          const completedStep = completed[index]!;
+          if (completedStep.definition.compensate !== undefined) {
+            const capturedInput = completedStep.input;
+            const capturedOutput = completedStep.output;
+            const capturedDefinition = completedStep.definition;
 
-          const compensateActivity = async () =>
-            capturedDefinition.compensate?.(capturedInput, capturedOutput);
+            const compensateActivity = async () =>
+              capturedDefinition.compensate?.(capturedInput, capturedOutput);
 
-          Object.defineProperty(compensateActivity, 'name', {
-            value: `compensate:${completedStep.definition.name}`,
-            configurable: true,
-          });
+            Object.defineProperty(compensateActivity, 'name', {
+              value: `compensate:${completedStep.definition.name}`,
+              configurable: true,
+            });
 
-          try {
-            yield* context.run(compensateActivity);
-          } catch {
-            // Compensator failures are intentionally swallowed so the original error propagates.
+            try {
+              yield* context.run(compensateActivity);
+            } catch {
+              // Compensator failures are intentionally swallowed so the original error propagates.
+            }
           }
         }
       }
@@ -58,4 +68,19 @@ export function* saga<TFinalOutput = unknown>(
   }
 
   return lastOutput as TFinalOutput;
+}
+
+async function compensateCompleted(
+  completed: Array<{ definition: ErasedActivityDefinition; input: unknown; output: unknown }>,
+): Promise<void> {
+  for (let index = completed.length - 1; index >= 0; index--) {
+    const completedStep = completed[index]!;
+    if (completedStep.definition.compensate !== undefined) {
+      try {
+        await completedStep.definition.compensate(completedStep.input, completedStep.output);
+      } catch {
+        // Swallowed — cancellation still finalizes
+      }
+    }
+  }
 }

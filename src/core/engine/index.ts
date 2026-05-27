@@ -416,6 +416,15 @@ export class Engine<
       broadcastEvents: resolvedOptions.broadcastEvents,
       getRegistration: getInternals(this).registrations.get.bind(getInternals(this).registrations),
       resolveWorkflowType: this.#resolveWorkflowTypeTarget.bind(this),
+      registerCancelHandler: (workflowId, handler) => {
+        const map = getInternals(this).cancelHandlersByWorkflow;
+        let handlers = map.get(workflowId);
+        if (handlers === undefined) {
+          handlers = [];
+          map.set(workflowId, handlers);
+        }
+        handlers.push(handler);
+      },
     });
     getInternals(this).storage = storage;
     getInternals(this).abortController = new AbortController();
@@ -485,6 +494,7 @@ export class Engine<
     getInternals(this).workflowReviewIds = new Map();
     getInternals(this).parkedInlineWorkflows = new Set();
     getInternals(this).terminalizingWorkflows = new Set();
+    getInternals(this).cancelHandlersByWorkflow = new Map();
     getInternals(this).reviewTimerIds = new Map();
     getInternals(this).pendingWebhooks = new Set();
     getInternals(this).pendingTimelineEntries = new Map();
