@@ -11,6 +11,7 @@ import type { ComposedWorkflowInterceptor } from '../interceptor.ts';
 import { encodePayloadWithinLimit } from '../payload-size.ts';
 import { validateSignalId } from '../signal-id.ts';
 import type { SignalDeliveryOptions, WorkflowState } from '../types.ts';
+import { commitAnonymousSignalOperations } from './anonymous-signal-sequence.ts';
 import type { EngineInternals } from './internals.ts';
 import { isTerminalWorkflowStatus } from './validation.ts';
 
@@ -147,33 +148,9 @@ export async function bufferSignalPayloads(
     requireStorageCapability(internals.storage, 'conditionalBatch', 'signal idempotency');
   }
 
-  // Encode each payload once, enforcing the size cap on the result, and reuse
-  // the bytes for the write. An oversize payload throws out of this map before
-  // the operations array is assigned, so the whole buffer aborts with nothing
-  // written.
-  const operations: BatchOperation[] = deliveries.map(({ signalName, payload, options }) => ({
-    type: 'put',
-    key: KEYS.signal(
-      workflowId,
-      signalName,
-      options?.signalId ?? defaultOptions.signalId ?? crypto.randomUUID(),
-    ),
-    value: encodePayloadWithinLimit(
-      payload,
-      internals.options.payloadSizePolicy.maxBytes,
-      'signal payload',
-    ),
-  }));
-  if (!internals.workflowsNeedingTerminalCleanup.has(workflowId)) {
-    internals.workflowsNeedingTerminalCleanup.add(workflowId);
-    operations.push({
-      type: 'put',
-      key: KEYS.terminalCleanupNeeded(workflowId),
-      value: EMPTY_STORAGE_VALUE,
-    });
-  }
-
   if (signalId !== undefined) {
+    const operations = createExplicitSignalOperations(internals, workflowId, deliveries, signalId);
+    appendTerminalCleanupOperation(internals, workflowId, operations);
     const delivery = deliveries[0]!;
     const acceptedResponseKey = KEYS.signalAcceptedResponse(
       workflowId,
@@ -193,12 +170,56 @@ export async function bufferSignalPayloads(
       await ensureDuplicateSignalAcceptedResponse(internals, acceptedResponseKey, acceptedResponse);
       return;
     }
+    markTerminalCleanupTracked(internals, workflowId);
     deliverBufferedSignals(internals, workflowId, deliveries, callbacks);
     return;
   }
 
-  await internals.storage.batch(operations);
+  await commitAnonymousSignalOperations(
+    internals,
+    workflowId,
+    deliveries,
+    (operations) => appendTerminalCleanupOperation(internals, workflowId, operations),
+    () => markTerminalCleanupTracked(internals, workflowId),
+  );
   deliverBufferedSignals(internals, workflowId, deliveries, callbacks);
+}
+
+function createExplicitSignalOperations(
+  internals: EngineInternals,
+  workflowId: string,
+  deliveries: BufferedSignalDelivery[],
+  signalId: string,
+): BatchOperation[] {
+  return deliveries.map(({ signalName, payload }) => ({
+    type: 'put',
+    key: KEYS.signal(workflowId, signalName, signalId),
+    value: encodePayloadWithinLimit(
+      payload,
+      internals.options.payloadSizePolicy.maxBytes,
+      'signal payload',
+    ),
+  }));
+}
+
+function appendTerminalCleanupOperation(
+  internals: EngineInternals,
+  workflowId: string,
+  operations: BatchOperation[],
+): void {
+  if (internals.workflowsNeedingTerminalCleanup.has(workflowId)) {
+    return;
+  }
+
+  operations.push({
+    type: 'put',
+    key: KEYS.terminalCleanupNeeded(workflowId),
+    value: EMPTY_STORAGE_VALUE,
+  });
+}
+
+function markTerminalCleanupTracked(internals: EngineInternals, workflowId: string): void {
+  internals.workflowsNeedingTerminalCleanup.add(workflowId);
 }
 
 function deliverBufferedSignals(

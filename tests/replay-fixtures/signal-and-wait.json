@@ -62,6 +62,7 @@
     "ev:wf-signal-and-wait:0000000000": "h6R0eXBls3dvcmtmbG93OmNoZWNrcG9pbnSqd29ya2Zsb3dJZLJ3Zi1zaWduYWwtYW5kLXdhaXSoc2VxdWVuY2UAqHByZXZIYXNosDAwMDAwMDAwMDAwMDAwMDCncGF5bG9hZIGkc3RlcAGpdGltZXN0YW1wAKx2ZXJzaW9uVHVwbGWBr3dvcmtmbG93VmVyc2lvbqEx",
     "ev:wf-signal-and-wait:0000000001": "h6R0eXBls3dvcmtmbG93OmNoZWNrcG9pbnSqd29ya2Zsb3dJZLJ3Zi1zaWduYWwtYW5kLXdhaXSoc2VxdWVuY2UBqHByZXZIYXNosDA2NmFlMDg4ZDE2Y2RlN2KncGF5bG9hZIGkc3RlcAKpdGltZXN0YW1wAKx2ZXJzaW9uVHVwbGWBr3dvcmtmbG93VmVyc2lvbqEx",
     "ev:wf-signal-and-wait:head": "gqhzZXF1ZW5jZQGobGFzdEhhc2iwNzJmNDg2OTA2OTFjY2QyMw==",
+    "sigseq:v1:wf-signal-and-wait": "AQ==",
     "wf-cleanup-needed:wf-signal-and-wait": "",
     "wf-cleanup:0000000000060000:terminal-cleanup%3Apreserve-output%3A00000000-0000-4000-8000-000000000004": "sndmLXNpZ25hbC1hbmQtd2FpdA==",
     "wf-idx-created:0000000000000000:wf-signal-and-wait": "",

@@ -6,6 +6,7 @@ import {
   encodeStorageKeyComponent,
   KEYS,
   type BatchOperation,
+  type ConditionalBatchCondition,
   type ScanOptions,
 } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -234,6 +235,24 @@ class BulkSignalFailureStorage extends MemoryStorage {
     }
 
     await super.batch(operations);
+  }
+
+  override async conditionalBatch(
+    conditions: ConditionalBatchCondition[],
+    operations: BatchOperation[],
+  ): Promise<boolean> {
+    if (
+      this.workflowIdToFail !== null &&
+      operations.some(
+        (operation) =>
+          operation.type === 'put' &&
+          operation.key.startsWith(`sig:${encodeStorageKeyComponent(this.workflowIdToFail!)}:`),
+      )
+    ) {
+      throw new Error(`simulated bulk signal failure for ${this.workflowIdToFail}`);
+    }
+
+    return super.conditionalBatch(conditions, operations);
   }
 }
 

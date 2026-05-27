@@ -452,6 +452,7 @@ describe('KEYS', () => {
     expect(KEYS.signal(workflowId, 'approve', 'signal:1')).toBe(
       `sig:${encodedWorkflowId}:approve:signal%3A1`,
     );
+    expect(KEYS.signalSequence(workflowId)).toBe(`sigseq:v1:${encodedWorkflowId}`);
     expect(KEYS.signalAcceptedResponsePrefix(workflowId)).toBe(`sigres:v1:${encodedWorkflowId}:`);
     expect(KEYS.signalAcceptedResponse(workflowId, 'approve', 'signal:1')).toBe(
       `sigres:v1:${encodedWorkflowId}:approve:signal%3A1`,

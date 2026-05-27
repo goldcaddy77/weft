@@ -432,6 +432,7 @@ export const KEYS = {
   eventWatermark: (workflowId: string) => `ev:${encodeStorageKeyComponent(workflowId)}:watermark`,
   signal: (workflowId: string, name: string, id: string) =>
     `sig:${encodeStorageKeyComponent(workflowId)}:${name}:${encodeStorageKeyComponent(id)}`,
+  signalSequence: (workflowId: string) => `sigseq:v1:${encodeStorageKeyComponent(workflowId)}`,
   signalAcceptedResponsePrefix: (workflowId: string) =>
     `sigres:v1:${encodeStorageKeyComponent(workflowId)}:`,
   signalAcceptedResponse: (workflowId: string, name: string, signalId: string) =>
@@ -480,8 +481,7 @@ export const KEYS = {
   budgetCharged: (operationId: string) => `budget-charged:${operationId}`,
   toolEffect: (workflowId: string, agentId: string, semanticHash: string) =>
     `tool-effect:${encodeStorageKeyComponent(workflowId)}:${agentId}:${semanticHash}`,
-  // Visibility index timestamps lex-sort correctly under forward and reverse
-  // scans. See `workflow-indexes.ts` for the per-workflow manifest contract.
+  // Visibility index timestamps lex-sort correctly; see `workflow-indexes.ts`.
   workflowVisibilityStatus: (status: string, workflowId: string) =>
     `wf-idx-status:${encodeStorageKeyComponent(status)}:${encodeStorageKeyComponent(workflowId)}`,
   workflowVisibilityType: (type: string, workflowId: string) =>
