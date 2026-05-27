@@ -108,7 +108,7 @@ Each `ctx.step()` call is a checkpoint boundary. `compileStepWorkflow(...)` comp
 
 The workflow is a **generator function**—notice the `function*` and the `yield*` keywords. If you haven't used generators much, here's the mental model: every `yield*` is a checkpoint boundary. The engine runs the generator until it hits a `yield*`, records the result of that operation, and saves the workflow's position to storage. If the process dies and restarts, the engine loads the last checkpoint and resumes from that exact point.
 
-There's no replay happening here. Weft doesn't re-execute your workflow from the beginning and try to match up results. It literally picks up where it left off. That's why you don't need to worry about determinism—your workflow code can use `Date.now()`, `Math.random()`, or anything else. The only rule is that side effects go inside activities (the functions you pass to `ctx.run()`).
+There's no replay happening here. Weft doesn't re-execute your workflow from the beginning and try to match up results. It literally picks up where it left off. That's why you don't need to worry about determinism—your workflow code can use `Date.now()`, `Math.random()`, or anything else. The only rule is that side effects go inside activities (the registered functions behind the names you pass to `ctx.run()`).
 
 `ctx.run('name', input)` is how you run an **activity** through its durable dispatch boundary. You pass the activity's registered name (the example does, and your editor autocompletes it from the `.activities({ ... })` block) plus a serializable input. Remote workers receive that name and the serialized input—not your in-process closure—which is why activities have to be registered with the engine before a workflow can dispatch to them.
 
