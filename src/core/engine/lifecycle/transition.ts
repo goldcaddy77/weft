@@ -16,7 +16,7 @@ import type {
 import { type WorkflowVersionTuple } from '../../workflow-version-tuple.ts';
 import { WorkflowTypeNotRegisteredForRecoveryError } from '../errors.ts';
 import { getWorkflowExecutionStartedAt, type WorkflowHandle } from '../handles.ts';
-import { appendCancelHandler, type EngineInternals } from '../internals.ts';
+import { appendCancelHandler, resetCancelHandlers, type EngineInternals } from '../internals.ts';
 import {
   encodeWorkflowStartHeaders,
   normalizeForkStep,
@@ -409,6 +409,9 @@ function launchInlineWorkflowFromCheckpoint(
     throw new Error('Inline workflow launch requested without an inline strategy.');
   }
 
+  // Reset cancel handlers so the replaying generator starts with a clean slate.
+  // Without this, handlers accumulate across fork/recover cycles.
+  resetCancelHandlers(internals, workflowId);
   const accumulatedResults = new Map<number, unknown>(checkpoint.accumulatedResults);
   const workflowAbort = new AbortController();
 

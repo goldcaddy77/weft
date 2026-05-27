@@ -303,6 +303,42 @@ describe('ctx.onCancel()', () => {
 
     engine2[Symbol.dispose]();
   });
+
+  // -------------------------------------------------------------------------
+  // 9. Handler registered before a park does not duplicate after resume
+  //    (regression: generator replay re-executed onCancel(), accumulating
+  //    handlers instead of resetting them before each relaunch).
+  // -------------------------------------------------------------------------
+
+  it('does not duplicate a handler registered before a park across resume cycles', async () => {
+    const engine = new Engine();
+    const runs: string[] = [];
+
+    const preParkWorkflow = workflow({ name: 'on-cancel-pre-park' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
+      ctx.onCancel(() => void runs.push('teardown'));
+      // Park — generator replay will re-execute onCancel() on resume.
+      yield* ctx.waitForSignal('resume');
+      yield* ctx.waitForSignal('never');
+    });
+    engine.register(preParkWorkflow);
+
+    const handle = await engine.start('on-cancel-pre-park', null);
+    await flush();
+
+    // Resume once to trigger replay (handler would be duplicated without the fix).
+    await engine.signal(handle.id, 'resume', null);
+    await flush();
+
+    await engine.cancel(handle.id);
+
+    await expect(handle.result()).rejects.toThrow('Workflow cancelled');
+    // Handler must fire exactly once, not twice.
+    expect(runs).toEqual(['teardown']);
+
+    engine[Symbol.dispose]();
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ import { WorkflowResumedEvent } from '../../events.ts';
 import type { Checkpoint, WorkflowState } from '../../types.ts';
 import { type WorkflowVersionTuple } from '../../workflow-version-tuple.ts';
 import { getWorkflowExecutionStartedAt, type WorkflowHandle } from '../handles.ts';
-import { appendCancelHandler, type EngineInternals } from '../internals.ts';
+import { appendCancelHandler, resetCancelHandlers, type EngineInternals } from '../internals.ts';
 import { loadWorkflowState } from '../storage-io.ts';
 import { decodeWorkflowState } from '../validation.ts';
 import { prepareResumeState } from './persist.ts';
@@ -67,6 +67,11 @@ function relaunchInlineWorkflowAfterResume(
   // Keep the final running-state check and the re-entry into user code
   // in the same serialized section so cancel/timeout cannot commit a
   // terminal state and still let a parked workflow continue.
+  //
+  // Reset cancel handlers before the generator replays: the generator will
+  // re-execute onCancel() calls during replay and re-register fresh handlers.
+  // Without this reset, each park/resume cycle accumulates duplicates.
+  resetCancelHandlers(internals, workflowId);
   const accumulatedResults = new Map<number, unknown>(resumeCheckpoint.accumulatedResults);
   const workflowAbort = new AbortController();
 
