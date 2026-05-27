@@ -122,6 +122,25 @@ describe('generateOpenRpcDocument — basic shape', () => {
     expect(Array.isArray(document['methods'])).toBe(true);
   });
 
+  it('does not advertise a stale root /jsonrpc or /mcp endpoint URL', () => {
+    // The live OpenRPC handler emits no `servers` URL, so the document must not
+    // leak a root-relative transport endpoint that the /api migration moved.
+    // This guards against a regression that hardcodes `/jsonrpc` or `/mcp`.
+    const document = generateOpenRpcDocument({
+      registry: createOperationRegistry([
+        makeOp({
+          name: 'weft.workflows.get',
+          inputSchema: z.object({ id: z.string() }),
+          outputSchema: z.object({ id: z.string() }),
+        }),
+      ]),
+      transports: ['http', 'websocket'],
+    });
+    const serialized = JSON.stringify(document);
+    expect(serialized).not.toContain('"/jsonrpc"');
+    expect(serialized).not.toContain('"/mcp"');
+  });
+
   it('includes weft.workflows.get when JSON-RPC is enabled and supported', () => {
     const registry = createOperationRegistry([
       makeOp({

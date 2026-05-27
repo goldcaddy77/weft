@@ -135,11 +135,16 @@ export async function handleServerFetchRequest(
   // the failure to a -32603 error envelope) and prevents an
   // auth-context failure on unrelated WS endpoints (`/stream`,
   // `/watch`, `/workers`) from returning a spurious 5xx.
+  //
+  // The *original* request is handed to `server.upgrade()` — a rebuilt
+  // `Request` (from `stripApiPrefix`) loses Bun's internal upgrade handle, so
+  // upgrading the synthetic copy fails. Routing/classification still uses the
+  // canonical stripped `url`, so `/api/v1/...` sockets match the same patterns.
   const websocketResponse = handleWebSocketUpgrade(
     server,
     context,
     options,
-    request,
+    originalRequest,
     url,
     authentication.authContext,
   );

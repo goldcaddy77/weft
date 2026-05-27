@@ -7,16 +7,13 @@
  * @module dashboard/router
  */
 
+import { ROUTE_TABLE, type ViewName } from './route-table.ts';
+
+export type { ViewName };
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-export type ViewName =
-  | 'workflow-list'
-  | 'workflow-detail'
-  | 'human-review-queue'
-  | 'workers-and-queues'
-  | 'not-found';
 
 export interface RouteState {
   path: string;
@@ -28,24 +25,6 @@ export interface RouteMatch {
   view: ViewName;
   params: Record<string, string>;
 }
-
-// ---------------------------------------------------------------------------
-// Route table
-// ---------------------------------------------------------------------------
-
-interface RouteDefinition {
-  pattern: RegExp;
-  paramNames: string[];
-  view: ViewName;
-}
-
-const ROUTE_TABLE: RouteDefinition[] = [
-  { pattern: /^\/?$/, paramNames: [], view: 'workflow-list' },
-  { pattern: /^\/workflows\/?$/, paramNames: [], view: 'workflow-list' },
-  { pattern: /^\/workflows\/([^/]+)\/?$/, paramNames: ['id'], view: 'workflow-detail' },
-  { pattern: /^\/reviews\/?$/, paramNames: [], view: 'human-review-queue' },
-  { pattern: /^\/workers\/?$/, paramNames: [], view: 'workers-and-queues' },
-];
 
 // ---------------------------------------------------------------------------
 // Helpers

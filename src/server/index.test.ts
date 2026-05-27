@@ -349,6 +349,18 @@ describe('serve', () => {
     expect(body.id.length).toBeGreaterThan(0);
   });
 
+  it('preserves the query string when stripping the /api prefix', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    // List with a query param via the prefixed path; the strip rebuilds the
+    // request URL, so the search string must survive to the handler.
+    const response = await fetch(`${server.url}/api/v1/workflows?limit=1`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { items?: unknown[] };
+    expect(Array.isArray(body.items)).toBe(true);
+  });
+
   it('keeps health and metrics at the origin root and exposes them as /api aliases', async () => {
     engine = createEngine();
     server = serve({ engine, port: 0, dashboard: makeDashboard() });
@@ -608,6 +620,32 @@ describe('serve', () => {
     await new Promise<void>((resolve) => {
       ws.addEventListener('close', () => resolve());
     });
+  });
+
+  // WebSocket upgrades must work through the external `/api` prefix. The front
+  // door strips `/api` for routing but hands the *original* request to
+  // `server.upgrade()` — a rebuilt Request loses Bun's upgrade handle, so these
+  // would silently fail if the wrong request object reached the upgrade call.
+  it.each([
+    '/api/v1/workflows/test-wf/watch',
+    '/api/v1/workflows/test-wf/stream',
+    '/api/v1/tasks/default/stream',
+    '/api/jsonrpc',
+  ])('accepts a WebSocket upgrade on %s', async (path) => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+    const wsUrl = server.url.replace('http://', 'ws://');
+    const ws = new WebSocket(`${wsUrl}${path}`);
+
+    const opened = await new Promise<boolean>((resolve) => {
+      ws.addEventListener('open', () => resolve(true));
+      ws.addEventListener('error', () => resolve(false));
+      setTimeout(() => resolve(false), 2000);
+    });
+    expect(opened).toBe(true);
+
+    ws.close();
+    await waitForRealTimersForTesting(50);
   });
 
   // -------------------------------------------------------------------------

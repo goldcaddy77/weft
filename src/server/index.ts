@@ -5,6 +5,7 @@
  */
 
 import type { RetryPolicy } from '../core/types.ts';
+import { DASHBOARD_MOUNT_PATTERNS } from '../dashboard/route-table.ts';
 import type { PrometheusExporter } from '../observability/metrics.ts';
 import type { RoutingPolicy } from '../worker/registry.ts';
 import { WorkerRegistry } from '../worker/registry.ts';
@@ -41,10 +42,12 @@ export {
 } from './runtime/event-broadcasting.ts';
 
 /**
- * Static route patterns at which the dashboard shell is served. These mirror
- * the top-level pages in the SPA's `ROUTE_TABLE`
- * (`src/dashboard/router.svelte.ts`) so a hard reload of any dashboard page
- * resolves to the shell. `/workflows/*` covers workflow detail deep-links.
+ * Static route patterns at which the dashboard shell is served, derived
+ * directly from the SPA's route table (`DASHBOARD_MOUNT_PATTERNS` in
+ * `src/dashboard/route-table.ts`). Deriving from the single source of truth —
+ * rather than re-listing the routes here — means a new top-level dashboard
+ * page automatically gets a server mount, so a hard reload of it resolves to
+ * the shell instead of 404ing.
  *
  * They are intentionally specific (no blanket `/*`) so they cannot shadow the
  * API served under the `/api` prefix or the root-stable discovery endpoints —
@@ -59,13 +62,7 @@ export {
  * console.log(DASHBOARD_PAGE_ROUTES.includes('/workflows')); // true
  * ```
  */
-export const DASHBOARD_PAGE_ROUTES = [
-  '/',
-  '/workflows',
-  '/workflows/*',
-  '/reviews',
-  '/workers',
-] as const;
+export const DASHBOARD_PAGE_ROUTES: readonly string[] = DASHBOARD_MOUNT_PATTERNS;
 
 /**
  * Configuration object for the `serve()` function.

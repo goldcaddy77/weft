@@ -609,8 +609,14 @@ const server = serve({
         headers: { 'Content-Type': 'text/plain' },
       }),
 
-    // Dashboard (embedded SPA)
-    '/*': (req) => new Response(Bun.file(dashboardHTML)),
+    // Dashboard (embedded SPA) — mounted at its specific top-level page
+    // routes, never a blanket `/*` (which would shadow the API, since Bun
+    // matches the `routes` map before the `fetch` fallback).
+    '/': (req) => new Response(Bun.file(dashboardHTML)),
+    '/workflows': (req) => new Response(Bun.file(dashboardHTML)),
+    '/workflows/*': (req) => new Response(Bun.file(dashboardHTML)),
+    '/reviews': (req) => new Response(Bun.file(dashboardHTML)),
+    '/workers': (req) => new Response(Bun.file(dashboardHTML)),
   },
 
   // WebSocket upgrade handling
