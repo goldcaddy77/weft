@@ -20,9 +20,12 @@ export interface RouteDefinition {
   view: ViewName;
   /**
    * The Bun static-route pattern the server must mount so a hard reload of this
-   * page resolves to the SPA shell. `*` covers a single path parameter. `null`
-   * for routes already covered by another entry's mount pattern (e.g. the bare
-   * `/workflows` list shares the `/workflows` mount with its detail route).
+   * page resolves to the SPA shell. A trailing `/*` matches one or more path
+   * segments (e.g. `/workflows/*` for workflow detail) but does **not** match
+   * the bare prefix, so the list page (`/workflows`) and its detail page
+   * (`/workflows/*`) are distinct entries with distinct mount patterns. `null`
+   * means this route needs no dedicated mount because another entry's pattern
+   * already serves its exact paths (none of the current entries use this).
    */
   mountPattern: string | null;
 }
@@ -61,10 +64,13 @@ export const ROUTE_TABLE: RouteDefinition[] = [
  * this so the static mount list can never silently drift from the SPA's
  * client-side routes.
  *
+ * Consumers reach this list through the server's re-export
+ * `DASHBOARD_PAGE_ROUTES`.
+ *
  * @example
  * ```ts
- * import { DASHBOARD_MOUNT_PATTERNS } from 'weft/dashboard/route-table';
- * console.log(DASHBOARD_MOUNT_PATTERNS.includes('/workflows/*')); // true
+ * import { DASHBOARD_PAGE_ROUTES } from 'weft/server';
+ * console.log(DASHBOARD_PAGE_ROUTES.includes('/workflows/*')); // true
  * ```
  */
 export const DASHBOARD_MOUNT_PATTERNS: readonly string[] = [

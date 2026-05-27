@@ -404,6 +404,17 @@ describe('serve', () => {
     expect(bareApiSlash.status).toBe(404);
   });
 
+  it('does not strip a doubled slash after the /api prefix', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0, dashboard: makeDashboard() });
+
+    // `/api//v1/health` must NOT canonicalize to `//v1/health` (which would
+    // route surprisingly). Only a clean `/api/<segment>` is stripped, so this
+    // malformed path falls through to a 404 rather than reaching the handler.
+    const doubled = await fetch(`${server.url}/api//v1/health`);
+    expect(doubled.status).toBe(404);
+  });
+
   it('stops cleanly via stop()', async () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });

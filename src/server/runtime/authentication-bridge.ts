@@ -104,7 +104,15 @@ export async function authenticateRequest(
 function stripApiPrefix(request: Request): Request {
   const url = new URL(request.url);
   const prefixedRoot = `${API_PREFIX}/`;
-  if (!url.pathname.startsWith(prefixedRoot) || url.pathname === prefixedRoot) {
+  // Require a non-empty, non-slash segment after `${API_PREFIX}/`. The char at
+  // `pathname[prefixedRoot.length]` is the first character after `/api/`:
+  //   - `/api`        → does not start with `/api/`, returned unchanged
+  //   - `/api/`       → char is `undefined` → returned unchanged (canonical 404)
+  //   - `/api//v1/x`  → char is `/` → returned unchanged (avoids a `//v1/x`
+  //                     pathname that would route surprisingly)
+  //   - `/api/v1/x`   → char is `v` → stripped to `/v1/x`
+  const nextChar = url.pathname[prefixedRoot.length];
+  if (!url.pathname.startsWith(prefixedRoot) || nextChar === undefined || nextChar === '/') {
     return request;
   }
   url.pathname = url.pathname.slice(API_PREFIX.length);

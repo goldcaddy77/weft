@@ -307,10 +307,10 @@ export function serve(options: ServeOptions): WeftServer {
     // specific page routes can't collide with `/api/...` or the root-stable
     // carve-outs, so `fetch` still owns everything else.
     //
-    // This list MUST stay in sync with `ROUTE_TABLE` in
-    // `src/dashboard/router.svelte.ts`; the server test that enumerates these
-    // routes is the enforcement mechanism. Adding a top-level page means adding
-    // its route here too.
+    // `DASHBOARD_PAGE_ROUTES` is derived from the SPA's route table
+    // (`DASHBOARD_MOUNT_PATTERNS` in `src/dashboard/route-table.ts`), so a new
+    // top-level page automatically gets a server mount — there is no list to
+    // hand-maintain here.
     for (const path of DASHBOARD_PAGE_ROUTES) {
       routes[path] = options.dashboard;
     }

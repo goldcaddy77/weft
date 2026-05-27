@@ -15,10 +15,15 @@ import { DASHBOARD_MOUNT_PATTERNS, ROUTE_TABLE } from './route-table.ts';
 // does not assert asset reachability.
 
 let server: WeftServer | undefined;
+let engine: Engine | undefined;
 
 afterEach(async () => {
+  // Stop the server BEFORE disposing the engine so teardown (interval cleanup,
+  // listener removal) never runs against an already-disposed Engine.
   await server?.stop();
   server = undefined;
+  engine?.[Symbol.dispose]();
+  engine = undefined;
 });
 
 // Route-sync guard: the server mounts exactly what the SPA route table
@@ -46,8 +51,7 @@ it('keeps the server dashboard mounts in sync with the SPA route table', () => {
 it('serves the dashboard shell and its bundled assets from the origin root', async () => {
   const dashboardModule = await import('./index.html');
   const dashboard = dashboardModule.default;
-  using storage = new MemoryStorage();
-  await using engine = new Engine({ storage });
+  engine = new Engine({ storage: new MemoryStorage() });
   server = serve({ engine, dashboard, port: 0, hostname: '127.0.0.1' });
 
   const shell = await fetch(new URL('/', server.url));
@@ -70,8 +74,7 @@ it('serves the dashboard shell and its bundled assets from the origin root', asy
 it('serves the dashboard shell on a deep-link reload of a known page route', async () => {
   const dashboardModule = await import('./index.html');
   const dashboard = dashboardModule.default;
-  using storage = new MemoryStorage();
-  await using engine = new Engine({ storage });
+  engine = new Engine({ storage: new MemoryStorage() });
   server = serve({ engine, dashboard, port: 0, hostname: '127.0.0.1' });
 
   // Hard reload of a workflow detail deep link (matched by the `/workflows/*`
