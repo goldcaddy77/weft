@@ -146,9 +146,11 @@ async function deriveNextAnonymousSignalSequence(
   workflowId: string,
   currentSequenceBytes: Uint8Array | null,
 ): Promise<number> {
-  const storedSequence = decodeSignalSequence(currentSequenceBytes);
-  const scannedSequence = await scanNextAnonymousSignalSequence(internals, workflowId);
-  return Math.max(storedSequence, scannedSequence);
+  if (currentSequenceBytes !== null) {
+    return decodeSignalSequence(currentSequenceBytes);
+  }
+
+  return scanNextAnonymousSignalSequence(internals, workflowId);
 }
 
 async function scanNextAnonymousSignalSequence(

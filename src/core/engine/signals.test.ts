@@ -284,6 +284,41 @@ describe('engine signals', () => {
     expect(signalKeys[1]).toContain('anonymous%3A0000000000000001%3A');
   });
 
+  it('scans anonymous signal keys only while bootstrapping the sequence key', async () => {
+    class ScanCountingStorage extends MemoryStorage {
+      signalScanCount = 0;
+
+      override scan(prefix: string) {
+        if (prefix === 'sig:workflow-anonymous-scan-bootstrap:') {
+          this.signalScanCount += 1;
+        }
+
+        return super.scan(prefix);
+      }
+    }
+
+    const storage = new ScanCountingStorage();
+    const internals = createSignalInternals(storage);
+    const callbacks = createSignalCallbacks();
+
+    await signal(
+      internals as never,
+      'workflow-anonymous-scan-bootstrap',
+      'release',
+      'first',
+      callbacks,
+    );
+    await signal(
+      internals as never,
+      'workflow-anonymous-scan-bootstrap',
+      'release',
+      'second',
+      callbacks,
+    );
+
+    expect(storage.signalScanCount).toBe(1);
+  });
+
   it('rejects oversize signalIds before persistence', async () => {
     const storage = new MemoryStorage();
     const internals = createSignalInternals(storage);
