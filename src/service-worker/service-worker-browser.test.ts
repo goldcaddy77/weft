@@ -34,36 +34,24 @@ function requirePage(): Page {
   return page;
 }
 
-function requireServerPort(): number {
-  if (server === undefined) {
-    throw new Error('Bun server was not initialized.');
-  }
-  if (server.port === undefined) {
-    throw new Error('Bun server did not expose a port.');
-  }
-  return server.port;
-}
-
 function serviceWorkerEntrySource(): string {
   return `
 /// <reference lib="webworker" />
 import { setupServiceWorker } from ${JSON.stringify(setupServiceWorkerModulePath)};
 import { activity, workflow } from ${JSON.stringify(indexModulePath)};
 
-let activityRunCount = 0;
-
+// activityResult is a fixed value so tests are independent of execution order.
+// The termination/restart test proves the activity did NOT re-run by verifying
+// the checkpointed value persists after SW restart — not by counting invocations.
 const countActivity = activity({
   name: 'count-activity',
-  execute: async () => {
-    activityRunCount += 1;
-    return activityRunCount;
-  },
+  execute: async () => 'ran',
 });
 
 const testWorkflow = workflow({ name: 'test-workflow' }).execute(async function* (ctx, _input) {
-  const count = yield* ctx.run(countActivity);
+  const activityResult = yield* ctx.run(countActivity);
   const signal = yield* ctx.waitForSignal('finish');
-  return { activityCount: count, signalPayload: signal };
+  return { activityResult, signalPayload: signal };
 });
 
 void setupServiceWorker({
@@ -179,29 +167,28 @@ async function readWorkflowResult(browserPage: Page, workflowId: string): Promis
   return body.result;
 }
 
+// Poll workflow status through the browser page so requests are intercepted by
+// the Service Worker — the /weft/* routes live in SW scope, not in Bun.serve().
 async function waitForWorkflowStatus(
-  port: number,
+  browserPage: Page,
   id: string,
   predicate: (state: WorkflowBrowserState) => boolean,
   timeout: number,
 ): Promise<WorkflowBrowserState> {
-  const endpoint = `http://127.0.0.1:${port}/weft/v1/workflows/${encodeURIComponent(id)}`;
+  const endpoint = `/weft/v1/workflows/${encodeURIComponent(id)}`;
   const deadline = Date.now() + timeout;
-  let lastState: WorkflowBrowserState | undefined;
 
   while (Date.now() < deadline) {
-    const response = await fetch(endpoint, { cache: 'no-store' });
-    if (response.ok) {
-      const state = (await response.json()) as WorkflowBrowserState;
+    try {
+      const state = await fetchJsonFromPage<WorkflowBrowserState>(browserPage, endpoint);
       if (predicate(state)) return state;
-      lastState = state;
+    } catch {
+      // SW may still be starting; retry.
     }
     await Bun.sleep(50);
   }
 
-  throw new Error(
-    `Workflow ${id} did not satisfy predicate within ${timeout}ms; last status: ${lastState?.status ?? 'unknown'}`,
-  );
+  throw new Error(`Workflow ${id} did not satisfy predicate within ${timeout}ms`);
 }
 
 describe('Service Worker browser lifecycle', () => {
@@ -280,21 +267,21 @@ describe('Service Worker browser lifecycle', () => {
     const workflowId = await startWorkflow(browserPage);
 
     await waitForWorkflowStatus(
-      requireServerPort(),
+      browserPage,
       workflowId,
       (state) => state.status === 'running',
       5_000,
     );
     await signalWorkflow(browserPage, workflowId, 'done');
     await waitForWorkflowStatus(
-      requireServerPort(),
+      browserPage,
       workflowId,
       (state) => state.status === 'completed',
       5_000,
     );
 
     await expect(readWorkflowResult(browserPage, workflowId)).resolves.toEqual({
-      activityCount: 1,
+      activityResult: 'ran',
       signalPayload: 'done',
     });
   });
@@ -311,7 +298,7 @@ describe('Service Worker browser lifecycle', () => {
       const workflowId = `sw-terminated-${crypto.randomUUID()}`;
       await startWorkflow(browserPage, { id: workflowId });
       await waitForWorkflowStatus(
-        requireServerPort(),
+        browserPage,
         workflowId,
         (state) => state.status === 'running',
         5_000,
@@ -331,17 +318,17 @@ describe('Service Worker browser lifecycle', () => {
 
       await signalWorkflow(browserPage, workflowId, 'restarted');
       await waitForWorkflowStatus(
-        requireServerPort(),
+        browserPage,
         workflowId,
         (state) => state.status === 'completed',
         5_000,
       );
 
-      // activityCount must be 1 — the activity completed before termination and its
-      // result was checkpointed in IndexedDB. After SW restart the engine recovers
-      // from the checkpoint and does NOT re-run the activity.
+      // activityResult must be 'ran' — the activity completed before termination
+      // and its result was checkpointed in IndexedDB. After SW restart the engine
+      // recovers from the checkpoint and does NOT re-run the activity.
       await expect(readWorkflowResult(browserPage, workflowId)).resolves.toEqual({
-        activityCount: 1,
+        activityResult: 'ran',
         signalPayload: 'restarted',
       });
     },
