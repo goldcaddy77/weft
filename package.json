@@ -177,6 +177,7 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
+    "weft": "./dist/cli-main.js",
     "weft-mcp": "./dist/mcp/cli.js"
   },
   "files": [
