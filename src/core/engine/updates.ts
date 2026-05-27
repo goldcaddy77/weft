@@ -2,7 +2,12 @@ import type { ContextOperationRequest } from '../context.ts';
 import { UpdateCompletedEvent, UpdateReceivedEvent } from '../events.ts';
 import { isGeneratorResult } from '../step-context.ts';
 import type { CoordinatedUpdateResult } from '../types.ts';
-import { UpdateTimeoutError, type UpdateRequest, type UpdateResponse } from '../updates.ts';
+import {
+  UpdateTimeoutError,
+  UpdateValidationError,
+  type UpdateRequest,
+  type UpdateResponse,
+} from '../updates.ts';
 import type { EngineInternals } from './internals.ts';
 import { trackWaiterKey, untrackWaiterKey } from './signals.ts';
 
@@ -50,6 +55,9 @@ export async function update(
   callbacks: UpdateCallbacks,
 ): Promise<unknown> {
   const timeout = options?.timeout ?? 30_000;
+
+  // Run pre-acceptance validator before any durable action.
+  await runUpdateValidator(internals, workflowId, name, payload);
 
   // Reject updates to workflows in terminal states
   await callbacks.guardTerminalWorkflow(workflowId);
@@ -222,6 +230,9 @@ export async function submitCoordinatedUpdate(
       return { updateId: existing.updateId, result: existing.result };
     }
   }
+
+  // Run pre-acceptance validator before any durable action.
+  await runUpdateValidator(internals, workflowId, name, payload);
 
   // Reject updates to workflows in terminal states
   await callbacks.guardTerminalWorkflow(workflowId);
@@ -429,4 +440,42 @@ export async function invokeUpdateHandler(
     );
   }
   return await result;
+}
+
+/**
+ * Run the pre-acceptance validator for an update, if one is registered.
+ * Throws `UpdateValidationError` if the validator rejects the payload.
+ * A validator may reject by:
+ *   - throwing (any thrown error is wrapped into an UpdateValidationError), or
+ *   - returning a Standard Schema failure result `{ issues: [...] }`.
+ */
+async function runUpdateValidator(
+  internals: EngineInternals,
+  workflowId: string,
+  name: string,
+  payload: unknown,
+): Promise<void> {
+  const validator = internals.inlineStrategy?.getContext(workflowId)?.updateValidators.get(name);
+  if (validator === undefined) return;
+
+  let result: unknown;
+  try {
+    result = await validator(payload);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new UpdateValidationError(name, [{ message }]);
+  }
+
+  const issues = extractStandardSchemaIssues(result);
+  if (issues !== null && issues.length > 0) {
+    throw new UpdateValidationError(name, issues);
+  }
+}
+
+/** Extract issues from a Standard Schema v1 failure result, or return null. */
+function extractStandardSchemaIssues(result: unknown): Array<{ message: string }> | null {
+  if (result === null || typeof result !== 'object' || !('issues' in result)) return null;
+  const { issues } = result as { issues: unknown };
+  if (!Array.isArray(issues)) return null;
+  return issues as Array<{ message: string }>;
 }
