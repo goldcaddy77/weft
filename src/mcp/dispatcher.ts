@@ -156,7 +156,7 @@ function initialize(params: unknown, session: McpSession): unknown {
     serverInfo: {
       name: 'weft',
       title: 'Weft',
-      version: '0.1.0',
+      version: '0.2.0',
     },
   };
 }
