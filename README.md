@@ -395,12 +395,16 @@ The `bun` runtime version `1.3.13` or later is required.
 
 If generator syntax is unfamiliar, the same workflow can be written with `ctx.step()` calls and plain `async`/`await`:
 
-```typescript
-engine.register('welcome', async (ctx, input: { name: string }) => {
-  const greeting = await ctx.step('greet', () => greet(input.name));
-  await ctx.step('notify', () => notify(greeting));
-  return { greeting, notified: true };
-});
+```typescript partial
+const welcome = workflow({ name: 'welcome' }).execute(
+  compileStepWorkflow(async (ctx: StepWorkflowContext, input: { name: string }) => {
+    const greeting = await ctx.step('greet', () => greet(input.name));
+    await ctx.step('notify', () => notify(greeting));
+    return { greeting, notified: true };
+  }),
+);
+
+engine.register(welcome);
 ```
 
 Each `ctx.step()` is a checkpoint boundary. The engine compiles step-style workflows to generator form at registration time. When you need durable timers, signals, or parallel execution, switch to the generator API.
