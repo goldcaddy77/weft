@@ -2,8 +2,10 @@
 
 Weft provides a command-line interface for running the server and diagnosing database state.
 
+This reference documents the source/binary `weft` CLI entrypoint (`src/cli-main.ts`). The published [`weft` package](https://www.npmjs.com/package/weft) at 0.1.0 installs only the [`weft-mcp`](api-server.md#mcp-server) binary; [`bun add weft`](https://bun.sh/docs/cli/add) does not put a `weft` command on your `PATH` yet. Use these commands from a source checkout or from a standalone binary built from this repository until the package publishes a `weft` bin.
+
 > [!NOTE]
-> [`serve`](#serve-default) and [`doctor`](#doctor) are the candidate-stable CLI commands for the pre-1.0 launch plan. [`conformance`](#conformance), [`codegen`](#codegen), and other specialized commands are useful, but their flags and output contracts remain experimental until the Tier-0 contract and 1.0 stability policy land.
+> [`serve`](#serve-default) and [`doctor`](#doctor) are the candidate-stable source/binary CLI commands for the pre-1.0 launch plan. [`conformance`](#conformance), [`codegen`](#codegen), and other specialized commands are useful, but their flags and output contracts remain experimental until the Tier-0 contract and 1.0 stability policy land.
 
 ## Usage
 
