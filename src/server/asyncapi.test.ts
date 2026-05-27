@@ -182,7 +182,7 @@ describe('AsyncAPI document', () => {
   it('uses ws for non-TLS server URLs', () => {
     const document = generateAsyncApiDocument({
       registry: createLiveOperationRegistry(),
-      serverUrl: 'http://api.example.com/v1/tasks/default/stream',
+      serverUrl: 'http://api.example.com/api/v1/tasks/default/stream',
     }) as AsyncApiDocument;
 
     expect(document.servers?.['default']).toEqual({
@@ -194,7 +194,7 @@ describe('AsyncAPI document', () => {
   it('uses wss for TLS server URLs', () => {
     const document = generateAsyncApiDocument({
       registry: createLiveOperationRegistry(),
-      serverUrl: 'https://api.example.com/v1/tasks/default/stream',
+      serverUrl: 'https://api.example.com/api/v1/tasks/default/stream',
     }) as AsyncApiDocument;
 
     expect(document.servers?.['default']).toEqual({
