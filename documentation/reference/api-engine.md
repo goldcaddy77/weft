@@ -14,23 +14,29 @@ class Engine extends EventTarget implements Disposable, AsyncDisposable
 new Engine(options?: Partial<EngineOptions>)
 ```
 
-Creates a new engine instance. All options are optional -- sensible defaults are applied when omitted.
+Creates a new engine instance. All options are optional — sensible defaults are applied when omitted.
 
 | Option                           | Type                       | Default               | Description                                                                    |
 | -------------------------------- | -------------------------- | --------------------- | ------------------------------------------------------------------------------ |
 | `storage`                        | `Storage`                  | `new MemoryStorage()` | Storage backend for workflow state and checkpoints                             |
 | `development`                    | `boolean`                  | `false`               | Enable development-mode checkpoint validation                                  |
 | `serializer`                     | `Serializer`               | built-in codec        | Custom serialization for checkpoint data                                       |
+| `retention`                      | `RetentionPolicy`          | `undefined`           | Default retention policy for completed, failed, and cancelled workflows        |
+| `retentionSweepInterval`         | `Duration`                 | internal default      | Interval for automatic retention sweeps                                        |
+| `retentionSweepBatchSize`        | `number`                   | internal default      | Maximum workflows considered by one retention sweep                            |
+| `history`                        | `HistoryPolicy`            | `undefined`           | Lifetime history circuit-breaker and event-log compaction policy               |
+| `archive`                        | `ArchiveAdapter`           | `undefined`           | Best-effort sink for event-log ranges discarded by compaction                  |
+| `payloadSize`                    | `PayloadSizePolicy`        | `undefined`           | Admission-time cap for workflow inputs, signal payloads, and activity results  |
+| `compression`                    | `CompressionOptions`       | `undefined`           | Enable framed storage payload compression for checkpoints and activity results |
 | `checkpointHistory`              | `number`                   | `10`                  | Number of historical checkpoints to retain                                     |
 | `checkpointSizeWarningThreshold` | `number`                   | `65_536`              | Byte threshold that triggers a `CheckpointSizeWarningEvent`                    |
 | `maxNestingDepth`                | `number`                   | `10`                  | Maximum allowed nesting depth for child workflows                              |
 | `broadcastEvents`                | `boolean`                  | `false`               | Enable `BroadcastChannel` for cross-worker event coordination                  |
-| `retention`                      | `RetentionPolicy`          | `undefined`           | Default retention policy for completed/failed/cancelled workflows              |
-| `compression`                    | `CompressionOptions`       | `undefined`           | Enable framed storage payload compression for checkpoints and activity results |
 | `workflowExecutionMode`          | `'inline' \| 'worker'`     | legacy selection      | Explicitly choose inline or Worker workflow execution                          |
 | `workerExecution`                | `WorkerExecutionOptions`   | `undefined`           | Configuration for offloading workflow execution to Web Workers                 |
 | `activityExecution`              | `ActivityExecutionOptions` | `undefined`           | Configuration for activity execution behavior                                  |
 | `alerts`                         | `AlertOptions[]`           | `undefined`           | Metric alert thresholds that fire `AlertFiredEvent` / `AlertResolvedEvent`     |
+| `interceptors`                   | `readonly Interceptor[]`   | `undefined`           | Unified interceptors registered at construction                                |
 
 ```ts
 import { Engine } from 'weft';
@@ -39,8 +45,12 @@ import { SQLiteStorage } from 'weft/storage/sqlite';
 const engine = new Engine({
   storage: new SQLiteStorage('./data/weft.db'),
   development: true,
+  history: { maxEvents: 100_000, retentionWindow: 10_000 },
+  payloadSize: { maxBytes: 1_048_576 },
 });
 ```
+
+`history.maxEvents` is a circuit breaker on lifetime event-log sequence. `history.retentionWindow` is optional compaction that reclaims old event-log records behind a confirmed checkpoint and durable watermark; it does not reset the lifetime counter. `archive` receives compacted ranges after deletion commits and is best-effort only. `payloadSize.maxBytes` rejects oversized workflow inputs, signal payloads, and activity results before any storage write, measuring the codec-encoded value before storage compression.
 
 ### `register()`
 
@@ -191,7 +201,7 @@ const running = await engine.list({ status: 'running', limit: 20 });
 getHandle(workflowId: string): WorkflowHandle
 ```
 
-Retrieve a `WorkflowHandle` for an existing workflow by ID. Uses a `WeakRef` cache internally -- if the handle has been garbage collected, a new one is created. If the workflow is still running, the result promise chains off the existing resolver. If the workflow has already completed or failed, the result is loaded from storage.
+Retrieve a `WorkflowHandle` for an existing workflow by ID. Uses a `WeakRef` cache internally — if the handle has been garbage collected, a new one is created. If the workflow is still running, the result promise chains off the existing resolver. If the workflow has already completed or failed, the result is loaded from storage.
 
 ### `addInterceptor()`
 
@@ -224,7 +234,7 @@ Direct access to the underlying scheduler. Primarily useful for `TestEngine` and
 [Symbol.asyncDispose](): Promise<void>
 ```
 
-Clean up all engine resources -- aborts the scheduler, clears active generators, handles, resolvers, signal waiters, sleep resolvers, and closes the `BroadcastChannel` if active. Supports both `using` and `await using` syntax.
+Clean up all engine resources — aborts the scheduler, clears active generators, handles, resolvers, signal waiters, sleep resolvers, and closes the `BroadcastChannel` if active. Supports both `using` and `await using` syntax.
 
 ```ts partial
 {
@@ -312,7 +322,7 @@ Returns an observable-compatible object with a `subscribe` method for frameworks
 async [Symbol.asyncDispose](): Promise<void>
 ```
 
-No-op disposal -- handles are lightweight and do not hold expensive resources.
+No-op disposal — handles are lightweight and do not hold expensive resources.
 
 ---
 
@@ -325,20 +335,26 @@ interface EngineOptions {
   storage?: Storage;
   development?: boolean;
   serializer?: Serializer;
+  retention?: RetentionPolicy;
+  retentionSweepInterval?: Duration;
+  retentionSweepBatchSize?: number;
+  history?: HistoryPolicy;
+  archive?: ArchiveAdapter;
+  payloadSize?: PayloadSizePolicy;
+  compression?: CompressionOptions;
   checkpointHistory?: number;
   checkpointSizeWarningThreshold?: number;
   maxNestingDepth?: number;
   broadcastEvents?: boolean;
-  retention?: RetentionPolicy;
-  compression?: CompressionOptions;
   workflowExecutionMode?: 'inline' | 'worker';
   workerExecution?: WorkerExecutionOptions;
   activityExecution?: ActivityExecutionOptions;
   alerts?: AlertOptions[];
+  interceptors?: readonly Interceptor[];
 }
 ```
 
-See [Configuration](./configuration.md) for defaults and Worker execution hardening options. Explicit `workflowExecutionMode: 'worker'` is the untrusted workflow posture; inline execution remains available for trusted deployments.
+See [Configuration](./configuration.md) for defaults and Worker execution hardening options. `interceptors` is equivalent to registering each entry with `addInterceptor()` during construction. Explicit `workflowExecutionMode: 'worker'` is the untrusted workflow posture; inline execution remains available for trusted deployments.
 
 ### `StartOptions`
 
