@@ -2,6 +2,7 @@ import type { Engine } from '../core/engine.ts';
 import { WeftError } from '../core/weft-error.ts';
 import { JSON_RPC_ERROR_CODES, type JsonRpcId } from '../server/json-rpc-protocol.ts';
 import { isAuthenticated, type Principal } from '../server/principal.ts';
+import { VERSION } from '../version.ts';
 import { McpToolExecutionError } from './access.ts';
 import {
   forbidden,
@@ -156,7 +157,7 @@ function initialize(params: unknown, session: McpSession): unknown {
     serverInfo: {
       name: 'weft',
       title: 'Weft',
-      version: '0.2.0',
+      version: VERSION,
     },
   };
 }
