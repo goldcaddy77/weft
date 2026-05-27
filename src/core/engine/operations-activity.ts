@@ -318,7 +318,20 @@ export async function executeActivity(
     let current: IteratorResult<unknown, unknown> = generator.next();
     while (!current.done) {
       const yielded = current.value;
-      current = generator.next(yielded instanceof Promise ? await yielded : yielded);
+      if (yielded instanceof Promise) {
+        // Forward rejections into the generator so interceptor try/catch/finally
+        // blocks (e.g. span cleanup) run instead of abandoning the generator.
+        let resolved: unknown;
+        try {
+          resolved = await yielded;
+        } catch (error) {
+          current = generator.throw(error);
+          continue;
+        }
+        current = generator.next(resolved);
+      } else {
+        current = generator.next(yielded);
+      }
     }
 
     copyActivityHeadersToOperation(operation, interception.headers);
