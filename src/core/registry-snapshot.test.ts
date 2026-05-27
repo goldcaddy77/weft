@@ -6,12 +6,14 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { z } from 'zod';
 
 import { MemoryStorage } from '../storage/memory.ts';
+import { ActivityRegistry } from './activity-registry.ts';
 import { Engine } from './engine.ts';
 import {
   buildRegistrySnapshot,
   REGISTRY_VERSION,
   RegistrySchemaConversionError,
 } from './registry-snapshot.ts';
+import type { WorkflowDefinition } from './types.ts';
 import { activity, workflow } from './types.ts';
 
 function createEngine(): Engine {
@@ -183,13 +185,29 @@ describe('buildRegistrySnapshot', () => {
     expect(Object.keys(snapshot.activities)).toEqual(['abc', 'mno', 'xyz']);
   });
 
-  it.skip('places integer-like keys first per ECMAScript object iteration semantics', () => {
-    // SKIPPED: the workflow-builder refactor enforces a name grammar of
-    // [A-Za-z_][A-Za-z0-9_-]* (no leading digits) so qualified worker wire
-    // names `${workflowType}.${activityName}` parse unambiguously. The
-    // ECMAScript integer-index iteration behaviour this test pins is still
-    // observable through any other map whose keys are user-controlled; it
-    // is no longer reachable through `workflow({ name })` registration.
+  it('rejects integer-like names before they can affect registry snapshot ordering', () => {
+    engine = createEngine();
+
+    expect(() => workflow({ name: '1' }).execute(async function* () {})).toThrow(
+      'workflow name "1" is invalid',
+    );
+    expect(() => activity({ name: '1', execute: async () => undefined })).toThrow(
+      'activity name "1" is invalid',
+    );
+    const structuralWorkflow: WorkflowDefinition = {
+      name: '1',
+      handler: async function* () {},
+    };
+    expect(() => engine?.register(structuralWorkflow)).toThrow('workflow name "1" is invalid');
+
+    const directRegistry = new ActivityRegistry();
+    expect(() => directRegistry.register('1', async () => undefined)).toThrow(
+      'activity name "1" is invalid',
+    );
+
+    const snapshot = buildRegistrySnapshot(engine);
+    expect(Object.keys(snapshot.workflows)).toEqual([]);
+    expect(Object.keys(snapshot.activities)).toEqual([]);
   });
 
   it('throws RegistrySchemaConversionError with workflow context when input schema conversion fails', () => {

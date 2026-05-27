@@ -7,13 +7,17 @@
  * or activity name, and names must start with a letter or underscore. The
  * permitted character class is `[A-Za-z_][A-Za-z0-9_-]*`.
  *
- * This helper is called from three construction sites:
+ * This helper is called from public construction and registration sites:
  *
  *   1. `workflow({ name })` — rejects invalid workflow names.
- *   2. `WorkflowBuilder.activities({ ... })` keys — rejects invalid activity
+ *   2. `engine.register(workflowDefinition)` — rejects invalid structural
+ *      workflow names before they reach the workflow registry.
+ *   3. `WorkflowBuilder.activities({ ... })` keys — rejects invalid activity
  *      names supplied as the outer object key.
- *   3. `activity({ name })` — rejects invalid names on the canonical
+ *   4. `activity({ name })` — rejects invalid names on the canonical
  *      activity-definition constructor.
+ *   5. `ActivityRegistry.register(name, fn)` — rejects invalid names before
+ *      they reach local or global activity registries.
  *
  * Keep this list in sync with Phase 4's worker SDK key validation: any name
  * that passes here must also pass on the worker side, and vice versa.

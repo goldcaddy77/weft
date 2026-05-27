@@ -9,14 +9,10 @@
  * its JSDoc for what reaches the wire vs server logs).
  *
  * **Ordering guarantee.** Builder code inserts keys in alphabetical
- * (codepoint) order. The *observable* iteration and `JSON.stringify` order
- * is the standard ECMAScript object iteration order: array-index-like keys
- * (e.g. `"42"`) come first in numeric order, then string keys in insertion
- * (codepoint) order. Workflows and activities are conventionally named with
- * words and dot/colon-separated identifiers, so the integer-key case is a
- * corner. Clients that care about a single ordering rule across all keys
- * should sort `Object.keys(...)` themselves rather than relying on the
- * map's iteration order.
+ * (codepoint) order. Public workflow and activity names cannot be integer-like
+ * because the name grammar requires a leading letter or underscore. Clients
+ * that want to protect themselves from future registry sources should still
+ * sort `Object.keys(...)` before presenting or diffing snapshot entries.
  *
  * @module core/registry-snapshot
  */
