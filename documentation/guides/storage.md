@@ -124,7 +124,7 @@ The honest profile per built-in adapter:
 | `MemoryStorage`       | `linearizable` | `snapshot`      | yes         | yes              | yes                |
 | `BunSQLiteStorage`    | `linearizable` | `snapshot`      | yes         | yes              | yes                |
 | `NodeSQLiteStorage`   | `linearizable` | `snapshot`      | yes         | yes              | no                 |
-| `LMDBStorage`         | `linearizable` | `snapshot`      | yes         | yes              | yes                |
+| `LMDBStorage`         | `linearizable` | `snapshot`      | yes         | yes              | no                 |
 | `IndexedDBStorage`    | `linearizable` | `best-effort`   | yes         | yes              | yes                |
 | `TursoStorage`        | `session`      | `snapshot`      | yes         | yes              | yes                |
 | `HTTPStorage`         | `eventual`     | `best-effort`   | yes         | no (opt-in)      | no                 |
@@ -142,7 +142,7 @@ Three kinds of capability, treated differently:
 **The opaque-value invariant:** adapters and decorators must treat stored values as opaque bytes and must not inspect or depend on value contents — values may later be encrypted or compressed. The engine ranges only over keys, never value bytes. This is why `CompressedStorage`, which transforms value bytes, downgrades `conditionalBatch` to `false`: a caller-supplied `expectedValue` can never byte-match the compressed stored value.
 
 > [!NOTE] `boundedRangeDelete`
-> `true` means `deletePrefix()` or `deleteRange()` can run as a single bounded operation (one SQL `DELETE`, an `IDBKeyRange` delete, or an LMDB range delete). `false` means the adapter falls back to the derived scan-and-delete loop — the operation still works, it just is not a single native bounded delete.
+> `true` means `deletePrefix()` or `deleteRange()` runs as a single native bounded operation (one SQL `DELETE` or an `IDBKeyRange` delete). `false` means the adapter uses a two-phase scan-and-delete approach — first collecting matching keys into memory, then deleting them in a batch — or falls back to the derived scan-and-delete loop. The operation still works either way; this is a performance claim, not a correctness gate.
 
 `deleteRange(prefix, options)` deletes only keys under `prefix` that also satisfy at least one lexicographic bound (`gt`, `gte`, `lt`, or `lte`). The public `storageDeleteRange()` dispatcher validates the bounds, rejects unbounded requests, normalizes `limit`, and falls back to a bounded `scan()` plus `batch()` loop when the adapter does not provide a native method. Use it for checkpoint-history or event-log truncation below a known watermark; use `deletePrefix()` for intentional whole-prefix cleanup.
 
