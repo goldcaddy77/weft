@@ -8,6 +8,11 @@
  * @module testing/test-engine
  */
 
+import type {
+  ActivityMetadata,
+  ActivityRegistrationOptions,
+  RegisteredActivityFunction,
+} from '../core/activity-registry.ts';
 import { Engine } from '../core/engine.ts';
 import { runtimeWorkflowEngine } from '../core/runtime-workflow-engine.ts';
 import { parseDuration } from '../core/scheduler.ts';
@@ -74,6 +79,26 @@ export interface RunNResult {
   consistency: number;
   /** Count of failures bucketed by failure category. */
   categories: Record<FailureCategory, number>;
+}
+
+interface ActivityRegistrationSnapshot {
+  readonly fn: RegisteredActivityFunction;
+  readonly options: ActivityRegistrationOptions;
+}
+
+function activityRegistrationOptionsFromMetadata(
+  metadata: ActivityMetadata,
+): ActivityRegistrationOptions {
+  return {
+    queue: metadata.queue,
+    ...(metadata.description === undefined ? {} : { description: metadata.description }),
+    ...(metadata.tags === undefined ? {} : { tags: [...metadata.tags] }),
+    ...(metadata.inputSchema === undefined ? {} : { inputSchema: metadata.inputSchema }),
+    ...(metadata.outputSchema === undefined ? {} : { outputSchema: metadata.outputSchema }),
+    ...(metadata.retry === undefined ? {} : { retry: metadata.retry }),
+    ...(metadata.timeout === undefined ? {} : { timeout: metadata.timeout }),
+    ...(metadata.idempotent === undefined ? {} : { idempotent: metadata.idempotent }),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -203,8 +228,9 @@ export class TestEngine extends Engine {
     activity: (() => Promise<TResult> | TResult) | ((input: TInput) => Promise<TResult> | TResult),
     implementation: MockActivityFunction<TInput, TResult>,
   ): MockHandle<TInput, TResult> {
-    const handle = this.#mocks.mock(activity, implementation);
     const activityName = activity.name || 'anonymous';
+    const previousRegistration = this.#captureActivityRegistration(activityName);
+    const handle = this.#mocks.mock(activity, implementation);
     const mockedActivity = defineActivity({
       name: activityName,
       execute: async (input: TInput) => {
@@ -216,7 +242,68 @@ export class TestEngine extends Engine {
       },
     });
     (this.register as (definition: typeof mockedActivity) => unknown)(mockedActivity);
-    return handle;
+    return this.#wrapMockHandleWithActivityRestore(handle, activityName, previousRegistration);
+  }
+
+  #captureActivityRegistration(activityName: string): ActivityRegistrationSnapshot | undefined {
+    const fn = this.resolveRegisteredActivity(activityName);
+    const metadata = this.getActivityDefinition(activityName);
+    if (!fn || !metadata) return undefined;
+
+    return {
+      fn,
+      options: activityRegistrationOptionsFromMetadata(metadata),
+    };
+  }
+
+  #wrapMockHandleWithActivityRestore<TInput, TResult>(
+    handle: MockHandle<TInput, TResult>,
+    activityName: string,
+    previousRegistration: ActivityRegistrationSnapshot | undefined,
+  ): MockHandle<TInput, TResult> {
+    let restored = false;
+    const restoreActivityRegistration = () => {
+      if (restored) return;
+      restored = true;
+      handle.restore();
+
+      if (previousRegistration) {
+        this.registerActivityFunction(
+          activityName,
+          previousRegistration.fn,
+          previousRegistration.options,
+        );
+      } else {
+        this.unregisterRegisteredActivity(activityName);
+      }
+    };
+
+    const wrappedHandle: MockHandle<TInput, TResult> = {
+      get calls() {
+        return handle.calls;
+      },
+      get callCount() {
+        return handle.callCount;
+      },
+      get lastCall() {
+        return handle.lastCall;
+      },
+      get currentImplementation() {
+        return handle.currentImplementation;
+      },
+      mockImplementation: handle.mockImplementation.bind(handle),
+      mockReturnValueOnce: (value: TResult) => {
+        handle.mockReturnValueOnce(value);
+        return wrappedHandle;
+      },
+      mockRejectionOnce: (error: Error) => {
+        handle.mockRejectionOnce(error);
+        return wrappedHandle;
+      },
+      resetCalls: handle.resetCalls.bind(handle),
+      restore: restoreActivityRegistration,
+    };
+    return wrappedHandle;
   }
 
   // ---------------------------------------------------------------------------

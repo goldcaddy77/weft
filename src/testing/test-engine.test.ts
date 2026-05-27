@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { restoreRealTimers, sleepForTesting, useFakeTimers } from './fake-timers.test-support.ts';
 
-import type { WorkflowContext } from '../core/types.ts';
+import { activity, type WorkflowContext } from '../core/types.ts';
 import { workflow } from '../core/types/workflow-function.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { TestEngine } from './test-engine.ts';
@@ -97,6 +97,70 @@ describe('TestEngine', () => {
 
     expect(result).toEqual({ id: 'user-123', name: 'Mock User' });
     expect(mockHandle.callCount).toBe(1);
+    engine[Symbol.dispose]();
+  });
+
+  it('mock restore preserves the previous activity registration', async () => {
+    const engine = new TestEngine();
+
+    const fetchAccount = activity({
+      name: 'fetchAccount',
+      queue: 'accounts',
+      timeout: '5s',
+      execute: async (input: unknown) => `real:${String(input)}`,
+    });
+    const accountWorkflow = workflow({ name: 'account-workflow' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
+      return yield* ctx.run(fetchAccount, input);
+    });
+
+    engine.register(fetchAccount);
+    engine.register(accountWorkflow);
+
+    const mockHandle = engine.mock(fetchAccount, async (input: unknown) => `mock:${String(input)}`);
+    const mockedHandle = await engine.start('account-workflow', 'first', {
+      id: 'account-workflow-mocked',
+    });
+    expect(await mockedHandle.result()).toBe('mock:first');
+
+    mockHandle.restore();
+    expect(engine.getActivityDefinition('fetchAccount')).toMatchObject({
+      name: 'fetchAccount',
+      queue: 'accounts',
+      timeout: '5s',
+    });
+
+    const restoredHandle = await engine.start('account-workflow', 'second', {
+      id: 'account-workflow-restored',
+    });
+    expect(await restoredHandle.result()).toBe('real:second');
+    expect(mockHandle.callCount).toBe(1);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('mock restore unregisters temporary activity registrations', () => {
+    const engine = new TestEngine();
+
+    async function temporaryActivity(input: unknown) {
+      return `real:${String(input)}`;
+    }
+
+    expect(engine.getActivityDefinition('temporaryActivity')).toBeUndefined();
+    const mockHandle = engine.mock(
+      temporaryActivity,
+      async (input: unknown) => `mock:${String(input)}`,
+    );
+    expect(engine.getActivityDefinition('temporaryActivity')).toMatchObject({
+      name: 'temporaryActivity',
+    });
+
+    mockHandle.restore();
+
+    expect(engine.getActivityDefinition('temporaryActivity')).toBeUndefined();
+
     engine[Symbol.dispose]();
   });
 
