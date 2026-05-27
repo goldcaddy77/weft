@@ -241,9 +241,35 @@ class MockHandleImplementation<TInput, TResult> implements MockHandle<TInput, TR
  */
 export class ActivityMockRegistry {
   #mocks: Map<Function, MockedActivity>;
+  #cleanupHooks: Map<Function, () => void>;
 
   constructor() {
     this.#mocks = new Map();
+    this.#cleanupHooks = new Map();
+  }
+
+  /**
+   * Register a cleanup callback to run when `restore(activity)` or
+   * `restoreAll()` removes the mock for `activity`. Used by {@link TestEngine}
+   * to undo the surrogate activity registration it installs on the engine, so
+   * `restoreAll()` does not leave stale registrations behind. The callback runs
+   * at most once per registration and is then discarded.
+   */
+  onRestore(activity: Function, cleanup: () => void): void {
+    this.#cleanupHooks.set(activity, cleanup);
+  }
+
+  #runCleanupHook(activity: Function): void {
+    const cleanup = this.#cleanupHooks.get(activity);
+    if (!cleanup) return;
+    this.#cleanupHooks.delete(activity);
+    cleanup();
+  }
+
+  #runAllCleanupHooks(): void {
+    const cleanups = Array.from(this.#cleanupHooks.values());
+    this.#cleanupHooks.clear();
+    for (const cleanup of cleanups) cleanup();
   }
 
   mock<TResult>(
@@ -282,10 +308,12 @@ export class ActivityMockRegistry {
 
   restore(activity: Function): void {
     this.#mocks.delete(activity);
+    this.#runCleanupHook(activity);
   }
 
   restoreAll(): void {
     this.#mocks.clear();
+    this.#runAllCleanupHooks();
   }
 
   /**

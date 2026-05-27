@@ -242,7 +242,25 @@ export class TestEngine extends Engine {
       },
     });
     (this.register as (definition: typeof mockedActivity) => unknown)(mockedActivity);
-    return this.#wrapMockHandleWithActivityRestore(handle, activityName, previousRegistration);
+    this.#mocks.onRestore(activity, () =>
+      this.#restoreActivityRegistration(activityName, previousRegistration),
+    );
+    return handle;
+  }
+
+  #restoreActivityRegistration(
+    activityName: string,
+    previousRegistration: ActivityRegistrationSnapshot | undefined,
+  ): void {
+    if (previousRegistration) {
+      this.registerActivityFunction(
+        activityName,
+        previousRegistration.fn,
+        previousRegistration.options,
+      );
+    } else {
+      this.unregisterRegisteredActivity(activityName);
+    }
   }
 
   #captureActivityRegistration(activityName: string): ActivityRegistrationSnapshot | undefined {
@@ -254,56 +272,6 @@ export class TestEngine extends Engine {
       fn,
       options: activityRegistrationOptionsFromMetadata(metadata),
     };
-  }
-
-  #wrapMockHandleWithActivityRestore<TInput, TResult>(
-    handle: MockHandle<TInput, TResult>,
-    activityName: string,
-    previousRegistration: ActivityRegistrationSnapshot | undefined,
-  ): MockHandle<TInput, TResult> {
-    let restored = false;
-    const restoreActivityRegistration = () => {
-      if (restored) return;
-      restored = true;
-      handle.restore();
-
-      if (previousRegistration) {
-        this.registerActivityFunction(
-          activityName,
-          previousRegistration.fn,
-          previousRegistration.options,
-        );
-      } else {
-        this.unregisterRegisteredActivity(activityName);
-      }
-    };
-
-    const wrappedHandle: MockHandle<TInput, TResult> = {
-      get calls() {
-        return handle.calls;
-      },
-      get callCount() {
-        return handle.callCount;
-      },
-      get lastCall() {
-        return handle.lastCall;
-      },
-      get currentImplementation() {
-        return handle.currentImplementation;
-      },
-      mockImplementation: handle.mockImplementation.bind(handle),
-      mockReturnValueOnce: (value: TResult) => {
-        handle.mockReturnValueOnce(value);
-        return wrappedHandle;
-      },
-      mockRejectionOnce: (error: Error) => {
-        handle.mockRejectionOnce(error);
-        return wrappedHandle;
-      },
-      resetCalls: handle.resetCalls.bind(handle),
-      restore: restoreActivityRegistration,
-    };
-    return wrappedHandle;
   }
 
   // ---------------------------------------------------------------------------

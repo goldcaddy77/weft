@@ -164,6 +164,51 @@ describe('TestEngine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('mocks.restoreAll restores the original activity registration', () => {
+    const engine = new TestEngine();
+
+    const fetchAccount = activity({
+      name: 'fetchAccount',
+      queue: 'accounts',
+      timeout: '5s',
+      execute: async (input: unknown) => `real:${String(input)}`,
+    });
+    engine.register(fetchAccount);
+
+    engine.mock(fetchAccount, async (input: unknown) => `mock:${String(input)}`);
+
+    engine.mocks.restoreAll();
+
+    // restoreAll must put back the original metadata, not leave the surrogate
+    // definition with default queue/timeout/retry settings.
+    expect(engine.getActivityDefinition('fetchAccount')).toMatchObject({
+      name: 'fetchAccount',
+      queue: 'accounts',
+      timeout: '5s',
+    });
+
+    engine[Symbol.dispose]();
+  });
+
+  it('mocks.restoreAll unregisters temporary mock activities', () => {
+    const engine = new TestEngine();
+
+    async function temporaryActivity(input: unknown) {
+      return `real:${String(input)}`;
+    }
+
+    engine.mock(temporaryActivity, async (input: unknown) => `mock:${String(input)}`);
+    expect(engine.getActivityDefinition('temporaryActivity')).toMatchObject({
+      name: 'temporaryActivity',
+    });
+
+    engine.mocks.restoreAll();
+
+    expect(engine.getActivityDefinition('temporaryActivity')).toBeUndefined();
+
+    engine[Symbol.dispose]();
+  });
+
   it('recover creates new engine with same storage', async () => {
     const engine = new TestEngine({ startTime: 1000 });
 
