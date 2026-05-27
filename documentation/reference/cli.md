@@ -26,13 +26,21 @@ weft serve --port 8080 --database /var/data/weft.db
 
 **Options:**
 
-| Flag         | Short | Default     | Description                                    |
-| ------------ | ----- | ----------- | ---------------------------------------------- |
-| `--port`     | `-p`  | `7233`      | Server port                                    |
-| `--database` | `-d`  | `./weft.db` | SQLite database file path                      |
-| `--storage`  | `-s`  | `sqlite`    | Storage backend: `sqlite`, `lmdb`, or `memory` |
-| `--no-ui`    |       | `false`     | Disable the web dashboard                      |
-| `--help`     | `-h`  |             | Show help message                              |
+| Flag          | Short | Default     | Description                                               |
+| ------------- | ----- | ----------- | --------------------------------------------------------- |
+| `--port`      | `-p`  | `7233`      | Server port                                               |
+| `--database`  | `-d`  | `./weft.db` | SQLite database file path                                 |
+| `--storage`   | `-s`  | `sqlite`    | Storage backend: `sqlite`, `lmdb`, or `memory`            |
+| `--workflows` | `-w`  |             | Path to a workflow module to load and register on startup |
+| `--no-ui`     |       | `false`     | Disable the web dashboard                                 |
+| `--help`      | `-h`  |             | Show help message                                         |
+
+When `--workflows` is omitted, the server starts in inspect-only mode (useful for viewing existing persisted workflow state via the REST API or dashboard, but no new workflow types can be executed). When provided, the module's exported `WorkflowRegistration` values and `ActivityDefinition` values are loaded and registered before the server begins accepting requests.
+
+```bash
+weft serve --workflows ./src/workflows.ts
+weft serve --port 8080 --database /var/data/weft.db --workflows ./src/my-workflows.ts
+```
 
 ### doctor
 

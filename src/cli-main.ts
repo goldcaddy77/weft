@@ -41,6 +41,16 @@ if (parsedArguments.command === 'serve') {
   const storage = await createStorage(parsedArguments.storage, parsedArguments.database);
   const engine = new Engine({ storage });
 
+  if (parsedArguments.workflows) {
+    const { loadRegistrationsFromModule } = await import('./diagnostics/validate.ts');
+    const { registerModuleExports } = await import('./cli/serve-registrations.ts');
+
+    const loaded = await loadRegistrationsFromModule(parsedArguments.workflows);
+    registerModuleExports(engine, loaded.registrations, loaded.activities);
+  } else {
+    console.log('No --workflows module provided; starting in inspect-only mode.');
+  }
+
   let dashboard: unknown = null;
   if (parsedArguments.ui) {
     try {

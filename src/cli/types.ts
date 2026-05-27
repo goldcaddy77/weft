@@ -15,6 +15,7 @@ export type CliCommand =
       storage: StorageBackend;
       ui: boolean;
       help: boolean;
+      workflows?: string;
     }
   | { command: 'doctor'; database: string; help: boolean; json: boolean }
   | {

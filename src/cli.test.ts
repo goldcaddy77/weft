@@ -65,6 +65,35 @@ describe('CLI argument parsing', () => {
       expect(result.port).toBe('9999');
     });
 
+    it('parses --workflows flag', () => {
+      const result = parseCliArguments(['--workflows', './my-workflows.ts']) as ServeCommand;
+      expect(result.command).toBe('serve');
+      expect(result.workflows).toBe('./my-workflows.ts');
+    });
+
+    it('parses -w short flag for workflows', () => {
+      const result = parseCliArguments(['-w', './workflows.ts']) as ServeCommand;
+      expect(result.command).toBe('serve');
+      expect(result.workflows).toBe('./workflows.ts');
+    });
+
+    it('parses serve -w short flag for workflows', () => {
+      const result = parseCliArguments(['serve', '-w', './x']) as ServeCommand;
+      expect(result.command).toBe('serve');
+      expect(result.workflows).toBe('./x');
+    });
+
+    it('throws when --workflows is an empty string', () => {
+      expect(() => parseCliArguments(['--workflows', ''])).toThrow(
+        '--workflows must be a non-empty path',
+      );
+    });
+
+    it('defaults workflows to undefined when not provided', () => {
+      const result = parseCliArguments([]) as ServeCommand;
+      expect(result.workflows).toBeUndefined();
+    });
+
     it('defaults port to 7233', () => {
       const result = parseCliArguments([]) as ServeCommand;
       expect(result.command).toBe('serve');
