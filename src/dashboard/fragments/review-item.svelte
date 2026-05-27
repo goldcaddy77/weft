@@ -37,7 +37,7 @@
 
   function handleWorkflowClick(event: MouseEvent): void {
     event.stopPropagation();
-    navigate(`/ui/workflows/${encodeURIComponent(review.workflowId)}`);
+    navigate(`/workflows/${encodeURIComponent(review.workflowId)}`);
   }
 </script>
 

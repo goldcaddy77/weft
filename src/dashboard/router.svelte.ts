@@ -51,16 +51,6 @@ const ROUTE_TABLE: RouteDefinition[] = [
 // Helpers
 // ---------------------------------------------------------------------------
 
-function stripPrefix(pathname: string): string {
-  if (pathname === '/ui') {
-    return '/';
-  }
-  if (pathname.startsWith('/ui/')) {
-    return pathname.slice(3);
-  }
-  return pathname;
-}
-
 function parseLocation(): RouteState {
   return {
     path: window.location.pathname,
@@ -74,10 +64,8 @@ function parseLocation(): RouteState {
 // ---------------------------------------------------------------------------
 
 export function matchRoute(pathname: string): RouteMatch {
-  const stripped = stripPrefix(pathname);
-
   for (const definition of ROUTE_TABLE) {
-    const match = definition.pattern.exec(stripped);
+    const match = definition.pattern.exec(pathname);
     if (!match) continue;
 
     const params: Record<string, string> = {};

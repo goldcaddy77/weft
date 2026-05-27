@@ -96,7 +96,9 @@ export class ApiError extends WeftError<'ApiError'> {
   }
 }
 
-const BASE_PATH = '/v1';
+// The functional API is served under the external `/api` prefix; the dashboard
+// is served from the origin root, so REST calls target `/api/v1/...`.
+const BASE_PATH = '/api/v1';
 
 function setOptionalSearchParam(
   params: URLSearchParams,

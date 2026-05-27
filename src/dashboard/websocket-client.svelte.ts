@@ -38,7 +38,7 @@ const BACKOFF_MULTIPLIER = 2;
 
 function buildWebSocketUrl(workflowId: string): string {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}/v1/workflows/${encodeURIComponent(workflowId)}/watch`;
+  return `${protocol}//${window.location.host}/api/v1/workflows/${encodeURIComponent(workflowId)}/watch`;
 }
 
 // ---------------------------------------------------------------------------

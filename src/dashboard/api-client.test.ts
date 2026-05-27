@@ -47,7 +47,7 @@ describe('ApiClient', () => {
       offset: 2,
     });
 
-    expect(requestedUrl).toContain('/v1/workflows?');
+    expect(requestedUrl).toContain('/api/v1/workflows?');
     expect(requestedUrl).toContain('status=running');
     expect(requestedUrl).toContain('type=echo');
     expect(requestedUrl).toContain('tag=nightly');
@@ -67,14 +67,14 @@ describe('ApiClient', () => {
     const client = new ApiClient();
     await client.listWorkflows();
 
-    expect(requestedUrl).toBe('/v1/workflows');
+    expect(requestedUrl).toBe('/api/v1/workflows');
   });
 
-  it('calls /v1/retention and returns the parsed overview', async () => {
+  it('calls /api/v1/retention and returns the parsed overview', async () => {
     const fetchMock = mock(async (input: RequestInfo | URL) => {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-      expect(url).toBe('/v1/retention');
+      expect(url).toBe('/api/v1/retention');
 
       return new Response(
         JSON.stringify({
@@ -133,7 +133,7 @@ describe('ApiClient', () => {
     const client = new ApiClient();
     await client.listWorkflows({ tags: ['nightly', 'v2'] });
 
-    expect(requestedUrl).toContain('/v1/workflows?');
+    expect(requestedUrl).toContain('/api/v1/workflows?');
     expect(requestedUrl).toContain('tag=nightly');
     expect(requestedUrl).toContain('tag=v2');
   });
@@ -150,11 +150,11 @@ describe('ApiClient', () => {
       const url = requestInputToUrl(input);
       requests.push(init === undefined ? { url } : { url, init });
 
-      if (url === '/v1/workflows/workflow%20id' && init?.method === 'DELETE') {
+      if (url === '/api/v1/workflows/workflow%20id' && init?.method === 'DELETE') {
         return new Response(null, { status: 204 });
       }
 
-      if (url === '/v1/workflows/workflow%20id') {
+      if (url === '/api/v1/workflows/workflow%20id') {
         return Response.json({
           id: 'workflow id',
           type: 'echo',
@@ -166,21 +166,21 @@ describe('ApiClient', () => {
         });
       }
 
-      if (url === '/v1/workflows/workflow%20id/signal/approve%2Fdeny') {
+      if (url === '/api/v1/workflows/workflow%20id/signal/approve%2Fdeny') {
         return new Response(null, { status: 204 });
       }
 
-      if (url === '/v1/workflows/workflow%20id/events') {
+      if (url === '/api/v1/workflows/workflow%20id/events') {
         return Response.json({
           events: [{ type: 'workflow.started', timestamp: 1, data: { step: 1 } }],
         });
       }
 
-      if (url === '/v1/workflows/workflow%20id/attributes') {
+      if (url === '/api/v1/workflows/workflow%20id/attributes') {
         return Response.json({ region: 'west' });
       }
 
-      if (url === '/v1/reviews') {
+      if (url === '/api/v1/reviews') {
         return Response.json({
           items: [
             {
@@ -195,11 +195,11 @@ describe('ApiClient', () => {
         });
       }
 
-      if (url === '/v1/reviews/review%2F1/decision') {
+      if (url === '/api/v1/reviews/review%2F1/decision') {
         return new Response(null, { status: 204 });
       }
 
-      if (url === '/v1/health') {
+      if (url === '/api/v1/health') {
         return Response.json({ status: 'ok' });
       }
 
@@ -223,14 +223,14 @@ describe('ApiClient', () => {
     expect(await client.checkHealth()).toEqual({ status: 'ok' });
 
     expect(requests.map((entry) => entry.url)).toEqual([
-      '/v1/workflows/workflow%20id',
-      '/v1/workflows/workflow%20id',
-      '/v1/workflows/workflow%20id/signal/approve%2Fdeny',
-      '/v1/workflows/workflow%20id/events',
-      '/v1/workflows/workflow%20id/attributes',
-      '/v1/reviews',
-      '/v1/reviews/review%2F1/decision',
-      '/v1/health',
+      '/api/v1/workflows/workflow%20id',
+      '/api/v1/workflows/workflow%20id',
+      '/api/v1/workflows/workflow%20id/signal/approve%2Fdeny',
+      '/api/v1/workflows/workflow%20id/events',
+      '/api/v1/workflows/workflow%20id/attributes',
+      '/api/v1/reviews',
+      '/api/v1/reviews/review%2F1/decision',
+      '/api/v1/health',
     ]);
 
     expect(requests[1]?.init?.method).toBe('DELETE');
@@ -250,7 +250,7 @@ describe('ApiClient', () => {
       const url = requestInputToUrl(input);
       requests.push(url);
 
-      if (url === '/v1/workflows/workflow%20id/timeline') {
+      if (url === '/api/v1/workflows/workflow%20id/timeline') {
         return Response.json([
           {
             step: 1,
@@ -265,7 +265,7 @@ describe('ApiClient', () => {
         ]);
       }
 
-      if (url === '/v1/workflows/workflow%20id/replay/2') {
+      if (url === '/api/v1/workflows/workflow%20id/replay/2') {
         return Response.json({
           checkpoint: {
             step: 2,
@@ -291,8 +291,8 @@ describe('ApiClient', () => {
     expect(replay?.checkpoint.step).toBe(2);
     expect(replay?.checkpoint.locals).toEqual({ approved: true });
     expect(requests).toEqual([
-      '/v1/workflows/workflow%20id/timeline',
-      '/v1/workflows/workflow%20id/replay/2',
+      '/api/v1/workflows/workflow%20id/timeline',
+      '/api/v1/workflows/workflow%20id/replay/2',
     ]);
   });
 
@@ -300,7 +300,7 @@ describe('ApiClient', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = requestInputToUrl(input);
 
-      if (url === '/v1/workflows/workflow%20id/replay/3') {
+      if (url === '/api/v1/workflows/workflow%20id/replay/3') {
         return Response.json(
           { error: 'Replay not found at step 3 for workflow workflow id' },
           {
@@ -356,7 +356,7 @@ describe('ApiClient', () => {
     });
 
     expect(requestedUrl).toBe(
-      '/v1/tasks/diagnostics?workflowId=workflow+id&queue=payments&limit=25',
+      '/api/v1/tasks/diagnostics?workflowId=workflow+id&queue=payments&limit=25',
     );
     expect(diagnostics.items[0]?.operationId).toBe('operation-1');
     expect(diagnostics.items[0]?.queue).toBe('payments');
@@ -437,7 +437,7 @@ describe('ApiClient', () => {
       offset: 20,
     });
 
-    expect(requestedUrl).toContain('/v1/schedules?');
+    expect(requestedUrl).toContain('/api/v1/schedules?');
     expect(requestedUrl).toContain('status=active');
     expect(requestedUrl).toContain('status=paused');
     expect(requestedUrl).toContain('workflowType=echo');
@@ -459,7 +459,7 @@ describe('ApiClient', () => {
       const url = requestInputToUrl(input);
       requests.push(init === undefined ? { url } : { url, init });
 
-      if (url === '/v1/workflows/bulk/cancel') {
+      if (url === '/api/v1/workflows/bulk/cancel') {
         const body = requestBodyToJson(init);
         if (body['dryRun'] === true) {
           return Response.json({
@@ -507,7 +507,7 @@ describe('ApiClient', () => {
         });
       }
 
-      if (url === '/v1/workflows/bulk/signal') {
+      if (url === '/api/v1/workflows/bulk/signal') {
         const body = requestBodyToJson(init);
         if (body['dryRun'] === true) {
           return Response.json({
@@ -554,7 +554,7 @@ describe('ApiClient', () => {
         });
       }
 
-      if (url === '/v1/workflows/bulk/tags') {
+      if (url === '/api/v1/workflows/bulk/tags') {
         const body = requestBodyToJson(init);
         if (body['dryRun'] === true) {
           return Response.json({
@@ -600,7 +600,7 @@ describe('ApiClient', () => {
         });
       }
 
-      if (url === '/v1/workflows/bulk' && init?.method === 'DELETE') {
+      if (url === '/api/v1/workflows/bulk' && init?.method === 'DELETE') {
         const body = requestBodyToJson(init);
         if (body['dryRun'] === true) {
           return Response.json({
@@ -718,16 +718,16 @@ describe('ApiClient', () => {
     expect(noPayloadSignalResult.signalled).toBe(2);
 
     expect(requests.map((entry) => entry.url)).toEqual([
-      '/v1/workflows/bulk/cancel',
-      '/v1/workflows/bulk/cancel',
-      '/v1/workflows/bulk/signal',
-      '/v1/workflows/bulk/signal',
-      '/v1/workflows/bulk',
-      '/v1/workflows/bulk',
-      '/v1/workflows/bulk/tags',
-      '/v1/workflows/bulk/tags',
-      '/v1/workflows/bulk/signal',
-      '/v1/workflows/bulk/signal',
+      '/api/v1/workflows/bulk/cancel',
+      '/api/v1/workflows/bulk/cancel',
+      '/api/v1/workflows/bulk/signal',
+      '/api/v1/workflows/bulk/signal',
+      '/api/v1/workflows/bulk',
+      '/api/v1/workflows/bulk',
+      '/api/v1/workflows/bulk/tags',
+      '/api/v1/workflows/bulk/tags',
+      '/api/v1/workflows/bulk/signal',
+      '/api/v1/workflows/bulk/signal',
     ]);
     expect(requests.map((entry) => entry.init?.method)).toEqual([
       'POST',
@@ -801,14 +801,14 @@ describe('ApiClient', () => {
     });
   });
 
-  it('fetches connected workers from GET /v1/workers with the routing policy', async () => {
+  it('fetches connected workers from GET /api/v1/workers with the routing policy', async () => {
     const requestedUrls: string[] = [];
 
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = requestInputToUrl(input);
       requestedUrls.push(url);
 
-      if (url === '/v1/workers') {
+      if (url === '/api/v1/workers') {
         return Response.json({
           items: [
             {
@@ -855,7 +855,7 @@ describe('ApiClient', () => {
     const client = new ApiClient();
     const response = await client.listWorkers();
 
-    expect(requestedUrls).toEqual(['/v1/workers']);
+    expect(requestedUrls).toEqual(['/api/v1/workers']);
     expect(response.routingPolicy).toBe('least-loaded');
     expect(response.deployments[0]?.deploymentName).toBe('payments');
     expect(response.items).toEqual([
@@ -890,10 +890,10 @@ describe('ApiClient', () => {
     await client.clearDeploymentDrain('payments/canary');
 
     expect(requests.map((entry) => entry.url)).toEqual([
-      '/v1/workers/worker%2F1/drain',
-      '/v1/workers/worker%2F1/drain',
-      '/v1/worker-deployments/payments%2Fcanary/drain',
-      '/v1/worker-deployments/payments%2Fcanary/drain',
+      '/api/v1/workers/worker%2F1/drain',
+      '/api/v1/workers/worker%2F1/drain',
+      '/api/v1/worker-deployments/payments%2Fcanary/drain',
+      '/api/v1/worker-deployments/payments%2Fcanary/drain',
     ]);
     expect(requests[0]?.init?.method).toBe('POST');
     expect(requests[0]?.init?.body).toBe(JSON.stringify({ reason: 'maintenance' }));
@@ -903,14 +903,14 @@ describe('ApiClient', () => {
     expect(requests[3]?.init?.method).toBe('DELETE');
   });
 
-  it('fetches per-queue health from GET /v1/task-queues', async () => {
+  it('fetches per-queue health from GET /api/v1/task-queues', async () => {
     const requestedUrls: string[] = [];
 
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = requestInputToUrl(input);
       requestedUrls.push(url);
 
-      if (url === '/v1/task-queues') {
+      if (url === '/api/v1/task-queues') {
         return Response.json({
           items: [
             {
@@ -933,7 +933,7 @@ describe('ApiClient', () => {
     const client = new ApiClient();
     const response = await client.listTaskQueues();
 
-    expect(requestedUrls).toEqual(['/v1/task-queues']);
+    expect(requestedUrls).toEqual(['/api/v1/task-queues']);
     expect(response.items).toEqual([
       expect.objectContaining({ queue: 'queue-a', backlog: 2, oldestQueuedAgeMs: 900 }),
     ]);
@@ -957,7 +957,7 @@ describe('ApiClient', () => {
       executionDeadline: { lte: 10_000 },
     });
 
-    expect(requestedUrl).toContain('/v1/workflows?');
+    expect(requestedUrl).toContain('/api/v1/workflows?');
     expect(requestedUrl).toContain('status=failed');
     expect(requestedUrl).toContain('status=timed-out');
     expect(requestedUrl).toContain('id_prefix=order-');
@@ -969,7 +969,7 @@ describe('ApiClient', () => {
     expect(requestedUrl).toContain('execution_deadline_lte=10000');
   });
 
-  it('aggregateWorkflows targets /v1/workflows/aggregate with group_by', async () => {
+  it('aggregateWorkflows targets /api/v1/workflows/aggregate with group_by', async () => {
     let requestedUrl = '';
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       requestedUrl = requestInputToUrl(input);
@@ -979,7 +979,7 @@ describe('ApiClient', () => {
     const client = new ApiClient();
     await client.aggregateWorkflows({ status: ['running'] }, 'status', 50);
 
-    expect(requestedUrl).toContain('/v1/workflows/aggregate?');
+    expect(requestedUrl).toContain('/api/v1/workflows/aggregate?');
     expect(requestedUrl).toContain('group_by=status');
     expect(requestedUrl).toContain('limit=50');
   });
@@ -994,7 +994,7 @@ describe('ApiClient', () => {
     const client = new ApiClient();
     await client.aggregateWorkflows(undefined, { attribute: 'customerTier' });
 
-    expect(requestedUrl).toContain('/v1/workflows/aggregate?');
+    expect(requestedUrl).toContain('/api/v1/workflows/aggregate?');
     expect(requestedUrl).toContain('group_by=attribute%3AcustomerTier');
   });
 });
