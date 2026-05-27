@@ -12,7 +12,7 @@ Use signals when you're pushing data in (e.g., "here's the customer's new addres
 
 ## Registering an update handler
 
-The callback-style pattern uses `ctx.onUpdate()` to register a handler that runs at any checkpoint boundary when an update of that name arrives. The handler is a plain function---not a generator---so it cannot yield. It reads and modifies workflow state through closure over local variables.
+The callback-style pattern uses `ctx.onUpdate()` to register a handler that runs at any checkpoint boundary when an update of that name arrives. The handler is a plain function—not a generator—so it cannot yield. It reads and modifies workflow state through closure over local variables.
 
 ```typescript partial
 async function* cartWorkflow(ctx: Context, cart: Cart) {
@@ -40,7 +40,7 @@ async function* cartWorkflow(ctx: Context, cart: Cart) {
   }));
 
   yield* ctx.waitForSignal('checkout');
-  const payment = yield* ctx.run(charge, { amount: cartTotal });
+  const payment = yield* ctx.run('charge', { amount: cartTotal });
   return { payment, total: cartTotal };
 }
 ```
@@ -97,7 +97,7 @@ Behind the scenes, the `UpdateCoordinator` class manages the full lifecycle. Whe
 
 1. The coordinator writes an update request to storage at `upd:{workflowId}:{updateId}`.
 2. The engine detects pending updates at the next checkpoint boundary and runs the registered handler.
-3. The response is written atomically with the checkpoint: the request is deleted, the response is stored at `upr:{updateId}`, and the checkpoint is updated---all in one `batch()` call.
+3. The response is written atomically with the checkpoint: the request is deleted, the response is stored at `upr:{updateId}`, and the checkpoint is updated—all in one `batch()` call.
 4. The caller's promise resolves with the response.
 
 If the server crashes between receiving the request and delivering the response, the update request is already persisted. After recovery, the workflow processes it and writes the response. The caller can poll `GET /v1/updates/:updateId` to retrieve it.
@@ -116,20 +116,20 @@ const result = await handle.update(
 );
 ```
 
-`handle.update()` accepts only `{ timeout }`---it is the in-process fast path and intentionally does not expose idempotency. For cross-process retries with idempotency guarantees, use `engine.submitCoordinatedUpdate()` directly or the HTTP path (`POST /v1/workflows/:id/update/:name` with an `idempotencyKey` field).
+`handle.update()` accepts only `{ timeout }`—it is the in-process fast path and intentionally does not expose idempotency. For cross-process retries with idempotency guarantees, use `engine.submitCoordinatedUpdate()` directly or the HTTP path (`POST /v1/workflows/:id/update/:name` with an `idempotencyKey` field).
 
 The mapping from idempotency key to update ID is stored at `upk:{workflowId}:{key}`.
 
 ## Timeout handling
 
-When an update times out, the `UpdateTimeoutError` includes the `updateId`. The update is still pending in storage---the workflow will eventually process it. You can check the result later:
+When an update times out, the `UpdateTimeoutError` includes the `updateId`. The update is still pending in storage—the workflow will eventually process it. You can check the result later:
 
 ```typescript partial
 try {
   const result = await handle.update(validateCoupon, payload, { timeout: 2000 });
 } catch (error) {
   if (error instanceof UpdateTimeoutError) {
-    // The update is still pending---check back later
+    // The update is still pending—check back later
     console.log(`Timed out. Update ID: ${error.updateId}`);
   }
 }
@@ -139,6 +139,6 @@ Response entries are cleaned up automatically after a configurable TTL (default 
 
 ## When to reach for updates
 
-Updates shine when external code needs to _query_ workflow state or _validate_ something against it before proceeding. Cart validation, approval status checks, configuration queries---any case where the caller needs a synchronous response from the workflow's current perspective.
+Updates shine when external code needs to _query_ workflow state or _validate_ something against it before proceeding. Cart validation, approval status checks, configuration queries—any case where the caller needs a synchronous response from the workflow's current perspective.
 
 If you're just pushing data in and don't need a response, stick with [signals](./signals-and-queries.md). If you need to run a long-running operation triggered by external input, send a signal and use [search attributes](./search-attributes.md) to track progress.

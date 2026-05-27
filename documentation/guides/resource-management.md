@@ -25,7 +25,7 @@ declare const orderWorkflow: never; // your registered workflow
 
 Every major Weft object implements `Disposable`, `AsyncDisposable`, or both.
 
-_Engine_ implements both. `Symbol.dispose` does immediate teardown---aborts all pending operations, terminates the worker pool, stops the scheduler, and clears caches. `Symbol.asyncDispose` does the same thing (it delegates to the synchronous dispose internally, though future versions may add graceful drain semantics).
+_Engine_ implements both. `Symbol.dispose` does immediate teardown—aborts all pending operations, terminates the worker pool, stops the scheduler, and clears caches. `Symbol.asyncDispose` does the same thing (it delegates to the synchronous dispose internally, though future versions may add graceful drain semantics).
 
 ```typescript partial
 {
@@ -34,7 +34,7 @@ _Engine_ implements both. `Symbol.dispose` does immediate teardown---aborts all 
 } // engine[Symbol.asyncDispose]() called
 ```
 
-_WorkflowHandle_ implements `AsyncDisposable`. Handles are lightweight, so disposal is currently a no-op---but declaring `await using` on handles is good practice because it documents intent and future-proofs your code.
+_WorkflowHandle_ implements `AsyncDisposable`. Handles are lightweight, so disposal is currently a no-op—but declaring `await using` on handles is good practice because it documents intent and future-proofs your code.
 
 ```typescript partial
 {
@@ -45,7 +45,7 @@ _WorkflowHandle_ implements `AsyncDisposable`. Handles are lightweight, so dispo
 
 _BunSQLiteStorage_ implements `Disposable`. Disposal closes the underlying SQLite database connection.
 
-`IndexedDBStorage` is the browser-environment equivalent---also `Disposable`---and uses the `await using` pattern. Import it from `'weft/storage/indexeddb'`.
+`IndexedDBStorage` is the browser-environment equivalent—also `Disposable`—and uses the `await using` pattern. Import it from `'weft/storage/indexeddb'`.
 
 ```typescript partial
 {
@@ -61,7 +61,7 @@ _Scheduler_ implements `Disposable`. Disposal stops the polling interval.
 
 ## Multi-resource orchestration
 
-When you have multiple resources that need coordinated cleanup, use `AsyncDisposableStack`. It disposes resources in reverse order of registration---like Go's `defer`, but type-safe and automatic.
+When you have multiple resources that need coordinated cleanup, use `AsyncDisposableStack`. It disposes resources in reverse order of registration—like Go's `defer`, but type-safe and automatic.
 
 ```typescript partial
 async function runServer(port: number) {
@@ -93,12 +93,12 @@ async function runServer(port: number) {
 Three methods on the stack are worth knowing:
 
 - `stack.use(resource)` registers a `Disposable` or `AsyncDisposable` and returns it for continued use.
-- `stack.adopt(value, onDispose)` registers any value with a custom disposal callback---perfect for things like `Bun.serve()` that are not natively disposable.
+- `stack.adopt(value, onDispose)` registers any value with a custom disposal callback—perfect for things like `Bun.serve()` that are not natively disposable.
 - `stack.defer(fn)` registers an arbitrary cleanup function, executed in stack order (just like `defer` in Go).
 
 ## Why this matters
 
-In a traditional Node.js application, you might forget to close a database connection in an error path, or leave an interval timer running after a test. These bugs are insidious---they work fine 99% of the time and only manifest under pressure or after hours of uptime.
+In a traditional Node.js application, you might forget to close a database connection in an error path, or leave an interval timer running after a test. These bugs are insidious—they work fine 99% of the time and only manifest under pressure or after hours of uptime.
 
 With `using`, the compiler and runtime _guarantee_ cleanup happens. You cannot forget. If you reach for `new BunSQLiteStorage()`, TypeScript will nudge you toward `using storage = new BunSQLiteStorage()` because the type implements `Disposable`. The resource lifecycle is visible in the code structure, not hidden in a `finally` block three screens away.
 

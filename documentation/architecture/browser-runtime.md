@@ -1,6 +1,6 @@
 # Browser Runtime
 
-Weft runs in the browser. Not a stripped-down client library that talks to a server---the actual engine, executing workflows in Web Workers, persisting state to IndexedDB, all inside the browser.
+Weft runs in the browser. Not a stripped-down client library that talks to a server—the actual engine, executing workflows in Web Workers, persisting state to IndexedDB, all inside the browser.
 
 The key enabler is the Service Worker. See the [Service Worker guide](../guides/service-worker.md) for the hands-on setup path.
 
@@ -103,7 +103,7 @@ self.addEventListener('periodicsync', createPeriodicSyncHandler(scheduler));
 
 ## Durable timers with Periodic Background Sync
 
-Workflows need timers---`yield* ctx.sleep("1 hour")` has to actually wake up an hour later. In Bun, the scheduler polls the database. In the browser, the **Periodic Background Sync API** serves the same purpose.
+Workflows need timers—`yield* ctx.sleep("1 hour")` has to actually wake up an hour later. In Bun, the scheduler polls the database. In the browser, the **Periodic Background Sync API** serves the same purpose.
 
 The engine scheduler manages timer wakeup. It checks IndexedDB for expired timers and advances waiting workflows. When Periodic Background Sync is available, the browser wakes the Service Worker at the registered interval. When it is not available, you need a page-controlled fallback that calls `engine.scheduler.tick()` while a tab is open.
 
@@ -131,6 +131,6 @@ self.addEventListener('message', (event) => {
 
 Service Workers don't have unlimited background execution time. Browsers limit how long a Service Worker can run after the page is closed. The Periodic Background Sync API's minimum interval varies by browser and depends on site engagement heuristics.
 
-For truly long-running workflows---ones that need to execute for hours or days---you still need a server. The browser runtime is ideal for: queuing work, short workflows, offline caching, and syncing state with a remote Weft server.
+For truly long-running workflows—ones that need to execute for hours or days—you still need a server. The browser runtime is ideal for: queuing work, short workflows, offline caching, and syncing state with a remote Weft server.
 
 The important thing is that these aren't two different engines with a compatibility layer between them. It's the same engine, the same workflow code, the same storage interface. The browser runtime is a deployment target, not a separate product.

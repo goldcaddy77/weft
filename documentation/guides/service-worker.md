@@ -76,7 +76,7 @@ const setup = await setupServiceWorker({
     engine.register(formatGreeting);
     engine.register(
       workflow({ name: 'welcome' }).execute(async function* (ctx, input: { name: string }) {
-        const greeting = yield* ctx.run(formatGreeting, { name: input.name });
+        const greeting = yield* ctx.run('formatGreeting', { name: input.name });
         yield* ctx.sleep('5s');
         return { greeting };
       }),
@@ -282,7 +282,7 @@ engine.register(formatGreeting);
 
 engine.register(
   workflow({ name: 'welcome' }).execute(async function* (ctx, input: { name: string }) {
-    const greeting = yield* ctx.run(formatGreeting, { name: input.name });
+    const greeting = yield* ctx.run('formatGreeting', { name: input.name });
     yield* ctx.sleep('5s');
     return { greeting };
   }),

@@ -1,24 +1,24 @@
 # Checkpoint, Don't Replay
 
-This is the single most important architectural decision in Weft---the one that shapes everything else.
+This is the single most important architectural decision in Weft—the one that shapes everything else.
 
 Temporal recovers workflows by _replaying_ them. When a workflow needs to resume after a crash, Temporal re-executes the entire function from the beginning, feeding in recorded results from an event history to fast-forward through completed steps. The more steps a workflow has completed, the longer recovery takes. This is O(n) recovery, and it brings with it a cascade of constraints that touch every part of your development experience.
 
-Weft takes a different path. Instead of replaying, Weft _checkpoints_. At each `yield*` boundary, the engine snapshots the workflow's current state---all local variables, the current position in the generator---and persists it. On crash, Weft loads that snapshot and resumes from exactly where it stopped. One read, one resume. O(1) recovery, regardless of whether the workflow has completed 10 steps or 10 million.
+Weft takes a different path. Instead of replaying, Weft _checkpoints_. At each `yield*` boundary, the engine snapshots the workflow's current state—all local variables, the current position in the generator—and persists it. On crash, Weft loads that snapshot and resumes from exactly where it stopped. One read, one resume. O(1) recovery, regardless of whether the workflow has completed 10 steps or 10 million.
 
 ## How it works
 
-Workflows in Weft are `AsyncGenerator` functions. Each `yield*` is a checkpoint boundary. The engine captures the state at that boundary using a MessagePack codec with structuredClone-compatible semantics---the same serialization algorithm browsers use for `postMessage`.
+Workflows in Weft are `AsyncGenerator` functions. Each `yield*` is a checkpoint boundary. The engine captures the state at that boundary using a MessagePack codec with structuredClone-compatible semantics—the same serialization algorithm browsers use for `postMessage`.
 
 ```typescript partial
 export async function* orderWorkflow(ctx: Weft.Context, order: Order) {
-  const payment = yield* ctx.run(charge, order); // checkpoint 1
-  const shipment = yield* ctx.run(ship, { order, payment }); // checkpoint 2
+  const payment = yield* ctx.run('charge', order); // checkpoint 1
+  const shipment = yield* ctx.run('ship', { order, payment }); // checkpoint 2
   return { payment, shipment };
 }
 ```
 
-If the process crashes after checkpoint 1, Weft loads the snapshot, sees that `payment` already has a value, and picks up at the `ship` call. The `charge` function never re-executes. There's no event history to walk through, no replay logic, no determinism constraints.
+If the process crashes after checkpoint 1, Weft loads the snapshot, sees that `payment` already has a value, and picks up at the `ship` call. The `charge` activity never re-executes. There's no event history to walk through, no replay logic, no determinism constraints.
 
 ## No determinism requirement
 
@@ -28,10 +28,10 @@ Temporal's replay model means your workflow code must be _deterministic_. If `Da
 
 Weft doesn't replay. So there's no determinism requirement at all. Use whatever you want:
 
-- `Date.now()`---go ahead, it won't be replayed.
-- `Math.random()`---no deterministic replacement needed.
-- `WeakRef` and `FinalizationRegistry`---Weft actually _depends_ on these internally for memory management. The primitives Temporal bans are the ones Weft needs.
-- Any npm package, any Node API, `console.log`, `debugger` statements---all fine.
+- `Date.now()`—go ahead, it won't be replayed.
+- `Math.random()`—no deterministic replacement needed.
+- `WeakRef` and `FinalizationRegistry`—Weft actually _depends_ on these internally for memory management. The primitives Temporal bans are the ones Weft needs.
+- Any npm package, any Node API, `console.log`, `debugger` statements—all fine.
 
 The only rule is `yield*` for durable operations. That's it.
 
@@ -43,7 +43,7 @@ Since checkpoints use a MessagePack codec with structuredClone-compatible semant
 
 **Cannot serialize:** functions, closures, class instances with methods, Symbols, `WeakMap`, `WeakRef`, or system resources (sockets, file handles).
 
-The practical implication: keep your local variables as plain data at yield boundaries. If you need an API client, store the configuration (a URL string, an API key) and reconstruct the client after resumption---don't try to checkpoint the client object itself.
+The practical implication: keep your local variables as plain data at yield boundaries. If you need an API client, store the configuration (a URL string, an API key) and reconstruct the client after resumption—don't try to checkpoint the client object itself.
 
 ## Development mode catches mistakes early
 
@@ -77,7 +77,7 @@ That error message tells you _what_ went wrong, _where_ it went wrong, and _how_
 
 ## No history growth, no continueAsNew
 
-Temporal's event history grows linearly with every activity, timer, and signal. At roughly 50,000 events, you must call `continueAsNew()`---which restarts the workflow, destroying all local variable state and requiring manual serialization of everything you want to carry forward. Signal handlers must be re-registered. Child workflow references must be re-established. This isn't an edge case; any workflow that loops (subscriptions, monitoring, batch processing) hits this limit.
+Temporal's event history grows linearly with every activity, timer, and signal. At roughly 50,000 events, you must call `continueAsNew()`—which restarts the workflow, destroying all local variable state and requiring manual serialization of everything you want to carry forward. Signal handlers must be re-registered. Child workflow references must be re-established. This isn't an edge case; any workflow that loops (subscriptions, monitoring, batch processing) hits this limit.
 
 Weft's checkpoint is a constant-size snapshot of the current state. It doesn't grow with workflow history length.
 
@@ -97,9 +97,9 @@ A workflow can run for years, execute millions of activities, and its checkpoint
 
 ## Payload efficiency
 
-Temporal stores every activity input and output in the event history. If your workflow calls 100 activities that each return 10KB of data, the history contains 1MB of payload data---even if the workflow only uses the final result. Large payloads bloat history, slow down replay, and accelerate hitting the 50K event limit.
+Temporal stores every activity input and output in the event history. If your workflow calls 100 activities that each return 10KB of data, the history contains 1MB of payload data—even if the workflow only uses the final result. Large payloads bloat history, slow down replay, and accelerate hitting the 50K event limit.
 
-Weft checkpoints store only the current state---the values of local variables at the yield point. Activity inputs aren't stored (they're derived from the workflow code on re-execution). Previous activity results are only present if they're still in scope as local variables. A workflow that processed 100 large API responses but only keeps a summary has a checkpoint containing only that summary.
+Weft checkpoints store only the current state—the values of local variables at the yield point. Activity inputs aren't stored (they're derived from the workflow code on re-execution). Previous activity results are only present if they're still in scope as local variables. A workflow that processed 100 large API responses but only keeps a summary has a checkpoint containing only that summary.
 
 The difference is architectural, not incremental. Replay _must_ store everything that happened. Checkpointing stores only what matters _right now_.
 

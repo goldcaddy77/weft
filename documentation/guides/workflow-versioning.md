@@ -4,7 +4,7 @@ You've shipped a new version of your order workflow, but there are 200 orders mi
 
 ## Why this is simpler
 
-Weft resumes from checkpoints, not by replaying event histories. The checkpoint captures the complete state at the pause point---local variables, step index, search attributes. When a workflow resumes, it picks up from that snapshot. The only compatibility question is: "Can my new code handle this checkpoint's shape at the step where execution paused?"
+Weft resumes from checkpoints, not by replaying event histories. The checkpoint captures the complete state at the pause point—local variables, step index, search attributes. When a workflow resumes, it picks up from that snapshot. The only compatibility question is: "Can my new code handle this checkpoint's shape at the step where execution paused?"
 
 No replay means no code-path determinism requirement. No `getVersion()` gates. No patching API. Migration is a pure data transformation.
 
@@ -26,9 +26,9 @@ The version string is stored alongside the checkpoint. On resume, the engine com
 
 The comparison logic is straightforward:
 
-- **`'compatible'`** --- versions match. Resume normally.
-- **`'needs-migration'`** --- versions differ and a migration function is registered. Run the migration first.
-- **`'incompatible'`** --- versions differ and no migration function is registered. The engine throws `VersionMismatchError` rather than resuming.
+- **`'compatible'`**: versions match. Resume normally.
+- **`'needs-migration'`**: versions differ and a migration function is registered. Run the migration first.
+- **`'incompatible'`**: versions differ and no migration function is registered. The engine throws `VersionMismatchError` rather than resuming.
 
 ## Writing a migration
 
@@ -87,7 +87,7 @@ try {
 
 ## Practical patterns
 
-For simple changes where the checkpoint shape didn't change---you only modified logic after the current pause point---skip the migration entirely:
+For simple changes where the checkpoint shape didn't change—you only modified logic after the current pause point—skip the migration entirely:
 
 ```typescript partial
 engine.register(

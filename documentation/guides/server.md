@@ -1,6 +1,6 @@
 # Server
 
-You've built your workflows and tested them locally. Now you need to expose them over the network---accept HTTP requests to start workflows, send signals, query status, and stream results over WebSockets. Weft's server module wraps `Bun.serve()` with a complete REST API and WebSocket support.
+You've built your workflows and tested them locally. Now you need to expose them over the network—accept HTTP requests to start workflows, send signals, query status, and stream results over WebSockets. Weft's server module wraps `Bun.serve()` with a complete REST API and WebSocket support.
 
 ## Starting the server
 
@@ -209,8 +209,8 @@ The server supports WebSocket connections for real-time streaming. When a reques
 
 Three WebSocket routes are available:
 
-- `/v1/workflows/:id/watch` --- observe workflow state changes in real time
-- `/v1/tasks/:queue/stream` --- [remote worker](./remote-workers.md) task dispatch
+- `/v1/workflows/:id/watch`: observe workflow state changes in real time
+- `/v1/tasks/:queue/stream`: [remote worker](./remote-workers.md) task dispatch
 
 HTTP long-poll task requests use the request's `AbortSignal`. If the client
 disconnects before or during the poll, the waiter settles promptly and does
@@ -218,7 +218,7 @@ not claim a pending task for a caller that can no longer complete it.
 
 ## The `handleRequest()` function
 
-Under the hood, `serve()` delegates to `handleRequest()`---a pure function that maps a `Request` to a `Response` with no Bun-specific dependencies. This is intentional. If you need to embed Weft's API inside an existing server or use a different HTTP framework, import `handleRequest` directly:
+Under the hood, `serve()` delegates to `handleRequest()`—a pure function that maps a `Request` to a `Response` with no Bun-specific dependencies. This is intentional. If you need to embed Weft's API inside an existing server or use a different HTTP framework, import `handleRequest` directly:
 
 ```typescript partial
 import { handleRequest } from 'weft/server/handler';
@@ -235,7 +235,7 @@ All response-producing endpoints support content negotiation. If the `Accept` he
 
 ## Service Worker
 
-The same `handleRequest()` function that powers the Bun server also powers the Service Worker runtime. In the browser, a Service Worker intercepts `fetch` events and routes them through the engine---your client code calls `fetch("/weft/v1/workflows", ...)` and the Service Worker responds, no network required.
+The same `handleRequest()` function that powers the Bun server also powers the Service Worker runtime. In the browser, a Service Worker intercepts `fetch` events and routes them through the engine—your client code calls `fetch("/weft/v1/workflows", ...)` and the Service Worker responds, no network required.
 
 The `weft/service-worker` module provides bootstrap functions for lifecycle, fetch, and periodic-sync wiring. Timer wakeup uses the engine scheduler from the Service Worker event.
 

@@ -1,6 +1,6 @@
 # Search Attributes
 
-Your workflows are running, but you can't find the one you need. Filtering by status or type only gets you so far---what you really want is to query workflows by _your_ domain data. "Show me all orders over $500 in the us-east region that are still processing." Search attributes make that possible.
+Your workflows are running, but you can't find the one you need. Filtering by status or type only gets you so far—what you really want is to query workflows by _your_ domain data. "Show me all orders over $500 in the us-east region that are still processing." Search attributes make that possible.
 
 ## Declaring a schema
 
@@ -36,7 +36,7 @@ type SearchAttributeValue = string | number | boolean | Date | string[];
 
 ## Setting attributes inside a workflow
 
-`ctx.setAttribute()` and `ctx.setAttributes()` are synchronous calls---they don't yield. You call them anywhere in your workflow, and the values are persisted at the next checkpoint boundary, batched with the checkpoint write. No extra I/O.
+`ctx.setAttribute()` and `ctx.setAttributes()` are synchronous calls—they don't yield. You call them anywhere in your workflow, and the values are persisted at the next checkpoint boundary, batched with the checkpoint write. No extra I/O.
 
 ```typescript partial
 async function* orderWorkflow(ctx: Context, order: Order) {
@@ -47,12 +47,12 @@ async function* orderWorkflow(ctx: Context, order: Order) {
     [tags.name]: ['new', 'needs-review'],
   });
 
-  const payment = yield* ctx.run(charge, order);
+  const payment = yield* ctx.run('charge', order);
 
   ctx.setAttribute(tags, ['charged', 'processing']);
   ctx.setAttribute('paymentId', payment.id);
 
-  const shipment = yield* ctx.run(ship, { order, payment });
+  const shipment = yield* ctx.run('ship', { order, payment });
 
   ctx.setAttribute(tags, ['completed', 'shipped']);
   ctx.setAttribute('trackingNumber', shipment.tracking);
@@ -61,7 +61,7 @@ async function* orderWorkflow(ctx: Context, order: Order) {
 }
 ```
 
-Notice how `setAttributes()` does a bulk set while `setAttribute()` sets a single key. Unmentioned keys are preserved---these are merge semantics, not replace.
+Notice how `setAttributes()` does a bulk set while `setAttribute()` sets a single key. Unmentioned keys are preserved—these are merge semantics, not replace.
 
 ## Reading attributes
 
@@ -120,7 +120,7 @@ A **forward map** at `attr:{workflow_id}` stores all attributes for a workflow a
 
 An **inverted index** at `idx:{attr_name}:{encoded_value}:{workflow_id}` enables queries. One entry per attribute value per workflow. A range scan on `idx:region:s:us-east:` returns all matching workflow IDs.
 
-Values are encoded into sortable strings so range scans produce correct results across all types. Strings get an `s:` prefix, booleans get `b:0` or `b:1`, dates use ISO 8601 with a `d:` prefix, and numbers use an IEEE 754 float-to-sortable-hex encoding that preserves numeric ordering in lexicographic comparisons. (Yes, `-1` sorts before `0` sorts before `100`---the `encodeAttributeValue` function handles the bit manipulation.)
+Values are encoded into sortable strings so range scans produce correct results across all types. Strings get an `s:` prefix, booleans get `b:0` or `b:1`, dates use ISO 8601 with a `d:` prefix, and numbers use an IEEE 754 float-to-sortable-hex encoding that preserves numeric ordering in lexicographic comparisons. (Yes, `-1` sorts before `0` sorts before `100`—the `encodeAttributeValue` function handles the bit manipulation.)
 
 For string-array attributes, each element gets its own index entry. Setting `tags: ['charged', 'processing']` creates two index keys.
 
@@ -128,4 +128,4 @@ All index updates happen atomically at the checkpoint boundary. The engine diffs
 
 ## External mutation
 
-Attributes can also be set from _outside_ the workflow via `handle.setAttributes()` or `PATCH /v1/workflows/:id/attributes`. Index updates happen atomically in this case too. This is useful for administrative tagging---marking a workflow as "escalated" or "under review" without sending a signal.
+Attributes can also be set from _outside_ the workflow via `handle.setAttributes()` or `PATCH /v1/workflows/:id/attributes`. Index updates happen atomically in this case too. This is useful for administrative tagging—marking a workflow as "escalated" or "under review" without sending a signal.

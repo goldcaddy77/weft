@@ -141,7 +141,7 @@ const worker = new RemoteWorker({
 });
 ```
 
-Multiple interceptors compose like middleware: the first one in the array is the outermost wrapper, and each calls `next(interception)` to delegate inward. Registration order matters---put tracing first so it measures everything that happens inside, and put validation near the inside so it runs after logging has already captured the attempt. See the [interceptors guide](./interceptors.md) for the full composition model and the workflow-side counterparts.
+Multiple interceptors compose like middleware: the first one in the array is the outermost wrapper, and each calls `next(interception)` to delegate inward. Registration order matters—put tracing first so it measures everything that happens inside, and put validation near the inside so it runs after logging has already captured the attempt. See the [interceptors guide](./interceptors.md) for the full composition model and the workflow-side counterparts.
 
 > [!NOTE]
 > If you pass zero interceptors (or omit the option entirely), the worker skips the composition path and calls your activity function directly. There's no overhead for workers that don't need instrumentation.
@@ -161,7 +161,7 @@ The `HeartbeatManager` is a simple interval wrapper with `start()`, `stop()`, an
 
 ## Queue-based routing
 
-Workers register with a queue name. The server's `WorkerRegistry.findWorker()` uses **least-loaded routing**---it picks the worker with the lowest in-flight count among those that handle the requested activity and have available capacity.
+Workers register with a queue name. The server's `WorkerRegistry.findWorker()` uses **least-loaded routing**—it picks the worker with the lowest in-flight count among those that handle the requested activity and have available capacity.
 
 The registry supports three routing policies, configured via `serve({ routingPolicy })`:
 
@@ -199,15 +199,15 @@ interface WorkerInfo {
 
 Key operations:
 
-- `register(info)` --- add a worker when it connects
-- `unregister(workerId)` --- remove a worker, returns its info for task reassignment
-- `heartbeat(workerId)` --- update last heartbeat timestamp
-- `taskAssigned(workerId)` / `taskCompleted(workerId)` --- track in-flight counts
-- `findWorker(activityName, options?)` --- least-loaded routing
-- `assignTask(workerId, operationId, visibilityTimeout)` --- track task with deadline
-- `checkExpiredTasks(now)` --- find tasks whose visibility timeout has expired
-- `extendVisibility(operationId, extension)` --- extend a task's deadline (heartbeat-driven)
-- `isAssignedToWorker(operationId, workerId)` --- trust-boundary ownership check for task results
+- `register(info)`: add a worker when it connects
+- `unregister(workerId)`: remove a worker, returns its info for task reassignment
+- `heartbeat(workerId)`: update last heartbeat timestamp
+- `taskAssigned(workerId)` / `taskCompleted(workerId)`: track in-flight counts
+- `findWorker(activityName, options?)`: least-loaded routing
+- `assignTask(workerId, operationId, visibilityTimeout)`: track task with deadline
+- `checkExpiredTasks(now)`: find tasks whose visibility timeout has expired
+- `extendVisibility(operationId, extension)`: extend a task's deadline (heartbeat-driven)
+- `isAssignedToWorker(operationId, workerId)`: trust-boundary ownership check for task results
 
 The `checkExpiredTasks()` method returns tasks that have exceeded their visibility timeout, enabling the server to reassign them to other workers. When a task has been reassigned to a different worker, a late `taskResult` from the displaced worker is rejected with `protocolError` and ignored. In v1 this guard is keyed by `(operationId, workerId)`, so a stale completion from the same `workerId` on a later attempt still requires a future protocol revision with an attempt token on the wire.
 
@@ -235,7 +235,7 @@ worker.start();
 
 The long-poll worker runs a loop: it `POST`s to `/poll` with its activity list and queue, blocks for up to `pollTimeout` milliseconds waiting for a task, executes it, and `POST`s the result to `/complete`. It respects the concurrency limit by pausing the poll loop when all slots are in use.
 
-Error handling is built in---network failures trigger a 1-second backoff, abort errors during shutdown are suppressed.
+Error handling is built in—network failures trigger a 1-second backoff, abort errors during shutdown are suppressed.
 
 ## Graceful shutdown
 

@@ -1,10 +1,10 @@
 # Activities
 
-Your [workflow](workflows.md) is the orchestrator. It decides _what_ happens and _in what order_. But the actual work---calling an API, writing to a database, sending an email---lives in activities. Activities are the side-effecting functions your workflows call, and they are the unit of retry, timeout, and failure isolation.
+Your [workflow](workflows.md) is the orchestrator. It decides _what_ happens and _in what order_. But the actual work—calling an API, writing to a database, sending an email—lives in activities. Activities are the side-effecting functions your workflows call, and they are the unit of retry, timeout, and failure isolation.
 
 ## Calling an activity
 
-You invoke an activity with `yield* ctx.run(activity, input)`. The function you pass is a real function reference, not a proxy or a type stub, so "Go to definition" still takes you to the implementation. But the durable operation is keyed by the activity name. In remote-worker mode, the worker receives that name and a serialized input payload; your in-process closure does not travel over the WebSocket.
+You invoke an activity with `yield* ctx.run('activityName', input)`. The first argument is the activity's registered name, and your editor autocompletes it from the names you declared. The durable operation is keyed by that name: in remote-worker mode, the worker receives the name and a serialized input payload, and your in-process closure never travels over the WebSocket. Naming the activity—rather than passing a function reference—keeps local and remote dispatch identical, because the name is the only thing that crosses the boundary either way.
 
 ```typescript partial
 const greet = activity({
@@ -22,14 +22,14 @@ engine.register(notify);
 
 engine.register(
   workflow({ name: 'welcome' }).execute(async function* (ctx, input: { name: string }) {
-    const greeting = yield* ctx.run(greet, { name: input.name });
-    yield* ctx.run(notify, { message: greeting });
+    const greeting = yield* ctx.run('greet', { name: input.name });
+    yield* ctx.run('notify', { message: greeting });
     return { greeting, notified: true };
   }),
 );
 ```
 
-Each `yield* ctx.run()` is a checkpoint boundary. If the process crashes after `greet` completes but before `notify` starts, recovery picks up at the second call---`greet` does not run again. For that to be true in a fresh process, register the same activity names before calling `engine.recoverAll()` or `engine.resume(id)`.
+Each `yield* ctx.run()` is a checkpoint boundary. If the process crashes after `greet` completes but before `notify` starts, recovery picks up at the second call—`greet` does not run again. For that to be true in a fresh process, register the same activity names before calling `engine.recoverAll()` or `engine.resume(id)`.
 
 ## Retry policies
 
@@ -56,7 +56,7 @@ const DEFAULT_RETRY_POLICY: RetryPolicy = {
 };
 ```
 
-So out of the box, a failing activity retries up to 3 times with backoff delays of 1 second, 2 seconds, and 4 seconds (capped at 30 seconds). The `nonRetryableErrors` array lets you short-circuit retries for errors you know are permanent---pass the error message strings and Weft will fail immediately instead of wasting time retrying a 404 or a validation error.
+So out of the box, a failing activity retries up to 3 times with backoff delays of 1 second, 2 seconds, and 4 seconds (capped at 30 seconds). The `nonRetryableErrors` array lets you short-circuit retries for errors you know are permanent—pass the error message strings and Weft will fail immediately instead of wasting time retrying a 404 or a validation error.
 
 ## ActivityContext
 
@@ -110,7 +110,7 @@ Pass these as the last argument to `ctx.run()`.
 
 ```typescript partial
 async function* example(ctx: Context) {
-  const result = yield* ctx.run(fetchData, url, {
+  const result = yield* ctx.run('fetchData', url, {
     timeout: '60s',
     retry: { maxAttempts: 5 },
     queue: 'external-api',
@@ -153,11 +153,11 @@ const charge: ActivityDefinition<Order, PaymentResult> = {
 };
 ```
 
-Now the workflow call is clean---configuration travels with the activity.
+Now the workflow call is clean—you reference the activity by name and its registered configuration travels with it.
 
 ```typescript partial
 async function* example(ctx: Context) {
-  const payment = yield* ctx.run(charge, order);
+  const payment = yield* ctx.run('charge', order);
 }
 ```
 
@@ -170,14 +170,14 @@ For named concurrent branches where each needs its own error handling, use `ctx.
 ```typescript partial
 async function* example(ctx: Context) {
   const results = yield* ctx.runAll({
-    payment: [charge, order],
-    inventory: [reserveInventory, order.items],
-    email: [sendConfirmation, order],
+    payment: ['charge', order],
+    inventory: ['reserveInventory', order.items],
+    email: ['sendConfirmation', order],
   });
   // results.payment, results.inventory, results.email
 }
 ```
 
-Both `ctx.all()` and `ctx.runAll()` create a single checkpoint boundary---all branches complete before the workflow advances.
+Both `ctx.all()` and `ctx.runAll()` create a single checkpoint boundary—all branches complete before the workflow advances.
 
 Activities are where the real world meets your durable logic. Keep them focused, make them idempotent where possible, and let Weft handle the retries.

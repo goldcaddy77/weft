@@ -4,7 +4,7 @@ You want to log every activity call, propagate scoped metadata from workflows to
 
 ## The mental model
 
-Interceptors wrap workflow context operations---`ctx.run()`, `ctx.sleep()`, `ctx.waitForSignal()`---without modifying the workflow code itself. They compose like Koa middleware: each interceptor receives an interception context and a `next` function that delegates to the next interceptor in the chain (or the final operation). The first registered interceptor is the outermost wrapper.
+Interceptors wrap workflow context operations—`ctx.run()`, `ctx.sleep()`, `ctx.waitForSignal()`—without modifying the workflow code itself. They compose like Koa middleware: each interceptor receives an interception context and a `next` function that delegates to the next interceptor in the chain (or the final operation). The first registered interceptor is the outermost wrapper.
 
 There are two hook categories on one registration surface. **Workflow interceptor hooks** wrap operations inside the workflow generator. **Activity interceptor hooks** wrap activity execution on the worker side. Together, they let you instrument the full lifecycle of a durable operation.
 
@@ -25,7 +25,7 @@ interface WorkflowInterceptor {
 
 For the complete interface with every hook signature, see the [Types Reference](../reference/types.md#workflowinterceptor).
 
-Notice that `activity`, `sleep`, `waitForSignal`, and `query` are generators---they must use `yield*` to delegate to `next()`. This preserves checkpoint semantics. The `childWorkflow` hook is async and returns a `Promise`. The `workflowStart` and `signalReceived` hooks are plain functions because they run outside the durable generator.
+Notice that `activity`, `sleep`, `waitForSignal`, and `query` are generators—they must use `yield*` to delegate to `next()`. This preserves checkpoint semantics. The `childWorkflow` hook is async and returns a `Promise`. The `workflowStart` and `signalReceived` hooks are plain functions because they run outside the durable generator.
 
 ## Activity interceptors
 
@@ -49,7 +49,7 @@ Each hook receives a typed context object. Here are the key shapes:
 ```typescript
 interface ActivityInterception {
   activityName: string;
-  input: unknown; // mutable---interceptors can transform it
+  input: unknown; // mutable—interceptors can transform it
   attempt: number;
   headers: Map<string, string>;
 }
@@ -80,13 +80,13 @@ interface ActivityExecutionInterception {
 }
 ```
 
-The `input` field is mutable by design---interceptors can validate, transform, or encrypt payloads before they reach the next layer.
+The `input` field is mutable by design—interceptors can validate, transform, or encrypt payloads before they reach the next layer.
 
 ## The `headers` Map
 
 The `headers` field is how metadata crosses thread and network boundaries. A workflow interceptor sets headers on `ActivityInterception` before calling `next()`. The engine serializes those headers into the `postMessage` (local workers) or WebSocket message (remote workers). The activity interceptor reads them from `ActivityExecutionInterception`.
 
-This is the mechanism for trace context, short-lived authorization claims, and opaque credential references---metadata you need to pass from the workflow side to the activity side. Do not propagate raw bearer tokens, encryption keys, or other long-lived secrets through interceptor headers. Resolve those from a worker-side secret store after validating the claim. See the [observability guide](./observability.md) for the canonical example.
+This is the mechanism for trace context, short-lived authorization claims, and opaque credential references—metadata you need to pass from the workflow side to the activity side. Do not propagate raw bearer tokens, encryption keys, or other long-lived secrets through interceptor headers. Resolve those from a worker-side secret store after validating the claim. See the [observability guide](./observability.md) for the canonical example.
 
 ## Writing an interceptor
 
@@ -163,7 +163,7 @@ const authActivityInterceptor: ActivityInterceptor = {
 
 ## Composition
 
-`composeWorkflowInterceptors()` and `composeActivityInterceptors()` combine multiple interceptors into a single chain. The chain is built once per engine, not per operation---zero overhead when no interceptors are registered.
+`composeWorkflowInterceptors()` and `composeActivityInterceptors()` combine multiple interceptors into a single chain. The chain is built once per engine, not per operation—zero overhead when no interceptors are registered.
 
 ```typescript partial
 import { composeWorkflowInterceptors, composeActivityInterceptors } from 'weft';
@@ -186,6 +186,6 @@ Registration order matters. The first interceptor is the outermost wrapper. In t
 
 ## Interceptors vs EventTarget
 
-These are complementary systems. **EventTarget** is for observation---listeners receive events _after_ things happen and cannot modify inputs, outputs, or control flow. **Interceptors** are for interception---they wrap execution, can modify inputs and outputs, can skip or retry operations, and participate in the control flow.
+These are complementary systems. **EventTarget** is for observation—listeners receive events _after_ things happen and cannot modify inputs, outputs, or control flow. **Interceptors** are for interception—they wrap execution, can modify inputs and outputs, can skip or retry operations, and participate in the control flow.
 
 If you just need to know that an activity ran, use events. If you need to change _how_ it runs, use interceptors.

@@ -57,7 +57,7 @@ import { workflow } from 'weft';
 
 engine.register(
   workflow({ name: 'send-email' }).execute(async function* (context, input) {
-    const result = yield* context.run(sendEmail, { to: input.to, body: input.body });
+    const result = yield* context.run('sendEmail', { to: input.to, body: input.body });
     return result;
   }),
 );

@@ -4,7 +4,7 @@ You want to know when a workflow starts, when an activity fails, when a signal a
 
 ## EventTarget, not EventEmitter
 
-Both `Engine` and `WorkflowHandle` extend `EventTarget`---the same interface that DOM elements, `WebSocket`, `AbortSignal`, and `BroadcastChannel` use. No custom event emitter. No `.on()` / `.off()` / `.emit()`. Just `addEventListener`, `removeEventListener`, and `dispatchEvent`.
+Both `Engine` and `WorkflowHandle` extend `EventTarget`—the same interface that DOM elements, `WebSocket`, `AbortSignal`, and `BroadcastChannel` use. No custom event emitter. No `.on()` / `.off()` / `.emit()`. Just `addEventListener`, `removeEventListener`, and `dispatchEvent`.
 
 ```typescript partial
 engine.addEventListener('workflow:completed', (event) => {
@@ -26,7 +26,7 @@ engine.addEventListener(WorkflowCompletedEvent.type, (event) => {
 });
 ```
 
-Each event class has a static `type` property that matches its event string. Use the class reference instead of raw strings---it keeps things type-safe and refactor-friendly.
+Each event class has a static `type` property that matches its event string. Use the class reference instead of raw strings—it keeps things type-safe and refactor-friendly.
 
 ## Core event types
 
@@ -100,7 +100,7 @@ engine.addEventListener(
 controller.abort();
 ```
 
-Using `AbortSignal` for cleanup is the modern best practice. One `abort()` call removes every listener you attached with that signal---no need to track individual references.
+Using `AbortSignal` for cleanup is the modern best practice. One `abort()` call removes every listener you attached with that signal—no need to track individual references.
 
 _Pattern 2: Async iteration._ `WorkflowHandle` implements `Symbol.asyncIterator`, so you can `for await...of` over events from a specific workflow.
 

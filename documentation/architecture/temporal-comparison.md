@@ -1,27 +1,27 @@
 # Weft versus Temporal: Ten Design Failures Eliminated
 
-Temporal's replay-based architecture creates a cascade of constraints---determinism, versioning, history limits, sandbox, payload sensitivity---that manifest as developer experience pain. These aren't bugs to fix; they're architectural consequences. Weft's checkpoint-based architecture eliminates the root cause, which means all the downstream constraints dissolve simultaneously.
+Temporal's replay-based architecture creates a cascade of constraints—determinism, versioning, history limits, sandbox, payload sensitivity—that manifest as developer experience pain. These aren't bugs to fix; they're architectural consequences. Weft's checkpoint-based architecture eliminates the root cause, which means all the downstream constraints dissolve simultaneously.
 
 Here's the mental model comparison for someone writing their first workflow.
 
-| Concept                | Temporal                          | Weft                                   |
-| ---------------------- | --------------------------------- | -------------------------------------- |
-| Core mental model      | Replay determinism                | Generators pause and resume            |
-| Activity invocation    | `proxyActivities()` + type import | `yield* ctx.run(namedActivity, input)` |
-| Timer                  | Deterministic `workflow.sleep()`  | `yield* ctx.sleep("1 hour")`           |
-| Signal                 | `setHandler` + `condition`        | `yield* ctx.waitForSignal(name)`       |
-| Versioning             | `patched()` / `deprecatePatch()`  | Deploy new code (migration optional)   |
-| Long-running workflows | `continueAsNew()`                 | Nothing (checkpoints are fixed-size)   |
-| Dev environment        | Docker Compose + Temporal server  | `bun add weft`                         |
-| Bundling               | Webpack for workflow sandbox      | None                                   |
+| Concept                | Temporal                          | Weft                                    |
+| ---------------------- | --------------------------------- | --------------------------------------- |
+| Core mental model      | Replay determinism                | Generators pause and resume             |
+| Activity invocation    | `proxyActivities()` + type import | `yield* ctx.run('activityName', input)` |
+| Timer                  | Deterministic `workflow.sleep()`  | `yield* ctx.sleep("1 hour")`            |
+| Signal                 | `setHandler` + `condition`        | `yield* ctx.waitForSignal(name)`        |
+| Versioning             | `patched()` / `deprecatePatch()`  | Deploy new code (migration optional)    |
+| Long-running workflows | `continueAsNew()`                 | Nothing (checkpoints are fixed-size)    |
+| Dev environment        | Docker Compose + Temporal server  | `bun add weft`                          |
+| Bundling               | Webpack for workflow sandbox      | None                                    |
 
 Now let's walk through each of the ten design failures in detail.
 
 ## The determinism constraint
 
-**The Temporal problem.** Temporal's TypeScript SDK removes `WeakRef` and `FinalizationRegistry` from the sandbox, replaces `Date.now()` and `Math.random()` with deterministic versions, and runs workflows through Webpack bundling that cannot reference Node.js or DOM APIs. You write normal-looking code, it works in tests, and then it explodes with `DeterminismViolationError` in production during replay. The error messages are often inscrutable---"Activity machine does not handle this event."
+**The Temporal problem.** Temporal's TypeScript SDK removes `WeakRef` and `FinalizationRegistry` from the sandbox, replaces `Date.now()` and `Math.random()` with deterministic versions, and runs workflows through Webpack bundling that cannot reference Node.js or DOM APIs. You write normal-looking code, it works in tests, and then it explodes with `DeterminismViolationError` in production during replay. The error messages are often inscrutable—"Activity machine does not handle this event."
 
-**The Weft answer.** Checkpoint, don't replay. No determinism requirement at all. Use `Date.now()`, `WeakRef`, `FinalizationRegistry`, `Math.random()`---anything. The only rule is `yield*` for durable operations.
+**The Weft answer.** Checkpoint, don't replay. No determinism requirement at all. Use `Date.now()`, `WeakRef`, `FinalizationRegistry`, `Math.random()`—anything. The only rule is `yield*` for durable operations.
 
 Weft actually _uses_ `WeakRef` and `FinalizationRegistry` internally for memory management. The primitives Temporal bans are the ones Weft depends on.
 
@@ -44,9 +44,9 @@ In Temporal, you discover serialization problems at replay time in production. I
 
 ## Versioning complexity
 
-**The Temporal problem.** Changing workflow code while workflows are in-flight requires either the `patched()` / `deprecatePatch()` API---which litters your code with version branches that never go away---or Worker Versioning, a whole deployment orchestration system. The Temporal docs themselves acknowledge this is complex enough that they deprecated their first versioning approach and replaced it in 2025.
+**The Temporal problem.** Changing workflow code while workflows are in-flight requires either the `patched()` / `deprecatePatch()` API—which litters your code with version branches that never go away—or Worker Versioning, a whole deployment orchestration system. The Temporal docs themselves acknowledge this is complex enough that they deprecated their first versioning approach and replaced it in 2025.
 
-**The Weft answer.** Checkpointing means code before the current checkpoint never re-executes. Changing steps after the current checkpoint is inherently safe. Versioning only matters for the step you're currently on---and even then, the migration path is a pure data transformation on the checkpoint, not code-path branching.
+**The Weft answer.** Checkpointing means code before the current checkpoint never re-executes. Changing steps after the current checkpoint is inherently safe. Versioning only matters for the step you're currently on—and even then, the migration path is a pure data transformation on the checkpoint, not code-path branching.
 
 ```typescript pseudocode
 // Temporal: version branches that accumulate forever
@@ -70,7 +70,7 @@ engine.register(
 );
 ```
 
-Weft also provides a `weft version:check` CLI command that analyzes registered workflows against the existing database and reports compatibility _before_ deployment---telling you exactly how many running workflows need migration and whether your migration function covers them.
+Weft also provides a `weft version:check` CLI command that analyzes registered workflows against the existing database and reports compatibility _before_ deployment—telling you exactly how many running workflows need migration and whether your migration function covers them.
 
 ## Steep learning curve
 
@@ -92,7 +92,7 @@ const handle = await engine.start(
 );
 ```
 
-Under the hood, `ctx.step()` compiles to the generator form. Developers who need the full power of generators, parallel branches, signals, and reviews graduate to the `async function*` form. The simple API is a subset of the full API---not a separate abstraction.
+Under the hood, `ctx.step()` compiles to the generator form. Developers who need the full power of generators, parallel branches, signals, and reviews graduate to the `async function*` form. The simple API is a subset of the full API—not a separate abstraction.
 
 ## Heavy operational infrastructure
 
@@ -109,11 +109,11 @@ temporal server start-dev     # ... or the dev shortcut that still needs Docker
 ./weft --port 7233            # SQLite auto-created. Dashboard at localhost:7233/ui
 ```
 
-Weft also ships a `weft doctor` diagnostic command that reports database health, workflow statistics, queue depths, performance metrics, and actionable recommendations---all without any external monitoring infrastructure.
+Weft also ships a `weft doctor` diagnostic command that reports database health, workflow statistics, queue depths, performance metrics, and actionable recommendations—all without any external monitoring infrastructure.
 
 ## Performance out of the box
 
-**The Temporal problem.** The O(n) replay model means workflows with long histories get progressively slower to recover. The Temporal team acknowledges that "almost all performance issues we have encountered are caused by the default settings"---meaning the defaults are wrong for most use cases.
+**The Temporal problem.** The O(n) replay model means workflows with long histories get progressively slower to recover. The Temporal team acknowledges that "almost all performance issues we have encountered are caused by the default settings"—meaning the defaults are wrong for most use cases.
 
 **The Weft answer.** O(1) recovery regardless of history length. In-process SQLite reads at ~10 microseconds instead of network round-trips at ~1 millisecond. Task claiming is a single atomic SQL statement, not a gRPC round-trip. Defaults are optimized for the common case.
 
@@ -123,7 +123,7 @@ The engine tracks checkpoint size automatically and warns you when it exceeds a 
 
 **The Temporal problem.** The TypeScript SDK bundles workflow code through Webpack to create a sandboxed environment. This causes: module resolution failures in monorepos, cryptic Webpack errors when importing packages that reference Node APIs, inability to use `console.log` normally, inability to import activity code directly (must use `proxyActivities`), and the general cognitive overhead of writing code that _looks_ like TypeScript but runs in a restricted sandbox.
 
-**The Weft answer.** No bundling, no sandbox, no Webpack. Workflows are regular TypeScript generator functions. Import anything. Use `console.log`. Reference activities directly.
+**The Weft answer.** No bundling, no sandbox, no Webpack. Workflows are regular TypeScript generator functions. Import anything. Use `console.log`. Dispatch activities by their registered name—no proxy object to generate first.
 
 The engine-isolate protection that Temporal achieves through Webpack plus a sandbox, Weft achieves through Web Workers when `workflowExecutionMode: 'worker'` is configured. Workers keep workflow generator turns out of the engine isolate without restricting the JavaScript language.
 
@@ -135,14 +135,13 @@ const { charge, ship } = proxyActivities<typeof activities>({
 });
 const result = await charge(order); // "Go to definition" → proxy type, not implementation
 
-// Weft: zero ceremony
-import { charge, ship } from './activities';
-const result = yield * ctx.run(charge, order); // "Go to definition" → actual function
+// Weft: zero ceremony — reference the activity by its registered name
+const result = yield * ctx.run('charge', order); // autocompletes from the registered activities
 ```
 
 ## continueAsNew for long-running workflows
 
-**The Temporal problem.** Temporal has a ~50K event history limit per workflow execution. Long-running workflows---subscription loops, monitoring workflows, order lifecycle management---must periodically call `continueAsNew()` to reset their history. This requires manually serializing all state, re-registering all signal handlers, and reconstructing all local variables. Getting this wrong causes data loss.
+**The Temporal problem.** Temporal has a ~50K event history limit per workflow execution. Long-running workflows—subscription loops, monitoring workflows, order lifecycle management—must periodically call `continueAsNew()` to reset their history. This requires manually serializing all state, re-registering all signal handlers, and reconstructing all local variables. Getting this wrong causes data loss.
 
 **The Weft answer.** Checkpoints are fixed-size snapshots of the current state, not a growing event log. A workflow that has executed 1 million activities has the same checkpoint size as one that has executed 10.
 
@@ -164,7 +163,7 @@ There is no `continueAsNew`, no history limit, no manual state serialization. A 
 
 **The Temporal problem.** In the TypeScript SDK, you cannot call activity functions directly. You must create proxy objects via `proxyActivities<T>()` which generate type stubs that know how to schedule activities. This exists because the sandbox cannot import activity code. It creates confusion about what is a real function call versus a scheduled remote operation. "Go to definition" navigates to the proxy type, not the actual implementation.
 
-**The Weft answer.** `yield* ctx.run(myFunction, input)`. You pass the actual function reference and one serializable input value. The `yield*` makes the durable boundary explicit---no proxies, no type stubs, no magic. "Go to definition" takes you to the implementation.
+**The Weft answer.** `yield* ctx.run('activityName', input)`. You name the activity—the same name it was registered under—and pass one serializable input value. There is no proxy object to construct and no generated type stub: the name _is_ the durable dispatch key, the one thing that travels to a remote worker, and your editor autocompletes it from the activities you registered. The `yield*` makes the durable boundary explicit—no proxies, no codegen, no magic.
 
 Activities can declare their own operational characteristics with a colocated configuration pattern.
 
@@ -188,24 +187,24 @@ export const charge = activity({
 
 async function* example(ctx: Context) {
   // In the workflow — configuration travels with the activity:
-  const payment = yield* ctx.run(charge, order);
+  const payment = yield* ctx.run('charge', order);
   // But you CAN override per-invocation:
-  const payment = yield* ctx.run(charge, order, { timeout: '60s' });
+  const payment = yield* ctx.run('charge', order, { timeout: '60s' });
 }
 ```
 
 ## Payload size sensitivity
 
-**The Temporal problem.** The docs warn extensively about keeping workflow inputs, outputs, and activity results small because everything is serialized into the event history. Large payloads degrade replay performance and bloat storage. This is a tax on the developer experience---you constantly have to think about data size.
+**The Temporal problem.** The docs warn extensively about keeping workflow inputs, outputs, and activity results small because everything is serialized into the event history. Large payloads degrade replay performance and bloat storage. This is a tax on the developer experience—you constantly have to think about data size.
 
-**The Weft answer.** Checkpoints store only the current state---the values of local variables at the pause point. Activity inputs aren't stored in the checkpoint. Previous activity results are only stored if they're still live in a local variable.
+**The Weft answer.** Checkpoints store only the current state—the values of local variables at the pause point. Activity inputs aren't stored in the checkpoint. Previous activity results are only stored if they're still live in a local variable.
 
 ```typescript partial
 async function* imageWorkflow(ctx: Weft.Context, urls: string[]) {
   let summary = { processed: 0, totalSize: 0 };
 
   for (const url of urls) {
-    const result = yield* ctx.run(processImage, url);
+    const result = yield* ctx.run('processImage', url);
     summary = { processed: summary.processed + 1, totalSize: summary.totalSize + result.size };
   }
   // Temporal: history contains 100 x 1MB activity results = ~100MB
@@ -220,4 +219,4 @@ A workflow that processed 1,000 large API responses but only keeps the final sum
 
 All ten of these problems trace back to the same root cause: replay-based recovery. Temporal replays your workflow code to reconstruct state, which requires determinism, which requires a sandbox, which requires Webpack bundling, which breaks your tooling, which forces proxy indirection, which loses type safety. Each constraint cascades into the next.
 
-Weft's checkpoint-based architecture cuts the chain at the root. No replay means no determinism requirement. No determinism requirement means no sandbox. No sandbox means no Webpack. No Webpack means no proxy indirection. No proxy indirection means real function references with full type safety. One architectural decision, ten problems eliminated.
+Weft's checkpoint-based architecture cuts the chain at the root. No replay means no determinism requirement. No determinism requirement means no sandbox. No sandbox means no Webpack. No Webpack means no proxy indirection. No proxy indirection means activities are dispatched by name with full type safety—no generated stubs to keep in sync. One architectural decision, ten problems eliminated.
