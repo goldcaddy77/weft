@@ -53,13 +53,17 @@ export class LMDBStorage implements Storage {
   capabilities(): StorageCapabilities {
     // LMDB MVCC, single writer, memory-mapped: a committed write is visible to
     // later reads (linearizable); read transactions are point-in-time snapshots;
-    // batch() and the range deletePrefix/deleteRange run inside one write transaction.
+    // batch() runs in one write transaction (atomic). deletePrefix and
+    // deleteRange use a two-phase client-side scan-then-batch: keys are first
+    // collected into an array via this.keys(), then removed in a single batch()
+    // call. lmdb-js exposes no native single-operation range-delete API, so this
+    // is the scan-and-delete fallback — boundedRangeDelete is false.
     return {
       readAfterWrite: 'linearizable',
       scanConsistency: 'snapshot',
       atomicBatch: true,
       conditionalBatch: true,
-      boundedRangeDelete: true,
+      boundedRangeDelete: false,
     };
   }
 

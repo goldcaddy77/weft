@@ -623,3 +623,70 @@ describe('ctx.saga() — cancellation compensation', () => {
     engine2[Symbol.dispose]();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Race condition: handlers must not fire on an already-terminal workflow
+// ---------------------------------------------------------------------------
+
+describe('cancel-handler race condition', () => {
+  // Note: in the single JS event loop, two concurrent async calls interleave at
+  // `await` boundaries. This test validates the at-most-once outcome: handlers
+  // must not fire more than once regardless of interleave order. The invariant
+  // is enforced by gating `runCancellationHandlersForStatus` behind the storage
+  // conditional-batch result — exactly one caller wins the state transition.
+  it('does not run cancel handlers when the workflow is already terminal', async () => {
+    let handlerCallCount = 0;
+
+    const racingWorkflow = workflow({ name: 'racing-cancel-wf' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
+      ctx.onCancel(() => {
+        handlerCallCount++;
+      });
+      yield* ctx.waitForSignal('never');
+    });
+
+    const engine = new Engine();
+    engine.register(racingWorkflow);
+
+    const handle = await engine.start('racing-cancel-wf', null, { id: 'race-wf' });
+    await flush();
+
+    // Fire two concurrent cancels — only the first should commit the state
+    // transition; the second must see the already-terminal state and skip handlers.
+    await Promise.allSettled([engine.cancel(handle.id), engine.cancel(handle.id)]);
+    await expect(handle.result()).rejects.toThrow('Workflow cancelled');
+
+    // Handler must fire exactly once — not twice due to the race.
+    expect(handlerCallCount).toBe(1);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('does not run cancel handlers when the workflow times out', async () => {
+    let handlerCallCount = 0;
+
+    const timedOutWorkflow = workflow({ name: 'racing-timeout-wf' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
+      ctx.onCancel(() => {
+        handlerCallCount++;
+      });
+      yield* ctx.waitForSignal('never');
+    });
+
+    const engine = new Engine();
+    engine.register(timedOutWorkflow);
+
+    const handle = await engine.start('racing-timeout-wf', null, { id: 'race-timeout-wf' });
+    await flush();
+
+    await engine.timeout(handle.id);
+    await expect(handle.result()).rejects.toThrow('exceeded execution timeout');
+
+    // Cancel handlers must never fire on timeout — they are scoped to cancellation only.
+    expect(handlerCallCount).toBe(0);
+
+    engine[Symbol.dispose]();
+  });
+});
