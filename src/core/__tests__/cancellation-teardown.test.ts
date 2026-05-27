@@ -175,6 +175,31 @@ describe('ctx.onCancel()', () => {
     engine[Symbol.dispose]();
   });
 
+  it('does not call the handler when the workflow times out', async () => {
+    const engine = new Engine();
+    let cancelFired = false;
+
+    const timeoutWorkflow = workflow({ name: 'on-cancel-timeout' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
+      ctx.onCancel(() => {
+        cancelFired = true;
+      });
+      yield* ctx.waitForSignal('never');
+    });
+    engine.register(timeoutWorkflow);
+
+    const handle = await engine.start('on-cancel-timeout', null);
+    await flush();
+
+    await engine.timeout(handle.id);
+
+    await expect(handle.result()).rejects.toThrow('exceeded execution timeout');
+    expect(cancelFired).toBe(false);
+
+    engine[Symbol.dispose]();
+  });
+
   // -------------------------------------------------------------------------
   // 5. Async handler awaited before workflow finalizes
   // -------------------------------------------------------------------------

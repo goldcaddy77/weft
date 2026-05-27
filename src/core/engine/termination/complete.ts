@@ -59,8 +59,8 @@ async function runCancellationHandlersForStatus(
   status: 'cancelled' | 'timed-out',
   callbacks: Pick<TerminationCallbacks, 'handleCleanupError'>,
 ): Promise<void> {
-  const cancelHandlers = takeCancelHandlers(internals, workflowId);
   if (status !== 'cancelled') return;
+  const cancelHandlers = takeCancelHandlers(internals, workflowId);
   await runCancelHandlers(cancelHandlers, callbacks, workflowId);
 }
 
