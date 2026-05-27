@@ -350,7 +350,7 @@
   }
 
   function handleBackClick(): void {
-    navigate('/ui/workflows');
+    navigate('/workflows');
   }
 
   function handleSelectTimelineStep(step: number): void {

@@ -315,9 +315,9 @@ const result = await engine.list({
 **HTTP API:**
 
 ```
-GET /v1/workflows?attr.customerId=cust-123
-GET /v1/workflows?attr.region=us-east&attr.priority.gte=8
-GET /v1/workflows?attr.orderTotal.gte=100&attr.orderTotal.lte=500
+GET /api/v1/workflows?attr.customerId=cust-123
+GET /api/v1/workflows?attr.region=us-east&attr.priority.gte=8
+GET /api/v1/workflows?attr.orderTotal.gte=100&attr.orderTotal.lte=500
 ```
 
 #### Index Mechanism
@@ -350,7 +350,7 @@ function encodeAttributeValue(value: AttributeValue): string {
 
 **Atomic updates at checkpoint boundary:** The engine diffs previous vs current attributes, computing add/delete index operations, and writes everything in the same `batch()` call as the checkpoint. No partial index states.
 
-**External mutation:** `handle.setAttributes()` and `PATCH /v1/workflows/:id/attributes` allow setting attributes from outside the workflow. Index updates happen atomically.
+**External mutation:** `handle.setAttributes()` and `PATCH /api/v1/workflows/:id/attributes` allow setting attributes from outside the workflow. Index updates happen atomically.
 
 ### 16. Synchronous Updates
 
@@ -438,7 +438,7 @@ if (result.valid) {
 2. **Engine detects pending updates** at the checkpoint boundary (same phase as pending signals). For `onUpdate` handlers: runs the handler, collects the result. For `waitForUpdate`: resumes the generator with `{ payload, respond }`.
 3. **Response written atomically** with the checkpoint: `batch([delete upd:..., put upr:..., put wf:...:ckpt])`.
 4. **Caller notified** via `BroadcastChannel` (`update:completed` message). The caller's `Promise.withResolvers` resolves without polling.
-5. **Timeout handling.** The caller races against `AbortSignal.timeout()`. On timeout: `UpdateTimeoutError` with the `updateId`. The update is still pending — the caller can poll `GET /v1/updates/:updateId` later to retrieve the eventual response.
+5. **Timeout handling.** The caller races against `AbortSignal.timeout()`. On timeout: `UpdateTimeoutError` with the `updateId`. The update is still pending — the caller can poll `GET /api/v1/updates/:updateId` later to retrieve the eventual response.
 6. **Durability.** If the server crashes between receiving the request and delivering the response, the update request is already in storage. After recovery, the workflow processes it and writes the response. The caller retrieves via the poll endpoint.
 
 **Idempotency:** An optional `idempotencyKey` maps to the `updateId` via `upk:{workflowId}:{key}`. Duplicate requests return the existing response.
@@ -660,7 +660,7 @@ engine.addActivityInterceptor(activity);
 
 // Remote workers get the activity interceptor
 const worker = new Worker({
-  serverUrl: 'ws://weft-server:7233/v1/tasks/default/stream',
+  serverUrl: 'ws://weft-server:7233/api/v1/tasks/default/stream',
   activities: { charge, ship },
   interceptors: [activity],
 });

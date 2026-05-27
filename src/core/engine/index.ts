@@ -215,6 +215,11 @@ import {
   type WorkflowFeedSelector,
 } from './workflow-feed.ts';
 
+export {
+  ActivityReconciliationCapabilityError,
+  ActivityReconciliationConflictError,
+  ActivityReconciliationIndeterminateError,
+} from './activity-reconciliation.ts';
 export type {
   PendingTimelineEntry,
   RegistrationEntry,

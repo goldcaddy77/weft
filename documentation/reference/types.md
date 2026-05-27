@@ -318,7 +318,7 @@ type ReviewStatus = 'pending' | 'completed';
 
 ### `ReviewListFilter`
 
-Optional filter accepted by `engine.listReviews(filter?)` and the `/v1/reviews` transport surface.
+Optional filter accepted by `engine.listReviews(filter?)` and the `/api/v1/reviews` transport surface.
 
 ```ts partial
 interface ReviewListFilter {

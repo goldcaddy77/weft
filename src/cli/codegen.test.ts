@@ -119,24 +119,28 @@ describe('codegen parser', () => {
 });
 
 describe('composeRegistryUrl', () => {
-  it('appends /v1/registry to a bare origin', () => {
-    expect(composeRegistryUrl('http://host').toString()).toBe('http://host/v1/registry');
+  it('appends /api/v1/registry to a bare origin', () => {
+    expect(composeRegistryUrl('http://host').toString()).toBe('http://host/api/v1/registry');
   });
 
-  it('appends /v1/registry to a path prefix', () => {
-    expect(composeRegistryUrl('http://host/base').toString()).toBe('http://host/base/v1/registry');
+  it('appends /api/v1/registry to a path prefix', () => {
+    expect(composeRegistryUrl('http://host/base').toString()).toBe(
+      'http://host/base/api/v1/registry',
+    );
   });
 
   it('handles a trailing slash on the base URL', () => {
-    expect(composeRegistryUrl('http://host/base/').toString()).toBe('http://host/base/v1/registry');
+    expect(composeRegistryUrl('http://host/base/').toString()).toBe(
+      'http://host/base/api/v1/registry',
+    );
   });
 
-  it('does not double-append when /v1/registry is already present', () => {
-    expect(composeRegistryUrl('http://host/v1/registry').toString()).toBe(
-      'http://host/v1/registry',
+  it('does not double-append when /api/v1/registry is already present', () => {
+    expect(composeRegistryUrl('http://host/api/v1/registry').toString()).toBe(
+      'http://host/api/v1/registry',
     );
-    expect(composeRegistryUrl('http://host/v1/registry/').toString()).toBe(
-      'http://host/v1/registry',
+    expect(composeRegistryUrl('http://host/api/v1/registry/').toString()).toBe(
+      'http://host/api/v1/registry',
     );
   });
 });
@@ -568,12 +572,12 @@ describe('executeCodegen HTTP fetch path', () => {
     expect(result.stderr).toContain('127.0.0.1:1');
   });
 
-  it('reaches /base/v1/registry when given a path-prefixed server URL', async () => {
+  it('reaches /base/api/v1/registry when given a path-prefixed server URL', async () => {
     let observedPath: string | null | undefined;
     const server = serveOnce((request) => {
       const url = new URL(request.url);
       observedPath = url.pathname;
-      if (url.pathname === '/base/v1/registry') {
+      if (url.pathname === '/base/api/v1/registry') {
         return new Response(Bun.file(REGISTRY_FIXTURE), {
           headers: { 'content-type': 'application/json' },
         });
@@ -586,7 +590,7 @@ describe('executeCodegen HTTP fetch path', () => {
       const url = new URL('/base', server.url).toString();
       const result = await executeCodegen({ server: url, out, timeoutMs: 30_000 });
       expect(result.exitCode).toBe(0);
-      expect(observedPath).toBe('/base/v1/registry');
+      expect(observedPath).toBe('/base/api/v1/registry');
     } finally {
       await server.stop(true);
     }

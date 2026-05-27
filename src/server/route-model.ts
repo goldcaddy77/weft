@@ -16,6 +16,54 @@
  */
 
 // ---------------------------------------------------------------------------
+// External API prefix
+// ---------------------------------------------------------------------------
+
+/**
+ * External URL prefix under which the functional HTTP/WebSocket API is served
+ * (REST workflows/schedules/tasks, `/mcp`, `/jsonrpc`, and the workflow/task
+ * WebSocket upgrades). The dashboard SPA owns the origin root, so the API is
+ * namespaced beneath this prefix on the wire.
+ *
+ * This is purely an *external* (wire) concern. Internal routing — the
+ * `DIRECT_HTTP_ROUTES` table, every `RestBinding`, the WebSocket-upgrade
+ * regexes, and the authentication allowlist — stays canonical and
+ * root-relative. The HTTP front door strips this prefix from incoming requests
+ * before any matching runs, and the spec/discovery generators reattach it via
+ * {@link externalApiPath} when advertising endpoints.
+ *
+ * Root-stable surfaces are deliberately **not** moved under this prefix:
+ * `/v1/health`, `/v1/metrics`, `/openapi.json`, `/openrpc.json`,
+ * `/asyncapi.json`, and `/.well-known/*` remain at the origin root per
+ * RFC 9264 / discovery convention.
+ */
+export const API_PREFIX = '/api';
+
+/**
+ * Map a canonical, root-relative server path to its external (`/api`-prefixed)
+ * form for emission in specs and discovery documents.
+ *
+ * Requires a leading slash and refuses an already-prefixed path so callers can
+ * never produce `/api/api/...`.
+ *
+ * @example
+ * ```ts
+ * import { externalApiPath } from './route-model.ts';
+ * externalApiPath('/v1/workflows'); // '/api/v1/workflows'
+ * externalApiPath('/mcp'); // '/api/mcp'
+ * ```
+ */
+export function externalApiPath(canonicalPath: string): string {
+  if (!canonicalPath.startsWith('/')) {
+    throw new Error(`externalApiPath requires a leading slash, received: ${canonicalPath}`);
+  }
+  if (canonicalPath === API_PREFIX || canonicalPath.startsWith(`${API_PREFIX}/`)) {
+    throw new Error(`externalApiPath received an already-prefixed path: ${canonicalPath}`);
+  }
+  return `${API_PREFIX}${canonicalPath}`;
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 

@@ -40,7 +40,7 @@ if (import.meta.main) {
 
   console.log(`Order processing example listening at ${server.url}`);
   if (dashboard !== null) {
-    console.log(`Dashboard: ${new URL('/ui', server.url).toString()}`);
+    console.log(`Dashboard: ${server.url}`);
   }
 
   await new Promise(() => {});

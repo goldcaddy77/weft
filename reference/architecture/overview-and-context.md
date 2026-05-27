@@ -201,7 +201,7 @@ docker compose up -d          # PostgreSQL, Elasticsearch, 4 Temporal services
 temporal server start-dev     # ... or the dev shortcut that still needs Docker
 
 # Weft
-./weft --port 7233            # SQLite auto-created. Dashboard at localhost:7233/ui
+./weft --port 7233            # SQLite auto-created. Dashboard at localhost:7233/
 ```
 
 **Going further: `weft doctor` diagnostic command.** A single command that reports everything an operator needs to know:
@@ -426,7 +426,7 @@ async function* longRunningWorkflow(ctx: Context, config: Config) {
 }
 ```
 
-The dashboard renders these as a live key-value table. The HTTP API serves them at `GET /v1/workflows/:id/state`.
+The dashboard renders these as a live key-value table. The HTTP API serves them at `GET /api/v1/workflows/:id/state`.
 
 **Going further: checkpoint history with time-travel debugging.** Store the last N checkpoints (configurable, default 10) instead of just the latest:
 
@@ -436,10 +436,10 @@ const engine = new Engine({
   checkpointHistory: 10,
 });
 
-// GET /v1/workflows/wf-abc123/checkpoints
+// GET /api/v1/workflows/wf-abc123/checkpoints
 // Returns: [{ step: 12, timestamp: ..., size: "2.1KB" }, { step: 11, ... }, ...]
 
-// GET /v1/workflows/wf-abc123/checkpoints/11
+// GET /api/v1/workflows/wf-abc123/checkpoints/11
 // Returns: the full deserialized checkpoint state at step 11
 ```
 

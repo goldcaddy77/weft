@@ -6,7 +6,7 @@ This document describes the versioned WebSocket protocol Weft uses to dispatch a
 
 - **Protocol version**: v1. `register.protocolVersion` is required and must be exactly `1`.
 - **Transport**: WebSocket text frames containing JSON objects.
-- **Endpoint**: `/v1/tasks/:queue/stream` on the Weft server. Connect to one queue per WebSocket.
+- **Endpoint**: `/api/v1/tasks/:queue/stream` on the Weft server. Connect to one queue per WebSocket.
 - **Direction**: bidirectional. Workers send `register`, `heartbeat`, `taskResult`. Server sends `task`, `cancel`, `shutdown`, `registerAck`, `registerError`, `protocolError`.
 - **Heartbeat**: workers heartbeat every 10 seconds after registration is acknowledged.
 - **Authentication**: not part of the protocol envelope. Auth happens at the WebSocket transport layer.
@@ -27,8 +27,8 @@ import {
 The server exposes one WebSocket endpoint per task queue:
 
 ```text
-ws://server.example.com/v1/tasks/:queue/stream
-wss://server.example.com/v1/tasks/:queue/stream
+ws://server.example.com/api/v1/tasks/:queue/stream
+wss://server.example.com/api/v1/tasks/:queue/stream
 ```
 
 `:queue` must consist only of word characters and hyphens (`[\w-]+`). The default queue is `default`. A worker connects to exactly one queue per WebSocket connection. To serve multiple queues, open one connection per queue.
@@ -39,7 +39,7 @@ The TypeScript `RemoteWorker` accepts the full URL via its `serverUrl` option:
 import { RemoteWorker } from 'weft';
 
 using worker = new RemoteWorker({
-  serverUrl: 'ws://localhost:7233/v1/tasks/default/stream',
+  serverUrl: 'ws://localhost:7233/api/v1/tasks/default/stream',
   activities: { sendEmail },
   concurrency: 5,
   queue: 'default',
@@ -146,7 +146,7 @@ Sent immediately after the WebSocket opens.
 | `startedAt`       | number                       | No       | Worker process start time in epoch milliseconds. Defaults to registration time when omitted.    |
 | `capabilities`    | `Record<string, JSON value>` | No       | JSON object of capability metadata such as region, hardware class, or feature flags.            |
 
-The server processes `register` only on worker-stream paths (`/v1/tasks/:queue/stream`). On other WebSocket endpoints, worker protocol messages are ignored or handled by that endpoint's own protocol.
+The server processes `register` only on worker-stream paths (`/api/v1/tasks/:queue/stream`). On other WebSocket endpoints, worker protocol messages are ignored or handled by that endpoint's own protocol.
 
 #### `heartbeat`
 

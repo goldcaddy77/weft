@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 
-import { createFetchHandler, createLifecycleHandlers, createPeriodicSyncHandler } from './index';
+import {
+  buildDelegatedRequest,
+  createFetchHandler,
+  createLifecycleHandlers,
+  createPeriodicSyncHandler,
+  normalizePathPrefix,
+} from './index';
 import type { ServiceWorkerScheduler } from './scheduler';
 
 // ---------------------------------------------------------------------------
@@ -114,6 +120,19 @@ describe('createFetchHandler', () => {
     const responsePromise = event.respondWith.mock.calls[0]![0] as Promise<Response>;
     const response = await responsePromise;
     expect(response.status).toBe(200);
+  });
+
+  // The service worker is intentionally decoupled from the network `/api`
+  // prefix: it calls `handleRequest` directly (bypassing the front-door strip),
+  // so it strips only its own `/weft/` prefix and delegates canonical
+  // root-relative paths. Do NOT wire `/api` handling into the service worker.
+  it('delegates the canonical /v1 path, never an /api-prefixed one', () => {
+    const event = createMockFetchEvent('https://example.com/weft/v1/workflows/abc');
+    const delegated = buildDelegatedRequest(event as any, normalizePathPrefix('/weft/'));
+
+    expect(delegated).not.toBeNull();
+    expect(new URL(delegated!.url).pathname).toBe('/v1/workflows/abc');
+    expect(new URL(delegated!.url).pathname.startsWith('/api/')).toBe(false);
   });
 
   it('handles trailing slash in pathPrefix', () => {

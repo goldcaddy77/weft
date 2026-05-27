@@ -149,7 +149,7 @@ console.log(await handle.result()); // { greeting: "Hello, Steve!", onboarded: t
 curl -L https://releases.weft.dev/v1/weft-darwin-arm64 -o weft && chmod +x weft
 ./weft --port 7233
 
-# That's it. SQLite database created automatically. Dashboard at localhost:7233/ui
+# That's it. SQLite database created automatically. Dashboard at localhost:7233/
 # Register workflows by connecting a worker:
 bun run my-workflows.ts  # connects to weft server via WebSocket
 ```

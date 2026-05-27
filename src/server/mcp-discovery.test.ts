@@ -16,7 +16,7 @@ describe('MCP discovery document', () => {
       },
       transports: {
         streamableHttp: {
-          url: 'https://api.example.com/mcp',
+          url: 'https://api.example.com/api/mcp',
           methods: ['POST', 'GET', 'DELETE'],
           sessionHeader: 'Mcp-Session-Id',
           protocolVersionHeader: 'Mcp-Protocol-Version',

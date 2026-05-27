@@ -3,6 +3,7 @@ import type { z } from 'zod';
 import type { DefinitionSchemaDirection } from '../core/types/definition-schema-to-json.ts';
 import { compareStrings } from './json-schema-utilities.ts';
 import type { ErasedOperation } from './operation-catalog.ts';
+import { externalApiPath } from './route-model.ts';
 
 const JSON_RPC_VERSION = '2.0';
 const EVENT_DELIVER_METHOD = 'weft.events.deliver';
@@ -48,7 +49,10 @@ type SseMessageNames = {
 export function buildWebSocketChannel(operation: ErasedOperation): Record<string, unknown> {
   const messageNames = webSocketMessageNames(operation);
   return {
-    address: '/jsonrpc',
+    // External wire address: the JSON-RPC WebSocket is served under the `/api`
+    // prefix. Internal routing matches the canonical `/jsonrpc` after the front
+    // door strips the prefix.
+    address: externalApiPath('/jsonrpc'),
     bindings: {
       ws: {
         method: 'GET',
@@ -77,7 +81,12 @@ export function buildSseChannel(
   restBindingPath: string | undefined,
 ): Record<string, unknown> {
   const messageNames = sseMessageNames(operation);
-  const address = restBindingPath ?? `/x-weft-unbound/${operation.name.replaceAll('.', '/')}`;
+  // Real REST binding paths are served under `/api`; the synthetic
+  // unbound-fallback is not a wire endpoint, so it is left unprefixed.
+  const address =
+    restBindingPath !== undefined
+      ? externalApiPath(restBindingPath)
+      : `/x-weft-unbound/${operation.name.replaceAll('.', '/')}`;
   return {
     address,
     description:

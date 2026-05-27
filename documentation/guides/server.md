@@ -26,7 +26,7 @@ interface ServeOptions {
   port?: number;
   hostname?: string;
   development?: boolean; // enable Bun's development mode (HMR, source maps)
-  dashboard?: unknown; // dashboard HTML/module import served at /ui
+  dashboard?: unknown; // dashboard HTML/module import served at /
   auth?: AuthConfig; // API key or JWT authentication configuration
   visibilityPollIntervalMs?: number; // task visibility scanner interval; default: 5000
   workerReconnectGracePeriodMs?: number; // reconnect grace before requeue; default: 100
@@ -40,7 +40,7 @@ interface ServeOptions {
 
 ## Dashboard
 
-The built-in dashboard is served at `/ui` when you pass a dashboard HTML/module import to `serve({ dashboard })`. The CLI loads the bundled dashboard by default and prints the dashboard URL after startup; pass `--no-ui` to run only the API and worker endpoints. For production, do not expose a CLI-started dashboard directly on a public interface unless access is controlled in front of Weft. Put an authenticated reverse proxy or custom wrapper in front of `/ui` before exposing it beyond a trusted operator network. During dashboard development, `bun run dev:dashboard` starts the server with the dashboard artifact from `src/dashboard/index.html`, which is the same kind of value you can pass through `ServeOptions.dashboard` in an embedded server.
+The built-in dashboard is served at `/` when you pass a dashboard HTML/module import to `serve({ dashboard })`. The CLI loads the bundled dashboard by default and prints the dashboard URL after startup; pass `--no-ui` to run only the API and worker endpoints. For production, do not expose a CLI-started dashboard directly on a public interface unless access is controlled in front of Weft. Put an authenticated reverse proxy or custom wrapper in front of `/` before exposing it beyond a trusted operator network. During dashboard development, `bun run dev:dashboard` starts the server with the dashboard artifact from `src/dashboard/index.html`, which is the same kind of value you can pass through `ServeOptions.dashboard` in an embedded server.
 
 ## The WeftServer handle
 
@@ -77,7 +77,7 @@ disposed engine.
 
 ## REST API endpoints
 
-The server exposes a versioned REST API under `/v1/`. All endpoints return JSON by default, with content negotiation for MessagePack (`Accept: application/msgpack`).
+The server exposes a versioned REST API under `/api/v1/`. All endpoints return JSON by default, with content negotiation for MessagePack (`Accept: application/msgpack`).
 
 **Health check:**
 
@@ -93,7 +93,7 @@ GET /openrpc.json
 → OpenRPC 1.3.2 document listing all JSON-RPC methods
 
 GET /.well-known/mcp.json
-→ MCP discovery document pointing clients at /mcp
+→ MCP discovery document pointing clients at /api/mcp
 ```
 
 The `rpc.discover` JSON-RPC method returns the OpenRPC document exposed at `GET /openrpc.json` over the JSON-RPC transport. MCP discovery is separate. These discovery endpoints were introduced in the Track 8 operation catalogue consolidation.
@@ -103,7 +103,7 @@ Engine-local definition introspection is separate from these transport documents
 **Start a workflow:**
 
 ```
-POST /v1/workflows
+POST /api/v1/workflows
 { "type": "order", "input": { ... }, "id": "custom-id", "executionTimeout": "24h" }
 → 201 { "id": "workflow-id" }
 ```
@@ -113,27 +113,27 @@ The `id` and `executionTimeout` fields are optional. If `id` is omitted, one is 
 **List workflows:**
 
 ```
-GET /v1/workflows?status=running&type=order&limit=50&offset=0
+GET /api/v1/workflows?status=running&type=order&limit=50&offset=0
 → { "items": [...], "total": 142, "offset": 0, "limit": 50 }
 ```
 
 Filter by `status`, `type`, `id_prefix`, `failure_category`, created/updated/deadline ranges, or [search attributes](./search-attributes.md) using `attribute.<name>` query parameters. Repeat `status` and `failure_category` for OR filters. Add `include=failureCategory` when the response needs `WorkflowSummary.failureCategory`; the default list path avoids the extra projection work.
 
-**Aggregate workflows:** `GET /v1/workflows/aggregate?group_by=status` returns grouped counts such as `{ "total": 42, "groups": [{ "key": "running", "count": 24 }], "truncated": false }`.
+**Aggregate workflows:** `GET /api/v1/workflows/aggregate?group_by=status` returns grouped counts such as `{ "total": 42, "groups": [{ "key": "running", "count": 24 }], "truncated": false }`.
 
 Use aggregates for dashboard counts. Supported groupings are `status`, `type`, `failureCategory`, and `attribute:<name>`.
 
 **Get workflow state:**
 
 ```
-GET /v1/workflows/:id
+GET /api/v1/workflows/:id
 → { "id": "...", "type": "order", "status": "running", ... }
 ```
 
 **Get workflow result:**
 
 ```
-GET /v1/workflows/:id/result
+GET /api/v1/workflows/:id/result
 → { "result": { ... } }
 ```
 
@@ -142,21 +142,21 @@ If the workflow is still running, this endpoint blocks for up to 30 seconds wait
 **Cancel a workflow:**
 
 ```
-DELETE /v1/workflows/:id
+DELETE /api/v1/workflows/:id
 → 204 No Content
 ```
 
 `DELETE` removes the workflow record from storage. To cancel a workflow while keeping its terminal state, use the cancel endpoint:
 
 ```
-POST /v1/workflows/:id/cancel
+POST /api/v1/workflows/:id/cancel
 → 204 No Content
 ```
 
 **Send a signal:**
 
 ```
-POST /v1/workflows/:id/signal/:name
+POST /api/v1/workflows/:id/signal/:name
 { "payload": { ... } }
 → { "ok": true }
 ```
@@ -164,7 +164,7 @@ POST /v1/workflows/:id/signal/:name
 **Send an update (synchronous request-response):**
 
 ```
-POST /v1/workflows/:id/update/:name
+POST /api/v1/workflows/:id/update/:name
 { "payload": { ... }, "timeout": 5000, "idempotencyKey": "..." }
 → { "updateId": "...", "result": { ... } }
 ```
@@ -174,7 +174,7 @@ See the [synchronous updates guide](./synchronous-updates.md) for details on the
 **Check update result:**
 
 ```
-GET /v1/updates/:updateId
+GET /api/v1/updates/:updateId
 → { "status": "completed", "result": { ... } }
 → { "status": "pending" }  (202 if still processing)
 ```
@@ -182,8 +182,8 @@ GET /v1/updates/:updateId
 **Get/set search attributes:**
 
 ```
-GET  /v1/workflows/:id/attributes
-PATCH /v1/workflows/:id/attributes
+GET  /api/v1/workflows/:id/attributes
+PATCH /api/v1/workflows/:id/attributes
 { "attributes": { "priority": 5, "region": "us-east" } }
 ```
 
@@ -197,7 +197,7 @@ GET /v1/metrics
 **Task diagnostics:**
 
 ```
-GET /v1/tasks/diagnostics?workflowId=<workflow-id>&queue=default&limit=25
+GET /api/v1/tasks/diagnostics?workflowId=<workflow-id>&queue=default&limit=25
 → { "items": [...], "summary": { ... }, "limit": 25 }
 ```
 
@@ -209,8 +209,8 @@ The server supports WebSocket connections for real-time streaming. When a reques
 
 Three WebSocket routes are available:
 
-- `/v1/workflows/:id/watch`: observe workflow state changes in real time
-- `/v1/tasks/:queue/stream`: [remote worker](./remote-workers.md) task dispatch
+- `/api/v1/workflows/:id/watch` — observe workflow state changes in real time
+- `/api/v1/tasks/:queue/stream` — [remote worker](./remote-workers.md) task dispatch
 
 HTTP long-poll task requests use the request's `AbortSignal`. If the client
 disconnects before or during the poll, the waiter settles promptly and does

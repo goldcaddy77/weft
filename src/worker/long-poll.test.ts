@@ -7,8 +7,8 @@ import { LongPollWorker } from './long-poll.ts';
 // Helpers
 // ---------------------------------------------------------------------------
 
-const POLL_PATH_RE = /^\/v1\/tasks\/([\w-]+)$/;
-const RESULT_PATH_RE = /^\/v1\/tasks\/([\w-]+)\/result$/;
+const POLL_PATH_RE = /^\/api\/v1\/tasks\/([\w-]+)$/;
+const RESULT_PATH_RE = /^\/api\/v1\/tasks\/([\w-]+)\/result$/;
 const LONG_POLL_TEST_TIMEOUT_MS = 2_000;
 
 // ---------------------------------------------------------------------------
@@ -125,7 +125,7 @@ describe('LongPollWorker', () => {
     expect(worker.running).toBe(false);
   });
 
-  it('polls GET /v1/tasks/:queue for tasks and executes them', async () => {
+  it('polls GET /api/v1/tasks/:queue for tasks and executes them', async () => {
     const completedTasks: any[] = [];
     const taskCompleted = createDeferred();
     let pollCount = 0;
@@ -185,7 +185,7 @@ describe('LongPollWorker', () => {
     expect(taskCompletion.value).toEqual({ processed: true, orderId: 42 });
   });
 
-  it('sends completion to POST /v1/tasks/:queue/result when activity throws', async () => {
+  it('sends completion to POST /api/v1/tasks/:queue/result when activity throws', async () => {
     const completedTasks: any[] = [];
     const taskCompleted = createDeferred();
     let pollCount = 0;
@@ -460,7 +460,7 @@ describe('LongPollWorker', () => {
     await withTimeout(pollObserved.promise, LONG_POLL_TEST_TIMEOUT_MS, 'billing queue poll');
     await worker.stop();
 
-    expect(capturedPath).toBe('/v1/tasks/billing');
+    expect(capturedPath).toBe('/api/v1/tasks/billing');
   });
 
   // ---------------------------------------------------------------------------
