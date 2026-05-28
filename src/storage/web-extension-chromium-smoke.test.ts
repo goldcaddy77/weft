@@ -1,9 +1,10 @@
-import { accessSync, constants, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'bun:test';
+import { chromium } from 'playwright';
 
 type SmokeResult =
   | {
@@ -19,49 +20,31 @@ type SmokeResult =
       readonly stack?: string;
     };
 
-const chromiumExecutable = findChromiumExecutable();
+// Resolve Chromium from Playwright's pinned, per-OS binary (managed by
+// `bunx playwright install --with-deps chromium`). This replaces hand-rolled
+// PATH/Applications discovery, which was fragile across runners. An explicit
+// `CHROMIUM_PATH` is honored as an opt-in override for a locally installed
+// browser; an empty value falls through to the pinned binary.
+//
+// `chromium.executablePath()` returns a computed path without touching the
+// filesystem in Playwright 1.60 (it does not throw when the browser is
+// absent), but we guard it anyway so this top-level resolution can never break
+// `bun test` collection on a machine that never ran `playwright install` — a
+// resolution failure degrades to `null`, which skips the smoke below.
+function resolveChromiumExecutable(): string | null {
+  const override = Bun.env['CHROMIUM_PATH']?.trim();
+  if (override) return override;
+  try {
+    return chromium.executablePath();
+  } catch {
+    return null;
+  }
+}
+
+const chromiumExecutable = resolveChromiumExecutable();
 const shouldRunChromiumSmoke =
   chromiumExecutable !== null && Bun.env['WEFT_CHROMIUM_EXTENSION_SMOKE'] === '1';
 const webExtensionStorageSource = fileURLToPath(new URL('./web-extension.ts', import.meta.url));
-
-function isExecutable(path: string): boolean {
-  try {
-    accessSync(path, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function findChromiumExecutable(): string | null {
-  const configuredPath = Bun.env['CHROMIUM_PATH'];
-  if (configuredPath && isExecutable(configuredPath)) return configuredPath;
-
-  const directCandidates = [
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/Applications/Chromium.app/Contents/MacOS/Chromium',
-    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
-  ];
-  for (const candidate of directCandidates) {
-    if (isExecutable(candidate)) return candidate;
-  }
-
-  const binaryNames = [
-    'chromium',
-    'chromium-browser',
-    'google-chrome',
-    'google-chrome-stable',
-    'microsoft-edge',
-  ];
-  for (const directory of (Bun.env['PATH'] ?? '').split(delimiter)) {
-    for (const binaryName of binaryNames) {
-      const candidate = join(directory, binaryName);
-      if (isExecutable(candidate)) return candidate;
-    }
-  }
-
-  return null;
-}
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMilliseconds: number): Promise<T> {
   let timeout: Timer | undefined;
@@ -179,6 +162,8 @@ describe('WebExtensionStorage Chromium smoke', () => {
   runIfChromiumSmokeEnabled(
     'round-trips bytes through real chrome.storage.local',
     async () => {
+      // `shouldRunChromiumSmoke` already guarantees this is non-null when the
+      // test runs; this guard narrows the type for the `Bun.spawn` launch site.
       if (chromiumExecutable === null) {
         throw new Error('Chromium executable is required for this smoke test.');
       }

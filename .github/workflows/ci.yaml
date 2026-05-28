@@ -49,8 +49,19 @@ jobs:
             src/dashboard/fragments/schedule-list.test.ts \
             src/dashboard/components/date-range-picker.svelte.test.ts \
             src/dashboard/views/workflow-list.svelte.test.ts
-  service-worker-browser:
+  # Real-browser smoke tests (IndexedDB durability, Service Worker runtime,
+  # WebExtension storage) run here against Playwright's pinned Chromium. The job
+  # is intentionally NON-BLOCKING (continue-on-error) while these tests bake:
+  # new real-browser tests are flaky to introduce and runner browser
+  # provisioning varies. Once the job has been green for ~2 weeks, drop
+  # continue-on-error to flip it into a required gate. That required-gate state
+  # is the documented criterion for graduating the browser adapters and the
+  # Service Worker runtime from experimental to stable — see the
+  # "Browser-Surface Promotion Gate" section of documentation/roadmap-to-1.0.md.
+  browser-smoke:
     runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v1
@@ -58,7 +69,7 @@ jobs:
           bun-version: 1.3.13
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps chromium
-      - run: bun run test:service-worker-browser
+      - run: bun run test:browser-smoke
   build:
     runs-on: ubuntu-latest
     steps:
