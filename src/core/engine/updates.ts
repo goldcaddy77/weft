@@ -475,7 +475,7 @@ async function runUpdateValidator(
  * Preserves the `path` as an RFC 6901 JSON Pointer when present, matching the
  * encoding used by the rest of the Standard Schema integration.
  */
-function extractStandardSchemaIssues(
+export function extractStandardSchemaIssues(
   result: unknown,
 ): Array<{ message: string; path?: string }> | null {
   if (result === null || typeof result !== 'object' || !('issues' in result)) return null;

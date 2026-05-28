@@ -213,6 +213,40 @@ describe('update validators (pre-acceptance)', () => {
     engine[Symbol.dispose]();
   });
 
+  it('accepts a Standard Schema result whose issues carry no string message (parity with inline path)', async () => {
+    // Regression: a validator that returns `{ issues: [...] }` where no entry
+    // has a string `message` must be ACCEPTED, not spuriously rejected. The
+    // pending path previously checked the raw `issues` length before filtering
+    // for valid messages, so it rejected updates the inline path accepted.
+    const setName = update<{ name: string }, { ok: boolean }>('setName');
+    const engine = makeEngine();
+
+    engine.register(
+      workflow({ name: 'issue-shape-guard' }).execute(async function* (ctx: WorkflowContext) {
+        ctx.onUpdate(setName, () => ({ ok: true }), {
+          // Returns a malformed Standard Schema failure result: an issues array
+          // with an entry that has no string `message`. After filtering, there
+          // are no actionable issues, so this must be treated as acceptance.
+          validator: (): unknown => ({ issues: [{ code: 'custom' }] }),
+        });
+        await waitForever();
+      }),
+    );
+
+    const handle = await engine.start('issue-shape-guard', null);
+    await flush();
+
+    // Inline path (handler already registered): accepted.
+    const inline = await handle.update(setName, { name: 'a' });
+    expect(inline).toEqual({ ok: true });
+
+    // Coordinated path: also accepted — both paths must agree.
+    const coordinated = await engine.submitCoordinatedUpdate(handle.id, 'setName', { name: 'b' });
+    expect(coordinated.result).toEqual({ ok: true });
+
+    engine[Symbol.dispose]();
+  });
+
   it('UpdateValidationError carries updateName and issues', () => {
     const err = new UpdateValidationError('my-update', [
       { message: 'field x is required' },
