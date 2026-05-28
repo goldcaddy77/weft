@@ -3,6 +3,7 @@ import { authContextToPrincipal } from '../handler.ts';
 import type { ServeOptions } from '../index.ts';
 import { finalizeWebSocketUpgrade } from '../json-rpc-transport-helpers.ts';
 import type { WebSocketData } from '../json-rpc-websocket-runtime.ts';
+import { isAuthenticated } from '../principal.ts';
 import { parseOptionalSequenceCursor } from '../sequence-cursor.ts';
 import type { ServerContext } from './context.ts';
 import { isOriginAllowed } from './cors.ts';
@@ -80,23 +81,49 @@ function rejectsCrossOriginUpgrade(context: ServerContext, request: Request): bo
 }
 
 /**
- * Resolve the connection principal for connection types that make post-upgrade
- * authorization decisions. Stream/watch sockets are one-way transports and do
- * not consume a principal. Returns `null` to signal a 401 response should be
- * sent, or `undefined` when no principal is needed for this connection type.
+ * Resolved principal state for a WebSocket upgrade request.
+ * - `{ ok: true, principal }` — proceed; `principal` is the resolved value (may be undefined)
+ * - `{ ok: false, response }` — reject the upgrade with this response
  */
-function resolvePrincipal(
+type PrincipalResolution =
+  | { ok: true; principal: WebSocketData['principal'] }
+  | { ok: false; response: Response };
+
+/**
+ * Resolve the connection principal and enforce scope for connection types that
+ * make authorization decisions after the upgrade.
+ *
+ * - Stream/watch sockets are one-way transports and do not consume a principal.
+ * - Worker connections require `workers:write` when auth is configured.
+ * - Returns `{ ok: false }` to reject the upgrade with a 401/403 response.
+ */
+function resolvePrincipalForUpgrade(
   connectionType: WebSocketData['connectionType'] | undefined,
   authContext: AuthContext | undefined,
-): WebSocketData['principal'] | null | undefined {
-  if (connectionType !== 'jsonrpc' && connectionType !== 'worker') return undefined;
-  if (authContext === undefined) return undefined;
+): PrincipalResolution {
+  if (connectionType !== 'jsonrpc' && connectionType !== 'worker') {
+    return { ok: true, principal: undefined };
+  }
+  if (authContext === undefined) {
+    return { ok: true, principal: undefined };
+  }
+  let principal: WebSocketData['principal'];
   try {
-    return authContextToPrincipal(authContext);
+    principal = authContextToPrincipal(authContext);
   } catch (error) {
     console.error('[weft] WebSocket upgrade principal resolution failed', error);
-    return null;
+    return { ok: false, response: new Response('Authentication context invalid', { status: 401 }) };
   }
+  // Enforce workers:write at upgrade time so a no-scope credential cannot even
+  // establish a worker WebSocket, regardless of post-upgrade checks.
+  if (
+    connectionType === 'worker' &&
+    isAuthenticated(principal) &&
+    !principal.hasScope('workers:write')
+  ) {
+    return { ok: false, response: new Response('Insufficient scope', { status: 403 }) };
+  }
+  return { ok: true, principal };
 }
 
 export function handleWebSocketUpgrade(
@@ -122,10 +149,11 @@ export function handleWebSocketUpgrade(
     return new Response('Invalid encoded WebSocket path', { status: 400 });
   }
 
-  const principal = resolvePrincipal(classification.connectionType, authContext);
-  if (principal === null) {
-    return new Response('Authentication context invalid', { status: 401 });
+  const resolution = resolvePrincipalForUpgrade(classification.connectionType, authContext);
+  if (!resolution.ok) {
+    return resolution.response;
   }
+  const { principal } = resolution;
 
   const resumeFromParam = url.searchParams.get('resumeFrom');
   const resumeFromResult = parseOptionalSequenceCursor(
