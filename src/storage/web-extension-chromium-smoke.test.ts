@@ -1,9 +1,10 @@
-import { accessSync, constants, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'bun:test';
+import { chromium } from 'playwright';
 
 type SmokeResult =
   | {
@@ -19,48 +20,46 @@ type SmokeResult =
       readonly stack?: string;
     };
 
-const chromiumExecutable = findChromiumExecutable();
+// Resolve Chromium from Playwright's pinned, per-OS binary (managed by
+// `bunx playwright install --with-deps chromium`). This replaces hand-rolled
+// PATH/Applications discovery, which was fragile across runners. An explicit
+// `CHROMIUM_PATH` is honored as an opt-in override for a locally installed
+// browser; an empty value falls through to the pinned binary.
+//
+// `chromium.executablePath()` returns a computed path without touching the
+// filesystem in Playwright 1.60 (it does not throw when the browser is
+// absent), but we guard it anyway so this top-level resolution can never break
+// `bun test` collection on a machine that never ran `playwright install` — a
+// resolution failure degrades to `null`, which skips the smoke below.
+function resolveChromiumExecutable(): string | null {
+  const override = Bun.env['CHROMIUM_PATH']?.trim();
+  if (override) return override;
+  try {
+    return chromium.executablePath();
+  } catch {
+    return null;
+  }
+}
+
+const chromiumExecutable = resolveChromiumExecutable();
 const shouldRunChromiumSmoke =
   chromiumExecutable !== null && Bun.env['WEFT_CHROMIUM_EXTENSION_SMOKE'] === '1';
 const webExtensionStorageSource = fileURLToPath(new URL('./web-extension.ts', import.meta.url));
 
-function isExecutable(path: string): boolean {
+/**
+ * Read a spawned process's stderr to text, swallowing read errors. Bun types
+ * `Subprocess.stderr` as `number | ReadableStream | undefined` (the number is a
+ * file descriptor when not piped); only a `ReadableStream` is drainable here.
+ */
+async function drainStderr(
+  stream: number | ReadableStream<Uint8Array> | undefined,
+): Promise<string> {
+  if (!(stream instanceof ReadableStream)) return '';
   try {
-    accessSync(path, constants.X_OK);
-    return true;
+    return await new Response(stream).text();
   } catch {
-    return false;
+    return '';
   }
-}
-
-function findChromiumExecutable(): string | null {
-  const configuredPath = Bun.env['CHROMIUM_PATH'];
-  if (configuredPath && isExecutable(configuredPath)) return configuredPath;
-
-  const directCandidates = [
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/Applications/Chromium.app/Contents/MacOS/Chromium',
-    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
-  ];
-  for (const candidate of directCandidates) {
-    if (isExecutable(candidate)) return candidate;
-  }
-
-  const binaryNames = [
-    'chromium',
-    'chromium-browser',
-    'google-chrome',
-    'google-chrome-stable',
-    'microsoft-edge',
-  ];
-  for (const directory of (Bun.env['PATH'] ?? '').split(delimiter)) {
-    for (const binaryName of binaryNames) {
-      const candidate = join(directory, binaryName);
-      if (isExecutable(candidate)) return candidate;
-    }
-  }
-
-  return null;
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMilliseconds: number): Promise<T> {
@@ -95,7 +94,9 @@ async function writeExtension(extensionDirectory: string, reportUrl: string): Pr
         content_scripts: [
           {
             js: ['content-script.js'],
-            matches: ['http://127.0.0.1/*'],
+            // `http://127.0.0.1/*` implies port 80 in MV3 match patterns; the
+            // test page is served on an ephemeral port, so match any port.
+            matches: ['http://127.0.0.1:*/*'],
             run_at: 'document_idle',
           },
         ],
@@ -179,6 +180,10 @@ describe('WebExtensionStorage Chromium smoke', () => {
   runIfChromiumSmokeEnabled(
     'round-trips bytes through real chrome.storage.local',
     async () => {
+      // Unreachable at runtime — `shouldRunChromiumSmoke` already requires a
+      // non-null executable before this test is selected to run. The guard
+      // exists only to narrow `string | null` to `string` for the `Bun.spawn`
+      // launch site below.
       if (chromiumExecutable === null) {
         throw new Error('Chromium executable is required for this smoke test.');
       }
@@ -221,6 +226,12 @@ describe('WebExtensionStorage Chromium smoke', () => {
           [
             chromiumExecutable,
             '--headless=new',
+            // GitHub-hosted Linux runners restrict user-namespace cloning, so
+            // Chrome's sandbox cannot initialize and the renderer (where the
+            // extension content script runs) crashes silently. Playwright's own
+            // launcher auto-injects this on such runners; our raw spawn must do
+            // the same. Safe for an isolated CI smoke process.
+            '--no-sandbox',
             '--disable-background-networking',
             '--disable-component-update',
             '--disable-dev-shm-usage',
@@ -238,12 +249,25 @@ describe('WebExtensionStorage Chromium smoke', () => {
             `http://127.0.0.1:${server.port}/`,
           ],
           {
-            stderr: 'ignore',
+            // Capture stderr so a Chrome startup failure (sandbox, missing lib)
+            // surfaces in the timeout error instead of a silent 15s hang.
+            stderr: 'pipe',
             stdout: 'ignore',
           },
         );
 
-        const result = await withTimeout(resultPromise, 15_000);
+        let result: SmokeResult;
+        try {
+          result = await withTimeout(resultPromise, 15_000);
+        } catch (error) {
+          const stderrText = await drainStderr(chromiumProcess?.stderr);
+          const detail = stderrText.trim();
+          throw detail
+            ? new Error(
+                `${error instanceof Error ? error.message : String(error)}\nChromium stderr:\n${detail}`,
+              )
+            : error;
+        }
         expect(result).toEqual({
           ok: true,
           afterDelete: true,
@@ -252,7 +276,7 @@ describe('WebExtensionStorage Chromium smoke', () => {
           value: [0, 1, 2, 255],
         });
       } finally {
-        server.stop(true);
+        await server.stop(true);
         chromiumProcess?.kill();
         await chromiumProcess?.exited.catch(() => {});
         rmSync(temporaryDirectory, { force: true, recursive: true });
