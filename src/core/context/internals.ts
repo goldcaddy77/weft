@@ -15,6 +15,7 @@ export interface ContextInternals {
   workflowInterceptor: ComposedWorkflowInterceptor | null | undefined;
   pendingAttributeChanges: Record<string, SearchAttributeValue> | undefined;
   updateHandlers: Map<string, (payload: unknown) => unknown> | undefined;
+  updateValidators: Map<string, (payload: unknown) => unknown> | undefined;
   queryHandlers: Map<string, (input: unknown) => unknown> | undefined;
   exposedValues: Map<string, () => unknown> | undefined;
   memoCache: Map<string, unknown> | undefined;
@@ -47,6 +48,7 @@ export function initializeInternals(
     workflowInterceptor: undefined,
     pendingAttributeChanges: undefined,
     updateHandlers: undefined,
+    updateValidators: undefined,
     queryHandlers: undefined,
     exposedValues: undefined,
     memoCache: undefined,

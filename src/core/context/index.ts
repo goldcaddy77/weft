@@ -125,6 +125,11 @@ export class Context implements WorkflowContext {
     internals.updateHandlers ??= new Map();
     return internals.updateHandlers;
   }
+  get updateValidators(): Map<string, (payload: unknown) => unknown> {
+    const internals = getInternals(this);
+    internals.updateValidators ??= new Map();
+    return internals.updateValidators;
+  }
   get queryHandlers(): Map<string, (input: unknown) => unknown> {
     const internals = getInternals(this);
     internals.queryHandlers ??= new Map();
@@ -439,10 +444,19 @@ export class Context implements WorkflowContext {
   onUpdate<TInput, TOutput>(
     definition: UpdateDefinition<TInput, TOutput>,
     handler: (payload: TInput) => TOutput | Promise<TOutput>,
+    options?: contextUpdates.UpdateHandlerOptions,
   ): void;
-  onUpdate(name: string, handler: (payload: unknown) => unknown): void;
-  onUpdate(nameOrDefinition: MessageName, handler: (payload: unknown) => unknown): void {
-    contextUpdates.onUpdate(getInternals(this), messageName(nameOrDefinition), handler);
+  onUpdate(
+    name: string,
+    handler: (payload: unknown) => unknown,
+    options?: contextUpdates.UpdateHandlerOptions,
+  ): void;
+  onUpdate(
+    nameOrDefinition: MessageName,
+    handler: (payload: unknown) => unknown,
+    options?: contextUpdates.UpdateHandlerOptions,
+  ): void {
+    contextUpdates.onUpdate(getInternals(this), messageName(nameOrDefinition), handler, options);
   }
   onQuery<TInput, TOutput>(
     definition: QueryDefinition<TInput, TOutput>,

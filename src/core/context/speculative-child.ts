@@ -62,6 +62,7 @@ function cloneSpeculativeRuntimeState(
     parentInternals.pendingAttributeChanges,
   );
   childInternals.updateHandlers = cloneMap(parentInternals.updateHandlers);
+  childInternals.updateValidators = cloneMap(parentInternals.updateValidators);
   childInternals.queryHandlers = cloneMap(parentInternals.queryHandlers);
   childInternals.exposedValues = cloneMap(parentInternals.exposedValues);
   childInternals.memoCache = cloneMap(parentInternals.memoCache);
@@ -91,6 +92,7 @@ export function commitSpeculativeChild(parent: Context, child: Context): void {
     childInternals.pendingAttributeChanges,
   );
   internals.updateHandlers = cloneMap(childInternals.updateHandlers);
+  internals.updateValidators = cloneMap(childInternals.updateValidators);
   internals.queryHandlers = cloneMap(childInternals.queryHandlers);
   internals.exposedValues = cloneMap(childInternals.exposedValues);
   internals.memoCache = cloneMap(childInternals.memoCache);
