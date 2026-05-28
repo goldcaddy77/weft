@@ -80,6 +80,8 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            playwright-chromium-${{ runner.os }}-
       - if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: bunx playwright install --with-deps chromium
       - if: steps.playwright-cache.outputs.cache-hit == 'true'
