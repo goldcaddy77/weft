@@ -2,7 +2,10 @@ import { UpdateCompletedEvent, UpdateReceivedEvent } from '../events.ts';
 import type { UpdateRequest } from '../updates.ts';
 import { UpdateValidationError } from '../updates.ts';
 import type { EngineInternals } from './internals.ts';
-import { invokeUpdateHandler as invokeUpdateHandlerFromInternals } from './updates.ts';
+import {
+  extractStandardSchemaIssues,
+  invokeUpdateHandler as invokeUpdateHandlerFromInternals,
+} from './updates.ts';
 
 type PendingUpdateCallbacks = {
   dispatchEvent: (event: Event) => boolean;
@@ -74,18 +77,11 @@ async function runPendingUpdateValidator(
     return new UpdateValidationError(updateName, [{ message }]).message;
   }
 
-  // Check for Standard Schema v1 failure result { issues: [...] }
-  if (
-    result !== null &&
-    typeof result === 'object' &&
-    'issues' in result &&
-    Array.isArray((result as { issues: unknown }).issues) &&
-    (result as { issues: unknown[] }).issues.length > 0
-  ) {
-    const rawIssues = (result as { issues: Array<{ message?: unknown }> }).issues;
-    const issues = rawIssues
-      .filter((i) => i !== null && typeof i === 'object' && typeof i.message === 'string')
-      .map((i) => ({ message: i.message as string }));
+  // Reuse the inline path's extraction so both paths accept/reject identically:
+  // filter for valid issues first, then reject only when at least one remains.
+  // (A raw `issues` array with no string `message` entries is not a rejection.)
+  const issues = extractStandardSchemaIssues(result);
+  if (issues !== null && issues.length > 0) {
     return new UpdateValidationError(updateName, issues).message;
   }
 
