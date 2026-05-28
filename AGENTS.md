@@ -94,7 +94,7 @@ Use `weft conformance` when a change touches the `RemoteWorker` protocol or work
 
 ### Core Design Principles
 
-1. **Environment-First Configuration**: All configuration starts with environment variables validated through Zod schemas in `src/environment.ts`. The `environment` object is the single source of truth.
+1. **Options-First Configuration**: The library API is options-first. Environment variables (`WEFT_*`) are limited to explicit runtime, CLI, and test toggles—document them in [`documentation/reference/configuration.md`](documentation/reference/configuration.md#environment-variables) and keep each read close to the code path that consumes it.
 
 2. **Lean Surface Area**: This template intentionally avoids framework-specific scaffolding (custom error classes, logger wrappers, etc.). Add only what you need for your project.
 
@@ -153,7 +153,7 @@ If an `as` cast is genuinely necessary (e.g., deserializing from storage where t
 
 ### Adding New Features
 
-1. **Environment variables**: Add to `.env.example` first, then update the schema in `src/environment.ts`.
+1. **Environment variables**: When a new `WEFT_*` variable is necessary, document it in [`documentation/reference/configuration.md`](documentation/reference/configuration.md#environment-variables) and place the read close to the code path that consumes it.
 2. **Types**: Shared/reusable types go in `src/types.ts`; domain-specific types live near their modules.
 
 ### Server and Dashboard Surfaces
