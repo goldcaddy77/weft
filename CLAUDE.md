@@ -66,7 +66,7 @@ Use `weft conformance` when a change touches the `RemoteWorker` protocol or work
 
 ### Core Design Principles
 
-1. **Options-First Configuration**: The library API is options-first. Environment variables (`WEFT_*`) are limited to explicit runtime, CLI, and test toggles—document them in [`documentation/reference/configuration.md`](documentation/reference/configuration.md#environment-variables) and keep each read close to the code path that consumes it.
+1. **Options-First Configuration**: The library API is options-first. Environment variables (`WEFT_*`) are limited to explicit runtime, CLI, and test toggles, and each read stays close to the code path that consumes it. Document user-facing runtime, CLI, and conformance variables in [`documentation/reference/configuration.md`](documentation/reference/configuration.md#environment-variables); internal benchmark, coverage, and smoke-test toggles stay documented beside the tests and scripts that consume them.
 
 2. **Lean Surface Area**: This template intentionally avoids framework-specific scaffolding (custom error classes, logger wrappers, etc.). Add only what you need for your project.
 
@@ -125,7 +125,7 @@ If an `as` cast is genuinely necessary (e.g., deserializing from storage where t
 
 ### Adding New Features
 
-1. **Environment variables**: When a new `WEFT_*` variable is necessary, document it in [`documentation/reference/configuration.md`](documentation/reference/configuration.md#environment-variables) and place the read close to the code path that consumes it.
+1. **Environment variables**: Place the read close to the code path that consumes it. Document a new user-facing runtime, CLI, or conformance `WEFT_*` variable in [`documentation/reference/configuration.md`](documentation/reference/configuration.md#environment-variables); document internal benchmark, coverage, and smoke-test toggles beside the tests or scripts that consume them.
 2. **Types**: Shared/reusable types go in `src/types.ts`; domain-specific types live near their modules.
 
 ### Server and Dashboard Surfaces

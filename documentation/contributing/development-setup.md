@@ -159,6 +159,6 @@ A few things worth knowing about the tooling setup:
 - **bunfig.toml** targets Bun for builds with sourcemaps and minification enabled.
 - **TypeScript** uses Bun types. Node type libraries are not included by default.
 - **ESM + TypeScript** is the module format. Source files are TypeScript modules; the build output targets Bun. Use standard TS/ESM imports—no special runtime helpers needed.
-- **Environment variables** are limited to explicit runtime, CLI, and test toggles. The library API is options-first; when a new `WEFT_*` variable is necessary, document it in [`configuration.md`](../reference/configuration.md#environment-variables) and keep the read close to the code path that consumes it.
+- **Environment variables** are limited to explicit runtime, CLI, and test toggles. The library API is options-first; keep each read close to the code path that consumes it. Document a new user-facing runtime, CLI, or conformance `WEFT_*` variable in [`configuration.md`](../reference/configuration.md#environment-variables); keep internal benchmark, coverage, and smoke-test toggles documented beside the tests or scripts that consume them.
 
 That covers the day-to-day workflow. If the tests pass, the linter is happy, and the types check out, you're good to open a pull request.
