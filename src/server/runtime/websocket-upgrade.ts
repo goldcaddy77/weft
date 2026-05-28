@@ -102,20 +102,18 @@ export function handleWebSocketUpgrade(
     return new Response('Invalid encoded WebSocket path', { status: 400 });
   }
 
-  // Resolve the principal ONLY for /jsonrpc connections. Other WS
-  // endpoints (`/v1/workflows/:id/stream`, `/watch`, `/v1/tasks/:q/stream`)
-  // do not consume a `Principal`, so running `authContextToPrincipal`
-  // for them would convert a client-side auth error (e.g.,
-  // malformed JWT) into a spurious failure on paths that never
-  // needed the principal in the first place. A resolver throw is
-  // an authentication failure — return 401 so clients with
-  // retry-on-5xx logic don't loop.
+  // Resolve the principal only for endpoints that make authorization decisions
+  // after the upgrade. Stream/watch sockets are one-way public/event transports
+  // and do not consume a Principal.
   let principal: WebSocketData['principal'] | undefined;
-  if (classification.connectionType === 'jsonrpc' && authContext !== undefined) {
+  if (
+    (classification.connectionType === 'jsonrpc' || classification.connectionType === 'worker') &&
+    authContext !== undefined
+  ) {
     try {
       principal = authContextToPrincipal(authContext);
     } catch (error) {
-      console.error('[weft] /jsonrpc WS upgrade principal resolution failed', error);
+      console.error('[weft] WebSocket upgrade principal resolution failed', error);
       return new Response('Authentication context invalid', { status: 401 });
     }
   }

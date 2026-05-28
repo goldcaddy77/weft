@@ -16,6 +16,8 @@ export interface LongPollWorkerOptions {
   concurrency?: number;
   queue?: string;
   pollTimeout?: number; // ms, default: 30000
+  /** HTTP headers sent with poll and result requests, such as Authorization. */
+  headers?: Record<string, string>;
   /** Activity interceptors to run around each activity execution on this worker. */
   interceptors?: ActivityInterceptor[];
 }
@@ -147,6 +149,7 @@ export class LongPollWorker implements Disposable {
 
       try {
         const response = await fetch(pollUrl, {
+          ...(this.#options.headers === undefined ? {} : { headers: this.#options.headers }),
           signal: this.#abortController.signal,
         });
 
@@ -166,6 +169,7 @@ export class LongPollWorker implements Disposable {
           input: unknown;
           attempt?: number;
           headers?: Record<string, string>;
+          workerId?: string;
         };
 
         void this.#executeTask(task, resultUrl);
@@ -185,6 +189,7 @@ export class LongPollWorker implements Disposable {
       input: unknown;
       attempt?: number;
       headers?: Record<string, string>;
+      workerId?: string;
     },
     resultUrl: string,
   ): Promise<void> {
@@ -195,9 +200,10 @@ export class LongPollWorker implements Disposable {
       if (activityFunction === undefined) {
         await fetch(resultUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { ...this.#options.headers, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             operationId: task.operationId,
+            workerId: task.workerId,
             status: 'failed',
             error: `Unknown activity: ${task.activityName}`,
           }),
@@ -214,9 +220,10 @@ export class LongPollWorker implements Disposable {
 
       await fetch(resultUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...this.#options.headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           operationId: task.operationId,
+          workerId: task.workerId,
           status: 'completed',
           value: result,
         }),
@@ -226,9 +233,10 @@ export class LongPollWorker implements Disposable {
       try {
         await fetch(resultUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { ...this.#options.headers, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             operationId: task.operationId,
+            workerId: task.workerId,
             status: 'failed',
             error: error instanceof Error ? error.message : String(error),
           }),

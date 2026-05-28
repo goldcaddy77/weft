@@ -49,6 +49,8 @@ export interface RemoteWorkerOptions {
   gitSha?: string;
   startedAt?: number;
   capabilities?: RemoteWorkerCapabilities;
+  /** Headers sent with the WebSocket upgrade request, such as Authorization. */
+  headers?: Record<string, string>;
   /** Activity interceptors to run around each activity execution on this worker. */
   interceptors?: ActivityInterceptor[];
 }
