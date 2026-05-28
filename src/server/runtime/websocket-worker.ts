@@ -209,6 +209,7 @@ function onTaskResultMessage(
       ...(inflightRecord === null ? {} : { record: inflightRecord }),
       resolvedAt,
       resolutionReason: resolvedStatus,
+      ...(message.status === 'completed' ? { value: message.value } : { error: message.error }),
     });
     if (inflightRecord !== null) {
       recordTaskExecutionLatencyMetric(context.metricsCollector, inflightRecord, resolvedAt);

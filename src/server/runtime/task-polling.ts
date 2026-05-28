@@ -84,6 +84,7 @@ async function applyTaskResult(
       ...(inflightRecord === null ? {} : { record: inflightRecord }),
       resolvedAt,
       resolutionReason: resolvedStatus,
+      ...(status === 'completed' ? { value } : { error }),
     });
     if (inflightRecord !== null) {
       recordTaskExecutionLatencyMetric(context.metricsCollector, inflightRecord, resolvedAt);
