@@ -15,9 +15,6 @@ Not every Weft surface carries the same stability promise. The tier is stated pe
 
 **Experimental surfaces:** Browser runtime, MCP server, `IndexedDBStorage`, `WebExtensionStorage`, `HTTPStorage`, `CompressedStorage`, Turso storage (pending conformance proof), CLI commands beyond `serve` and `doctor`, OTel metric names, the dashboard, and `ctx.step()` sugar.
 
-> [!NOTE]
-> Turso storage reports `conditionalBatch: true`, which gates the checkpoint ownership feature. That claim is contingent on conformance proof of its remote transaction semantics. Until proof is filed, treat Turso as experimental for production deployments that rely on `conditionalBatch`.
-
 ## Versioning
 
 Weft uses [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`.
@@ -88,7 +85,12 @@ The `BREAKING-CHANGES.md` file at the repository root redirects to `documentatio
 
 ## Wire Contract Stability
 
-REST and JSON-RPC routes under `/v1/` are stable. Changes follow the same deprecation cycle as API-level changes.
+The stable wire contract covers two sets of routes:
+
+- **Operation routes** exposed externally under `/api/v1/*` (e.g. `/api/v1/workflows`, `/api/v1/activities`). These are cataloged in the OpenAPI/AsyncAPI/OpenRPC specs served at `/openapi.json`, `/asyncapi.json`, and `/openrpc.json`.
+- **Root-stable utility routes** at the origin root: `/v1/health`, `/v1/metrics`, `/.well-known/*`, and the spec endpoints listed above.
+
+Changes to any of these follow the same deprecation cycle as API-level changes.
 
 Experimental routes (MCP at `/mcp`, any route documented as experimental) may change without notice.
 
