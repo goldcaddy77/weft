@@ -229,6 +229,16 @@ export class TestEngine extends Engine {
     implementation: MockActivityFunction<TInput, TResult>,
   ): MockHandle<TInput, TResult> {
     const activityName = activity.name || 'anonymous';
+
+    // Re-mocking an already-mocked activity only swaps the implementation: the
+    // surrogate's `execute` reads `this.#mocks.get(activity)` dynamically, and
+    // the original-registration snapshot was already captured by the first
+    // mock. Re-capturing here would snapshot the surrogate (with default
+    // metadata) and corrupt the eventual restore, so we skip it.
+    if (this.#mocks.hasRestoreHook(activity)) {
+      return this.#mocks.mock(activity, implementation);
+    }
+
     const previousRegistration = this.#captureActivityRegistration(activityName);
     const handle = this.#mocks.mock(activity, implementation);
     const mockedActivity = defineActivity({

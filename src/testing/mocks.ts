@@ -254,9 +254,21 @@ export class ActivityMockRegistry {
    * to undo the surrogate activity registration it installs on the engine, so
    * `restoreAll()` does not leave stale registrations behind. The callback runs
    * at most once per registration and is then discarded.
+   *
+   * If a cleanup hook is already registered for `activity` (for example, when
+   * the same activity is mocked twice without an intervening `restore()`), the
+   * existing hook is kept and the new one is ignored. This preserves the
+   * original-registration snapshot captured by the first mock, so re-mocking
+   * never overwrites the restorer with one that points at a surrogate.
    */
   onRestore(activity: Function, cleanup: () => void): void {
+    if (this.#cleanupHooks.has(activity)) return;
     this.#cleanupHooks.set(activity, cleanup);
+  }
+
+  /** Whether a cleanup hook is currently registered for `activity`. */
+  hasRestoreHook(activity: Function): boolean {
+    return this.#cleanupHooks.has(activity);
   }
 
   #runCleanupHook(activity: Function): void {

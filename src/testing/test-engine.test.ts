@@ -209,6 +209,54 @@ describe('TestEngine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('re-mocking an activity preserves the original registration on restore', async () => {
+    const engine = new TestEngine();
+
+    const fetchAccount = activity({
+      name: 'fetchAccount',
+      queue: 'accounts',
+      timeout: '5s',
+      execute: async (input: unknown) => `real:${String(input)}`,
+    });
+    const accountWorkflow = workflow({ name: 'account-workflow' }).execute(async function* (
+      ctx: WorkflowContext,
+      input: unknown,
+    ) {
+      return yield* ctx.run(fetchAccount, input);
+    });
+    engine.register(fetchAccount);
+    engine.register(accountWorkflow);
+
+    // Mock twice without an intervening restore. The second mock must not
+    // overwrite the original-registration snapshot captured by the first.
+    const firstHandle = engine.mock(
+      fetchAccount,
+      async (input: unknown) => `mock-a:${String(input)}`,
+    );
+    engine.mock(fetchAccount, async (input: unknown) => `mock-b:${String(input)}`);
+
+    const mockedHandle = await engine.start('account-workflow', 'first', {
+      id: 'account-workflow-double-mocked',
+    });
+    expect(await mockedHandle.result()).toBe('mock-b:first');
+
+    // Restoring via the first handle must reinstate the *original* registration
+    // with its real metadata, not a surrogate with default queue/timeout.
+    firstHandle.restore();
+    expect(engine.getActivityDefinition('fetchAccount')).toMatchObject({
+      name: 'fetchAccount',
+      queue: 'accounts',
+      timeout: '5s',
+    });
+
+    const restoredHandle = await engine.start('account-workflow', 'second', {
+      id: 'account-workflow-double-restored',
+    });
+    expect(await restoredHandle.result()).toBe('real:second');
+
+    engine[Symbol.dispose]();
+  });
+
   it('recover creates new engine with same storage', async () => {
     const engine = new TestEngine({ startTime: 1000 });
 
