@@ -79,6 +79,26 @@ function rejectsCrossOriginUpgrade(context: ServerContext, request: Request): bo
   );
 }
 
+/**
+ * Resolve the connection principal for connection types that make post-upgrade
+ * authorization decisions. Stream/watch sockets are one-way transports and do
+ * not consume a principal. Returns `null` to signal a 401 response should be
+ * sent, or `undefined` when no principal is needed for this connection type.
+ */
+function resolvePrincipal(
+  connectionType: WebSocketData['connectionType'] | undefined,
+  authContext: AuthContext | undefined,
+): WebSocketData['principal'] | null | undefined {
+  if (connectionType !== 'jsonrpc' && connectionType !== 'worker') return undefined;
+  if (authContext === undefined) return undefined;
+  try {
+    return authContextToPrincipal(authContext);
+  } catch (error) {
+    console.error('[weft] WebSocket upgrade principal resolution failed', error);
+    return null;
+  }
+}
+
 export function handleWebSocketUpgrade(
   server: ReturnType<typeof Bun.serve>,
   context: ServerContext,
@@ -102,20 +122,9 @@ export function handleWebSocketUpgrade(
     return new Response('Invalid encoded WebSocket path', { status: 400 });
   }
 
-  // Resolve the principal only for endpoints that make authorization decisions
-  // after the upgrade. Stream/watch sockets are one-way public/event transports
-  // and do not consume a Principal.
-  let principal: WebSocketData['principal'] | undefined;
-  if (
-    (classification.connectionType === 'jsonrpc' || classification.connectionType === 'worker') &&
-    authContext !== undefined
-  ) {
-    try {
-      principal = authContextToPrincipal(authContext);
-    } catch (error) {
-      console.error('[weft] WebSocket upgrade principal resolution failed', error);
-      return new Response('Authentication context invalid', { status: 401 });
-    }
+  const principal = resolvePrincipal(classification.connectionType, authContext);
+  if (principal === null) {
+    return new Response('Authentication context invalid', { status: 401 });
   }
 
   const resumeFromParam = url.searchParams.get('resumeFrom');
