@@ -247,6 +247,45 @@ describe('update validators (pre-acceptance)', () => {
     engine[Symbol.dispose]();
   });
 
+  it('validates via the pending-drain path when an update arrives before ctx.onUpdate registers', async () => {
+    // Directly exercises runPendingUpdateValidator: the coordinated update lands
+    // in the coordinator while the workflow is still parked at waitForSignal,
+    // BEFORE ctx.onUpdate runs. The pending drain then validates it on delivery.
+    // Pre-fix, the drain's raw-length check spuriously rejected the malformed
+    // (message-less) Standard Schema result; post-fix it accepts, like inline.
+    const setName = update<{ name: string }, { ok: boolean }>('setName');
+    const engine = makeEngine();
+
+    engine.register(
+      workflow({ name: 'late-register-guard' }).execute(async function* (ctx: WorkflowContext) {
+        // Park BEFORE registering the handler/validator, so an update submitted
+        // now is queued and only validated later during the pending drain.
+        yield* ctx.waitForSignal('register');
+        ctx.onUpdate(setName, () => ({ ok: true }), {
+          validator: (): unknown => ({ issues: [{ code: 'custom' }] }),
+        });
+        await waitForever();
+      }),
+    );
+
+    const handle = await engine.start('late-register-guard', null);
+    await flush();
+
+    // Submit while parked at the signal — handler not yet registered, so this
+    // routes through the coordinator and is drained after registration. Do not
+    // await yet: the response only arrives once the workflow registers.
+    const pending = engine.submitCoordinatedUpdate(handle.id, 'setName', { name: 'queued' });
+
+    // Release the workflow so it registers the handler and the drain runs.
+    await engine.signal(handle.id, 'register');
+
+    const result = await pending;
+    expect(result.result).toEqual({ ok: true });
+    expect(result.error).toBeUndefined();
+
+    engine[Symbol.dispose]();
+  });
+
   it('UpdateValidationError carries updateName and issues', () => {
     const err = new UpdateValidationError('my-update', [
       { message: 'field x is required' },
