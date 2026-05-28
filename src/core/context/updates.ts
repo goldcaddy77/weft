@@ -61,6 +61,11 @@ export function onUpdate(
   if (options?.validator !== undefined) {
     internals.updateValidators ??= new Map();
     internals.updateValidators.set(name, options.validator);
+  } else {
+    // Clear any stale validator from a previous registration for this name —
+    // if the caller re-registers without a validator, the old validator must
+    // not silently continue to gate the new handler.
+    internals.updateValidators?.delete(name);
   }
 }
 

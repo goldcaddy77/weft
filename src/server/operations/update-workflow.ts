@@ -1,7 +1,11 @@
 import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
-import { UpdateTimeoutError, WorkflowTerminalError } from '../../core/updates.ts';
+import {
+  UpdateTimeoutError,
+  UpdateValidationError,
+  WorkflowTerminalError,
+} from '../../core/updates.ts';
 import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
@@ -77,6 +81,14 @@ export const updateWorkflowOperation = defineOperation<UpdateWorkflowInput, Upda
     } catch (error) {
       if (isOperationFault(error)) {
         throw error;
+      }
+      if (error instanceof UpdateValidationError) {
+        const fault: OperationFault = {
+          code: 'Unprocessable',
+          message: error.message,
+          data: { reason: error.message },
+        };
+        throw fault;
       }
       if (error instanceof WorkflowTerminalError) {
         const fault: OperationFault = {

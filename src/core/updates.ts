@@ -116,9 +116,17 @@ export class UpdateTimeoutError extends WeftError<'UpdateTimeoutError'> {
  */
 export class UpdateValidationError extends WeftError<'UpdateValidationError'> {
   readonly updateName: string;
-  readonly issues: ReadonlyArray<{ readonly message: string }>;
+  /**
+   * Structured validation issues from the pre-acceptance validator. Each issue
+   * carries a human-readable `message` and an optional RFC 6901 JSON Pointer
+   * `path` indicating which field in the update payload failed validation.
+   */
+  readonly issues: ReadonlyArray<{ readonly message: string; readonly path?: string }>;
 
-  constructor(updateName: string, issues: ReadonlyArray<{ readonly message: string }>) {
+  constructor(
+    updateName: string,
+    issues: ReadonlyArray<{ readonly message: string; readonly path?: string }>,
+  ) {
     const summary = issues.map((i) => i.message).join('; ');
     super('UpdateValidationError', `Update "${updateName}" rejected by validator: ${summary}`);
     this.updateName = updateName;

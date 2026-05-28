@@ -444,10 +444,8 @@ export async function invokeUpdateHandler(
 
 /**
  * Run the pre-acceptance validator for an update, if one is registered.
- * Throws `UpdateValidationError` if the validator rejects the payload.
- * A validator may reject by:
- *   - throwing (any thrown error is wrapped into an UpdateValidationError), or
- *   - returning a Standard Schema failure result `{ issues: [...] }`.
+ * Throws `UpdateValidationError` if the validator rejects (by throwing or by
+ * returning a Standard Schema `{ issues: [...] }` failure result).
  */
 async function runUpdateValidator(
   internals: EngineInternals,
@@ -472,21 +470,31 @@ async function runUpdateValidator(
   }
 }
 
-/** Extract issues from a Standard Schema v1 failure result, or return null. */
-function extractStandardSchemaIssues(result: unknown): Array<{ message: string }> | null {
+/**
+ * Extract issues from a Standard Schema v1 failure result, or return null.
+ * Preserves the `path` as an RFC 6901 JSON Pointer when present, matching the
+ * encoding used by the rest of the Standard Schema integration.
+ */
+function extractStandardSchemaIssues(
+  result: unknown,
+): Array<{ message: string; path?: string }> | null {
   if (result === null || typeof result !== 'object' || !('issues' in result)) return null;
   const { issues } = result as { issues: unknown };
   if (!Array.isArray(issues)) return null;
-  const normalized: Array<{ message: string }> = [];
-  for (const issue of issues) {
-    if (
-      issue !== null &&
-      typeof issue === 'object' &&
-      'message' in issue &&
-      typeof issue.message === 'string'
-    ) {
-      normalized.push({ message: issue.message });
+  return issues.flatMap((issue: unknown) => {
+    if (issue === null || typeof issue !== 'object') return [];
+    const obj = issue as Record<string, unknown>;
+    if (typeof obj['message'] !== 'string') return [];
+    const entry: { message: string; path?: string } = { message: obj['message'] };
+    if (Array.isArray(obj['path']) && obj['path'].length > 0) {
+      entry.path = (obj['path'] as unknown[]).reduce((p: string, seg: unknown) => {
+        const k =
+          seg !== null && typeof seg === 'object' && 'key' in (seg as Record<string, unknown>)
+            ? String((seg as { key: unknown }).key)
+            : String(seg);
+        return p + '/' + k.replace(/~/g, '~0').replace(/\//g, '~1');
+      }, '');
     }
-  }
-  return normalized;
+    return [entry];
+  });
 }
