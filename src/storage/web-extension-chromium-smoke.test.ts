@@ -46,6 +46,22 @@ const shouldRunChromiumSmoke =
   chromiumExecutable !== null && Bun.env['WEFT_CHROMIUM_EXTENSION_SMOKE'] === '1';
 const webExtensionStorageSource = fileURLToPath(new URL('./web-extension.ts', import.meta.url));
 
+/**
+ * Read a spawned process's stderr to text, swallowing read errors. Bun types
+ * `Subprocess.stderr` as `number | ReadableStream | undefined` (the number is a
+ * file descriptor when not piped); only a `ReadableStream` is drainable here.
+ */
+async function drainStderr(
+  stream: number | ReadableStream<Uint8Array> | undefined,
+): Promise<string> {
+  if (!(stream instanceof ReadableStream)) return '';
+  try {
+    return await new Response(stream).text();
+  } catch {
+    return '';
+  }
+}
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMilliseconds: number): Promise<T> {
   let timeout: Timer | undefined;
 
@@ -78,7 +94,9 @@ async function writeExtension(extensionDirectory: string, reportUrl: string): Pr
         content_scripts: [
           {
             js: ['content-script.js'],
-            matches: ['http://127.0.0.1/*'],
+            // `http://127.0.0.1/*` implies port 80 in MV3 match patterns; the
+            // test page is served on an ephemeral port, so match any port.
+            matches: ['http://127.0.0.1:*/*'],
             run_at: 'document_idle',
           },
         ],
@@ -208,6 +226,12 @@ describe('WebExtensionStorage Chromium smoke', () => {
           [
             chromiumExecutable,
             '--headless=new',
+            // GitHub-hosted Linux runners restrict user-namespace cloning, so
+            // Chrome's sandbox cannot initialize and the renderer (where the
+            // extension content script runs) crashes silently. Playwright's own
+            // launcher auto-injects this on such runners; our raw spawn must do
+            // the same. Safe for an isolated CI smoke process.
+            '--no-sandbox',
             '--disable-background-networking',
             '--disable-component-update',
             '--disable-dev-shm-usage',
@@ -225,12 +249,25 @@ describe('WebExtensionStorage Chromium smoke', () => {
             `http://127.0.0.1:${server.port}/`,
           ],
           {
-            stderr: 'ignore',
+            // Capture stderr so a Chrome startup failure (sandbox, missing lib)
+            // surfaces in the timeout error instead of a silent 15s hang.
+            stderr: 'pipe',
             stdout: 'ignore',
           },
         );
 
-        const result = await withTimeout(resultPromise, 15_000);
+        let result: SmokeResult;
+        try {
+          result = await withTimeout(resultPromise, 15_000);
+        } catch (error) {
+          const stderrText = await drainStderr(chromiumProcess?.stderr);
+          const detail = stderrText.trim();
+          throw detail
+            ? new Error(
+                `${error instanceof Error ? error.message : String(error)}\nChromium stderr:\n${detail}`,
+              )
+            : error;
+        }
         expect(result).toEqual({
           ok: true,
           afterDelete: true,
