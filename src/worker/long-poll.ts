@@ -16,7 +16,12 @@ export interface LongPollWorkerOptions {
   concurrency?: number;
   queue?: string;
   pollTimeout?: number; // ms, default: 30000
-  /** HTTP headers sent with poll and result requests, such as Authorization. */
+  /**
+   * HTTP headers sent with poll and result requests, such as `Authorization`.
+   * When the server enforces authentication, supply credentials with the
+   * `workers:write` scope here. `Content-Type` is reserved on result requests
+   * and is always set to `application/json`, overriding any value passed here.
+   */
   headers?: Record<string, string>;
   /** Activity interceptors to run around each activity execution on this worker. */
   interceptors?: ActivityInterceptor[];

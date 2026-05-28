@@ -229,8 +229,17 @@ export async function handleTaskResultRequest(
     return validated;
   }
 
+  // Ownership guard. When the task is still in flight, the submitter must echo
+  // the exact workerId the server handed out on claim — a missing workerId
+  // (`undefined`) is rejected rather than treated as a wildcard match. A null
+  // record means the task already resolved/expired/was reclaimed, so there is
+  // no owner to match against; the completion lands on whatever the queue does
+  // with an unknown operationId (a no-op for already-settled work).
   const inflightRecord = await readInflightRecord(options.engine.storage, validated.operationId);
-  if (inflightRecord !== null && inflightRecord.workerId !== validated.workerId) {
+  if (
+    inflightRecord !== null &&
+    (validated.workerId === undefined || inflightRecord.workerId !== validated.workerId)
+  ) {
     return Response.json({ error: 'Forbidden' }, { status: 403 });
   }
 

@@ -206,6 +206,7 @@ describe('LongPollWorker', () => {
           if (pollCount === 1) {
             return Response.json({
               operationId: 'op-err-1',
+              workerId: 'longpoll-err-worker',
               activityName: 'failingActivity',
               input: null,
             });
@@ -245,6 +246,8 @@ describe('LongPollWorker', () => {
     expect(errorCompletion).toBeDefined();
     expect(errorCompletion.status).toBe('failed');
     expect(errorCompletion.error).toBe('activity failed');
+    // The failure path echoes the claimed workerId so the ownership guard accepts it.
+    expect(errorCompletion.workerId).toBe('longpoll-err-worker');
   });
 
   it('handles non-ok poll responses by backing off', async () => {

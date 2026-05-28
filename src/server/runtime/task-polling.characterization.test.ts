@@ -254,4 +254,58 @@ describe('handleTaskPollRequest', () => {
     );
     expect(accepted?.status).toBe(200);
   });
+
+  it('rejects an in-flight result that omits the workerId', async () => {
+    const context = minimalServerContext();
+    const options = minimalServeOptions();
+    context.taskQueue.enqueue('default', {
+      operationId: 'op-missing-worker',
+      activityName: 'charge',
+      input: { amount: 42 },
+    });
+
+    const pollRequest = new Request('http://localhost/v1/tasks/default?activity=charge&timeout=0', {
+      method: 'GET',
+    });
+    await handleTaskPollRequest(
+      context,
+      options,
+      pollRequest,
+      new URL(pollRequest.url),
+      WORKER_PRINCIPAL,
+    );
+
+    // A claimed task has an owner; a result that does not echo the workerId is
+    // rejected rather than treated as a wildcard match.
+    const rejected = await handleTaskResultRequest(
+      context,
+      options,
+      makePostRequest({ operationId: 'op-missing-worker', status: 'completed', value: 42 }),
+      makeUrl('/v1/tasks/default/result'),
+      WORKER_PRINCIPAL,
+    );
+    expect(rejected?.status).toBe(403);
+  });
+
+  it('accepts a result with no in-flight record without an ownership check', async () => {
+    const context = minimalServerContext();
+    const options = minimalServeOptions();
+
+    // No task was ever claimed, so there is no in-flight record to own. The
+    // completion lands as a no-op on already-settled/unknown work; the ownership
+    // guard is intentionally skipped because there is no owner to match against.
+    const response = await handleTaskResultRequest(
+      context,
+      options,
+      makePostRequest({
+        operationId: 'op-never-claimed',
+        status: 'completed',
+        value: 42,
+        workerId: 'longpoll-whatever',
+      }),
+      makeUrl('/v1/tasks/default/result'),
+      WORKER_PRINCIPAL,
+    );
+    expect(response?.status).toBe(200);
+  });
 });
