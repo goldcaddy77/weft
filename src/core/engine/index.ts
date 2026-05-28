@@ -430,6 +430,7 @@ export class Engine<
       development: resolvedOptions.development,
       broadcastEvents: resolvedOptions.broadcastEvents,
       getRegistration: getInternals(this).registrations.get.bind(getInternals(this).registrations),
+      getComposedWorkflowInterceptor: () => getComposedWorkflowInterceptor(getInternals(this)),
       resolveWorkflowType: this.#resolveWorkflowTypeTarget.bind(this),
       registerCancelHandler: (workflowId, handler) =>
         registerCancelHandler(getInternals(this), workflowId, handler),

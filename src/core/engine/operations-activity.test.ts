@@ -309,6 +309,46 @@ describe('activity operation helpers', () => {
     expect(operation.headers).toEqual([['x-trace-id', 'workflow']]);
   });
 
+  it('forwards activity rejections into the workflow interceptor so finally blocks run', async () => {
+    const operation = createActivityOperation({
+      fn: () => {
+        throw new Error('activity boom');
+      },
+    });
+
+    let finallyRan = false;
+    let caughtInGenerator: unknown;
+
+    await expect(
+      executeActivity(
+        createInternals() as never,
+        'workflow-id',
+        operation,
+        createCallbacks({
+          getComposedWorkflowInterceptor: () =>
+            ({
+              *activity(
+                interception: ActivityInterception,
+                next: (interception: ActivityInterception) => Generator<unknown, unknown, unknown>,
+              ) {
+                try {
+                  return yield* next(interception);
+                } catch (error) {
+                  caughtInGenerator = error;
+                  throw error;
+                } finally {
+                  finallyRan = true;
+                }
+              },
+            }) as never,
+        }),
+      ),
+    ).rejects.toThrow('activity boom');
+
+    expect(finallyRan).toBe(true);
+    expect(caughtInGenerator).toBeInstanceOf(Error);
+  });
+
   it('records verification promises on speculative execution state', async () => {
     const verificationPromises: Promise<void>[] = [];
     const verify = mock(async () => true);

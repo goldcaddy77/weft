@@ -1,3 +1,4 @@
+import type { ComposedWorkflowInterceptor } from '../interceptor.ts';
 import type { HumanReviewOptions, HumanReviewResult } from '../review/index.ts';
 import { normalizeSessionStateLocals } from '../session-state.ts';
 import type {
@@ -56,6 +57,13 @@ export type {
   StreamReference,
   StreamSink,
 } from './types.ts';
+
+export function setContextWorkflowInterceptor(
+  context: Context,
+  workflowInterceptor: ComposedWorkflowInterceptor | null,
+): void {
+  getInternals(context).workflowInterceptor = workflowInterceptor;
+}
 
 /**
  * Concrete workflow execution context injected as the first argument of every
@@ -192,7 +200,21 @@ export class Context implements WorkflowContext {
     return yield* runActivityWithRetry(this, activity, rest);
   }
   *sleep(duration: Duration): Generator<ContextOperationRequest, void, unknown> {
-    return yield* durableOperations.sleep(this, getInternals(this), duration);
+    const internals = getInternals(this);
+    const prepared = durableOperations.prepareSleepOperation(internals, duration);
+    if (prepared.cached) return;
+    const execute = () => durableOperations.completePreparedSleepOperation(this, prepared);
+    if (!internals.workflowInterceptor) {
+      return yield* execute();
+    }
+    return yield* internals.workflowInterceptor.sleep(
+      {
+        workflowId: this.workflowId,
+        duration: prepared.milliseconds,
+        headers: new Map<string, string>(),
+      },
+      execute,
+    ) as Generator<ContextOperationRequest, void, unknown>;
   }
   *suspendUntil<T = unknown>(resumeToken: string): Generator<ContextOperationRequest, T, unknown> {
     return yield* this.waitForSignal<T>(resumeToken);
@@ -204,11 +226,24 @@ export class Context implements WorkflowContext {
   *waitForSignal<T = unknown>(
     nameOrDefinition: MessageName,
   ): Generator<ContextOperationRequest, T, unknown> {
-    return yield* durableOperations.waitForSignal<T>(
-      this,
-      getInternals(this),
-      messageName(nameOrDefinition),
-    );
+    const internals = getInternals(this);
+    const signalName = messageName(nameOrDefinition);
+    const execute = () => durableOperations.waitForSignal<T>(this, internals, signalName);
+    if (internals.accumulatedResults?.has(internals.stepIndex)) {
+      return yield* execute();
+    }
+    if (!internals.workflowInterceptor) {
+      return yield* execute();
+    }
+    return (yield* internals.workflowInterceptor.waitForSignal(
+      {
+        workflowId: this.workflowId,
+        signalName,
+        payload: undefined,
+        headers: new Map<string, string>(),
+      },
+      execute,
+    ) as Generator<ContextOperationRequest, unknown, unknown>) as T;
   }
   waitForUpdate<TInput, TOutput>(
     definition: UpdateDefinition<TInput, TOutput>,
