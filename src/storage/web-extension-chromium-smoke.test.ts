@@ -162,8 +162,10 @@ describe('WebExtensionStorage Chromium smoke', () => {
   runIfChromiumSmokeEnabled(
     'round-trips bytes through real chrome.storage.local',
     async () => {
-      // `shouldRunChromiumSmoke` already guarantees this is non-null when the
-      // test runs; this guard narrows the type for the `Bun.spawn` launch site.
+      // Unreachable at runtime — `shouldRunChromiumSmoke` already requires a
+      // non-null executable before this test is selected to run. The guard
+      // exists only to narrow `string | null` to `string` for the `Bun.spawn`
+      // launch site below.
       if (chromiumExecutable === null) {
         throw new Error('Chromium executable is required for this smoke test.');
       }
@@ -237,7 +239,7 @@ describe('WebExtensionStorage Chromium smoke', () => {
           value: [0, 1, 2, 255],
         });
       } finally {
-        server.stop(true);
+        await server.stop(true);
         chromiumProcess?.kill();
         await chromiumProcess?.exited.catch(() => {});
         rmSync(temporaryDirectory, { force: true, recursive: true });
