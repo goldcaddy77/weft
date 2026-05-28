@@ -471,9 +471,9 @@ async function runUpdateValidator(
 }
 
 /**
- * Extract issues from a Standard Schema v1 failure result, or return null.
- * Preserves the `path` as an RFC 6901 JSON Pointer when present, matching the
- * encoding used by the rest of the Standard Schema integration.
+ * Extract issues from a Standard Schema v1 failure result, or null if absent.
+ * No string-`message` entries yields `[]`; callers reject only on a non-empty
+ * array, so `null` and `[]` both mean acceptance. Preserves `path` (RFC 6901).
  */
 export function extractStandardSchemaIssues(
   result: unknown,
