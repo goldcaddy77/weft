@@ -119,11 +119,18 @@ function writeActivityRetryAttempt(
   const current = internals.checkpointLocals[ACTIVITY_RETRY_STATE_LOCAL_KEY];
   const attempts = isActivityRetryState(current) ? { ...current.attempts } : {};
   attempts[String(step)] = attempt;
+  // Preserve any completedRetrySleeps already recorded for earlier steps;
+  // rebuilding the slot with only `attempts` would erase them, causing a
+  // recovered workflow to re-run backoff sleeps it already completed.
+  const completedRetrySleeps = isActivityRetryState(current)
+    ? current.completedRetrySleeps
+    : undefined;
   internals.checkpointLocals = {
     ...internals.checkpointLocals,
     [ACTIVITY_RETRY_STATE_LOCAL_KEY]: {
       version: ACTIVITY_RETRY_STATE_VERSION,
       attempts,
+      ...(completedRetrySleeps === undefined ? {} : { completedRetrySleeps }),
     } satisfies ActivityRetryState,
   };
 }

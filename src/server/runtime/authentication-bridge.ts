@@ -120,6 +120,20 @@ function stripApiPrefix(request: Request): Request {
   return new Request(url, request);
 }
 
+/**
+ * Resolve the principal handed to the long-poll task endpoints. Only `/v1/tasks/`
+ * routes consume it, and only when an auth context exists, so other paths skip
+ * `authContextToPrincipal` and avoid turning a client auth error into a spurious
+ * failure on routes that never needed the principal.
+ */
+function resolveTaskPrincipal(
+  authContext: AuthContext | undefined,
+  url: URL,
+): ReturnType<typeof authContextToPrincipal> | undefined {
+  if (authContext === undefined || !url.pathname.startsWith('/v1/tasks/')) return undefined;
+  return authContextToPrincipal(authContext);
+}
+
 export async function handleServerFetchRequest(
   server: ReturnType<typeof Bun.serve>,
   context: ServerContext,
@@ -198,12 +212,25 @@ async function dispatchServerFetchRequest(
     });
   }
 
-  const taskPollResponse = await handleTaskPollRequest(context, options, request, url);
+  const taskPrincipal = resolveTaskPrincipal(authentication.authContext, url);
+  const taskPollResponse = await handleTaskPollRequest(
+    context,
+    options,
+    request,
+    url,
+    taskPrincipal,
+  );
   if (taskPollResponse !== null) {
     return taskPollResponse;
   }
 
-  const taskResultResponse = await handleTaskResultRequest(context, options, request, url);
+  const taskResultResponse = await handleTaskResultRequest(
+    context,
+    options,
+    request,
+    url,
+    taskPrincipal,
+  );
   if (taskResultResponse !== null) {
     return taskResultResponse;
   }

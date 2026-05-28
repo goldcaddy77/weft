@@ -171,6 +171,70 @@ describe('Temporal failure-handling parity', () => {
     expect(attempts).toEqual([1, 2]);
   });
 
+  it('preserves an earlier completed-retry-sleep across restart when a later activity retries', async () => {
+    // Regression: writeActivityRetryAttempt for a later step must not clobber
+    // the completedRetrySleeps recorded for an earlier retried step. The clobber
+    // is only observable across recovery: the persisted state replays, and a
+    // dropped completedRetrySleeps makes the recovered run re-execute the first
+    // activity's already-completed backoff sleep.
+    using engine = new TestEngine({ startTime: 0 });
+    const firstAttempts: number[] = [];
+    const secondAttempts: number[] = [];
+
+    const firstFlaky = activity({
+      name: 'parityFirstFlaky',
+      retry: { maxAttempts: 2, initialBackoff: 50, backoffMultiplier: 2, maxBackoff: 200 },
+      execute: async () => {
+        firstAttempts.push(firstAttempts.length + 1);
+        if (firstAttempts.length === 1) throw new Error('first transient');
+        return 'first-ok';
+      },
+    });
+    const secondFlaky = activity({
+      name: 'paritySecondFlaky',
+      retry: { maxAttempts: 2, initialBackoff: 75, backoffMultiplier: 2, maxBackoff: 200 },
+      execute: async () => {
+        secondAttempts.push(secondAttempts.length + 1);
+        if (secondAttempts.length === 1) throw new Error('second transient');
+        return 'second-ok';
+      },
+    });
+    const twoStepWorkflow = workflow({ name: 'parity-two-step-retry' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
+      const first = yield* ctx.run(firstFlaky);
+      const second = yield* ctx.run(secondFlaky);
+      return `${first}/${second}`;
+    });
+
+    engine.register(twoStepWorkflow);
+    const originalHandle = await engine.start('parity-two-step-retry', null);
+
+    // First activity fails, completes its 50ms backoff, succeeds. Second activity
+    // then fails and parks on its 75ms backoff — the moment its retry attempt is
+    // written, which must keep the first step's completedRetrySleeps intact.
+    await waitFor(() => firstAttempts.length === 1, { label: 'first activity attempt' });
+    await engine.advanceTime(50);
+    await waitFor(() => firstAttempts.length === 2, { label: 'first activity retry' });
+    await waitFor(() => secondAttempts.length === 1, { label: 'second activity attempt' });
+
+    // Recover with the second activity still parked on backoff.
+    using recovered = engine.recover();
+    engine[Symbol.dispose]();
+    recovered.register(twoStepWorkflow);
+    await recovered.recoverAll();
+
+    // The first activity's result is cached; recovery must not re-run it.
+    expect(firstAttempts).toEqual([1, 2]);
+
+    const recoveredHandle = recovered.getHandle(originalHandle.id);
+    await recovered.advanceTime(75);
+
+    await expect(recoveredHandle.result()).resolves.toBe('first-ok/second-ok');
+    expect(firstAttempts).toEqual([1, 2]);
+    expect(secondAttempts).toEqual([1, 2]);
+  });
+
   it('does not retry errors listed as non-retryable', async () => {
     using engine = new TestEngine({ startTime: 0 });
     let attempts = 0;
