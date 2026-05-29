@@ -260,6 +260,7 @@ function createFreshRunActivityRequest(
     type: 'activity',
     operationId: crypto.randomUUID(),
     activityName,
+    step,
     ...(activityFunction !== undefined ? { fn: activityFunction } : {}),
     input,
     callerStack: captureCallerStack(),

@@ -2,6 +2,7 @@ import type { BatchOperation } from '../../../storage/interface.ts';
 import { KEYS, encodeStorageKeyComponent } from '../../../storage/interface.ts';
 import { CleanupWarningEvent } from '../../events.ts';
 import type { WorkflowState, WorkflowStatus } from '../../types.ts';
+import { asyncActivityWorkflowPrefix } from '../async-activity-completion.ts';
 import { forgetCommittedCheckpointBytes } from '../checkpoint-commit-snapshots.ts';
 import type { EngineInternals } from '../internals.ts';
 import { parseTerminalCleanupTimerId, workflowFeedListenerKey } from '../state-utilities.ts';
@@ -179,6 +180,7 @@ export async function cleanupWorkflowStorage(
   // effect volume across the engine's lifetime.
   const prefixes: string[] = [
     KEYS.activityReconciliationPrefix(workflowId),
+    asyncActivityWorkflowPrefix(workflowId),
     KEYS.signalAcceptedResponsePrefix(workflowId),
     `sig:${encodedWorkflowId}:`,
     `state:execution:${encodedWorkflowId}:`,
@@ -246,6 +248,11 @@ export function cleanupTerminalWorkflowMemory(
   forgetCommittedCheckpointBytes(internals, workflowId);
   internals.checkpoints.delete(workflowId);
   internals.heartbeatDetails.delete(workflowId);
+  for (const [token, pending] of internals.pendingAsyncActivities) {
+    if (pending.workflowId === workflowId) {
+      internals.pendingAsyncActivities.delete(token);
+    }
+  }
   internals.eventLogHeads.delete(workflowId);
   internals.pendingTimelineEntries.delete(workflowId);
   internals.parkedInlineWorkflows.delete(workflowId);

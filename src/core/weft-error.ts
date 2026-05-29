@@ -47,6 +47,7 @@ export type WeftErrorCode =
   | 'ActivityReconciliationCapabilityError'
   | 'ActivityReconciliationConflictError'
   | 'ActivityReconciliationIndeterminateError'
+  | 'AsyncActivityTokenNotFoundError'
   | 'PayloadSizeExceededError';
 
 /**
@@ -107,6 +108,7 @@ const publicWeftErrorCodeMap = {
   ActivityReconciliationCapabilityError: true,
   ActivityReconciliationConflictError: true,
   ActivityReconciliationIndeterminateError: true,
+  AsyncActivityTokenNotFoundError: true,
   PayloadSizeExceededError: true,
 } satisfies Record<WeftErrorCode, true>;
 

@@ -28,6 +28,7 @@ export {
   ActivityReconciliationConflictError,
   ActivityReconciliationIndeterminateError,
   ActivityResolutionError,
+  AsyncActivityTokenNotFoundError,
   BulkDeleteRequiresTerminalWorkflowsError,
   BulkOperationConfirmationError,
   Engine,
@@ -188,6 +189,7 @@ export type {
 } from './alerting/types';
 // Events
 export {
+  ActivityAsyncPendingEvent,
   ActivityCompletedEvent,
   ActivityFailedEvent,
   ActivityStartedEvent,

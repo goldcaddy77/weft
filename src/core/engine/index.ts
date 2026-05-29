@@ -75,6 +75,11 @@ import {
   type AggregateOptions,
   type AggregateResult,
 } from './aggregate.ts';
+import {
+  completeAsyncActivity as completeAsyncActivityFromInternals,
+  failAsyncActivity as failAsyncActivityFromInternals,
+  recoverPendingAsyncActivities,
+} from './async-activity-completion.ts';
 import { broadcast as broadcastFromInternals, type BroadcastCallbacks } from './broadcast.ts';
 import {
   cancelAll as cancelAllWorkflows,
@@ -199,10 +204,15 @@ import {
 } from './schedules.ts';
 import { signal as signalWorkflow } from './signals.ts';
 import { loadScheduleState, loadWorkflowState } from './storage-io.ts';
-import { getComposedWorkflowInterceptor, swallowPromiseRejection } from './strategy-helpers.ts';
+import {
+  feedOperationResult,
+  getComposedWorkflowInterceptor,
+  swallowPromiseRejection,
+} from './strategy-helpers.ts';
 import {
   cancelWorkflow as cancelWorkflowFromTermination,
   cleanupWaiters as cleanupWaitersFromTermination,
+  finalizePendingTimelineEntry,
   timeoutWorkflow as timeoutWorkflowFromTermination,
   type TerminationCallbacks,
 } from './termination.ts';
@@ -227,6 +237,8 @@ export {
   ActivityReconciliationConflictError,
   ActivityReconciliationIndeterminateError,
 } from './activity-reconciliation.ts';
+export { AsyncActivityTokenNotFoundError } from './async-activity-completion.ts';
+export type { PendingAsyncActivity } from './async-activity-completion.ts';
 export type {
   PendingTimelineEntry,
   RegistrationEntry,
@@ -494,6 +506,7 @@ export class Engine<
       );
     }
     getInternals(this).heartbeatDetails = new Map();
+    getInternals(this).pendingAsyncActivities = new Map();
     getInternals(this).pendingStarts = new Set();
     getInternals(this).pendingScheduleCreations = new Set();
     getInternals(this).workflowsNeedingTerminalCleanup = new Set();
@@ -1120,7 +1133,52 @@ export class Engine<
    * {@link WorkflowRecoverySkippedEvent}.
    */
   async recoverAll(options?: RecoverAllOptions): Promise<WorkflowHandle[]> {
+    // Reload durable async-activity tokens first so a callback that arrives
+    // before (or during) workflow replay still resolves a parked activity.
+    await recoverPendingAsyncActivities(getInternals(this));
     return recoverAllFromLifecycle(getInternals(this), this.#createLifecycleCallbacks(), options);
+  }
+
+  /**
+   * Complete a deferred activity out-of-band with `result`. The activity must
+   * have parked itself via `ActivityContext.completeAsync()`; pass the durable
+   * task token announced through the `activity:async-pending` event (or
+   * persisted by your callback dispatcher). The parked workflow resumes as
+   * though the activity had returned `result` inline.
+   *
+   * @throws {AsyncActivityTokenNotFoundError} when no pending activity matches
+   * the token (unknown, or already completed/failed — tokens are single-use).
+   */
+  async completeAsyncActivity(token: string, result: unknown): Promise<void> {
+    await completeAsyncActivityFromInternals(
+      getInternals(this),
+      token,
+      result,
+      (workflowId, outcome) => feedOperationResult(getInternals(this), workflowId, outcome),
+      (workflowId, status, output) =>
+        finalizePendingTimelineEntry(getInternals(this), workflowId, status, output),
+    );
+  }
+
+  /**
+   * Fail a deferred activity out-of-band with `error`. The error is thrown into
+   * the workflow generator at the parked step — identical to an inline activity
+   * that threw — so the workflow's own try/catch and any configured retry
+   * policy apply unchanged.
+   *
+   * @throws {AsyncActivityTokenNotFoundError} when no pending activity matches
+   * the token (unknown, or already completed/failed — tokens are single-use).
+   */
+  async failAsyncActivity(token: string, error: unknown): Promise<void> {
+    await failAsyncActivityFromInternals(
+      getInternals(this),
+      token,
+      error,
+      (workflowId, outcome, originalReason) =>
+        feedOperationResult(getInternals(this), workflowId, outcome, originalReason),
+      (workflowId, status, output) =>
+        finalizePendingTimelineEntry(getInternals(this), workflowId, status, output),
+    );
   }
   async cancel(workflowId: string): Promise<void> {
     await cancelWorkflowFromTermination(

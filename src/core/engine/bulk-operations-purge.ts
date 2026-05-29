@@ -15,6 +15,7 @@ import type {
   WorkflowState,
 } from '../types.ts';
 import { buildWorkflowTagIndexOperations, normalizeWorkflowTags } from '../workflow-tags.ts';
+import { asyncActivityWorkflowPrefix } from './async-activity-completion.ts';
 import { forgetCommittedCheckpointBytes } from './checkpoint-commit-snapshots.ts';
 import type { EngineInternals } from './internals.ts';
 import { streamWorkflowStates } from './listing.ts';
@@ -209,6 +210,11 @@ export async function purgeWorkflow(
   forgetCommittedCheckpointBytes(internals, workflowId);
   internals.checkpoints.delete(workflowId);
   internals.heartbeatDetails.delete(workflowId);
+  for (const [token, pending] of internals.pendingAsyncActivities) {
+    if (pending.workflowId === workflowId) {
+      internals.pendingAsyncActivities.delete(token);
+    }
+  }
   internals.eventLogHeads.delete(workflowId);
   internals.workflowVersionTuples.delete(workflowId);
   internals.handleCache.delete(workflowId);
@@ -342,6 +348,7 @@ function workflowPurgePrefixes(workflowId: string): string[] {
     `tool-effect:${encodedWorkflowId}:`,
     `upk:${encodedWorkflowId}:`,
     `actrec:v1:${encodedWorkflowId}:`,
+    asyncActivityWorkflowPrefix(workflowId),
     `sigres:v1:${encodedWorkflowId}:`,
   ];
 }
