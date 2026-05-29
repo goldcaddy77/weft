@@ -17,8 +17,9 @@
  *
  * ## Running
  *
- * Gate: WEFT_CHROMIUM_INDEXEDDB_SMOKE=1 must be set. Otherwise all tests skip.
- * This test does NOT run in the default `bun test` pass.
+ * Gate: WEFT_BROWSER_SMOKE=1 must be set (the shared flag for all real-browser
+ * smokes). Otherwise all tests skip. This test does NOT run in the default
+ * `bun test` pass.
  *
  * Browser provisioning: `bunx playwright install chromium` (run once; the CI
  * ticket wires this into the workflow). No CHROMIUM_PATH discovery needed —
@@ -45,7 +46,7 @@ import { chromium } from 'playwright';
 
 import type { StorageCapabilities } from './capabilities.ts';
 
-const shouldRun = Bun.env['WEFT_CHROMIUM_INDEXEDDB_SMOKE'] === '1';
+const shouldRun = Bun.env['WEFT_BROWSER_SMOKE'] === '1';
 
 /**
  * Build the IndexedDB adapter as a browser-compatible IIFE and return its
