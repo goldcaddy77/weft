@@ -217,7 +217,18 @@ let baseUrl: string;
         (attribute) => document.documentElement.getAttribute(attribute),
         RESULT_ATTRIBUTE,
       );
-      const result = JSON.parse(raw ?? 'null') as SmokeResult;
+      const result = JSON.parse(raw ?? 'null') as SmokeResult | null;
+
+      // Surface a content-script failure (or a missing result) as its real
+      // message rather than an opaque object-diff on the `toEqual` below.
+      if (result === null) {
+        throw new Error('Result attribute was present but evaluated to null.');
+      }
+      if (!result.ok) {
+        throw new Error(
+          `Content script reported failure: ${result.message}\n${result.stack ?? ''}`,
+        );
+      }
 
       expect(result).toEqual({
         ok: true,
