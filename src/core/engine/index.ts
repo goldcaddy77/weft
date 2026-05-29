@@ -1,6 +1,11 @@
 /* oxlint-disable max-lines -- Engine's public overload signatures (~191 lines: register/start/signal/update/query, the five bulk dry-run-vs-commit methods, schedule, and static create) plus member JSDoc (~130 lines) ARE the published declaration surface, gated byte-for-byte by verify:jsdoc:declarations and the scoped Engine class-block .d.ts oracle; the irreducible declaration floor alone (>=531 lines, counted with skipBlankLines:false skipComments:false) exceeds the 500 ceiling before any method body is counted. The aggressive class split was attempted (task 3765ffa6, documentation/engine-split-log/PR-33.md): a class-expression mixin regresses the emitted .d.ts (Engine extends a synthetic any-typed Engine_base intersection; schedule methods leave the Engine block), and a verbatim class move only relocates this suppression because max-lines is repo-wide; rejected. All extractable bodies live in ~90 sibling modules under src/core/engine/. */
 import { KEYS, type Storage as WeftStorage } from '../../storage/interface.ts';
-import { ActivityRegistry, type ActivityMetadata } from '../activity-registry.ts';
+import {
+  ActivityRegistry,
+  type ActivityMetadata,
+  type ActivityRegistrationOptions,
+  type RegisteredActivityFunction,
+} from '../activity-registry.ts';
 import { AtomicState, type AtomicStateOptions } from '../atomic-state.ts';
 import type { StoredStreamChunk } from '../context.ts';
 import { createHandleCacheFinalizer } from '../engine-helpers.ts';
@@ -47,6 +52,7 @@ import {
   type ScheduleSummary,
   type SearchAttributeValue,
   type SignalDefinition,
+  type SignalDeliveryOptions,
   type StartOptions,
   type SubmitReviewOptions,
   type TypedListFilter,
@@ -86,6 +92,7 @@ import {
   createTerminationCallbacks as createTerminationCallbacksForEngine,
   createUpdateCallbacks as createUpdateCallbacksForEngine,
 } from './callback-creators.ts';
+import { registerCancelHandler } from './cancel-handlers.ts';
 import {
   getCheckpointAt as getCheckpointStateAt,
   getEvents as getWorkflowEvents,
@@ -139,7 +146,7 @@ import {
   resumeParkedInlineWorkflow as resumeParkedInlineWorkflowFromInternals,
   type InlineParkingCallbacks,
 } from './inline-parking.ts';
-import { appendCancelHandler, getInternals, initializeInternals } from './internals.ts';
+import { getInternals, initializeInternals } from './internals.ts';
 import {
   fork as forkFromLifecycle,
   recoverAll as recoverAllFromLifecycle,
@@ -214,6 +221,11 @@ import {
   type WorkflowFeedSelector,
 } from './workflow-feed.ts';
 
+export {
+  ActivityReconciliationCapabilityError,
+  ActivityReconciliationConflictError,
+  ActivityReconciliationIndeterminateError,
+} from './activity-reconciliation.ts';
 export type {
   PendingTimelineEntry,
   RegistrationEntry,
@@ -382,11 +394,14 @@ export class Engine<
       }
 
       if (options.recover === true) {
-        const recoverOptions =
-          options.acknowledgeUnknownWorkflowTypes === undefined
-            ? undefined
-            : { acknowledgeUnknownWorkflowTypes: options.acknowledgeUnknownWorkflowTypes };
-        await engine.recoverAll(recoverOptions);
+        await engine.recoverAll({
+          ...(options.acknowledgeUnknownWorkflowTypes !== undefined
+            ? { acknowledgeUnknownWorkflowTypes: options.acknowledgeUnknownWorkflowTypes }
+            : {}),
+          ...(options.requireConcurrentResumeSafety !== undefined
+            ? { requireConcurrentResumeSafety: options.requireConcurrentResumeSafety }
+            : {}),
+        });
       }
     } catch (error) {
       // Constructor side effects (broadcast channel, scheduler, dispatchers,
@@ -415,10 +430,10 @@ export class Engine<
       development: resolvedOptions.development,
       broadcastEvents: resolvedOptions.broadcastEvents,
       getRegistration: getInternals(this).registrations.get.bind(getInternals(this).registrations),
+      getComposedWorkflowInterceptor: () => getComposedWorkflowInterceptor(getInternals(this)),
       resolveWorkflowType: this.#resolveWorkflowTypeTarget.bind(this),
-      registerCancelHandler: (workflowId, handler) => {
-        appendCancelHandler(getInternals(this), workflowId, handler);
-      },
+      registerCancelHandler: (workflowId, handler) =>
+        registerCancelHandler(getInternals(this), workflowId, handler),
     });
     getInternals(this).storage = storage;
     getInternals(this).abortController = new AbortController();
@@ -730,6 +745,22 @@ export class Engine<
     getInternals(this).activityRegistry.register(definition.name, definition);
   }
 
+  protected resolveRegisteredActivity(name: string): RegisteredActivityFunction | undefined {
+    return getInternals(this).activityRegistry.resolve(name);
+  }
+
+  protected registerActivityFunction(
+    name: string,
+    fn: Function,
+    options?: ActivityRegistrationOptions,
+  ): void {
+    getInternals(this).activityRegistry.register(name, fn, options);
+  }
+
+  protected unregisterRegisteredActivity(name: string): void {
+    getInternals(this).activityRegistry.unregister(name);
+  }
+
   getWorkflowDefinition(type: string): RegisteredWorkflowDefinition | undefined {
     const registration = getInternals(this).registrations.get(type);
     return registration === undefined ? undefined : copyWorkflowDefinition(type, registration);
@@ -976,27 +1007,41 @@ export class Engine<
     workflowId: string,
     name: SignalDefinition<TInput>,
     payload: TInput,
+    options?: SignalDeliveryOptions,
   ): Promise<void>;
-  async signal(workflowId: string, name: string, payload?: unknown): Promise<void>;
+  async signal(
+    workflowId: string,
+    name: string,
+    payload?: unknown,
+    options?: SignalDeliveryOptions,
+  ): Promise<void>;
   async signal(
     workflowId: string,
     nameOrDefinition: MessageName,
     payload?: unknown,
+    options?: SignalDeliveryOptions,
   ): Promise<void> {
-    return signalWorkflow(getInternals(this), workflowId, messageName(nameOrDefinition), payload, {
-      loadWorkflowState: (id) => loadWorkflowState(getInternals(this), id),
-      dispatchEvent: (event) => this.dispatchEvent(event),
-      broadcast: (message) => this.#broadcast(message),
-      getComposedInterceptor: () => getComposedWorkflowInterceptor(getInternals(this)),
-      resumeParkedInlineWorkflow: (id) =>
-        swallowPromiseRejection(
-          resumeParkedInlineWorkflowFromInternals(
-            getInternals(this),
-            id,
-            this.#createInlineParkingCallbacks(),
+    return signalWorkflow(
+      getInternals(this),
+      workflowId,
+      messageName(nameOrDefinition),
+      payload,
+      {
+        loadWorkflowState: (id) => loadWorkflowState(getInternals(this), id),
+        dispatchEvent: (event) => this.dispatchEvent(event),
+        broadcast: (message) => this.#broadcast(message),
+        getComposedInterceptor: () => getComposedWorkflowInterceptor(getInternals(this)),
+        resumeParkedInlineWorkflow: (id) =>
+          swallowPromiseRejection(
+            resumeParkedInlineWorkflowFromInternals(
+              getInternals(this),
+              id,
+              this.#createInlineParkingCallbacks(),
+            ),
           ),
-        ),
-    });
+      },
+      options,
+    );
   }
   async update(
     workflowId: string,

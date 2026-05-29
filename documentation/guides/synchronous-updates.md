@@ -78,7 +78,7 @@ The `timeout` option defaults to 30 seconds. If the workflow doesn't respond in 
 The HTTP API offers the same capability:
 
 ```
-POST /v1/workflows/:id/update/:name
+POST /api/v1/workflows/:id/update/:name
 {
   "payload": { "code": "SAVE20" },
   "timeout": 5000
@@ -100,7 +100,7 @@ Behind the scenes, the `UpdateCoordinator` class manages the full lifecycle. Whe
 3. The response is written atomically with the checkpoint: the request is deleted, the response is stored at `upr:{updateId}`, and the checkpoint is updated—all in one `batch()` call.
 4. The caller's promise resolves with the response.
 
-If the server crashes between receiving the request and delivering the response, the update request is already persisted. After recovery, the workflow processes it and writes the response. The caller can poll `GET /v1/updates/:updateId` to retrieve it.
+If the server crashes between receiving the request and delivering the response, the update request is already persisted. After recovery, the workflow processes it and writes the response. The caller can poll `GET /api/v1/updates/:updateId` to retrieve it.
 
 ## Idempotency
 
@@ -116,7 +116,7 @@ const result = await handle.update(
 );
 ```
 
-`handle.update()` accepts only `{ timeout }`—it is the in-process fast path and intentionally does not expose idempotency. For cross-process retries with idempotency guarantees, use `engine.submitCoordinatedUpdate()` directly or the HTTP path (`POST /v1/workflows/:id/update/:name` with an `idempotencyKey` field).
+`handle.update()` accepts only `{ timeout }`—it is the in-process fast path and intentionally does not expose idempotency. For cross-process retries with idempotency guarantees, use `engine.submitCoordinatedUpdate()` directly or the HTTP path (`POST /api/v1/workflows/:id/update/:name` with an `idempotencyKey` field).
 
 The mapping from idempotency key to update ID is stored at `upk:{workflowId}:{key}`.
 

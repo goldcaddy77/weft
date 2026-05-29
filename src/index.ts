@@ -24,6 +24,9 @@ export {
 export type { FaultCode } from './core/fault-code.ts';
 // Core
 export {
+  ActivityReconciliationCapabilityError,
+  ActivityReconciliationConflictError,
+  ActivityReconciliationIndeterminateError,
   ActivityResolutionError,
   BulkDeleteRequiresTerminalWorkflowsError,
   BulkOperationConfirmationError,
@@ -63,6 +66,9 @@ export type {
   ActivityMapInput,
   ActivityObjectInput,
   ActivityResultFor,
+  ActivityVerificationContext,
+  ActivityVerificationPhase,
+  ActivityVerificationResult,
   AnyActivityDefinition,
   AnyWorkflowDefinition,
   ArchiveAdapter,
@@ -135,6 +141,7 @@ export type {
   SearchAttributeValue,
   Serializer,
   SignalDefinition,
+  SignalDeliveryOptions,
   SignalMap,
   SignalPayload,
   StartOptions,
@@ -318,7 +325,13 @@ export {
   searchAttribute,
 } from './core/search-attributes';
 
-export { UpdateCoordinator, UpdateTimeoutError, WorkflowTerminalError } from './core/updates';
+export type { UpdateHandlerOptions } from './core/context/updates';
+export {
+  UpdateCoordinator,
+  UpdateTimeoutError,
+  UpdateValidationError,
+  WorkflowTerminalError,
+} from './core/updates';
 
 export {
   VersionMismatchError,

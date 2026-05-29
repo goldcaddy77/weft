@@ -21,7 +21,7 @@ Checklist for reviewing security-sensitive changes in the weft durable execution
 - Modifying workflow execution, checkpoint replay, or activity dispatch (`src/core/`)
 - Changing storage backends or serialization (`src/storage/`, `src/core/codec.ts`)
 - Adding new public API surface (`src/index.ts`)
-- Handling environment variables or secrets (`src/environment.ts`)
+- Handling environment variables or secrets (`WEFT_*` reads via `Bun.env`)
 
 ## Checklist
 
@@ -54,15 +54,16 @@ Routes that accept bodies include workflow start, signal, update, query, attribu
 
 ### 3. Workflow Trust Boundary
 
-**Files**: `src/core/engine.ts`, `src/core/context.ts`, `src/core/checkpoint.ts`
+**Files**: `src/core/engine.ts`, `src/core/context.ts`, `src/core/checkpoint.ts`, `src/core/worker-execution-strategy.ts`
 
 User-defined workflow functions run inside the engine. They should not be able to:
 
 - [ ] Access engine internals or other workflows' state
 - [ ] Corrupt checkpoint data (verify checkpoint writes are atomic)
 - [ ] Inject arbitrary data that gets `eval()`'d or `new Function()`'d on replay
-- [ ] Cause unbounded memory growth through oversized checkpoint payloads
+- [ ] Cause unbounded memory growth through oversized checkpoint payloads; `payloadSize.maxBytes` must reject workflow inputs, signal payloads, and activity results before any durable write
 - [ ] Escape the workflow context to access the underlying storage directly
+- [ ] Bypass the explicit trust posture: untrusted workflow code uses `workflowExecutionMode: 'worker'` with bounded turn timeouts and protocol-message sizes, while `workflowExecutionMode: 'inline'` rejects `workerExecution`
 
 ### 4. Storage and Serialization
 
@@ -73,6 +74,7 @@ User-defined workflow functions run inside the engine. They should not be able t
 - [ ] Storage keys constructed from user input (workflow IDs, attribute names) are bounded in length and character set
 - [ ] Bounded range deletes go through `storageDeleteRange()` or the same normalized bounds; unbounded deletion must use explicit `deletePrefix()`, never a malformed `deleteRange()`
 - [ ] Bounded delete tests cover empty options rejection, invalid negative limits, impossible bound intersections, and scoped-storage prefix-smuggling attempts
+- [ ] Event-log compaction deletes only behind a confirmed checkpoint and writes the watermark atomically with that checkpoint commit; archive adapters are best-effort post-commit sinks, not durability barriers
 - [ ] Batch operations in storage cannot be used to overwrite keys belonging to other workflows
 - [ ] IndexedDB storage (`src/storage/indexeddb.ts`) applies the same key validation
 
@@ -87,16 +89,16 @@ User-defined workflow functions run inside the engine. They should not be able t
 
 ### 6. Input Validation at API Boundaries
 
-- [ ] Public-facing functions validate inputs with Zod or explicit type guards (following the `src/environment.ts` pattern)
+- [ ] Public-facing functions validate inputs with Zod or explicit type guards
 - [ ] No `any` types at trust boundaries: server routes, storage interface methods, public API exports
 - [ ] Duration strings passed to `parseDuration()` are validated (reject nonsensical values like negative durations)
 - [ ] Workflow IDs and signal/update names are validated for length and character set
 
 ### 7. Credential and Secret Handling
 
-**File**: `src/environment.ts`
+**Pattern**: `WEFT_*` variables read directly via `Bun.env`, validated at the point of use
 
-- [ ] Environment variables accessed via `Bun.env` and validated through Zod schemas
+- [ ] Environment variables accessed via `Bun.env` and validated where they are consumed
 - [ ] Secrets are not included in: log output, error messages, checkpoint data, HTTP responses, metrics
 - [ ] `.env` files are in `.gitignore`
 - [ ] No hardcoded credentials, tokens, or API keys in source code

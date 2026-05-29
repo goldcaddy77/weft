@@ -26,17 +26,20 @@ This works under Bun and Node. The path lives under `${tmpdir()}/weft-default/<c
 
 Use the narrowest adapter that matches where the engine runs:
 
-| Backend                | Environment       | Persistence | Optional dep     | Notes                                     |
-| ---------------------- | ----------------- | ----------- | ---------------- | ----------------------------------------- |
-| `MemoryStorage`        | All               | No          | None             | Tests/demos only—data lost on restart.    |
-| `SQLiteStorage` (Bun)  | Bun               | Yes         | None             | Default for the Bun runtime.              |
-| `SQLiteStorage` (Node) | Node >= 22        | Yes         | None             | Default for the Node runtime.             |
-| `LMDBStorage`          | Bun/Node          | Yes         | `lmdb`           | High-throughput memory-mapped key-value.  |
-| `TursoStorage`         | Bun/Node          | Yes         | `@libsql/client` | libSQL/Turso for edge or serverless.      |
-| `IndexedDBStorage`     | Browser           | Yes         | None             | Browser native; no SQL passthrough.       |
-| `WebExtensionStorage`  | Browser extension | Yes         | None             | `chrome.storage` / `browser.storage`.     |
-| `HTTPStorage`          | All               | Remote      | None             | Connects to a remote Weft storage API.    |
-| `CompressedStorage`    | All               | Wrapper     | None             | Wraps another adapter; compresses values. |
+| Backend                | Environment       | Persistence | Stability tier                 | Optional dep     | Notes                                     |
+| ---------------------- | ----------------- | ----------- | ------------------------------ | ---------------- | ----------------------------------------- |
+| `MemoryStorage`        | All               | No          | Candidate-stable for tests/dev | None             | Tests/demos only—data lost on restart.    |
+| `SQLiteStorage` (Bun)  | Bun               | Yes         | Candidate-stable, provisional  | None             | Default for the Bun runtime.              |
+| `SQLiteStorage` (Node) | Node >= 22        | Yes         | Candidate-stable, provisional  | `better-sqlite3` | Default for the Node runtime.             |
+| `LMDBStorage`          | Bun/Node          | Yes         | Candidate-stable, provisional  | `lmdb`           | High-throughput memory-mapped key-value.  |
+| `TursoStorage`         | Bun/Node          | Yes         | Experimental                   | `@libsql/client` | Stable tier is pending conformance proof. |
+| `IndexedDBStorage`     | Browser           | Yes         | Experimental                   | None             | Browser native; no SQL passthrough.       |
+| `WebExtensionStorage`  | Browser extension | Yes         | Experimental                   | None             | `chrome.storage` / `browser.storage`.     |
+| `HTTPStorage`          | All               | Remote      | Experimental                   | None             | Connects to a remote Weft storage API.    |
+| `CompressedStorage`    | All               | Wrapper     | Experimental                   | None             | Wraps another adapter; compresses values. |
+
+> [!NOTE]
+> Candidate-stable is provisional while the [Tier-0 Behavioral Contract](../architecture/tier-0-behavioral-contract.md) is still shaping failure semantics. The storage adapters above keep their current capability contracts, but Tier-0 work may still add guarded failure modes when a deployment asks for behavior a backend cannot provide. The experimental browser adapters (`IndexedDBStorage`, `WebExtensionStorage`) graduate on a separate, mechanical criterion: their real-browser smoke tests must be green in a required CI gate. See the [browser-surface promotion gate](../roadmap-to-1.0.md#browser-surface-promotion-gate).
 
 ## Advanced: choosing a backend explicitly
 
@@ -115,6 +118,8 @@ type StorageCapabilities = {
 
 The engine depends on four guarantees. **`atomicBatch`** keeps a checkpoint commit all-or-nothing. **`readAfterWrite`** lets a resume observe the checkpoint it just wrote. **`scanConsistency`** keeps visibility and index scans from seeing torn writes. **`conditionalBatch`** backs compare-and-swap state, including storage-backed workflow state and operations that must commit only if the current value still matches the caller's expectation.
 
+The Tier-0 failure-semantics contract relies on this capability split for activity reconciliation, signal idempotency, and checkpoint ownership. See [Tier-0 Behavioral Contract](../architecture/tier-0-behavioral-contract.md) for the implementation gates.
+
 The honest profile per built-in adapter:
 
 | Adapter               | readAfterWrite | scanConsistency | atomicBatch | conditionalBatch | boundedRangeDelete |
@@ -122,7 +127,7 @@ The honest profile per built-in adapter:
 | `MemoryStorage`       | `linearizable` | `snapshot`      | yes         | yes              | yes                |
 | `BunSQLiteStorage`    | `linearizable` | `snapshot`      | yes         | yes              | yes                |
 | `NodeSQLiteStorage`   | `linearizable` | `snapshot`      | yes         | yes              | no                 |
-| `LMDBStorage`         | `linearizable` | `snapshot`      | yes         | yes              | yes                |
+| `LMDBStorage`         | `linearizable` | `snapshot`      | yes         | yes              | no                 |
 | `IndexedDBStorage`    | `linearizable` | `best-effort`   | yes         | yes              | yes                |
 | `TursoStorage`        | `session`      | `snapshot`      | yes         | yes              | yes                |
 | `HTTPStorage`         | `eventual`     | `best-effort`   | yes         | no (opt-in)      | no                 |
@@ -140,7 +145,7 @@ Three kinds of capability, treated differently:
 **The opaque-value invariant:** adapters and decorators must treat stored values as opaque bytes and must not inspect or depend on value contents — values may later be encrypted or compressed. The engine ranges only over keys, never value bytes. This is why `CompressedStorage`, which transforms value bytes, downgrades `conditionalBatch` to `false`: a caller-supplied `expectedValue` can never byte-match the compressed stored value.
 
 > [!NOTE] `boundedRangeDelete`
-> `true` means `deletePrefix()` or `deleteRange()` can run as a single bounded operation (one SQL `DELETE`, an `IDBKeyRange` delete, or an LMDB range delete). `false` means the adapter falls back to the derived scan-and-delete loop — the operation still works, it just is not a single native bounded delete.
+> `true` means `deletePrefix()` or `deleteRange()` runs as a single native bounded operation (one SQL `DELETE` or an `IDBKeyRange` delete). `false` means the adapter uses a two-phase scan-and-delete approach — first collecting matching keys into memory, then deleting them in a batch — or falls back to the derived scan-and-delete loop. The operation still works either way; this is a performance claim, not a correctness gate.
 
 `deleteRange(prefix, options)` deletes only keys under `prefix` that also satisfy at least one lexicographic bound (`gt`, `gte`, `lt`, or `lte`). The public `storageDeleteRange()` dispatcher validates the bounds, rejects unbounded requests, normalizes `limit`, and falls back to a bounded `scan()` plus `batch()` loop when the adapter does not provide a native method. Use it for checkpoint-history or event-log truncation below a known watermark; use `deletePrefix()` for intentional whole-prefix cleanup.
 
@@ -154,6 +159,7 @@ wf:{id}:ckpt                                  -- latest checkpoint
 wf:{id}:ckpt:{step}                           -- checkpoint history
 op:{queue}:{scheduled}:{id}                   -- operation (sorted by queue + time)
 ev:{workflowId}:{seq}                         -- event (sorted by workflow + sequence)
+ev:{workflowId}:watermark                     -- compaction watermark for truncated events
 sig:{workflowId}:{name}:{id}                  -- signal
 wf-deadline:{deadline}:{workflowId}           -- timeout deadline
 attr:{workflowId}                             -- search attributes
@@ -165,6 +171,12 @@ upr:{updateId}                                -- update response
 This listing covers the primary keys. The full canonical list—including `wf:{id}:timeline:`, `schedule:`, `op:inflight:`, `tag:`, `upk:` (idempotency), `budget:`, `archive:`, `state:execution:`, `state:workflow:`, `blob:`, and others—is in `KEYS` in `src/storage/interface.ts`.
 
 All timestamps are zero-padded to 16 digits for correct lexicographic ordering. So `scan("op:default:")` returns all operations on the "default" queue in scheduled order—the core hot path is a single range scan, regardless of backend.
+
+### Event-log compaction
+
+Long-running workflows can reclaim old event-log records with `new Engine({ history: { retentionWindow } })`. The canonical checkpoint is the compacted state used for resume, so compaction deletes only records older than a confirmed checkpoint and writes `ev:{workflowId}:watermark` atomically with that checkpoint commit. Verification starts from the watermark and still checks the surviving tail against the event-log head, so a compacted log is not treated as corrupt merely because its prefix was intentionally removed.
+
+Compaction is bounded and incremental. The watermark only moves forward, so raising `retentionWindow` later cannot restore records that were already deleted. `history.maxEvents` still counts lifetime event-log sequence; compaction reclaims storage but does not make the workflow semantically younger. When `archive` is configured, compacted ranges are exported after deletion commits; archive failures do not roll back the checkpoint.
 
 ## Per-backend configuration
 
@@ -319,7 +331,7 @@ Wraps any `Storage` implementation. Disposing the `CompressedStorage` disposes t
 
 ## Troubleshooting
 
-**Missing optional dependencies (`lmdb`, `@libsql/client`).** `LMDBStorage` and `TursoStorage` import their dependencies lazily. If the package isn't installed, you'll see an error like `Cannot find module 'lmdb'` or `Cannot find module '@libsql/client'` when you first call `resolveStorage` or instantiate the adapter. Install with `bun add lmdb` or `bun add @libsql/client`.
+**Missing optional dependencies (`better-sqlite3`, `lmdb`, `@libsql/client`).** `NodeSQLiteStorage`, `LMDBStorage`, and `TursoStorage` import their dependencies lazily. If the package isn't installed, you'll see an error when you first call `resolveStorage` or instantiate the adapter. Install the adapter you selected with `bun add better-sqlite3`, `bun add lmdb`, or `bun add @libsql/client`.
 
 **`weft/storage/auto` in a browser bundler.** The module statically imports Node built-ins, so bundlers like Vite or webpack will fail or warn when targeting the browser. Switch to `weft/storage/indexeddb` directly, or use `setupServiceWorker()` from `weft/service-worker`. If you need a single configuration that works across runtimes including browsers, use `resolveStorage({ type: 'auto' })` instead—it lazy-loads adapters and includes browser fallbacks.
 

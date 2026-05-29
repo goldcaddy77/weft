@@ -27,7 +27,7 @@ Start the local server and dashboard:
 bun run server
 ```
 
-The dashboard is available at `http://localhost:7321/ui`.
+The dashboard is available at `http://localhost:7321/`.
 
 The server stores state in `./order-processing.sqlite` by default. Set `WEFT_DATABASE_PATH` when
 you want both terminals to use a different SQLite file.

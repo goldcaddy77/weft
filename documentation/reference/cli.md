@@ -2,6 +2,11 @@
 
 Weft provides a command-line interface for running the server and diagnosing database state.
 
+This reference documents the source/binary `weft` CLI entrypoint (`src/cli-main.ts`). The published [`weft` package](https://www.npmjs.com/package/weft) at 0.1.0 installs only the [`weft-mcp`](api-server.md#mcp-server) binary; [`bun add weft`](https://bun.sh/docs/cli/add) does not put a `weft` command on your `PATH` yet. Use these commands from a source checkout or from a standalone binary built from this repository until the package publishes a `weft` bin.
+
+> [!NOTE]
+> [`serve`](#serve-default) and [`doctor`](#doctor) are the candidate-stable source/binary CLI commands for the pre-1.0 launch plan. [`conformance`](#conformance), [`codegen`](#codegen), and other specialized commands are useful, but their flags and output contracts remain experimental until the Tier-0 contract and 1.0 stability policy land.
+
 ## Usage
 
 ```bash
@@ -21,13 +26,21 @@ weft serve --port 8080 --database /var/data/weft.db
 
 **Options:**
 
-| Flag         | Short | Default     | Description                                    |
-| ------------ | ----- | ----------- | ---------------------------------------------- |
-| `--port`     | `-p`  | `7233`      | Server port                                    |
-| `--database` | `-d`  | `./weft.db` | SQLite database file path                      |
-| `--storage`  | `-s`  | `sqlite`    | Storage backend: `sqlite`, `lmdb`, or `memory` |
-| `--no-ui`    |       | `false`     | Disable the web dashboard                      |
-| `--help`     | `-h`  |             | Show help message                              |
+| Flag          | Short | Default     | Description                                               |
+| ------------- | ----- | ----------- | --------------------------------------------------------- |
+| `--port`      | `-p`  | `7233`      | Server port                                               |
+| `--database`  | `-d`  | `./weft.db` | SQLite database file path                                 |
+| `--storage`   | `-s`  | `sqlite`    | Storage backend: `sqlite`, `lmdb`, or `memory`            |
+| `--workflows` | `-w`  |             | Path to a workflow module to load and register on startup |
+| `--no-ui`     |       | `false`     | Disable the web dashboard                                 |
+| `--help`      | `-h`  |             | Show help message                                         |
+
+When `--workflows` is omitted, the server starts in inspect-only mode (useful for viewing existing persisted workflow state via the REST API or dashboard, but no new workflow types can be executed). When provided, the module's exported `WorkflowRegistration` values and `ActivityDefinition` values are loaded and registered before the server begins accepting requests.
+
+```bash
+weft serve --workflows ./src/workflows.ts
+weft serve --port 8080 --database /var/data/weft.db --workflows ./src/my-workflows.ts
+```
 
 ### doctor
 
@@ -97,7 +110,7 @@ The generated file augments the public `weft` module with `WorkflowRegistry` ent
 
 | Flag        | Short | Default | Description                                                                                      |
 | ----------- | ----- | ------- | ------------------------------------------------------------------------------------------------ |
-| `--server`  |       |         | Base URL of a running Weft server. The CLI appends `/v1/registry` to the supplied path.          |
+| `--server`  |       |         | Base URL of a running Weft server. The CLI appends `/api/v1/registry` to the supplied path.      |
 | `--from`    |       |         | Local registry snapshot JSON file. Mutually exclusive with `--server`.                           |
 | `--token`   |       |         | Bearer token for `--server`. Falls back to `WEFT_TOKEN`; persistent credentials are unsupported. |
 | `--out`     | `-o`  |         | Required output `.d.ts` file. The parent directory must already exist.                           |

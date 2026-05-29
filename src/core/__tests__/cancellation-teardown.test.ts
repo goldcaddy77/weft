@@ -13,7 +13,6 @@ import { describe, expect, it } from 'bun:test';
 import { sleepForTesting } from '../../testing/fake-timers.test-support.ts';
 
 import { MemoryStorage } from '../../storage/memory.ts';
-import { TestEngine } from '../../testing/test-engine.ts';
 import { Engine } from '../engine.ts';
 import type { ActivityDefinition, WorkflowContext } from '../types.ts';
 import { workflow } from '../types.ts';
@@ -176,6 +175,31 @@ describe('ctx.onCancel()', () => {
     engine[Symbol.dispose]();
   });
 
+  it('does not call the handler when the workflow times out', async () => {
+    const engine = new Engine();
+    let cancelFired = false;
+
+    const timeoutWorkflow = workflow({ name: 'on-cancel-timeout' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
+      ctx.onCancel(() => {
+        cancelFired = true;
+      });
+      yield* ctx.waitForSignal('never');
+    });
+    engine.register(timeoutWorkflow);
+
+    const handle = await engine.start('on-cancel-timeout', null);
+    await flush();
+
+    await engine.timeout(handle.id);
+
+    await expect(handle.result()).rejects.toThrow('exceeded execution timeout');
+    expect(cancelFired).toBe(false);
+
+    engine[Symbol.dispose]();
+  });
+
   // -------------------------------------------------------------------------
   // 5. Async handler awaited before workflow finalizes
   // -------------------------------------------------------------------------
@@ -217,9 +241,7 @@ describe('ctx.onCancel()', () => {
     const postResumeWorkflow = workflow({ name: 'on-cancel-post-resume' }).execute(async function* (
       ctx: WorkflowContext,
     ) {
-      // Park first — context is deleted from inline strategy during park.
       yield* ctx.waitForSignal('resume');
-      // Register after resume — tests that the new context also has registerCancelHandler.
       ctx.onCancel(() => void ran.push('post-resume'));
       yield* ctx.waitForSignal('never');
     });
@@ -239,110 +261,62 @@ describe('ctx.onCancel()', () => {
     engine[Symbol.dispose]();
   });
 
-  // -------------------------------------------------------------------------
-  // 7. Handler fires on workflow timeout (terminateWorkflow covers both paths)
-  // -------------------------------------------------------------------------
-
-  it('runs the handler when the workflow times out', async () => {
-    const engine = new TestEngine({ startTime: 1_000 });
-    const ran: string[] = [];
-
-    const timedOutWorkflow = workflow({ name: 'on-cancel-timeout' }).execute(async function* (
-      ctx: WorkflowContext,
-    ) {
-      ctx.onCancel(() => void ran.push('timeout-teardown'));
-      yield* ctx.waitForSignal('never');
-    });
-    engine.register(timedOutWorkflow);
-
-    const handle = await engine.start('on-cancel-timeout', null, {
-      executionTimeout: '1s',
-    });
-    await flush();
-
-    await engine.advanceTime('2s');
-
-    await expect(handle.result()).rejects.toThrow();
-    expect(ran).toEqual(['timeout-teardown']);
-
-    engine[Symbol.dispose]();
-  });
-
-  // -------------------------------------------------------------------------
-  // 8. Handler fires after fork (launchInlineWorkflowFromCheckpoint path)
-  // -------------------------------------------------------------------------
-
-  it('runs the handler when a forked workflow is cancelled', async () => {
-    const storage = new MemoryStorage();
-    const ran: string[] = [];
-
-    const forkableWorkflow = workflow({ name: 'on-cancel-fork' }).execute(async function* (
-      ctx: WorkflowContext,
-    ) {
-      ctx.onCancel(() => void ran.push('fork-cancel'));
-      yield* ctx.waitForSignal('never');
-    });
-
-    const engine1 = new Engine({ storage });
-    engine1.register(forkableWorkflow);
-
-    await engine1.start('on-cancel-fork', null, { id: 'fork-source' });
-    await flush();
-    engine1[Symbol.dispose]();
-
-    const engine2 = new Engine({ storage });
-    engine2.register(forkableWorkflow);
-
-    const forkHandle = await engine2.fork('fork-source');
-    await flush();
-
-    await engine2.cancel(forkHandle.id);
-
-    await expect(forkHandle.result()).rejects.toThrow('Workflow cancelled');
-    expect(ran).toEqual(['fork-cancel']);
-
-    engine2[Symbol.dispose]();
-  });
-
-  // -------------------------------------------------------------------------
-  // 9. Handler registered before a park does not duplicate after resume
-  //    (regression: generator replay re-executed onCancel(), accumulating
-  //    handlers instead of resetting them before each relaunch).
-  // -------------------------------------------------------------------------
-
-  it('does not duplicate a handler registered before a park across resume cycles', async () => {
+  it('does not duplicate a pre-park handler when the workflow resumes from a park', async () => {
     const engine = new Engine();
-    const runs: string[] = [];
+    const ran: string[] = [];
 
-    const preParkWorkflow = workflow({ name: 'on-cancel-pre-park' }).execute(async function* (
-      ctx: WorkflowContext,
-    ) {
-      ctx.onCancel(() => void runs.push('teardown'));
-      // Park — generator replay will re-execute onCancel() on resume.
-      yield* ctx.waitForSignal('resume');
-      yield* ctx.waitForSignal('never');
-    });
+    const preParkWorkflow = workflow({ name: 'on-cancel-pre-park-resume' }).execute(
+      async function* (ctx: WorkflowContext) {
+        ctx.onCancel(() => void ran.push('pre-park'));
+        yield* ctx.waitForSignal('resume');
+        yield* ctx.waitForSignal('never');
+      },
+    );
     engine.register(preParkWorkflow);
 
-    const handle = await engine.start('on-cancel-pre-park', null);
+    const handle = await engine.start('on-cancel-pre-park-resume', null);
     await flush();
 
-    // Resume once to trigger replay (handler would be duplicated without the fix).
     await engine.signal(handle.id, 'resume', null);
     await flush();
 
     await engine.cancel(handle.id);
 
     await expect(handle.result()).rejects.toThrow('Workflow cancelled');
-    // Handler must fire exactly once, not twice.
-    expect(runs).toEqual(['teardown']);
+    expect(ran).toEqual(['pre-park']);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('runs cancellation handlers for workflows launched from a checkpoint', async () => {
+    const engine = new Engine();
+    const ranForWorkflowIds: string[] = [];
+
+    const forkedWorkflow = workflow({ name: 'on-cancel-forked-checkpoint' }).execute(
+      async function* (ctx: WorkflowContext) {
+        ctx.onCancel(() => void ranForWorkflowIds.push(ctx.workflowId));
+        yield* ctx.waitForSignal('never');
+      },
+    );
+    engine.register(forkedWorkflow);
+
+    const original = await engine.start('on-cancel-forked-checkpoint', null);
+    await flush();
+
+    const forked = await engine.fork(original.id);
+    await flush();
+
+    await engine.cancel(forked.id);
+
+    await expect(forked.result()).rejects.toThrow('Workflow cancelled');
+    expect(ranForWorkflowIds).toEqual([forked.id]);
 
     engine[Symbol.dispose]();
   });
 });
 
 // ---------------------------------------------------------------------------
-// 9. saga compensation on cancel — in-progress saga compensates already-
+// 7. saga compensation on cancel — in-progress saga compensates already-
 //    completed steps in reverse order when the workflow is cancelled.
 // ---------------------------------------------------------------------------
 
@@ -544,6 +518,37 @@ describe('ctx.saga() — cancellation compensation', () => {
     engine[Symbol.dispose]();
   });
 
+  it('does not compensate a saga that completed before the workflow is cancelled', async () => {
+    const engine = new Engine();
+    const compensationOrder: string[] = [];
+
+    const completedStep = makeActivity({
+      name: 'completed-before-later-cancel',
+      execute: (_input: string) => 'done',
+      compensate: (_input, _output) => {
+        compensationOrder.push('should-not-run');
+      },
+    });
+
+    const completedSagaThenParkWorkflow = workflow({
+      name: 'completed-saga-then-cancel',
+    }).execute(async function* (ctx: WorkflowContext) {
+      yield* ctx.saga([{ definition: completedStep, input: 'x' }]);
+      yield* ctx.waitForSignal('never');
+    });
+    engine.register(completedSagaThenParkWorkflow);
+
+    const handle = await engine.start('completed-saga-then-cancel', null);
+    await flush();
+
+    await engine.cancel(handle.id);
+
+    await expect(handle.result()).rejects.toThrow('Workflow cancelled');
+    expect(compensationOrder).toEqual([]);
+
+    engine[Symbol.dispose]();
+  });
+
   // -------------------------------------------------------------------------
   // 10. Engine restart: cancellation that ran compensators does not re-run
   //     them on engine restart (workflow is already terminal).
@@ -617,44 +622,70 @@ describe('ctx.saga() — cancellation compensation', () => {
 
     engine2[Symbol.dispose]();
   });
+});
 
-  // -------------------------------------------------------------------------
-  // 11. Completed saga does not compensate when the workflow is cancelled
-  //     after the saga finishes normally (regression: compensationRun was not
-  //     set on the normal-completion path, causing spurious compensation).
-  // -------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Race condition: handlers must not fire on an already-terminal workflow
+// ---------------------------------------------------------------------------
 
-  it('does not compensate when the workflow is cancelled after the saga completed normally', async () => {
-    const engine = new Engine();
-    let compensatorCalls = 0;
+describe('cancel-handler race condition', () => {
+  // Note: in the single JS event loop, two concurrent async calls interleave at
+  // `await` boundaries. This test validates the at-most-once outcome: handlers
+  // must not fire more than once regardless of interleave order. The invariant
+  // is enforced by gating `runCancellationHandlersForStatus` behind the storage
+  // conditional-batch result — exactly one caller wins the state transition.
+  it('does not run cancel handlers when the workflow is already terminal', async () => {
+    let handlerCallCount = 0;
 
-    const step = makeActivity({
-      name: 'saga-step',
-      execute: (_input: string) => 'done',
-      compensate: (_input, _output) => {
-        compensatorCalls++;
-      },
-    });
-
-    const sagaThenWaitWorkflow = workflow({ name: 'saga-then-wait' }).execute(async function* (
+    const racingWorkflow = workflow({ name: 'racing-cancel-wf' }).execute(async function* (
       ctx: WorkflowContext,
     ) {
-      yield* ctx.saga([{ definition: step, input: 'x' }]);
-      // Saga completed normally — now park waiting for a signal that never arrives.
+      ctx.onCancel(() => {
+        handlerCallCount++;
+      });
       yield* ctx.waitForSignal('never');
     });
-    engine.register(sagaThenWaitWorkflow);
 
-    const handle = await engine.start('saga-then-wait', null);
+    const engine = new Engine();
+    engine.register(racingWorkflow);
+
+    const handle = await engine.start('racing-cancel-wf', null, { id: 'race-wf' });
     await flush();
 
-    // Cancel the workflow while it is parked after the saga completed normally.
-    await engine.cancel(handle.id);
-
+    // Fire two concurrent cancels — only the first should commit the state
+    // transition; the second must see the already-terminal state and skip handlers.
+    await Promise.allSettled([engine.cancel(handle.id), engine.cancel(handle.id)]);
     await expect(handle.result()).rejects.toThrow('Workflow cancelled');
 
-    // Compensators must NOT run — the saga finished successfully before cancel.
-    expect(compensatorCalls).toBe(0);
+    // Handler must fire exactly once — not twice due to the race.
+    expect(handlerCallCount).toBe(1);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('does not run cancel handlers when the workflow times out', async () => {
+    let handlerCallCount = 0;
+
+    const timedOutWorkflow = workflow({ name: 'racing-timeout-wf' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
+      ctx.onCancel(() => {
+        handlerCallCount++;
+      });
+      yield* ctx.waitForSignal('never');
+    });
+
+    const engine = new Engine();
+    engine.register(timedOutWorkflow);
+
+    const handle = await engine.start('racing-timeout-wf', null, { id: 'race-timeout-wf' });
+    await flush();
+
+    await engine.timeout(handle.id);
+    await expect(handle.result()).rejects.toThrow('exceeded execution timeout');
+
+    // Cancel handlers must never fire on timeout — they are scoped to cancellation only.
+    expect(handlerCallCount).toBe(0);
 
     engine[Symbol.dispose]();
   });

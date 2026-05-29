@@ -1,6 +1,6 @@
 # Weft
 
-A Bun-native durable execution engine.
+A Bun-native durable execution engine. Current launch version: `0.2.0`.
 
 > _Weft_—the cross-threads in weaving that bind the warp together.
 
@@ -32,6 +32,21 @@ Weft is a ground-up rethink: what would durable execution look like if you desig
 
 > [!IMPORTANT]
 > Workflows run in TypeScript on the engine; activities can run in any language via the `RemoteWorker` protocol. This split is intentional — the checkpoint model requires single-process generator state, so workflow code is TypeScript-only by design. See [ADR 0001](documentation/contributing/architecture-decisions/0001-workflows-typescript-only.md) for the design rationale.
+
+## Stability Tiers
+
+Weft is launching as `0.2.0`, not `1.0`. The table below is the current adoption guidance, not a permanent compatibility guarantee. Surfaces marked **candidate-stable** are expected to carry the 1.0 support promise if the [Tier-0 Behavioral Contract](documentation/architecture/tier-0-behavioral-contract.md) does not force a public-shape change. Tier-0 work may still add error codes, duplicate-response shapes, or storage-capability failures before those surfaces graduate.
+
+| Tier                          | Surfaces                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | What to expect                                                                                                             |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Candidate-stable, provisional | Engine core, [`TestEngine`](documentation/guides/testing.md), Bun SQLite, Node SQLite, LMDB, [`RemoteWorker`](documentation/guides/remote-workers.md), [`serve()`](documentation/guides/server.md) and `/v1` REST, exported public error codes                                                                                                                                                                                                                                       | Suitable for serious trials. Pin the package version and read release notes before upgrading until the 1.0 contract lands. |
+| Experimental                  | [Browser runtime](documentation/guides/service-worker.md), [MCP](documentation/reference/api-server.md#mcp-server), IndexedDB, WebExtension, HTTP and compressed storage, Turso pending conformance proof, CLI commands beyond `serve` and `doctor` when running Weft from source or a standalone binary, [OpenTelemetry](documentation/guides/observability.md) metric names, dashboard, [`ctx.step()`](documentation/guides/workflows.md#getting-started-without-generators) sugar | API shape, storage guarantees, diagnostics, or compatibility behavior may change without a deprecation window before 1.0.  |
+
+If a surface is not named here, treat it as experimental. Stability is about compatibility and operational guarantees; it is not a statement that every candidate-stable surface is appropriate for every deployment.
+
+The public path to 1.0 is tracked in the [roadmap to 1.0](documentation/roadmap-to-1.0.md). The 1.0 compatibility promise will apply to the stable tier only; experimental surfaces may continue changing until they graduate.
+
+The browser surfaces graduate on a specific, mechanical criterion: the IndexedDB and WebExtension adapters and the Service Worker runtime stay experimental until their real-browser smoke tests are green in a **required** CI gate. The [browser-surface promotion gate](documentation/roadmap-to-1.0.md#browser-surface-promotion-gate) documents how the `browser-smoke` CI job flips from non-blocking to required, and why real-browser coverage — not fake-IndexedDB or stubbed-`chrome.storage` unit tests — is the evidence that moves them to stable.
 
 ## Hello, World
 
@@ -173,7 +188,7 @@ const orders = await engine.list({
 });
 ```
 
-Workflow visibility extends the same list surface with operator filters for `idPrefix`, failure categories, created/updated/deadline ranges, and status arrays. Use `engine.aggregate()` or `GET /v1/workflows/aggregate` for grouped counts by status, type, failure category, or a search attribute. Existing Bun SQLite deployments should run the [workflow visibility backfill](documentation/guides/workflow-visibility-backfill.md) before relying on the indexed fast path for older workflows.
+Workflow visibility extends the same list surface with operator filters for `idPrefix`, failure categories, created/updated/deadline ranges, and status arrays. Use `engine.aggregate()` or `GET /api/v1/workflows/aggregate` for grouped counts by status, type, failure category, or a search attribute. Existing Bun SQLite deployments should run the [workflow visibility backfill](documentation/guides/workflow-visibility-backfill.md) before relying on the indexed fast path for older workflows.
 
 ### Human-in-the-Loop Review
 
@@ -235,6 +250,8 @@ A small `Storage` interface over string keys and `Uint8Array` values: five requi
 
 Bring your own backend by implementing the interface—five methods is enough.
 
+For long-running workflows, `history.retentionWindow` can compact old event-log records behind the latest checkpoint while preserving verification through a durable watermark. `history.maxEvents` remains a lifetime circuit breaker even after compaction. Use `payloadSize.maxBytes` when operators need an admission-time cap on workflow inputs, signal payloads, and activity results before those values reach storage.
+
 ### Server Mode
 
 `serve()` wraps `Bun.serve()` to expose your engine over HTTP and WebSocket with a versioned REST API.
@@ -251,7 +268,7 @@ await using server = serve({ engine, port: 7233 });
 // server.url is e.g. "http://0.0.0.0:7233"
 ```
 
-Endpoints under `/v1/` cover the full lifecycle: start workflows, list, signal, update, query, cancel, fork, and stream events. Content negotiation supports JSON and MessagePack. The server can also serve the built-in dashboard at `/ui`; see the [server guide](documentation/guides/server.md#dashboard) for how to enable it, lock it down, and disable it.
+Endpoints under `/api/v1/` cover the full lifecycle: start workflows, list, signal, update, query, cancel, fork, and stream events. Content negotiation supports JSON and MessagePack. The server can also serve the built-in dashboard at `/`; see the [server guide](documentation/guides/server.md#dashboard) for how to enable it, lock it down, and disable it.
 
 ### Remote Workers
 
@@ -382,12 +399,16 @@ The `bun` runtime version `1.3.13` or later is required.
 
 If generator syntax is unfamiliar, the same workflow can be written with `ctx.step()` calls and plain `async`/`await`:
 
-```typescript
-engine.register('welcome', async (ctx, input: { name: string }) => {
-  const greeting = await ctx.step('greet', () => greet(input.name));
-  await ctx.step('notify', () => notify(greeting));
-  return { greeting, notified: true };
-});
+```typescript partial
+const welcome = workflow({ name: 'welcome' }).execute(
+  compileStepWorkflow(async (ctx: StepWorkflowContext, input: { name: string }) => {
+    const greeting = await ctx.step('greet', () => greet(input.name));
+    await ctx.step('notify', () => notify(greeting));
+    return { greeting, notified: true };
+  }),
+);
+
+engine.register(welcome);
 ```
 
 Each `ctx.step()` is a checkpoint boundary. The engine compiles step-style workflows to generator form at registration time. When you need durable timers, signals, or parallel execution, switch to the generator API.
@@ -458,6 +479,8 @@ Here's what's different:
 | Bundling               | Webpack for workflow sandbox                  | None                                                                       |
 
 > Weft is for teams whose primary backend language is TypeScript. If you need workflows in multiple languages, [Temporal](https://temporal.io) is the right answer. For the design rationale, see [ADR 0001 — Workflows Are TypeScript-Only by Design](documentation/contributing/architecture-decisions/0001-workflows-typescript-only.md).
+>
+> Weft's server runtime is Bun-only for this launch line. If you need the workflow server itself to run as a Node-native process, evaluate [Temporal](https://temporal.io).
 
 ## Documentation
 

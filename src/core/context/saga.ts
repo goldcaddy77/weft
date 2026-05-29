@@ -1,5 +1,6 @@
 import type { ActivityContext } from '../types.ts';
 import type { Context } from './index.ts';
+import { getInternals } from './internals.ts';
 import type { ContextOperationRequest } from './operation-request.ts';
 import type { ErasedActivityDefinition, ErasedSagaStep } from './types.ts';
 
@@ -14,14 +15,19 @@ export function* saga<TFinalOutput = unknown>(
   }> = [];
 
   let lastOutput: unknown;
-  // Guards against double-compensation: whichever path runs first (step failure
-  // or cancellation) claims the flag, and the other path skips entirely.
   let compensationRun = false;
+  let sagaActive = true;
 
-  context.onCancel(async () => {
-    if (compensationRun) return;
+  const unregisterCancelHandler = getInternals(context).registerCancelHandler?.(async () => {
+    if (!sagaActive || compensationRun) return;
     compensationRun = true;
-    await compensateCompleted(completed);
+    try {
+      await compensateCompleted(completed);
+    } finally {
+      sagaActive = false;
+      completed.length = 0;
+      unregisterCancelHandler?.();
+    }
   });
 
   for (const step of steps) {
@@ -65,20 +71,21 @@ export function* saga<TFinalOutput = unknown>(
         }
       }
 
+      finishSaga();
       throw stepError;
     }
   }
 
-  // Saga completed normally — disable the cancel-path compensator so it does
-  // not fire if the workflow is cancelled after this saga returns.
-  compensationRun = true;
+  finishSaga();
   return lastOutput as TFinalOutput;
+
+  function finishSaga(): void {
+    sagaActive = false;
+    completed.length = 0;
+    unregisterCancelHandler?.();
+  }
 }
 
-// Called from the onCancel handler, where the generator coroutine has been aborted and
-// cannot be driven — direct await is intentional. This is best-effort: compensators here
-// do not run through context.run, so they are not checkpointed or replayed. Step-failure
-// compensation (above) uses context.run and is durable; cancel-path compensation is not.
 async function compensateCompleted(
   completed: Array<{ definition: ErasedActivityDefinition; input: unknown; output: unknown }>,
 ): Promise<void> {

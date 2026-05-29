@@ -95,6 +95,22 @@ class WorkflowStateWriteTrackingStorage implements Storage {
     await this.#storage.batch(operations);
   }
 
+  async conditionalBatch(
+    conditions: Parameters<MemoryStorage['conditionalBatch']>[0],
+    operations: BatchOperation[],
+  ): Promise<boolean> {
+    const writesTrackedWorkflowState = operations.some(
+      (operation) => operation.type === 'put' && operation.key === this.#trackedWorkflowKey,
+    );
+    if (writesTrackedWorkflowState) {
+      return await this.#trackWorkflowStateWrite(() =>
+        this.#storage.conditionalBatch(conditions, operations),
+      );
+    }
+
+    return await this.#storage.conditionalBatch(conditions, operations);
+  }
+
   async has(key: string): Promise<boolean> {
     return (await this.#storage.get(key)) !== null;
   }
@@ -133,7 +149,7 @@ class WorkflowStateWriteTrackingStorage implements Storage {
     this.#storage[Symbol.dispose]();
   }
 
-  async #trackWorkflowStateWrite(writeOperation: () => Promise<void>): Promise<void> {
+  async #trackWorkflowStateWrite<Result>(writeOperation: () => Promise<Result>): Promise<Result> {
     this.activeWorkflowWrites++;
     this.maxConcurrentWorkflowWrites = Math.max(
       this.maxConcurrentWorkflowWrites,
@@ -142,7 +158,7 @@ class WorkflowStateWriteTrackingStorage implements Storage {
 
     try {
       await waitForRealTimersForTesting(25);
-      await writeOperation();
+      return await writeOperation();
     } finally {
       this.activeWorkflowWrites--;
     }

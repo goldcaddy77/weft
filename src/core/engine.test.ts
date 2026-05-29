@@ -1,10 +1,15 @@
 import { describe, expect, it, mock, spyOn } from 'bun:test';
 import { sleepForTesting, withTimeout } from '../testing/fake-timers.test-support.ts';
 
-import type { ScanOptions, Storage as WeftStorage } from '../storage/interface.ts';
+import type {
+  ScanOptions,
+  StorageCapabilities,
+  Storage as WeftStorage,
+} from '../storage/interface.ts';
 import { encodeStorageKeyComponent, KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { AtomicStateConflictEvent } from './atomic-state.ts';
+import { deserializeCheckpoint } from './checkpoint.ts';
 import { decode, encode } from './codec.ts';
 import type { Context, StreamReference } from './context.ts';
 import { computeSemanticHash, EffectLog } from './effect-log/index.ts';
@@ -30,13 +35,14 @@ import type { ActivityInterceptor, WorkflowInterceptor } from './interceptor.ts'
 import { ListFilterValidationError } from './list-filter-validation.ts';
 import { WorkflowTimeoutError } from './timeouts.ts';
 import type {
+  Checkpoint,
   DefinitionSchema,
   TimerEntry,
   WorkerOutboundMessage,
   WorkflowContext,
   WorkflowState,
 } from './types.ts';
-import { activity, workflow } from './types.ts';
+import { activity, signal, workflow } from './types.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -122,6 +128,12 @@ class ConcurrentAttributeReadCountingStorage extends AttributeReadCountingStorag
     } finally {
       this.activeAttributeReadCount -= 1;
     }
+  }
+}
+
+class EngineCreateNoConditionalBatchStorage extends MemoryStorage {
+  override capabilities(): StorageCapabilities {
+    return { ...super.capabilities(), conditionalBatch: false };
   }
 }
 
@@ -212,6 +224,23 @@ describe('Engine', () => {
       'Hello, Ada!',
     );
     recoveredEngine[Symbol.dispose]();
+  });
+
+  it('Engine.create forwards requireConcurrentResumeSafety into recovery', async () => {
+    const storage = new EngineCreateNoConditionalBatchStorage();
+
+    await expect(
+      Engine.create({
+        storage,
+        recover: true,
+        requireConcurrentResumeSafety: true,
+      }),
+    ).rejects.toThrow(
+      'Feature "concurrent resume checkpoint commits" requires storage capability "conditionalBatch"',
+    );
+
+    const engine = await Engine.create({ storage, recover: true });
+    engine[Symbol.dispose]();
   });
 
   it('Engine.create({ recover: false }) skips recovery preflight', async () => {
@@ -1066,6 +1095,81 @@ describe('Engine', () => {
       unknown
     >;
     expect('tenant' in resumedState).toBe(false);
+
+    engine2[Symbol.dispose]();
+  });
+
+  it('recoverAll() migrates checkpoint state across a workflow version bump and resumes', async () => {
+    const storage = new MemoryStorage();
+    const workflowId = 'version-migration-recovery';
+    const migrationCalls: Array<{ fromVersion: string; step: number }> = [];
+
+    const versionedWorkflowV1 = workflow({
+      name: 'version-migration-workflow',
+      version: '1.0.0',
+    }).execute(async function* (ctx: WorkflowContext, input: { prefix: string }) {
+      ctx.expose({ phase: () => 'waiting' });
+      const value = yield* ctx.waitForSignal<string>('continue');
+      return `v1:${input.prefix}:${value}`;
+    });
+
+    const versionedWorkflowV2 = workflow({
+      name: 'version-migration-workflow',
+      version: '2.0.0',
+      migrate: (checkpoint, fromVersion) => {
+        const typedCheckpoint = checkpoint as Checkpoint;
+        migrationCalls.push({ fromVersion, step: typedCheckpoint.step });
+        return {
+          ...typedCheckpoint,
+          locals: {
+            ...typedCheckpoint.locals,
+            migratedBy: 'version-migration-workflow@2.0.0',
+          },
+        };
+      },
+    }).execute(async function* (ctx: WorkflowContext, input: { prefix: string }) {
+      ctx.expose({ phase: () => 'waiting' });
+      const value = yield* ctx.waitForSignal<string>('continue');
+      return `v2:${input.prefix}:${value}`;
+    });
+
+    const engine1 = new Engine({ storage });
+    engine1.register(versionedWorkflowV1);
+    await engine1.start('version-migration-workflow', { prefix: 'ready' }, { id: workflowId });
+    await flush();
+    engine1[Symbol.dispose]();
+    await flush();
+
+    const engine2 = new Engine({ storage });
+    engine2.register(versionedWorkflowV2);
+    const recoveredHandles = await engine2.recoverAll();
+    await flush();
+
+    expect(recoveredHandles).toHaveLength(1);
+    expect(migrationCalls).toEqual([{ fromVersion: '1.0.0', step: 1 }]);
+
+    const migratedCheckpoint = deserializeCheckpoint(
+      (await storage.get(KEYS.checkpoint(workflowId)))!,
+    );
+    expect(migratedCheckpoint.version).toBe('2.0.0');
+    expect(migratedCheckpoint.locals['migratedBy']).toBe('version-migration-workflow@2.0.0');
+    expect(migratedCheckpoint.accumulatedResults).toEqual([]);
+
+    const migratedState = decode((await storage.get(KEYS.workflow(workflowId)))!) as WorkflowState;
+    expect(migratedState.version).toBe('2.0.0');
+    expect(await engine2.query(workflowId, 'phase')).toBe('waiting');
+    expect(engine2[ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING]()).toBe(1);
+
+    await withTimeout(
+      engine2.signal(workflowId, 'continue', 'go'),
+      500,
+      'version migration signal',
+    );
+    await flush();
+    expect(await engine2.get(workflowId)).toMatchObject({ status: 'completed' });
+    await expect(
+      withTimeout(recoveredHandles[0]!.result(), 500, 'version migration result'),
+    ).resolves.toBe('v2:ready:go');
 
     engine2[Symbol.dispose]();
   });
@@ -2138,6 +2242,24 @@ describe('Engine', () => {
     await handle.signal('my-signal', 'payload');
     const result = await handle.result();
     expect(result).toBe('got: payload');
+    engine[Symbol.dispose]();
+  });
+
+  it('preserves signal payloads that overlap signal delivery options', async () => {
+    const objectSignal = signal<{ signalId: string }>('object-signal');
+    const engine = new Engine();
+    engine.register(
+      workflow({ name: 'object-signal-payload' }).execute(async function* (ctx: WorkflowContext) {
+        const value = yield* ctx.waitForSignal(objectSignal);
+        return value.signalId;
+      }),
+    );
+
+    const handle = await engine.start('object-signal-payload', null);
+    await flush();
+
+    await engine.signal(handle.id, objectSignal, { signalId: 'payload-value' });
+    await expect(handle.result()).resolves.toBe('payload-value');
     engine[Symbol.dispose]();
   });
 
@@ -5579,6 +5701,7 @@ describe('Engine', () => {
           );
           await realStorage.batch(operations);
         },
+        conditionalBatch: realStorage.conditionalBatch.bind(realStorage),
         [Symbol.dispose]() {
           realStorage[Symbol.dispose]();
         },

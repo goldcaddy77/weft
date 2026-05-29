@@ -15,6 +15,7 @@ export type CliCommand =
       storage: StorageBackend;
       ui: boolean;
       help: boolean;
+      workflows?: string;
     }
   | { command: 'doctor'; database: string; help: boolean; json: boolean }
   | {
@@ -32,6 +33,20 @@ export type CliCommand =
       token?: string;
       out: string;
       timeoutMs: number;
+      help: boolean;
+      json: boolean;
+    }
+  | {
+      command: 'api';
+      operationName?: string;
+      server?: string;
+      token?: string;
+      profile?: string;
+      input?: string;
+      inputFile?: string;
+      list: boolean;
+      describe?: string;
+      yes: boolean;
       help: boolean;
       json: boolean;
     }

@@ -1,5 +1,5 @@
-import type { BatchOperation } from '../../storage/interface.ts';
-import { KEYS } from '../../storage/interface.ts';
+import type { BatchOperation, ConditionalBatchCondition } from '../../storage/interface.ts';
+import { KEYS, storageConditionalBatch } from '../../storage/interface.ts';
 import {
   advanceCheckpoint,
   deserializeCheckpoint,
@@ -16,6 +16,10 @@ import {
 } from '../events.ts';
 import { buildIndexOperations } from '../search-attributes.ts';
 import type { SearchAttributeValue, WorkflowTimelineEntry } from '../types.ts';
+import {
+  getCommittedCheckpointBytes,
+  rememberCommittedCheckpointBytes,
+} from './checkpoint-commit-snapshots.ts';
 import {
   appendCompactionOperations,
   type CompactionResult,
@@ -97,6 +101,7 @@ export function appendTimelineBatchOperations(
 type CheckpointCommit = {
   checkpoint: CheckpointStateForCommit;
   serialized: Uint8Array;
+  expectedSerialized?: Uint8Array;
   step: number;
   timestamp: number;
   operations: BatchOperation[];
@@ -199,9 +204,11 @@ function createCheckpointCommit(
       value: serialized,
     });
   }
+  const expectedSerialized = getCommittedCheckpointBytes(internals, workflowId);
   return {
     checkpoint,
     serialized,
+    ...(expectedSerialized !== undefined ? { expectedSerialized } : {}),
     step: checkpoint.step,
     timestamp: checkpoint.createdAt,
     operations,
@@ -264,7 +271,17 @@ async function commitCheckpoint(
           commit.operations,
         );
 
-  await internals.storage.batch(commit.operations);
+  if (
+    commit.expectedSerialized === undefined ||
+    !internals.storage.capabilities().conditionalBatch
+  ) {
+    await internals.storage.batch(commit.operations);
+  } else {
+    await writeCheckpointCommitBatch(internals, workflowId, commit, commit.expectedSerialized);
+  }
+  if (commit.expectedSerialized !== undefined) {
+    rememberCommittedCheckpointBytes(internals, workflowId, commit.serialized);
+  }
   internals.pendingTimelineEntries.set(workflowId, nextPendingTimelineEntry);
   internals.checkpoints.set(workflowId, commit.checkpoint);
   internals.eventLogHeads.set(workflowId, newHead);
@@ -292,6 +309,26 @@ async function commitCheckpoint(
   // pre-replay guard re-attempts termination on the next activation).
   if (historyEventLimitBreached(internals, newHead.sequence)) {
     await callbacks.enforceHistoryCircuitBreaker(workflowId);
+  }
+}
+
+async function writeCheckpointCommitBatch(
+  internals: EngineInternals,
+  workflowId: string,
+  commit: CheckpointCommit,
+  expectedSerialized: Uint8Array,
+): Promise<void> {
+  const conditions: ConditionalBatchCondition[] = [
+    {
+      key: KEYS.checkpoint(workflowId),
+      expectedValue: expectedSerialized,
+    },
+  ];
+  const committed = await storageConditionalBatch(internals.storage, conditions, commit.operations);
+  if (!committed) {
+    throw new Error(
+      `Checkpoint commit for workflow "${workflowId}" lost its CAS race against a newer checkpoint.`,
+    );
   }
 }
 

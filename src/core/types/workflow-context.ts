@@ -4,6 +4,7 @@ import type {
   StreamReference,
   StreamSink,
 } from '../context/types.ts';
+import type { UpdateHandlerOptions } from '../context/updates.ts';
 import type { HumanReviewOptions, HumanReviewResult } from '../review/index.ts';
 import type { ActivityCallable, ActivityCallOptions } from './activity.ts';
 import type { WorkflowId } from './identity.ts';
@@ -191,6 +192,12 @@ export interface WorkflowContext<
   runAll<const TBranches extends Record<string, WorkflowRunAllBranch>>(
     branches: TBranches,
   ): WorkflowOperation<RunAllResult<TBranches>>;
+  /**
+   * Run a compensating transaction. In inline execution, if cancellation
+   * interrupts an active saga, completed steps compensate in reverse order on a
+   * best-effort, in-memory path. Cancellation compensation runs outside the
+   * durable activity pipeline and is not replayed after engine restart.
+   */
   saga<TFinalOutput = unknown>(steps: ErasedSagaStep[]): WorkflowOperation<TFinalOutput>;
   startChild<TResult = unknown>(
     workflowType: string,
@@ -273,12 +280,18 @@ export interface WorkflowContext<
     ) =>
       | Parameters<UpdatePayload<TUpdates[TName]>['respond']>[0]
       | Promise<Parameters<UpdatePayload<TUpdates[TName]>['respond']>[0]>,
+    options?: UpdateHandlerOptions,
   ): void;
   onUpdate<TInput, TOutput>(
     definition: UpdateDefinition<TInput, TOutput>,
     handler: (payload: TInput) => TOutput | Promise<TOutput>,
+    options?: UpdateHandlerOptions,
   ): void;
-  onUpdate(name: string, handler: (payload: unknown) => unknown): void;
+  onUpdate(
+    name: string,
+    handler: (payload: unknown) => unknown,
+    options?: UpdateHandlerOptions,
+  ): void;
   // Workflow-scoped typed-key onQuery overload.
   onQuery<TName extends keyof TQueries & string>(
     name: TName,
@@ -299,16 +312,16 @@ export interface WorkflowContext<
   streamUrl(reference: StreamReference): string;
   /**
    * Register a best-effort teardown handler that runs when this workflow is
-   * terminated (cancelled or timed out), before the workflow is finalized.
+   * cancelled, before the workflow is finalized.
    * Handlers run in registration order; async handlers are awaited; failures
-   * are swallowed — the workflow still finalizes as terminated.
+   * are swallowed — the workflow still finalizes as cancelled.
    *
    * **Best-effort only**: handlers run outside the durable effect log and are
-   * not retried. Side effects in handlers are not replay-safe.
+   * not retried. Side effects in handlers are not replay-safe, and registered
+   * handlers are not restored after an engine restart.
    *
-   * **Worker-pool mode**: this method is a no-op when the engine uses a
-   * remote worker pool — register teardown logic via worker-side lifecycle
-   * hooks instead.
+   * **Worker-pool mode**: this method throws when the engine uses a remote
+   * worker pool so teardown does not silently drop.
    *
    * @example
    * ```ts

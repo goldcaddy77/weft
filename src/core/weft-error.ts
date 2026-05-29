@@ -36,6 +36,7 @@ export type WeftErrorCode =
   | 'HttpClientError'
   | 'WorkerProtocolIncompatibleError'
   | 'UpdateTimeoutError'
+  | 'UpdateValidationError'
   | 'WorkflowTerminalError'
   | 'WorkflowBuilderError'
   | 'VersionMismatchError'
@@ -43,6 +44,9 @@ export type WeftErrorCode =
   | 'ReviewTimeoutError'
   | 'AtomicStateConflictError'
   | 'StandardSchemaValidationError'
+  | 'ActivityReconciliationCapabilityError'
+  | 'ActivityReconciliationConflictError'
+  | 'ActivityReconciliationIndeterminateError'
   | 'PayloadSizeExceededError';
 
 /**
@@ -92,6 +96,7 @@ const publicWeftErrorCodeMap = {
   HttpClientError: true,
   WorkerProtocolIncompatibleError: true,
   UpdateTimeoutError: true,
+  UpdateValidationError: true,
   WorkflowTerminalError: true,
   WorkflowBuilderError: true,
   VersionMismatchError: true,
@@ -99,6 +104,9 @@ const publicWeftErrorCodeMap = {
   ReviewTimeoutError: true,
   AtomicStateConflictError: true,
   StandardSchemaValidationError: true,
+  ActivityReconciliationCapabilityError: true,
+  ActivityReconciliationConflictError: true,
+  ActivityReconciliationIndeterminateError: true,
   PayloadSizeExceededError: true,
 } satisfies Record<WeftErrorCode, true>;
 

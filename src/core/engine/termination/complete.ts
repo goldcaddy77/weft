@@ -25,6 +25,7 @@ import {
   writeRetainedTerminalSearchAttributes,
 } from '../attributes-tags.ts';
 import { TERMINAL_CLEANUP_DELAY_MS } from '../bulk-operations.ts';
+import { takeCancelHandlers, type CancelHandler } from '../cancel-handlers.ts';
 import { getWorkflowExecutionStartedAt } from '../handles.ts';
 import { dropQueuedInlineWorkflowStart } from '../inline-launch-queue.ts';
 import type { EngineInternals } from '../internals.ts';
@@ -39,7 +40,7 @@ import {
 } from './cleanup.ts';
 
 async function runCancelHandlers(
-  handlers: Array<() => Promise<void> | void>,
+  handlers: CancelHandler[],
   callbacks: Pick<TerminationCallbacks, 'handleCleanupError'>,
   workflowId: string,
 ): Promise<void> {
@@ -50,6 +51,17 @@ async function runCancelHandlers(
       callbacks.handleCleanupError('cancel-handler', error, workflowId);
     }
   }
+}
+
+async function runCancellationHandlersForStatus(
+  internals: EngineInternals,
+  workflowId: string,
+  status: 'cancelled' | 'timed-out',
+  callbacks: Pick<TerminationCallbacks, 'handleCleanupError'>,
+): Promise<void> {
+  if (status !== 'cancelled') return;
+  const cancelHandlers = takeCancelHandlers(internals, workflowId);
+  await runCancelHandlers(cancelHandlers, callbacks, workflowId);
 }
 
 export async function cancelWorkflow(
@@ -77,13 +89,6 @@ export async function terminateWorkflow(
 ): Promise<void> {
   internals.terminalizingWorkflows.add(workflowId);
   dropQueuedInlineWorkflowStart(internals, workflowId);
-  // Snapshot and remove handlers before strategy.cancelWorkflow so any concurrent
-  // cancel attempt sees an empty list and cannot cause duplicate invocations.
-  // We do NOT run the handlers yet — they must only fire if the state transition
-  // succeeds (i.e. the workflow was still running/pending). Running them first
-  // would violate the contract when the workflow is already terminal.
-  const cancelHandlers = internals.cancelHandlersByWorkflow.get(workflowId) ?? [];
-  internals.cancelHandlersByWorkflow.delete(workflowId);
   internals.strategy.cancelWorkflow(workflowId);
 
   try {
@@ -115,9 +120,9 @@ export async function terminateWorkflow(
     if (!terminationResult) {
       return;
     }
-    // State transition succeeded — the workflow was running/pending and is now
-    // terminal. Only now do we run teardown handlers.
-    await runCancelHandlers(cancelHandlers, callbacks, workflowId);
+    // Run teardown handlers only after the state transition succeeds — this
+    // prevents handlers from firing when the workflow was already terminal.
+    await runCancellationHandlersForStatus(internals, workflowId, status, callbacks);
 
     const { previousState, updatedAt } = terminationResult;
     const elapsed = updatedAt - getWorkflowExecutionStartedAt(previousState);

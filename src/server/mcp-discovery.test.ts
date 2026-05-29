@@ -12,11 +12,11 @@ describe('MCP discovery document', () => {
       protocolVersion: '2025-11-25',
       serverInfo: {
         name: 'weft',
-        version: '0.1.0',
+        version: '0.2.0',
       },
       transports: {
         streamableHttp: {
-          url: 'https://api.example.com/mcp',
+          url: 'https://api.example.com/api/mcp',
           methods: ['POST', 'GET', 'DELETE'],
           sessionHeader: 'Mcp-Session-Id',
           protocolVersionHeader: 'Mcp-Protocol-Version',

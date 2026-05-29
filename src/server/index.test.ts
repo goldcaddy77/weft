@@ -19,7 +19,7 @@ import { resetPublicOriginWarningForTesting } from './api-catalog.ts';
 import { DeadlineTracker } from './deadline-tracker.ts';
 import * as handlerModule from './handler.ts';
 import type { WeftServer } from './index.ts';
-import { serve, wireEventBroadcasting } from './index.ts';
+import { DASHBOARD_PAGE_ROUTES, serve, wireEventBroadcasting } from './index.ts';
 import { createOperationRegistry, executeOperation } from './operation-catalog.ts';
 import {
   createGetTaskDiagnosticsOperation,
@@ -163,6 +163,64 @@ describe('serve', () => {
     expect(server.port).toBeGreaterThan(0);
   });
 
+  it('warns loudly when started without authentication', () => {
+    const warningSpy = spyOn(console, 'warn').mockImplementation(() => {});
+    engine = createEngine();
+
+    try {
+      server = serve({ engine, port: 0 });
+
+      expect(warningSpy).toHaveBeenCalledWith(
+        expect.stringContaining('server started with NO authentication'),
+      );
+      expect(warningSpy).toHaveBeenCalledWith(
+        expect.stringContaining('all non-public operations are publicly accessible'),
+      );
+    } finally {
+      warningSpy.mockRestore();
+    }
+  });
+
+  it('refuses to start without authentication when unauthenticated access is rejected', () => {
+    const warningSpy = spyOn(console, 'warn').mockImplementation(() => {});
+    engine = createEngine();
+
+    try {
+      expect(() => serve({ engine, port: 0, unauthenticatedAccess: 'reject' })).toThrow(
+        'Refusing to start server with no authentication',
+      );
+      expect(warningSpy).not.toHaveBeenCalled();
+    } finally {
+      warningSpy.mockRestore();
+    }
+  });
+
+  it('allows explicitly unauthenticated local servers without warning', () => {
+    const warningSpy = spyOn(console, 'warn').mockImplementation(() => {});
+    engine = createEngine();
+
+    try {
+      server = serve({ engine, port: 0, unauthenticatedAccess: 'allow' });
+
+      expect(warningSpy).not.toHaveBeenCalled();
+    } finally {
+      warningSpy.mockRestore();
+    }
+  });
+
+  it('does not warn when authentication is configured', () => {
+    const warningSpy = spyOn(console, 'warn').mockImplementation(() => {});
+    engine = createEngine();
+
+    try {
+      server = serve({ engine, port: 0, auth: { apiKeys: ['test-key'] } });
+
+      expect(warningSpy).not.toHaveBeenCalled();
+    } finally {
+      warningSpy.mockRestore();
+    }
+  });
+
   it('serves public MCP discovery that matches the live MCP transport', async () => {
     const originalNodeEnv = Bun.env['NODE_ENV'];
     Bun.env['NODE_ENV'] = 'development';
@@ -181,7 +239,10 @@ describe('serve', () => {
         discovery?: { tools?: { method?: string } };
       };
       const endpoint = discovery.transports?.streamableHttp?.url;
-      expect(endpoint).toBe(`${server.url}/mcp`);
+      // The MCP endpoint is advertised under the external `/api` prefix; the
+      // front door strips it back to canonical `/mcp` before routing, so
+      // fetching `endpoint` below exercises the full round-trip.
+      expect(endpoint).toBe(`${server.url}/api/mcp`);
       expect(discovery.transports?.streamableHttp?.methods).toEqual(['POST', 'GET', 'DELETE']);
 
       const authorization = { Authorization: `Bearer ${apiKey}` };
@@ -275,23 +336,41 @@ describe('serve', () => {
     expect(body.status).toBe('ok');
   });
 
-  it('serves dashboard routes when a dashboard asset is configured', async () => {
+  const dashboardBody = '<html><body>dashboard</body></html>';
+  const makeDashboard = (): Response =>
+    new Response(dashboardBody, { headers: { 'Content-Type': 'text/html' } });
+
+  it('serves the dashboard at the origin root', async () => {
     engine = createEngine();
-    server = serve({
-      engine,
-      port: 0,
-      dashboard: new Response('<html><body>dashboard</body></html>', {
-        headers: { 'Content-Type': 'text/html' },
-      }),
-    });
+    server = serve({ engine, port: 0, dashboard: makeDashboard() });
 
-    const rootResponse = await fetch(`${server.url}/ui`);
-    const nestedResponse = await fetch(`${server.url}/ui/assets/app.js`);
-
+    const rootResponse = await fetch(`${server.url}/`);
     expect(rootResponse.status).toBe(200);
     expect(await rootResponse.text()).toContain('dashboard');
-    expect(nestedResponse.status).toBe(200);
-    expect(await nestedResponse.text()).toContain('dashboard');
+  });
+
+  it('serves the dashboard shell at every known top-level page route', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0, dashboard: makeDashboard() });
+
+    // Enumerating DASHBOARD_PAGE_ROUTES is the enforcement mechanism that keeps
+    // the server route list in sync with the SPA ROUTE_TABLE: a hard reload of
+    // any dashboard page must resolve to the shell.
+    for (const route of DASHBOARD_PAGE_ROUTES) {
+      // `/workflows/*` is a deep-link pattern; exercise it with a concrete id.
+      const path = route.endsWith('/*') ? `${route.slice(0, -2)}/abc123` : route;
+      const response = await fetch(`${server.url}${path}`);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain('dashboard');
+    }
+  });
+
+  it('does not serve the dashboard for unknown root paths (no blanket catch-all)', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0, dashboard: makeDashboard() });
+
+    const response = await fetch(`${server.url}/nonsense`);
+    expect(response.status).toBe(404);
   });
 
   it('handles workflow API routes (POST /v1/workflows)', async () => {
@@ -308,6 +387,90 @@ describe('serve', () => {
     const body = (await response.json()) as { id: string };
     expect(typeof body.id).toBe('string');
     expect(body.id.length).toBeGreaterThan(0);
+  });
+
+  it('routes /api/v1/workflows to the same handler as /v1/workflows (POST body preserved)', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    // The front door strips `/api` before routing; the POST body must survive
+    // the request rebuild.
+    const response = await fetch(`${server.url}/api/v1/workflows`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'echo', input: 'hello' }),
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { id: string };
+    expect(typeof body.id).toBe('string');
+    expect(body.id.length).toBeGreaterThan(0);
+  });
+
+  it('preserves the query string when stripping the /api prefix', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    // List with a query param via the prefixed path; the strip rebuilds the
+    // request URL, so the search string must survive to the handler.
+    const response = await fetch(`${server.url}/api/v1/workflows?limit=1`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { items?: unknown[] };
+    expect(Array.isArray(body.items)).toBe(true);
+  });
+
+  it('keeps health and metrics at the origin root and exposes them as /api aliases', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0, dashboard: makeDashboard() });
+
+    // Canonical root-stable forms.
+    const health = await fetch(`${server.url}/v1/health`);
+    const metrics = await fetch(`${server.url}/v1/metrics`);
+    expect(health.status).toBe(200);
+    expect(metrics.status).toBe(200);
+    // Undocumented public aliases via canonicalization — pinned so the behavior
+    // is intentional, not accidental exposure behind a different auth surface.
+    const aliasHealth = await fetch(`${server.url}/api/v1/health`);
+    const aliasMetrics = await fetch(`${server.url}/api/v1/metrics`);
+    expect(aliasHealth.status).toBe(200);
+    expect(aliasMetrics.status).toBe(200);
+  });
+
+  it('serves discovery documents at the origin root (not under /api)', async () => {
+    engine = createEngine();
+    // `/.well-known/mcp.json` emits absolute URLs, so it needs a public origin.
+    server = serve({ engine, port: 0, publicOrigin: 'http://discovery.test' });
+
+    for (const path of [
+      '/openapi.json',
+      '/openrpc.json',
+      '/asyncapi.json',
+      '/.well-known/mcp.json',
+    ]) {
+      const response = await fetch(`${server.url}${path}`);
+      expect(response.status).toBe(200);
+    }
+  });
+
+  it('returns 404 for bare /api and /api/ (no aliasing of the root)', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0, dashboard: makeDashboard() });
+
+    const bareApi = await fetch(`${server.url}/api`);
+    const bareApiSlash = await fetch(`${server.url}/api/`);
+    expect(bareApi.status).toBe(404);
+    expect(bareApiSlash.status).toBe(404);
+  });
+
+  it('does not strip a doubled slash after the /api prefix', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0, dashboard: makeDashboard() });
+
+    // `/api//v1/health` must NOT canonicalize to `//v1/health` (which would
+    // route surprisingly). Only a clean `/api/<segment>` is stripped, so this
+    // malformed path falls through to a 404 rather than reaching the handler.
+    const doubled = await fetch(`${server.url}/api//v1/health`);
+    expect(doubled.status).toBe(404);
   });
 
   it('stops cleanly via stop()', async () => {
@@ -476,9 +639,92 @@ describe('serve', () => {
       expect(response.status).toBe(401);
       expect(await response.text()).toBe('Authentication context invalid');
       expect(errorSpy).toHaveBeenCalledWith(
-        '[weft] /jsonrpc WS upgrade principal resolution failed',
+        '[weft] WebSocket upgrade principal resolution failed',
         expect.any(Error),
       );
+    } finally {
+      principalSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('resolves the principal during a worker WebSocket upgrade', async () => {
+    // The worker stream endpoint authorizes registration against the connection
+    // principal, so the upgrade must resolve one (previously only /jsonrpc did).
+    // A resolver throw on this path proves the principal is wired through — if
+    // it were skipped, the upgrade would not surface the 401.
+    engine = createEngine();
+    server = serve({
+      engine,
+      port: 0,
+      auth: {
+        apiKeys: ['weft_key_valid123456789012345678901'],
+      },
+    });
+
+    const principalSpy = spyOn(handlerModule, 'authContextToPrincipal').mockImplementation(() => {
+      throw new Error('invalid auth context');
+    });
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      const response = await fetch(`${server.url}/v1/tasks/default/stream`, {
+        method: 'GET',
+        headers: {
+          upgrade: 'websocket',
+          connection: 'Upgrade',
+          'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
+          'sec-websocket-version': '13',
+          'x-api-key': 'weft_key_valid123456789012345678901',
+        },
+      });
+
+      expect(response.status).toBe(401);
+      expect(await response.text()).toBe('Authentication context invalid');
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] WebSocket upgrade principal resolution failed',
+        expect.any(Error),
+      );
+    } finally {
+      principalSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('keeps JSON-RPC HTTP principal resolution inside the JSON-RPC error boundary', async () => {
+    engine = createEngine();
+    server = serve({
+      engine,
+      port: 0,
+      auth: {
+        apiKeys: ['weft_key_valid123456789012345678901'],
+      },
+    });
+
+    const principalSpy = spyOn(handlerModule, 'authContextToPrincipal').mockImplementation(() => {
+      throw new Error('invalid auth context');
+    });
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      const response = await fetch(`${server.url}/jsonrpc`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': 'weft_key_valid123456789012345678901',
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', method: 'engine.list', id: 1 }),
+      });
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({
+        jsonrpc: '2.0',
+        error: { code: -32603, message: 'Internal error' },
+        id: null,
+      });
+      expect(errorSpy).toHaveBeenCalledWith('Unhandled error in /jsonrpc', {
+        error: expect.any(Error),
+      });
     } finally {
       principalSpy.mockRestore();
       errorSpy.mockRestore();
@@ -526,6 +772,32 @@ describe('serve', () => {
     await new Promise<void>((resolve) => {
       ws.addEventListener('close', () => resolve());
     });
+  });
+
+  // WebSocket upgrades must work through the external `/api` prefix. The front
+  // door strips `/api` for routing but hands the *original* request to
+  // `server.upgrade()` — a rebuilt Request loses Bun's upgrade handle, so these
+  // would silently fail if the wrong request object reached the upgrade call.
+  it.each([
+    '/api/v1/workflows/test-wf/watch',
+    '/api/v1/workflows/test-wf/stream',
+    '/api/v1/tasks/default/stream',
+    '/api/jsonrpc',
+  ])('accepts a WebSocket upgrade on %s', async (path) => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+    const wsUrl = server.url.replace('http://', 'ws://');
+    const ws = new WebSocket(`${wsUrl}${path}`);
+
+    const opened = await new Promise<boolean>((resolve) => {
+      ws.addEventListener('open', () => resolve(true));
+      ws.addEventListener('error', () => resolve(false));
+      setTimeout(() => resolve(false), 2000);
+    });
+    expect(opened).toBe(true);
+
+    ws.close();
+    await waitForRealTimersForTesting(50);
   });
 
   // -------------------------------------------------------------------------
@@ -2916,7 +3188,7 @@ describe('long-poll endpoints (GET /v1/tasks/:queue, POST /v1/tasks/:queue/resul
 
     const pollResponse = await fetch(`${server.url}/v1/tasks/default?activity=charge&timeout=1000`);
     expect(pollResponse.status).toBe(200);
-    const task = (await pollResponse.json()) as { operationId: string };
+    const task = (await pollResponse.json()) as { operationId: string; workerId: string };
     expect(task.operationId).toBe('long-poll-diagnostics-op');
 
     const resultResponse = await fetch(`${server.url}/v1/tasks/default/result`, {
@@ -2924,6 +3196,7 @@ describe('long-poll endpoints (GET /v1/tasks/:queue, POST /v1/tasks/:queue/resul
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         operationId: 'long-poll-diagnostics-op',
+        workerId: task.workerId,
         status: 'completed',
         value: { result: 42 },
       }),

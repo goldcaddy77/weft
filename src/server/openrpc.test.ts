@@ -61,6 +61,7 @@ function makeOp(
 ): RegistrableOperation {
   return {
     mcpExposable: false,
+    destructive: false,
     summary: 'test op',
     tags: [],
     access: { kind: 'public' },
@@ -118,8 +119,27 @@ describe('generateOpenRpcDocument — basic shape', () => {
     expect(document['openrpc']).toBe('1.3.2');
     expect(typeof document['info']).toBe('object');
     expect((document['info'] as Record<string, unknown>)['title']).toBeDefined();
-    expect((document['info'] as Record<string, unknown>)['version']).toBe('0.1.0');
+    expect((document['info'] as Record<string, unknown>)['version']).toBe('0.2.0');
     expect(Array.isArray(document['methods'])).toBe(true);
+  });
+
+  it('does not advertise a stale root /jsonrpc or /mcp endpoint URL', () => {
+    // The live OpenRPC handler emits no `servers` URL, so the document must not
+    // leak a root-relative transport endpoint that the /api migration moved.
+    // This guards against a regression that hardcodes `/jsonrpc` or `/mcp`.
+    const document = generateOpenRpcDocument({
+      registry: createOperationRegistry([
+        makeOp({
+          name: 'weft.workflows.get',
+          inputSchema: z.object({ id: z.string() }),
+          outputSchema: z.object({ id: z.string() }),
+        }),
+      ]),
+      transports: ['http', 'websocket'],
+    });
+    const serialized = JSON.stringify(document);
+    expect(serialized).not.toContain('"/jsonrpc"');
+    expect(serialized).not.toContain('"/mcp"');
   });
 
   it('includes weft.workflows.get when JSON-RPC is enabled and supported', () => {
@@ -453,6 +473,7 @@ describe('generateOpenRpcDocument — MCP metadata', () => {
       makeOp({
         name: 'weft.workflows.checkout.start',
         mcpExposable: true,
+        destructive: false,
         mcpTool: { workflowType: 'checkout-flow' },
         inputSchema: z.object({ orderId: z.string() }),
         outputSchema: z.object({ workflowId: z.string(), status: z.string() }),
@@ -461,6 +482,7 @@ describe('generateOpenRpcDocument — MCP metadata', () => {
       makeOp({
         name: 'weft.workflows.internal.start',
         mcpExposable: false,
+        destructive: false,
         inputSchema: z.object({ id: z.string() }),
         outputSchema: z.object({ workflowId: z.string(), status: z.string() }),
       }),
@@ -503,6 +525,7 @@ describe('generateOpenRpcDocument — MCP metadata', () => {
       makeOp({
         name: 'weft.workflows.checkout.start',
         mcpExposable: true,
+        destructive: false,
         mcpTool: { workflowType: 'checkout_flow' },
         inputSchema: z.object({ orderId: z.string() }),
         outputSchema: z.object({ workflowId: z.string(), status: z.string() }),
@@ -511,6 +534,7 @@ describe('generateOpenRpcDocument — MCP metadata', () => {
       makeOp({
         name: 'weft.workflows.refund.start',
         mcpExposable: true,
+        destructive: false,
         mcpTool: { workflowType: 'checkout-flow' },
         inputSchema: z.object({ refundId: z.string() }),
         outputSchema: z.object({ workflowId: z.string(), status: z.string() }),
@@ -548,6 +572,7 @@ describe('generateOpenRpcDocument — MCP metadata', () => {
       makeOp({
         name: 'weft.workflows.missing.start',
         mcpExposable: true,
+        destructive: false,
         mcpTool: { workflowType: 'missing-workflow' },
         inputSchema: z.object({ id: z.string() }),
         outputSchema: z.object({ workflowId: z.string(), status: z.string() }),

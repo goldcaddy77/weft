@@ -408,10 +408,33 @@ describe('termination helpers', () => {
     for (let index = 0; index < 1_001; index++) {
       await storage.put(KEYS.signal(workflowId, 'release', `signal-${index}`), new Uint8Array([1]));
     }
+    await storage.put(
+      KEYS.activityReconciliation(workflowId, 'charge-card', 'digest'),
+      new Uint8Array([1]),
+    );
+    await storage.put(KEYS.signalSequence(workflowId), new Uint8Array([1]));
 
     await cleanupWorkflowStorage({ storage } as never, workflowId, false);
 
     expect(await storage.get(KEYS.signal(workflowId, 'release', 'signal-0'))).toBeNull();
     expect(await storage.get(KEYS.signal(workflowId, 'release', 'signal-1000'))).toBeNull();
+    expect(await storage.get(KEYS.signalSequence(workflowId))).toBeNull();
+    expect(
+      await storage.get(KEYS.activityReconciliation(workflowId, 'charge-card', 'digest')),
+    ).toBeNull();
+  });
+
+  it('deletes only the exact anonymous signal sequence key during cleanup', async () => {
+    const storage = new MemoryStorage();
+    const workflowId = 'cleanup-sequence-prefix';
+    const siblingWorkflowId = `${workflowId}-sibling`;
+
+    await storage.put(KEYS.signalSequence(workflowId), new Uint8Array([1]));
+    await storage.put(KEYS.signalSequence(siblingWorkflowId), new Uint8Array([2]));
+
+    await cleanupWorkflowStorage({ storage } as never, workflowId, false);
+
+    expect(await storage.get(KEYS.signalSequence(workflowId))).toBeNull();
+    expect(await storage.get(KEYS.signalSequence(siblingWorkflowId))).toEqual(new Uint8Array([2]));
   });
 });

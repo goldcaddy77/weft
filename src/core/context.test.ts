@@ -62,6 +62,31 @@ function expectRequest<T extends ContextOperationRequest['type']>(
 }
 
 describe('Context', () => {
+  describe('ctx.onCancel', () => {
+    it('throws when cancellation hooks are not available for the execution mode', () => {
+      const context = createContext();
+
+      expect(() => context.onCancel(() => {})).toThrow(
+        'ctx.onCancel() is only supported for inline workflow execution',
+      );
+    });
+
+    it('registers a cancellation handler when supported by the engine', () => {
+      const handlers: Array<() => Promise<void> | void> = [];
+      const context = createContext({
+        registerCancelHandler: (cancelHandler) => {
+          handlers.push(cancelHandler);
+          return () => {};
+        },
+      });
+      const cancellationHandler = () => {};
+
+      context.onCancel(cancellationHandler);
+
+      expect(handlers).toEqual([cancellationHandler]);
+    });
+  });
+
   describe('ctx.run', () => {
     it('yields an activity request', () => {
       const context = createContext();
@@ -95,6 +120,32 @@ describe('Context', () => {
 
       expect(result.done).toBe(true);
       expect(result.value).toBe('cached-result');
+    });
+
+    it('on recovery skips completed retry backoff sleeps after a cached retried activity', () => {
+      const accumulatedResults = new Map<number, unknown>();
+      accumulatedResults.set(0, 'cached-result');
+      accumulatedResults.set(1, undefined);
+      const context = createContext({
+        accumulatedResults,
+        locals: {
+          __weftActivityRetryState: {
+            version: 1,
+            attempts: {},
+            completedRetrySleeps: { '0': 1 },
+          },
+        },
+      });
+
+      const retriedActivity = context.run(greet, 'Alice');
+      const retriedResult = retriedActivity.next();
+      expect(retriedResult.done).toBe(true);
+      expect(retriedResult.value).toBe('cached-result');
+      expect(context.stepIndex).toBe(2);
+
+      const nextActivity = context.run(sendEmail, 'bob@example.com');
+      const request = expectRequest(nextActivity.next(), 'activity');
+      expect(request.activityName).toBe('sendEmail');
     });
 
     it('on recovery returns cached undefined without yielding', () => {

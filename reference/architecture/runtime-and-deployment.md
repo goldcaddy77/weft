@@ -451,7 +451,7 @@ const server = serve({
 
   routes: {
     // Workflow Management (JSON API)
-    'POST /v1/workflows': async (req) => {
+    'POST /api/v1/workflows': async (req) => {
       const body = await req.json();
       const handle = await engine.start(body.type, body.input, {
         idempotencyKey: body.idempotencyKey,
@@ -461,43 +461,43 @@ const server = serve({
       return Response.json({ id: handle.id, status: 'running' }, { status: 201 });
     },
 
-    'GET /v1/workflows/:id': async (req) => {
+    'GET /api/v1/workflows/:id': async (req) => {
       const workflow = await engine.get(req.params.id);
       if (!workflow) return new Response('Not found', { status: 404 });
       return Response.json(workflow);
     },
 
-    'DELETE /v1/workflows/:id': async (req) => {
+    'DELETE /api/v1/workflows/:id': async (req) => {
       await engine.cancel(req.params.id);
       return new Response(null, { status: 204 });
     },
 
-    'POST /v1/workflows/:id/signal/:name': async (req) => {
+    'POST /api/v1/workflows/:id/signal/:name': async (req) => {
       const payload = await req.json();
       await engine.signal(req.params.id, req.params.name, payload);
       return Response.json({ delivered: true });
     },
 
-    'GET /v1/workflows/:id/query/:name': async (req) => {
+    'GET /api/v1/workflows/:id/query/:name': async (req) => {
       const result = await engine.query(req.params.id, req.params.name);
       return Response.json(result);
     },
 
     // Search Attributes
-    'GET /v1/workflows/:id/attributes': async (req) => {
+    'GET /api/v1/workflows/:id/attributes': async (req) => {
       const attributes = await engine.getAttributes(req.params.id);
       if (!attributes) return new Response('Not found', { status: 404 });
       return Response.json(attributes);
     },
 
-    'PATCH /v1/workflows/:id/attributes': async (req) => {
+    'PATCH /api/v1/workflows/:id/attributes': async (req) => {
       const attributes = await req.json();
       await engine.setAttributes(req.params.id, attributes);
       return Response.json({ updated: true });
     },
 
     // Synchronous Updates
-    'POST /v1/workflows/:id/update/:name': async (req) => {
+    'POST /api/v1/workflows/:id/update/:name': async (req) => {
       const { payload, timeout, idempotencyKey } = await req.json();
       try {
         const result = await engine.update(req.params.id, req.params.name, payload, {
@@ -513,13 +513,13 @@ const server = serve({
       }
     },
 
-    'GET /v1/updates/:updateId': async (req) => {
+    'GET /api/v1/updates/:updateId': async (req) => {
       const response = await engine.getUpdateResponse(req.params.updateId);
       if (!response) return Response.json({ status: 'pending' }, { status: 202 });
       return Response.json({ status: 'completed', result: response.result, error: response.error });
     },
 
-    'GET /v1/workflows': async (req) => {
+    'GET /api/v1/workflows': async (req) => {
       const url = new URL(req.url);
       const filter: ListFilter = {
         status: url.searchParams.get('status'),
@@ -559,21 +559,21 @@ const server = serve({
     },
 
     // Agent-Specific Endpoints
-    'GET /v1/workflows/:id/conversation': async (req) => {
+    'GET /api/v1/workflows/:id/conversation': async (req) => {
       const agentConversation = query<void, AgentConversation>('agentConversation');
       const conversation = await engine.query(req.params.id, agentConversation);
       if (!conversation) return new Response('Not found', { status: 404 });
       return Response.json(conversation);
     },
 
-    'GET /v1/workflows/:id/cost': async (req) => {
+    'GET /api/v1/workflows/:id/cost': async (req) => {
       const agentCostWaterfall = query<void, AgentCostWaterfall>('agentCostWaterfall');
       const cost = await engine.query(req.params.id, agentCostWaterfall);
       if (!cost) return new Response('Not found', { status: 404 });
       return Response.json(cost);
     },
 
-    'GET /v1/reviews': async (req) => {
+    'GET /api/v1/reviews': async (req) => {
       const reviews = await engine.listReviews({
         status: req.query.status,
         workflowId: req.query.workflowId,
@@ -582,7 +582,7 @@ const server = serve({
       return Response.json(reviews);
     },
 
-    'GET /v1/workflows/:id/review/:reviewId': async (req) => {
+    'GET /api/v1/workflows/:id/review/:reviewId': async (req) => {
       // getReview() lives on HumanReviewCoordinator, not Engine directly
       const reviews = await engine.listReviews({ workflowId: req.params.id });
       const review = reviews.find(
@@ -592,7 +592,7 @@ const server = serve({
       return Response.json(review);
     },
 
-    'POST /v1/reviews/:reviewId/decision': async (req) => {
+    'POST /api/v1/reviews/:reviewId/decision': async (req) => {
       const { decision, reviewer, feedback } = await req.json();
       await engine.submitReview(req.params.reviewId, {
         decision,
@@ -609,8 +609,14 @@ const server = serve({
         headers: { 'Content-Type': 'text/plain' },
       }),
 
-    // Dashboard (embedded SPA)
-    '/ui/*': (req) => new Response(Bun.file(dashboardHTML)),
+    // Dashboard (embedded SPA) — mounted at its specific top-level page
+    // routes, never a blanket `/*` (which would shadow the API, since Bun
+    // matches the `routes` map before the `fetch` fallback).
+    '/': (req) => new Response(Bun.file(dashboardHTML)),
+    '/workflows': (req) => new Response(Bun.file(dashboardHTML)),
+    '/workflows/*': (req) => new Response(Bun.file(dashboardHTML)),
+    '/reviews': (req) => new Response(Bun.file(dashboardHTML)),
+    '/workers': (req) => new Response(Bun.file(dashboardHTML)),
   },
 
   // WebSocket upgrade handling
@@ -681,7 +687,7 @@ import { ship } from './activities/ship.ts';
 import { sendEmail } from './activities/email.ts';
 
 const worker = new Worker({
-  serverUrl: 'ws://weft-server:7233/v1/tasks/default/stream',
+  serverUrl: 'ws://weft-server:7233/api/v1/tasks/default/stream',
   queue: 'default',
   identity: `worker-${crypto.randomUUID()}`, // unique per process
   concurrency: 10, // max simultaneous activities
@@ -706,7 +712,7 @@ Task dispatch is **server-push over WebSocket**, not client-poll. This eliminate
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ 1. Worker connects: WS /v1/tasks/:queue/stream                 │
+│ 1. Worker connects: WS /api/v1/tasks/:queue/stream                 │
 │ 2. Worker sends REGISTER: { identity, activities, concurrency } │
 │ 3. Server tracks worker capacity (concurrency - in_flight)      │
 │ 4. Server pushes TASK to worker when capacity > 0               │
@@ -986,7 +992,7 @@ For environments where WebSocket connections aren't possible (restrictive proxie
 
 ```typescript
 // Server route: long-poll task claiming
-"GET /v1/tasks/:queue": async (req) => {
+"GET /api/v1/tasks/:queue": async (req) => {
   const queue = req.params.queue;
   const url = new URL(req.url);
   const timeout = parseInt(url.searchParams.get("timeout") ?? "30000");
@@ -1018,7 +1024,7 @@ For environments where WebSocket connections aren't possible (restrictive proxie
 },
 
 // Result submission via POST (pairs with long-poll)
-"POST /v1/tasks/:queue/result": async (req) => {
+"POST /api/v1/tasks/:queue/result": async (req) => {
   const body = await req.json();
   await handleTaskResult(body.operationId, body.outcome, body.value, body.error);
   return Response.json({ accepted: true });
@@ -1036,7 +1042,7 @@ async function longPollWorker(
 
   while (true) {
     const response = await fetch(
-      `${serverUrl}/v1/tasks/${queue}?timeout=30000&activities=${activityNames}`,
+      `${serverUrl}/api/v1/tasks/${queue}?timeout=30000&activities=${activityNames}`,
     );
 
     if (response.status === 204) continue; // No tasks, poll again
@@ -1056,7 +1062,7 @@ async function longPollWorker(
       error = String(err);
     }
 
-    await fetch(`${serverUrl}/v1/tasks/${queue}/result`, {
+    await fetch(`${serverUrl}/api/v1/tasks/${queue}/result`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ operationId: task.operationId, outcome, value, error }),
@@ -1079,7 +1085,7 @@ The operation catalog (`src/server/operation-catalog.ts`) reflects this: every `
 
 ## 8a-1: No second orchestration layer
 
-Track 8's runtime transports—`POST /jsonrpc`, WebSocket on `/jsonrpc`, and the opt-in stdio session—all route through `src/server/operation-catalog.ts`'s `executeOperation` against the live `Engine` instance. `/openrpc.json` is not in this list: it is a discovery document generated from the same catalog, served as documentation rather than executed as an operation. There is no parallel orchestration system, no shadow event bus, no second state machine sitting between transport and engine.
+Track 8's runtime transports—`POST /api/jsonrpc`, WebSocket on `/api/jsonrpc`, and the opt-in stdio session—all route through `src/server/operation-catalog.ts`'s `executeOperation` against the live `Engine` instance. `/openrpc.json` is not in this list: it is a discovery document generated from the same catalog, served as documentation rather than executed as an operation. There is no parallel orchestration system, no shadow event bus, no second state machine sitting between transport and engine.
 
 `executeOperation` calls the same `Engine` methods that the REST bindings have always called. The transport decides how to frame the request and response; the catalog decides what to invoke and how to map errors. The `Engine` itself is unchanged.
 

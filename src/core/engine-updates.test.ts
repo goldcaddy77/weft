@@ -65,6 +65,10 @@ function wrapStorageWithUpdateScanHook(
     wrapped.query = storage.query.bind(storage);
   }
 
+  if (storage.conditionalBatch) {
+    wrapped.conditionalBatch = storage.conditionalBatch.bind(storage);
+  }
+
   return wrapped;
 }
 
@@ -118,6 +122,10 @@ function wrapStorageWithStaleWorkflowStateRead(storage: Storage): {
 
   if (storage.query) {
     wrapped.query = storage.query.bind(storage);
+  }
+
+  if (storage.conditionalBatch) {
+    wrapped.conditionalBatch = storage.conditionalBatch.bind(storage);
   }
 
   return {
@@ -175,6 +183,9 @@ function wrapStorageWithDelayedUpdateResponse(storage: Storage, result: unknown)
     delete: storage.delete.bind(storage),
     scan: storage.scan.bind(storage),
     batch: storage.batch.bind(storage),
+    ...(storage.conditionalBatch
+      ? { conditionalBatch: storage.conditionalBatch.bind(storage) }
+      : {}),
     [Symbol.dispose]() {
       storage[Symbol.dispose]();
     },
@@ -209,6 +220,9 @@ function wrapStorageWithPostDeleteUpdateResponse(storage: Storage, result: unkno
     },
     scan: storage.scan.bind(storage),
     batch: storage.batch.bind(storage),
+    ...(storage.conditionalBatch
+      ? { conditionalBatch: storage.conditionalBatch.bind(storage) }
+      : {}),
     [Symbol.dispose]() {
       storage[Symbol.dispose]();
     },
@@ -1261,62 +1275,66 @@ for (const backend of storageBackends) {
         );
       }
 
-      it('re-checks pending updates after waiter registration to catch arrivals during registration', async () => {
-        const result = backend.factory();
-        cleanup = result.cleanup;
+      if (backend.name === 'MemoryStorage') {
+        // This test forces a scheduler-sensitive gap between waiter
+        // registration and the follow-up pending-update scan. The behavior is
+        // engine-level rather than adapter-specific, so keep the harness on
+        // MemoryStorage where scan timing is deterministic.
+        it('re-checks pending updates after waiter registration to catch arrivals during registration', async () => {
+          const result = backend.factory();
+          cleanup = result.cleanup;
 
-        let updateScanCount = 0;
-        const secondScanStarted = Promise.withResolvers<void>();
-        const releaseSecondScan = Promise.withResolvers<void>();
-        const storage = wrapStorageWithUpdateScanHook(result.storage, async () => {
-          updateScanCount++;
-          if (updateScanCount !== 2) {
-            return;
-          }
+          const workflowId = `wait-update-registration-race-${backend.name}`;
+          const pendingUpdate = {
+            updateId: 'registration-race-update',
+            workflowId,
+            name: 'data',
+            payload: 'arrived-during-registration',
+            createdAt: Date.now(),
+          };
+          let updateScanCount = 0;
+          const updateInsertedBeforeSecondScan = Promise.withResolvers<void>();
+          const storage = wrapStorageWithUpdateScanHook(result.storage, async () => {
+            updateScanCount++;
+            if (updateScanCount !== 2) {
+              return;
+            }
 
-          secondScanStarted.resolve();
-          await releaseSecondScan.promise;
+            await result.storage.put(
+              KEYS.update(workflowId, pendingUpdate.updateId),
+              encode(pendingUpdate),
+            );
+            updateInsertedBeforeSecondScan.resolve();
+          });
+
+          engine = new Engine({ storage });
+
+          const waitUpdateRegistrationRaceWorkflow = workflow({
+            name: 'wait-update-registration-race',
+          }).execute(async function* (ctx: WorkflowContext) {
+            const { payload, respond } = yield* ctx.waitForUpdate<string>('data');
+            respond(`processed:${payload}`);
+            return payload;
+          });
+          engine.register(waitUpdateRegistrationRaceWorkflow);
+
+          const handle = await engine.start('wait-update-registration-race', undefined, {
+            id: workflowId,
+          });
+
+          await updateInsertedBeforeSecondScan.promise;
+
+          await expect(handle.result()).resolves.toBe('arrived-during-registration');
+          await flush();
+
+          const responseBytes = await result.storage.get(
+            KEYS.updateResponse(pendingUpdate.updateId),
+          );
+          expect(responseBytes).not.toBeNull();
+          const response = decode(responseBytes!) as { result: unknown };
+          expect(response.result).toBe('processed:arrived-during-registration');
         });
-
-        engine = new Engine({ storage });
-        const workflowId = `wait-update-registration-race-${backend.name}`;
-
-        const waitUpdateRegistrationRaceWorkflow = workflow({
-          name: 'wait-update-registration-race',
-        }).execute(async function* (ctx: WorkflowContext) {
-          const { payload, respond } = yield* ctx.waitForUpdate<string>('data');
-          respond(`processed:${payload}`);
-          return payload;
-        });
-        engine.register(waitUpdateRegistrationRaceWorkflow);
-
-        const handle = await engine.start('wait-update-registration-race', undefined, {
-          id: workflowId,
-        });
-
-        await secondScanStarted.promise;
-
-        const pendingUpdate = {
-          updateId: 'registration-race-update',
-          workflowId,
-          name: 'data',
-          payload: 'arrived-during-registration',
-          createdAt: Date.now(),
-        };
-        await result.storage.put(
-          KEYS.update(workflowId, pendingUpdate.updateId),
-          encode(pendingUpdate),
-        );
-        releaseSecondScan.resolve();
-
-        await expect(handle.result()).resolves.toBe('arrived-during-registration');
-        await flush();
-
-        const responseBytes = await result.storage.get(KEYS.updateResponse(pendingUpdate.updateId));
-        expect(responseBytes).not.toBeNull();
-        const response = decode(responseBytes!) as { result: unknown };
-        expect(response.result).toBe('processed:arrived-during-registration');
-      });
+      }
 
       it('recovery path provides no-op respond function', async () => {
         const result = backend.factory();

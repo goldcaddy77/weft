@@ -28,7 +28,7 @@ describe('OpenAPI hydration', () => {
     const document = (await response.json()) as Record<string, unknown>;
 
     const paths = document['paths'] as Record<string, Record<string, Record<string, unknown>>>;
-    const startOperation = paths['/v1/workflows']?.['post'];
+    const startOperation = paths['/api/v1/workflows']?.['post'];
     expect(startOperation).toBeDefined();
     const requestBody = startOperation!['requestBody'] as Record<string, unknown>;
     const content = requestBody['content'] as Record<string, Record<string, unknown>>;
@@ -98,7 +98,7 @@ describe('OpenAPI hydration', () => {
       paths: Record<string, Record<string, Record<string, unknown>>>;
     };
 
-    const sseGet = document.paths['/v1/workflows/{id}/sse']?.['get'];
+    const sseGet = document.paths['/api/v1/workflows/{id}/sse']?.['get'];
     expect(sseGet).toBeDefined();
     const sseResponses = sseGet!['responses'] as Record<string, Record<string, unknown>>;
     const sseSuccess = sseResponses['200'] as { content: Record<string, unknown> };
@@ -130,7 +130,7 @@ describe('OpenAPI hydration', () => {
       components?: { schemas?: Record<string, unknown> };
     };
 
-    const startOperation = document.paths['/v1/workflows']?.['post'];
+    const startOperation = document.paths['/api/v1/workflows']?.['post'];
     expect(startOperation).toBeDefined();
 
     // The operation ID, summary, and tags are stable contract surface.
@@ -184,6 +184,7 @@ describe('OpenAPI hydration', () => {
       name: 'weft.test.publicoperation',
       summary: 'public fixture',
       mcpExposable: false,
+      destructive: false,
       inputSchema: z.object({ value: z.string() }),
       outputSchema: z.object({ ok: z.boolean() }),
       access: { kind: 'public' },
@@ -195,6 +196,7 @@ describe('OpenAPI hydration', () => {
       name: 'weft.test.privateoperation',
       summary: 'private fixture',
       mcpExposable: false,
+      destructive: false,
       inputSchema: z.object({ secret: z.string() }),
       outputSchema: z.object({ ok: z.boolean() }),
       access: { kind: 'authenticated' },

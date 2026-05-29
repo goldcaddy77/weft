@@ -2,6 +2,9 @@
 
 Durable workflows are inherently hard to test. They span time—sleeps, retries, timeouts—and depend on external services. You don't want your test suite waiting 30 real seconds for a timer to fire or hitting a real payment API. Weft's testing module gives you deterministic time control, activity mocking, and crash-recovery simulation.
 
+> [!NOTE]
+> [`TestEngine`](../reference/api-testing.md#testengine) is candidate-stable and provisional. It is the supported test harness for workflow behavior, virtual time, activity mocks, and restart simulation; compatibility is still subject to the Tier-0 contract before 1.0.
+
 ## TestEngine
 
 `TestEngine` is a subclass of `Engine` backed by in-memory storage and a virtual clock. Everything behaves like the real engine, but you control time and can mock activities.

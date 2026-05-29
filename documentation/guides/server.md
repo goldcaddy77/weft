@@ -2,6 +2,9 @@
 
 You've built your workflows and tested them locally. Now you need to expose them over the network—accept HTTP requests to start workflows, send signals, query status, and stream results over WebSockets. Weft's server module wraps `Bun.serve()` with a complete REST API and WebSocket support.
 
+> [!NOTE]
+> [`serve()`](../reference/api-server.md#serve) and the `/v1` REST surface are candidate-stable, provisional surfaces. [MCP discovery](../reference/api-server.md#mcp-server), the bundled dashboard, and the exact [OpenTelemetry](./observability.md) metric names remain experimental until the Tier-0 failure-semantics work finishes and the launch contract is frozen.
+
 ## Starting the server
 
 The `serve()` function takes an engine and optional network configuration, and returns a `WeftServer` handle.
@@ -26,8 +29,10 @@ interface ServeOptions {
   port?: number;
   hostname?: string;
   development?: boolean; // enable Bun's development mode (HMR, source maps)
-  dashboard?: unknown; // dashboard HTML/module import served at /ui
+  dashboard?: unknown; // dashboard HTML/module import served at /
   auth?: AuthConfig; // API key or JWT authentication configuration
+  cors?: CorsOptions; // cross-origin policy for browser clients; omit for same-origin only
+  unauthenticatedAccess?: 'warn' | 'allow' | 'reject'; // startup policy when auth is omitted
   visibilityPollIntervalMs?: number; // task visibility scanner interval; default: 5000
   workerReconnectGracePeriodMs?: number; // reconnect grace before requeue; default: 100
   routingPolicy?: RoutingPolicy; // task dispatch policy for remote workers; default: 'least-loaded'
@@ -36,11 +41,73 @@ interface ServeOptions {
 }
 ```
 
+When [`auth`](../reference/configuration.md#serveoptions) is omitted, [`serve()`](../reference/api-server.md#serve) starts in an open local-development mode and logs a loud startup warning because every non-public operation is reachable by anyone who can connect to the server. Production wrappers should pass `unauthenticatedAccess: 'reject'` or set [`WEFT_SERVER_AUTHENTICATION_REQUIRED=1`](../reference/configuration.md#environment-variables); either setting makes `serve()` fail before binding unless `auth` is configured. Use `unauthenticatedAccess: 'allow'` only when an intentionally open local process boundary should start without a warning.
+
 `workerReconnectGracePeriodMs` is clamped to `0..5000`. The default `100` ms gives a worker that drops and reconnects with the same `workerId` a short window to keep its in-flight task assignments; set it to `0` when tests or embedded servers need close handling to requeue immediately.
+
+## Authentication
+
+Use [`auth`](../reference/configuration.md#serveoptions) to lock down the [REST](../reference/api-server.md#rest-api-routes), [JSON-RPC](../getting-started/transports.md#json-rpc-over-http-post-apijsonrpc), [WebSocket](../getting-started/transports.md#json-rpc-over-websocket-ws-apijsonrpc), worker, and [MCP](../getting-started/transports.md#mcp-over-streamable-http-and-stdio) surfaces. Public discovery and health routes remain public, while operation routes enforce the scope policy declared by the operation catalog.
+
+```typescript partial
+import { Engine } from 'weft';
+import { serve } from 'weft/server';
+
+const engine = new Engine({ storage });
+
+const server = serve({
+  engine,
+  auth: { apiKeys: [process.env.WEFT_API_KEY!] },
+  unauthenticatedAccess: 'reject',
+});
+```
+
+The built-in API-key configuration grants the configured key the default authenticated scope set. JWT and custom authenticators can provide narrower scope sets such as `workflows:read`, `workflows:write`, `workflows:admin`, and `system:read`; requests missing the required scope fail with `401` or `403` before the operation runs.
+
+## Cross-Origin Resource Sharing (CORS)
+
+The dashboard and the [Service Worker browser runtime](#service-worker) are browser clients. When they run on the **same origin** as the API—the default when the CLI serves the dashboard from `/`, or when a reverse proxy puts the UI and API behind one hostname—no CORS configuration is needed, and Weft ships nothing by default: `serve()` emits no `Access-Control-*` headers and only same-origin browser requests succeed. **The default is deliberately restrictive; Weft never sends `Access-Control-Allow-Origin: *`.**
+
+Configure `cors` only when a browser client calls the API from a **different origin** (a dashboard hosted separately, a web app embedding Weft's API, or a Service Worker registered under another origin):
+
+```typescript partial
+import { Engine } from 'weft';
+import { serve } from 'weft/server';
+
+const engine = new Engine({ storage });
+
+const server = serve({
+  engine,
+  auth: { apiKeys: [process.env.WEFT_API_KEY!] },
+  cors: {
+    allowedOrigins: ['https://dashboard.example.com'],
+    // Set credentials only when the browser must send cookies / HTTP auth via
+    // `fetch(..., { credentials: 'include' })`. A bearer `Authorization` header
+    // is governed by allowedHeaders, not by this flag.
+    credentials: true,
+  },
+});
+```
+
+With `cors` set, `serve()`:
+
+- answers CORS preflight (`OPTIONS`) requests **before** authentication—browsers never attach credentials to a preflight, so it must not be auth-gated;
+- adds `Access-Control-Allow-Origin` (echoing the exact request origin) plus `Vary: Origin` to responses for allowed origins;
+- when `auth` is configured, automatically advertises `Authorization` in `Access-Control-Allow-Headers` so authenticated browser clients can preflight successfully;
+- rejects cross-origin **WebSocket** upgrades (`/jsonrpc`, `/v1/.../stream`, `/watch`) from disallowed origins with `403`, because CORS does not govern the WebSocket handshake.
+
+Origins are matched as canonical origin tuples (scheme, host, port), so case, default-port elision, and trailing slashes do not cause mismatches. The literal `Origin: null` (sandboxed iframes, `file://`) never matches.
+
+Two combinations fail fast—`serve()` throws before binding the port:
+
+- `credentials: true` with `allowedOrigins: ['*']`. A wildcard origin is illegal for credentialed CORS; list explicit origins instead.
+- `allowedOrigins: ['*']` together with an `Authorization` entry in `allowedHeaders`. That would let any web origin send bearer tokens and read the response—almost never intended. Use an explicit allowlist, or drop `Authorization` from `allowedHeaders` if the wildcard is genuinely meant for a public, unauthenticated API.
+
+A wildcard origin is allowed only for a public, non-credentialed API that does not accept an `Authorization` header. For everything else, list the exact origins your browser clients are served from.
 
 ## Dashboard
 
-The built-in dashboard is served at `/ui` when you pass a dashboard HTML/module import to `serve({ dashboard })`. The CLI loads the bundled dashboard by default and prints the dashboard URL after startup; pass `--no-ui` to run only the API and worker endpoints. For production, do not expose a CLI-started dashboard directly on a public interface unless access is controlled in front of Weft. Put an authenticated reverse proxy or custom wrapper in front of `/ui` before exposing it beyond a trusted operator network. During dashboard development, `bun run dev:dashboard` starts the server with the dashboard artifact from `src/dashboard/index.html`, which is the same kind of value you can pass through `ServeOptions.dashboard` in an embedded server.
+The built-in dashboard is served at `/` when you pass a dashboard HTML/module import to `serve({ dashboard })`. The CLI loads the bundled dashboard by default and prints the dashboard URL after startup; pass `--no-ui` to run only the API and worker endpoints. For production, do not expose a CLI-started dashboard directly on a public interface unless access is controlled in front of Weft. Put an authenticated reverse proxy or custom wrapper in front of `/` before exposing it beyond a trusted operator network. During dashboard development, `bun run dev:dashboard` starts the server with the dashboard artifact from `src/dashboard/index.html`, which is the same kind of value you can pass through `ServeOptions.dashboard` in an embedded server.
 
 ## The WeftServer handle
 
@@ -77,7 +144,7 @@ disposed engine.
 
 ## REST API endpoints
 
-The server exposes a versioned REST API under `/v1/`. All endpoints return JSON by default, with content negotiation for MessagePack (`Accept: application/msgpack`).
+The server exposes a versioned REST API under `/api/v1/`. All endpoints return JSON by default, with content negotiation for MessagePack (`Accept: application/msgpack`).
 
 **Health check:**
 
@@ -93,7 +160,7 @@ GET /openrpc.json
 → OpenRPC 1.3.2 document listing all JSON-RPC methods
 
 GET /.well-known/mcp.json
-→ MCP discovery document pointing clients at /mcp
+→ MCP discovery document pointing clients at /api/mcp
 ```
 
 The `rpc.discover` JSON-RPC method returns the OpenRPC document exposed at `GET /openrpc.json` over the JSON-RPC transport. MCP discovery is separate. These discovery endpoints were introduced in the Track 8 operation catalogue consolidation.
@@ -103,7 +170,7 @@ Engine-local definition introspection is separate from these transport documents
 **Start a workflow:**
 
 ```
-POST /v1/workflows
+POST /api/v1/workflows
 { "type": "order", "input": { ... }, "id": "custom-id", "executionTimeout": "24h" }
 → 201 { "id": "workflow-id" }
 ```
@@ -113,27 +180,27 @@ The `id` and `executionTimeout` fields are optional. If `id` is omitted, one is 
 **List workflows:**
 
 ```
-GET /v1/workflows?status=running&type=order&limit=50&offset=0
+GET /api/v1/workflows?status=running&type=order&limit=50&offset=0
 → { "items": [...], "total": 142, "offset": 0, "limit": 50 }
 ```
 
 Filter by `status`, `type`, `id_prefix`, `failure_category`, created/updated/deadline ranges, or [search attributes](./search-attributes.md) using `attribute.<name>` query parameters. Repeat `status` and `failure_category` for OR filters. Add `include=failureCategory` when the response needs `WorkflowSummary.failureCategory`; the default list path avoids the extra projection work.
 
-**Aggregate workflows:** `GET /v1/workflows/aggregate?group_by=status` returns grouped counts such as `{ "total": 42, "groups": [{ "key": "running", "count": 24 }], "truncated": false }`.
+**Aggregate workflows:** `GET /api/v1/workflows/aggregate?group_by=status` returns grouped counts such as `{ "total": 42, "groups": [{ "key": "running", "count": 24 }], "truncated": false }`.
 
 Use aggregates for dashboard counts. Supported groupings are `status`, `type`, `failureCategory`, and `attribute:<name>`.
 
 **Get workflow state:**
 
 ```
-GET /v1/workflows/:id
+GET /api/v1/workflows/:id
 → { "id": "...", "type": "order", "status": "running", ... }
 ```
 
 **Get workflow result:**
 
 ```
-GET /v1/workflows/:id/result
+GET /api/v1/workflows/:id/result
 → { "result": { ... } }
 ```
 
@@ -142,21 +209,21 @@ If the workflow is still running, this endpoint blocks for up to 30 seconds wait
 **Cancel a workflow:**
 
 ```
-DELETE /v1/workflows/:id
+DELETE /api/v1/workflows/:id
 → 204 No Content
 ```
 
 `DELETE` removes the workflow record from storage. To cancel a workflow while keeping its terminal state, use the cancel endpoint:
 
 ```
-POST /v1/workflows/:id/cancel
+POST /api/v1/workflows/:id/cancel
 → 204 No Content
 ```
 
 **Send a signal:**
 
 ```
-POST /v1/workflows/:id/signal/:name
+POST /api/v1/workflows/:id/signal/:name
 { "payload": { ... } }
 → { "ok": true }
 ```
@@ -164,7 +231,7 @@ POST /v1/workflows/:id/signal/:name
 **Send an update (synchronous request-response):**
 
 ```
-POST /v1/workflows/:id/update/:name
+POST /api/v1/workflows/:id/update/:name
 { "payload": { ... }, "timeout": 5000, "idempotencyKey": "..." }
 → { "updateId": "...", "result": { ... } }
 ```
@@ -174,7 +241,7 @@ See the [synchronous updates guide](./synchronous-updates.md) for details on the
 **Check update result:**
 
 ```
-GET /v1/updates/:updateId
+GET /api/v1/updates/:updateId
 → { "status": "completed", "result": { ... } }
 → { "status": "pending" }  (202 if still processing)
 ```
@@ -182,8 +249,8 @@ GET /v1/updates/:updateId
 **Get/set search attributes:**
 
 ```
-GET  /v1/workflows/:id/attributes
-PATCH /v1/workflows/:id/attributes
+GET  /api/v1/workflows/:id/attributes
+PATCH /api/v1/workflows/:id/attributes
 { "attributes": { "priority": 5, "region": "us-east" } }
 ```
 
@@ -197,7 +264,7 @@ GET /v1/metrics
 **Task diagnostics:**
 
 ```
-GET /v1/tasks/diagnostics?workflowId=<workflow-id>&queue=default&limit=25
+GET /api/v1/tasks/diagnostics?workflowId=<workflow-id>&queue=default&limit=25
 → { "items": [...], "summary": { ... }, "limit": 25 }
 ```
 
@@ -209,8 +276,8 @@ The server supports WebSocket connections for real-time streaming. When a reques
 
 Three WebSocket routes are available:
 
-- `/v1/workflows/:id/watch`: observe workflow state changes in real time
-- `/v1/tasks/:queue/stream`: [remote worker](./remote-workers.md) task dispatch
+- `/api/v1/workflows/:id/watch` — observe workflow state changes in real time
+- `/api/v1/tasks/:queue/stream` — [remote worker](./remote-workers.md) task dispatch
 
 HTTP long-poll task requests use the request's `AbortSignal`. If the client
 disconnects before or during the poll, the waiter settles promptly and does

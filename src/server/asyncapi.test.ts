@@ -31,6 +31,7 @@ type AsyncApiDocument = {
 const PRIVATE_STREAM_OPERATION: ErasedOperation = {
   name: 'weft.private.stream',
   mcpExposable: false,
+  destructive: false,
   kind: 'stream',
   summary: 'Private test stream',
   tags: ['Tests'],
@@ -176,13 +177,13 @@ describe('AsyncAPI document', () => {
     }) as AsyncApiDocument;
 
     expect(document.info?.title).toBe('Weft Workflow Engine');
-    expect(document.info?.version).toBe('0.1.0');
+    expect(document.info?.version).toBe('0.2.0');
   });
 
   it('uses ws for non-TLS server URLs', () => {
     const document = generateAsyncApiDocument({
       registry: createLiveOperationRegistry(),
-      serverUrl: 'http://api.example.com/v1/tasks/default/stream',
+      serverUrl: 'http://api.example.com/api/v1/tasks/default/stream',
     }) as AsyncApiDocument;
 
     expect(document.servers?.['default']).toEqual({
@@ -194,7 +195,7 @@ describe('AsyncAPI document', () => {
   it('uses wss for TLS server URLs', () => {
     const document = generateAsyncApiDocument({
       registry: createLiveOperationRegistry(),
-      serverUrl: 'https://api.example.com/v1/tasks/default/stream',
+      serverUrl: 'https://api.example.com/api/v1/tasks/default/stream',
     }) as AsyncApiDocument;
 
     expect(document.servers?.['default']).toEqual({

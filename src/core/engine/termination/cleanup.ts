@@ -2,6 +2,7 @@ import type { BatchOperation } from '../../../storage/interface.ts';
 import { KEYS, encodeStorageKeyComponent } from '../../../storage/interface.ts';
 import { CleanupWarningEvent } from '../../events.ts';
 import type { WorkflowState, WorkflowStatus } from '../../types.ts';
+import { forgetCommittedCheckpointBytes } from '../checkpoint-commit-snapshots.ts';
 import type { EngineInternals } from '../internals.ts';
 import { parseTerminalCleanupTimerId, workflowFeedListenerKey } from '../state-utilities.ts';
 
@@ -177,6 +178,8 @@ export async function cleanupWorkflowStorage(
   // after the workflow terminates - leaving them behind would leak linearly with
   // effect volume across the engine's lifetime.
   const prefixes: string[] = [
+    KEYS.activityReconciliationPrefix(workflowId),
+    KEYS.signalAcceptedResponsePrefix(workflowId),
     `sig:${encodedWorkflowId}:`,
     `state:execution:${encodedWorkflowId}:`,
     `tool-effect:${encodedWorkflowId}:`,
@@ -191,6 +194,7 @@ export async function cleanupWorkflowStorage(
   }
 
   await internals.storage.delete(KEYS.workflowHeaders(workflowId));
+  await internals.storage.delete(KEYS.signalSequence(workflowId));
 
   // Use the storage adapter's native prefix deletion when available
   // (e.g., BunSQLiteStorage's prepared DELETE...WHERE key >= ? AND key < ?).
@@ -239,6 +243,7 @@ export function cleanupTerminalWorkflowMemory(
   callbacks: Pick<TerminationCallbacks, 'swallowPromiseRejection'>,
 ): void {
   internals.workflowsNeedingTerminalCleanup.delete(workflowId);
+  forgetCommittedCheckpointBytes(internals, workflowId);
   internals.checkpoints.delete(workflowId);
   internals.heartbeatDetails.delete(workflowId);
   internals.eventLogHeads.delete(workflowId);

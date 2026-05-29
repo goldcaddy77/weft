@@ -65,6 +65,35 @@ describe('CLI argument parsing', () => {
       expect(result.port).toBe('9999');
     });
 
+    it('parses --workflows flag', () => {
+      const result = parseCliArguments(['--workflows', './my-workflows.ts']) as ServeCommand;
+      expect(result.command).toBe('serve');
+      expect(result.workflows).toBe('./my-workflows.ts');
+    });
+
+    it('parses -w short flag for workflows', () => {
+      const result = parseCliArguments(['-w', './workflows.ts']) as ServeCommand;
+      expect(result.command).toBe('serve');
+      expect(result.workflows).toBe('./workflows.ts');
+    });
+
+    it('parses serve -w short flag for workflows', () => {
+      const result = parseCliArguments(['serve', '-w', './x']) as ServeCommand;
+      expect(result.command).toBe('serve');
+      expect(result.workflows).toBe('./x');
+    });
+
+    it('throws when --workflows is an empty string', () => {
+      expect(() => parseCliArguments(['--workflows', ''])).toThrow(
+        '--workflows must be a non-empty path',
+      );
+    });
+
+    it('defaults workflows to undefined when not provided', () => {
+      const result = parseCliArguments([]) as ServeCommand;
+      expect(result.workflows).toBeUndefined();
+    });
+
     it('defaults port to 7233', () => {
       const result = parseCliArguments([]) as ServeCommand;
       expect(result.command).toBe('serve');
@@ -1180,11 +1209,20 @@ describe('CLI direct execution', () => {
   });
 
   it('validates the bundled examples through the CLI entrypoint and exits 0', async () => {
-    const childProcess = Bun.spawn(['bun', './src/cli-main.ts', 'validate', 'examples/**/*.ts'], {
-      cwd: process.cwd(),
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
+    const childProcess = Bun.spawn(
+      [
+        'bun',
+        './src/cli-main.ts',
+        'validate',
+        'examples/hello-world/src/**/*.ts',
+        'examples/order-processing/src/**/*.ts',
+      ],
+      {
+        cwd: process.cwd(),
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    );
 
     const exitCode = await childProcess.exited;
     const stdout = await new Response(childProcess.stdout).text();
@@ -1192,8 +1230,8 @@ describe('CLI direct execution', () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe('');
-    expect(stdout).toContain('examples/hello-world.ts');
-    expect(stdout).toContain('examples/customer-profile.ts');
+    expect(stdout).toContain('examples/hello-world/src/index.ts');
+    expect(stdout).toContain('examples/order-processing/src/workflows/order.ts');
     expect(stdout).toContain('No issues found.');
   });
 });
@@ -1480,43 +1518,74 @@ describe('executeValidate', () => {
 
   it('returns exitCode 0 for the bundled examples validation gate', async () => {
     const result = await executeValidate({
-      entryPaths: ['examples/**/*.ts'],
+      entryPaths: ['examples/hello-world/src/**/*.ts', 'examples/order-processing/src/**/*.ts'],
       json: false,
     });
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout.indexOf('examples/customer-profile.ts')).toBeLessThan(
-      result.stdout.indexOf('examples/hello-world.ts'),
+    // Globs are validated in argument order, so the hello-world entry precedes
+    // the order-processing entries.
+    expect(result.stdout.indexOf('examples/hello-world/src/index.ts')).toBeLessThan(
+      result.stdout.indexOf('examples/order-processing/src/workflows/order.ts'),
     );
-    expect(result.stdout).toContain('examples/hello-world.ts');
-    expect(result.stdout).toContain('examples/customer-profile.ts');
+    expect(result.stdout).toContain('examples/hello-world/src/index.ts');
+    expect(result.stdout).toContain('examples/order-processing/src/workflows/order.ts');
+  });
+
+  it('expands a single glob to its matching files in alphabetical order', async () => {
+    // The order-processing example is the multi-file glob target, so it pins the
+    // within-glob sort contract (a single glob's matches are emitted sorted,
+    // independent of filesystem enumeration order).
+    const result = await executeValidate({
+      entryPaths: ['examples/order-processing/src/**/*.ts'],
+      json: true,
+    });
+
+    expect(result.exitCode).toBe(0);
+    const entryPaths = (
+      JSON.parse(result.stdout) as { entries: Array<{ entryPath: string }> }
+    ).entries.map((entry) => entry.entryPath);
+    expect(entryPaths.length).toBeGreaterThan(1);
+    expect(entryPaths).toEqual([...entryPaths].toSorted());
   });
 
   it('expands absolute glob patterns for bundled example validation', async () => {
     const result = await executeValidate({
-      entryPaths: [join(process.cwd(), 'examples/**/*.ts')],
+      entryPaths: [
+        join(process.cwd(), 'examples/hello-world/src/**/*.ts'),
+        join(process.cwd(), 'examples/order-processing/src/**/*.ts'),
+      ],
       json: false,
     });
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(join(process.cwd(), 'examples/customer-profile.ts'));
-    expect(result.stdout).toContain(join(process.cwd(), 'examples/hello-world.ts'));
+    expect(result.stdout).toContain(join(process.cwd(), 'examples/hello-world/src/index.ts'));
+    expect(result.stdout).toContain(
+      join(process.cwd(), 'examples/order-processing/src/workflows/order.ts'),
+    );
   });
 
   it('normalizes Windows-style glob separators for bundled example validation', async () => {
     const result = await executeValidate({
-      entryPaths: [String.raw`examples\**\*.ts`],
+      entryPaths: [
+        String.raw`examples\hello-world\src\**\*.ts`,
+        String.raw`examples\order-processing\src\**\*.ts`,
+      ],
       json: false,
     });
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('examples/customer-profile.ts');
-    expect(result.stdout).toContain('examples/hello-world.ts');
+    expect(result.stdout).toContain('examples/hello-world/src/index.ts');
+    expect(result.stdout).toContain('examples/order-processing/src/workflows/order.ts');
   });
 
   it('deduplicates validate entries when a glob and explicit path match the same file', async () => {
     const result = await executeValidate({
-      entryPaths: ['examples/**/*.ts', 'examples/hello-world.ts'],
+      entryPaths: [
+        'examples/hello-world/src/**/*.ts',
+        'examples/order-processing/src/**/*.ts',
+        'examples/hello-world/src/index.ts',
+      ],
       json: true,
     });
 
@@ -1535,8 +1604,7 @@ describe('executeValidate', () => {
       hasValidationErrors: false,
     });
     const validatedEntryPaths = parsed.entries.map((entry) => entry.entryPath);
-    expect(validatedEntryPaths).toContain('examples/customer-profile.ts');
-    expect(validatedEntryPaths).toContain('examples/hello-world.ts');
+    expect(validatedEntryPaths).toContain('examples/hello-world/src/index.ts');
     expect(validatedEntryPaths).toContain('examples/order-processing/src/workflows/order.ts');
     expect(new Set(validatedEntryPaths).size).toBe(validatedEntryPaths.length);
   });

@@ -110,7 +110,7 @@ The workflow is a **generator function**—notice the `function*` and the `yield
 
 There's no replay happening here. Weft doesn't re-execute your workflow from the beginning and try to match up results. It literally picks up where it left off. That's why you don't need to worry about determinism—your workflow code can use `Date.now()`, `Math.random()`, or anything else. The only rule is that side effects go inside activities (the registered functions behind the names you pass to `ctx.run()`).
 
-`ctx.run('name', input)` is how you run an **activity** through its durable dispatch boundary. You pass the activity's registered name (the example does, and your editor autocompletes it from the `.activities({ ... })` block) plus a serializable input. Remote workers receive that name and the serialized input—not your in-process closure—which is why activities have to be registered with the engine before a workflow can dispatch to them.
+`ctx.run('name', input)` is how you run an **activity** through its durable dispatch boundary. You pass the activity name from the workflow's `.activities({ ... })` block (the example does this, and your editor autocompletes it) plus a serializable input. Remote workers receive that name and the serialized input—not your in-process closure—which is why you declare each activity in the workflow's `.activities({ ... })` block before you register the workflow with the engine.
 
 > [!NOTE]
 > **Checkpoint:** a serialized snapshot of the workflow's current position and local variables. Each durable operation creates a checkpoint boundary, so recovery resumes from the latest saved boundary instead of starting over.
@@ -119,7 +119,7 @@ There's no replay happening here. Weft doesn't re-execute your workflow from the
 
 `engine.start()` kicks off a new execution and returns a handle. `handle.result()` waits for the workflow to finish and gives you the output. Without `options.id`, each call gets a fresh UUID; with a stable id, the second run of this script throws `WorkflowAlreadyExistsError` instead of double-starting — which is what the `try`/`catch` block handles by resuming the existing workflow.
 
-If you'd rather wire registration up yourself — useful for tests or dynamic plugin loading — `new Engine({ storage })`, `engine.register()`, and `await engine.recoverAll()` are the same primitives. Register every activity and workflow before recovering.
+If you'd rather wire registration up yourself — useful for tests or dynamic plugin loading — `new Engine({ storage })`, `engine.register()`, and `await engine.recoverAll()` are the same primitives. Register every workflow before recovering; each workflow carries its own `.activities({ ... })` declarations with it.
 
 ## Adding a Sleep
 
@@ -171,24 +171,19 @@ A **signal** is fire-and-forget from the sender's perspective. If the caller nee
 When you have independent work, run it concurrently with `ctx.all()`:
 
 ```typescript partial
-const double = activity({
-  name: 'double',
-  execute: async (input: number) => input * 2,
-});
-
-const triple = activity({
-  name: 'triple',
-  execute: async (input: number) => input * 3,
-});
-
-engine.register(double);
-engine.register(triple);
-
 engine.register(
-  workflow({ name: 'parallel' }).execute(async function* (ctx, input: number) {
-    const [doubled, tripled] = yield* ctx.all([ctx.run('double', input), ctx.run('triple', input)]);
-    return { doubled, tripled };
-  }),
+  workflow({ name: 'parallel' })
+    .activities({
+      double: async (input: number) => input * 2,
+      triple: async (input: number) => input * 3,
+    })
+    .execute(async function* (ctx, input: number) {
+      const [doubled, tripled] = yield* ctx.all([
+        ctx.run('double', input),
+        ctx.run('triple', input),
+      ]);
+      return { doubled, tripled };
+    }),
 );
 
 const handle = await engine.start('parallel', 5);

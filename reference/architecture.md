@@ -199,7 +199,7 @@ docker compose up -d          # PostgreSQL, Elasticsearch, 4 Temporal services
 temporal server start-dev     # ... or the dev shortcut that still needs Docker
 
 # Weft
-./weft --port 7233            # SQLite auto-created. Dashboard at localhost:7233/ui
+./weft --port 7233            # SQLite auto-created. Dashboard at localhost:7233/
 ```
 
 **Going further: `weft doctor` diagnostic command.** A single command that reports everything an operator needs to know:
@@ -424,7 +424,7 @@ async function* longRunningWorkflow(ctx: Context, config: Config) {
 }
 ```
 
-The dashboard renders these as a live key-value table. The HTTP API serves them at `GET /v1/workflows/:id/state`.
+The dashboard renders these as a live key-value table. The HTTP API serves them at `GET /api/v1/workflows/:id/state`.
 
 **Going further: checkpoint history with time-travel debugging.** Store the last N checkpoints (configurable, default 10) instead of just the latest:
 
@@ -434,10 +434,10 @@ const engine = new Engine({
   checkpointHistory: 10,
 });
 
-// GET /v1/workflows/wf-abc123/checkpoints
+// GET /api/v1/workflows/wf-abc123/checkpoints
 // Returns: [{ step: 12, timestamp: ..., size: "2.1KB" }, { step: 11, ... }, ...]
 
-// GET /v1/workflows/wf-abc123/checkpoints/11
+// GET /api/v1/workflows/wf-abc123/checkpoints/11
 // Returns: the full deserialized checkpoint state at step 11
 ```
 
@@ -2185,7 +2185,7 @@ const server = serve({
 
   routes: {
     // Workflow Management (JSON API)
-    'POST /v1/workflows': async (req) => {
+    'POST /api/v1/workflows': async (req) => {
       const body = await req.json();
       const handle = await engine.start(body.type, body.input, {
         idempotencyKey: body.idempotencyKey,
@@ -2195,43 +2195,43 @@ const server = serve({
       return Response.json({ id: handle.id, status: 'running' }, { status: 201 });
     },
 
-    'GET /v1/workflows/:id': async (req) => {
+    'GET /api/v1/workflows/:id': async (req) => {
       const workflow = await engine.get(req.params.id);
       if (!workflow) return new Response('Not found', { status: 404 });
       return Response.json(workflow);
     },
 
-    'DELETE /v1/workflows/:id': async (req) => {
+    'DELETE /api/v1/workflows/:id': async (req) => {
       await engine.cancel(req.params.id);
       return new Response(null, { status: 204 });
     },
 
-    'POST /v1/workflows/:id/signal/:name': async (req) => {
+    'POST /api/v1/workflows/:id/signal/:name': async (req) => {
       const payload = await req.json();
       await engine.signal(req.params.id, req.params.name, payload);
       return Response.json({ delivered: true });
     },
 
-    'GET /v1/workflows/:id/query/:name': async (req) => {
+    'GET /api/v1/workflows/:id/query/:name': async (req) => {
       const result = await engine.query(req.params.id, req.params.name);
       return Response.json(result);
     },
 
     // Search Attributes
-    'GET /v1/workflows/:id/attributes': async (req) => {
+    'GET /api/v1/workflows/:id/attributes': async (req) => {
       const attributes = await engine.getAttributes(req.params.id);
       if (!attributes) return new Response('Not found', { status: 404 });
       return Response.json(attributes);
     },
 
-    'PATCH /v1/workflows/:id/attributes': async (req) => {
+    'PATCH /api/v1/workflows/:id/attributes': async (req) => {
       const attributes = await req.json();
       await engine.setAttributes(req.params.id, attributes);
       return Response.json({ updated: true });
     },
 
     // Synchronous Updates
-    'POST /v1/workflows/:id/update/:name': async (req) => {
+    'POST /api/v1/workflows/:id/update/:name': async (req) => {
       const { payload, timeout, idempotencyKey } = await req.json();
       try {
         const result = await engine.update(req.params.id, req.params.name, payload, {
@@ -2247,13 +2247,13 @@ const server = serve({
       }
     },
 
-    'GET /v1/updates/:updateId': async (req) => {
+    'GET /api/v1/updates/:updateId': async (req) => {
       const response = await engine.getUpdateResponse(req.params.updateId);
       if (!response) return Response.json({ status: 'pending' }, { status: 202 });
       return Response.json({ status: 'completed', result: response.result, error: response.error });
     },
 
-    'GET /v1/workflows': async (req) => {
+    'GET /api/v1/workflows': async (req) => {
       const url = new URL(req.url);
       const filter: ListFilter = {
         status: url.searchParams.get('status'),
@@ -2292,7 +2292,7 @@ const server = serve({
       return Response.json(result);
     },
 
-    'GET /v1/reviews': async (req) => {
+    'GET /api/v1/reviews': async (req) => {
       const reviews = await engine.listReviews({
         status: req.query.status,
         workflowId: req.query.workflowId,
@@ -2301,7 +2301,7 @@ const server = serve({
       return Response.json(reviews);
     },
 
-    'GET /v1/workflows/:id/review/:reviewId': async (req) => {
+    'GET /api/v1/workflows/:id/review/:reviewId': async (req) => {
       // getReview() lives on HumanReviewCoordinator, not Engine directly
       const reviews = await engine.listReviews({ workflowId: req.params.id });
       const review = reviews.find(
@@ -2311,7 +2311,7 @@ const server = serve({
       return Response.json(review);
     },
 
-    'POST /v1/reviews/:reviewId/decision': async (req) => {
+    'POST /api/v1/reviews/:reviewId/decision': async (req) => {
       const { decision, reviewer, feedback } = await req.json();
       await engine.submitReview(req.params.reviewId, {
         decision,
@@ -2328,8 +2328,14 @@ const server = serve({
         headers: { 'Content-Type': 'text/plain' },
       }),
 
-    // Dashboard (embedded SPA)
-    '/ui/*': (req) => new Response(Bun.file(dashboardHTML)),
+    // Dashboard (embedded SPA) — mounted at its specific top-level page
+    // routes, never a blanket `/*` (which would shadow the API, since Bun
+    // matches the `routes` map before the `fetch` fallback).
+    '/': (req) => new Response(Bun.file(dashboardHTML)),
+    '/workflows': (req) => new Response(Bun.file(dashboardHTML)),
+    '/workflows/*': (req) => new Response(Bun.file(dashboardHTML)),
+    '/reviews': (req) => new Response(Bun.file(dashboardHTML)),
+    '/workers': (req) => new Response(Bun.file(dashboardHTML)),
   },
 
   // WebSocket upgrade handling
@@ -2393,7 +2399,7 @@ import { ship } from './activities/ship.ts';
 import { sendEmail } from './activities/email.ts';
 
 const worker = new Worker({
-  serverUrl: 'ws://weft-server:7233/v1/tasks/default/stream',
+  serverUrl: 'ws://weft-server:7233/api/v1/tasks/default/stream',
   queue: 'default',
   identity: `worker-${crypto.randomUUID()}`, // unique per process
   concurrency: 10, // max simultaneous activities
@@ -2418,7 +2424,7 @@ Task dispatch is **server-push over WebSocket**, not client-poll. This eliminate
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ 1. Worker connects: WS /v1/tasks/:queue/stream                 │
+│ 1. Worker connects: WS /api/v1/tasks/:queue/stream                 │
 │ 2. Worker sends REGISTER: { identity, activities, concurrency } │
 │ 3. Server tracks worker capacity (concurrency - in_flight)      │
 │ 4. Server pushes TASK to worker when capacity > 0               │
@@ -2698,7 +2704,7 @@ For environments where WebSocket connections aren't possible (restrictive proxie
 
 ```typescript
 // Server route: long-poll task claiming
-"GET /v1/tasks/:queue": async (req) => {
+"GET /api/v1/tasks/:queue": async (req) => {
   const queue = req.params.queue;
   const url = new URL(req.url);
   const timeout = parseInt(url.searchParams.get("timeout") ?? "30000");
@@ -2730,7 +2736,7 @@ For environments where WebSocket connections aren't possible (restrictive proxie
 },
 
 // Result submission via POST (pairs with long-poll)
-"POST /v1/tasks/:queue/result": async (req) => {
+"POST /api/v1/tasks/:queue/result": async (req) => {
   const body = await req.json();
   await handleTaskResult(body.operationId, body.outcome, body.value, body.error);
   return Response.json({ accepted: true });
@@ -2748,7 +2754,7 @@ async function longPollWorker(
 
   while (true) {
     const response = await fetch(
-      `${serverUrl}/v1/tasks/${queue}?timeout=30000&activities=${activityNames}`,
+      `${serverUrl}/api/v1/tasks/${queue}?timeout=30000&activities=${activityNames}`,
     );
 
     if (response.status === 204) continue; // No tasks, poll again
@@ -2768,7 +2774,7 @@ async function longPollWorker(
       error = String(err);
     }
 
-    await fetch(`${serverUrl}/v1/tasks/${queue}/result`, {
+    await fetch(`${serverUrl}/api/v1/tasks/${queue}/result`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ operationId: task.operationId, outcome, value, error }),
@@ -3092,9 +3098,9 @@ const result = await engine.list({
 **HTTP API:**
 
 ```
-GET /v1/workflows?attr.customerId=cust-123
-GET /v1/workflows?attr.region=us-east&attr.priority.gte=8
-GET /v1/workflows?attr.orderTotal.gte=100&attr.orderTotal.lte=500
+GET /api/v1/workflows?attr.customerId=cust-123
+GET /api/v1/workflows?attr.region=us-east&attr.priority.gte=8
+GET /api/v1/workflows?attr.orderTotal.gte=100&attr.orderTotal.lte=500
 ```
 
 #### Index Mechanism
@@ -3127,7 +3133,7 @@ function encodeAttributeValue(value: AttributeValue): string {
 
 **Atomic updates at checkpoint boundary:** The engine diffs previous vs current attributes, computing add/delete index operations, and writes everything in the same `batch()` call as the checkpoint. No partial index states.
 
-**External mutation:** `handle.setAttributes()` and `PATCH /v1/workflows/:id/attributes` allow setting attributes from outside the workflow. Index updates happen atomically.
+**External mutation:** `handle.setAttributes()` and `PATCH /api/v1/workflows/:id/attributes` allow setting attributes from outside the workflow. Index updates happen atomically.
 
 ### 16. Synchronous Updates
 
@@ -3215,7 +3221,7 @@ if (result.valid) {
 2. **Engine detects pending updates** at the checkpoint boundary (same phase as pending signals). For `onUpdate` handlers: runs the handler, collects the result. For `waitForUpdate`: resumes the generator with `{ payload, respond }`.
 3. **Response written atomically** with the checkpoint: `batch([delete upd:..., put upr:..., put wf:...:ckpt])`.
 4. **Caller notified** via `BroadcastChannel` (`update:completed` message). The caller's `Promise.withResolvers` resolves without polling.
-5. **Timeout handling.** The caller races against `AbortSignal.timeout()`. On timeout: `UpdateTimeoutError` with the `updateId`. The update is still pending — the caller can poll `GET /v1/updates/:updateId` later to retrieve the eventual response.
+5. **Timeout handling.** The caller races against `AbortSignal.timeout()`. On timeout: `UpdateTimeoutError` with the `updateId`. The update is still pending — the caller can poll `GET /api/v1/updates/:updateId` later to retrieve the eventual response.
 6. **Durability.** If the server crashes between receiving the request and delivering the response, the update request is already in storage. After recovery, the workflow processes it and writes the response. The caller retrieves via the poll endpoint.
 
 **Idempotency:** An optional `idempotencyKey` maps to the `updateId` via `upk:{workflowId}:{key}`. Duplicate requests return the existing response.
@@ -3437,7 +3443,7 @@ engine.addActivityInterceptor(activity);
 
 // Remote workers get the activity interceptor
 const worker = new Worker({
-  serverUrl: 'ws://weft-server:7233/v1/tasks/default/stream',
+  serverUrl: 'ws://weft-server:7233/api/v1/tasks/default/stream',
   activities: { charge, ship },
   interceptors: [activity],
 });
@@ -3655,7 +3661,7 @@ console.log(await handle.result()); // { greeting: "Hello, Steve!", onboarded: t
 curl -L https://releases.weft.dev/v1/weft-darwin-arm64 -o weft && chmod +x weft
 ./weft --port 7233
 
-# That's it. SQLite database created automatically. Dashboard at localhost:7233/ui
+# That's it. SQLite database created automatically. Dashboard at localhost:7233/
 # Register workflows by connecting a worker:
 bun run my-workflows.ts  # connects to weft server via WebSocket
 ```
@@ -3827,12 +3833,12 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Uses `Bun.serve()` routes syntax.** Not manual URL parsing.
 - [x] **JSON by default, MessagePack opt-in.** `Accept: application/msgpack` header.
 - [x] **WebSocket upgrade for worker streams.** `WS /v1/tasks/:queue/stream`.
-- [x] **WebSocket upgrade for workflow observation.** `WS /v1/workflows/:id/watch`.
-- [x] **WebSocket upgrade for token streaming.** `WS /v1/workflows/:id/stream`.
+- [x] **WebSocket upgrade for workflow observation.** `WS /api/v1/workflows/:id/watch`.
+- [x] **WebSocket upgrade for token streaming.** `WS /api/v1/workflows/:id/stream`.
 - [x] **Bun's built-in pub/sub (`ws.subscribe` / `server.publish`).** No external message broker.
-- [x] **Long-poll fallback for non-WebSocket environments.** `GET /v1/tasks/:queue` with timeout.
+- [x] **Long-poll fallback for non-WebSocket environments.** `GET /api/v1/tasks/:queue` with timeout.
 - [x] **Prometheus metrics at `/v1/metrics`.** All counters, gauges, histograms defined.
-- [x] **Built-in web dashboard at `/ui`.** Pre-built SPA embedded in binary.
+- [x] **Built-in web dashboard at `/`.** Pre-built SPA embedded in binary.
 - [x] **Auth: API keys, JWT, optional mTLS.** Configurable in `serve()` options.
 
 ### Library/Server Parity

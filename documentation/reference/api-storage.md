@@ -566,7 +566,7 @@ type HTTPStorageOptions = {
 
 | Field     | Type                     | Default | Description                                                                                  |
 | --------- | ------------------------ | ------- | -------------------------------------------------------------------------------------------- |
-| `baseUrl` | `string \| URL`          | —       | Base URL of the Weft server. Routes are appended (`/v1/storage/...`).                        |
+| `baseUrl` | `string \| URL`          | —       | Base URL of the Weft server. Routes are appended (`/api/v1/storage/...`).                    |
 | `headers` | `Record<string, string>` | `{}`    | Headers sent with every request. Use this for `authorization` and any other request headers. |
 
 ```ts partial

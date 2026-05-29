@@ -184,11 +184,9 @@ export interface ContextOptions {
   sleepReferenceTime?: number;
   resolveWorkflowType?: (target: string | Function) => string;
   /**
-   * Called by `ctx.onCancel()` to register the handler outside the context
-   * lifecycle. The engine holds these handlers in memory (keyed by workflow ID)
-   * so they survive a `parkWorkflow` / `#cleanup` cycle within the same engine
-   * process and still fire on cancellation. Handlers do not survive an engine
-   * restart — they are re-registered by replaying the workflow's generator.
+   * Called by `ctx.onCancel()` to keep the handler in engine memory outside
+   * the transient context instance. The handler survives inline parking, but
+   * it is not persisted or restored after engine restart.
    */
-  registerCancelHandler?: (handler: () => Promise<void> | void) => void;
+  registerCancelHandler?: (handler: () => Promise<void> | void) => () => void;
 }

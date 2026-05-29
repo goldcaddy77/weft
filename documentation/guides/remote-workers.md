@@ -2,6 +2,9 @@
 
 Your workflow engine runs on one machine, but your activities need to run on GPU nodes, region-specific servers, or isolated containers. Remote workers connect to the Weft server over WebSocket (or HTTP long-polling as a fallback) and execute activities wherever they're deployed.
 
+> [!NOTE]
+> [`RemoteWorker`](../reference/api-workers.md#remoteworker) is a candidate-stable, provisional surface. The v1 task transport and worker lifecycle are intended for serious trials, but release notes may still call out Tier-0-driven changes to error codes or storage-capability failures before 1.0.
+
 ## The RemoteWorker class
 
 A `RemoteWorker` connects to the server, registers its available activities and concurrency capacity, then waits for task assignments.
@@ -10,7 +13,7 @@ A `RemoteWorker` connects to the server, registers its available activities and 
 import { RemoteWorker } from 'weft';
 
 const worker = new RemoteWorker({
-  serverUrl: 'wss://weft-server:7233/v1/tasks/default/stream',
+  serverUrl: 'wss://weft-server:7233/api/v1/tasks/default/stream',
   activities: {
     transcribe: async (input) => {
       /* ... */
@@ -100,7 +103,7 @@ const loggingInterceptor: ActivityInterceptor = {
 };
 
 const worker = new RemoteWorker({
-  serverUrl: 'wss://weft-server:7233/v1/tasks/default/stream',
+  serverUrl: 'wss://weft-server:7233/api/v1/tasks/default/stream',
   activities: {
     transcribe: async (input) => {
       /* ... */
@@ -133,7 +136,7 @@ import { createObservabilityInterceptors } from 'weft';
 const { interceptor } = createObservabilityInterceptors();
 
 const worker = new RemoteWorker({
-  serverUrl: 'wss://weft-server:7233/v1/tasks/default/stream',
+  serverUrl: 'wss://weft-server:7233/api/v1/tasks/default/stream',
   activities: {
     /* ... */
   },

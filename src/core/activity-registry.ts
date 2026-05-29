@@ -17,6 +17,7 @@ import {
   type Duration,
   type RetryPolicy,
 } from './types.ts';
+import { validateWorkflowOrActivityName } from './types/name-grammar.ts';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -369,6 +370,7 @@ export class ActivityRegistry {
    * take precedence over auto-extracted values.
    */
   register(name: string, fn: Function, options?: ActivityRegistrationOptions): void {
+    validateWorkflowOrActivityName(name, 'activity');
     // Keep function-reference metadata aligned when this name moves to a
     // different function. Aliased functions retarget to a remaining name;
     // unaliased functions leave the WeakMap.

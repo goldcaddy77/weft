@@ -2,6 +2,9 @@
 
 Your workflows are running in production. Something is slow, but you can't tell whether it's the payment activity, the shipping call, or the sleep between them. You need traces, spans, and metrics—without instrumenting every workflow by hand. Weft's observability module is a pre-built [interceptor](./interceptors.md) that gives you all of this out of the box.
 
+> [!NOTE]
+> The observability interceptor shape is available for trials, but [OpenTelemetry](https://opentelemetry.io/) metric names are experimental before 1.0. Treat metric names and label sets as release-note-sensitive until the stability contract graduates them.
+
 ## Quick setup
 
 Import the factory, pass the engine as the `eventTarget`, and register the interceptor.
@@ -128,7 +131,7 @@ import { METRICS } from 'weft/observability';
 
 Each metric has a `name`, `description`, `unit`, and `type` (counter, gauge, or histogram). The [server](./server.md) exposes these at `GET /v1/metrics` in Prometheus-compatible text format.
 
-Task and worker metrics are intentionally low-cardinality. They tell you that backlog, queue latency, execution latency, retries, stale heartbeats, or capacity saturation exist. When you need the concrete evidence behind those aggregates, use `GET /v1/tasks/diagnostics` to retrieve bounded diagnostic items for stuck queued tasks, stale in-flight tasks, retry storms, and all-workers-at-capacity conditions.
+Task and worker metrics are intentionally low-cardinality. They tell you that backlog, queue latency, execution latency, retries, stale heartbeats, or capacity saturation exist. When you need the concrete evidence behind those aggregates, use `GET /api/v1/tasks/diagnostics` to retrieve bounded diagnostic items for stuck queued tasks, stale in-flight tasks, retry storms, and all-workers-at-capacity conditions.
 
 ## Composing with other interceptors
 

@@ -1,13 +1,16 @@
 import { KEYS } from '../../../storage/interface.ts';
 import { deserializeCheckpoint, serializeCheckpoint } from '../../checkpoint.ts';
-import { Context } from '../../context.ts';
+import { Context, setContextWorkflowInterceptor } from '../../context.ts';
 import { EventLog, type EventHeadRecord } from '../../event-log.ts';
 import { WorkflowResumedEvent } from '../../events.ts';
 import type { Checkpoint, WorkflowState } from '../../types.ts';
 import { type WorkflowVersionTuple } from '../../workflow-version-tuple.ts';
+import { createCancelHandlerRegistration, resetCancelHandlers } from '../cancel-handlers.ts';
+import { rememberCommittedCheckpointBytes } from '../checkpoint-commit-snapshots.ts';
 import { getWorkflowExecutionStartedAt, type WorkflowHandle } from '../handles.ts';
-import { appendCancelHandler, resetCancelHandlers, type EngineInternals } from '../internals.ts';
+import type { EngineInternals } from '../internals.ts';
 import { loadWorkflowState } from '../storage-io.ts';
+import { getComposedWorkflowInterceptor } from '../strategy-helpers.ts';
 import { decodeWorkflowState } from '../validation.ts';
 import { prepareResumeState } from './persist.ts';
 import {
@@ -22,6 +25,7 @@ import {
 type SerializedResumeArgs = {
   workflowId: string;
   resumeCheckpoint: Checkpoint;
+  serializedCheckpoint: Uint8Array;
   registeredVersionTuple: WorkflowVersionTuple;
   restoredHead: EventHeadRecord;
   workflowStartHeaders: Map<string, string> | undefined;
@@ -41,14 +45,23 @@ function commitSerializedResumeState(
     SerializedResumeArgs,
     | 'workflowId'
     | 'resumeCheckpoint'
+    | 'serializedCheckpoint'
     | 'registeredVersionTuple'
     | 'restoredHead'
     | 'workflowStartHeaders'
     | 'callbacks'
   >,
 ): void {
-  const { workflowId, resumeCheckpoint, registeredVersionTuple, restoredHead, callbacks } = args;
+  const {
+    workflowId,
+    resumeCheckpoint,
+    serializedCheckpoint,
+    registeredVersionTuple,
+    restoredHead,
+    callbacks,
+  } = args;
   internals.checkpoints.set(workflowId, resumeCheckpoint);
+  rememberCommittedCheckpointBytes(internals, workflowId, serializedCheckpoint);
   internals.workflowVersionTuples.set(workflowId, registeredVersionTuple);
   internals.eventLogHeads.set(workflowId, restoredHead);
   setWorkflowStartHeaders(internals, workflowId, args.workflowStartHeaders, callbacks);
@@ -68,13 +81,10 @@ function relaunchInlineWorkflowAfterResume(
   // in the same serialized section so cancel/timeout cannot commit a
   // terminal state and still let a parked workflow continue.
   //
-  // Reset cancel handlers before the generator replays: the generator will
-  // re-execute onCancel() calls during replay and re-register fresh handlers.
-  // Without this reset, each park/resume cycle accumulates duplicates.
-  resetCancelHandlers(internals, workflowId);
   const accumulatedResults = new Map<number, unknown>(resumeCheckpoint.accumulatedResults);
   const workflowAbort = new AbortController();
 
+  resetCancelHandlers(internals, workflowId);
   const context = new Context({
     workflowId,
     workflowType: latestState.type,
@@ -86,6 +96,7 @@ function relaunchInlineWorkflowAfterResume(
     accumulatedResults,
     locals: resumeCheckpoint.locals,
     searchAttributes: resumeCheckpoint.searchAttributes,
+    registerCancelHandler: createCancelHandlerRegistration(internals, workflowId),
     ...(registration.searchAttributes && {
       searchAttributeSchema: registration.searchAttributes,
     }),
@@ -93,8 +104,8 @@ function relaunchInlineWorkflowAfterResume(
     ...(latestState.executionDeadline !== undefined && {
       deadline: latestState.executionDeadline,
     }),
-    registerCancelHandler: (handler) => appendCancelHandler(internals, workflowId, handler),
   });
+  setContextWorkflowInterceptor(context, getComposedWorkflowInterceptor(internals));
 
   if (internals.options.development) {
     context.explain(true);
@@ -199,6 +210,7 @@ export async function resumeWorkflowFromStorage(
     workflowId,
     state,
     checkpoint,
+    checkpointBytes,
     registration,
     callbacks,
   );
@@ -226,6 +238,7 @@ export async function resumeWorkflowFromStorage(
     performSerializedResume(internals, {
       workflowId,
       resumeCheckpoint,
+      serializedCheckpoint: preparedResumeState.serializedCheckpoint,
       registeredVersionTuple,
       restoredHead,
       workflowStartHeaders,

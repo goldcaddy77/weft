@@ -4,6 +4,8 @@ Weft promises that workflows survive process death. The mechanism is `engine.rec
 
 This guide is about what happens when recovery and your deploy lifecycle disagree — when storage holds workflows whose code is no longer in the new build, when you're rolling pods one at a time, or when you genuinely want to abandon old workflows and need to do it on purpose.
 
+For the Tier-0 contract that defines future activity reconciliation, signal idempotency, concurrent-resume ownership, and persisted-format rollout rules, see [Tier-0 Behavioral Contract](../architecture/tier-0-behavioral-contract.md).
+
 ## The default: loud failure on unknown types
 
 If `recoverAll()` finds a running workflow whose type isn't registered on the engine, it throws `WorkflowTypeNotRegisteredForRecoveryError` before resuming anything. No partial recovery, no quiet skip, no zombie workflows hanging around in storage with no process to drive them.
@@ -52,6 +54,28 @@ The `Error.message` lists missing _type names_ (capped at ten with `+N more` pas
 Earlier versions of Weft silently skipped unregistered workflow types during recovery. The result: a deploy that accidentally dropped a workflow definition would boot cleanly, look healthy, and silently abandon every in-flight execution of that workflow type. The bug surfaced only when someone noticed a customer's order had been stuck in `running` for a week.
 
 The default has flipped because abandoned workflows are almost always a bug, not an intent. If you _do_ intend it — see the next section — you have to say so explicitly.
+
+## Concurrent recovery: `requireConcurrentResumeSafety`
+
+If exactly one engine process owns recovery for a storage backend, the default recovery path is enough.
+If multiple processes may call `recoverAll()` against the same durable storage at the same time, opt into
+the concurrent-owner gate:
+
+```typescript partial
+const engine = await Engine.create({
+  storage,
+  workflows: { greet },
+  recover: true,
+  requireConcurrentResumeSafety: true,
+});
+```
+
+That flag fails fast unless the storage adapter reports `conditionalBatch: true`. Adapters with that
+capability commit checkpoints with a compare-and-swap guard on the previous canonical checkpoint bytes,
+so a stale owner cannot overwrite a newer checkpoint. Adapters without it are single-owner-only for
+recovery: they may still run normal checkpoint commits, but they do not claim safe concurrent ownership.
+This guard protects checkpoint commits; it does not make every recovery or dispatch side effect
+single-owner before the next checkpoint persists.
 
 ## Acknowledging drift: `acknowledgeUnknownWorkflowTypes`
 

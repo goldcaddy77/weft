@@ -105,7 +105,7 @@ export interface Storage extends Disposable {
   count?(prefix: string): Promise<number>;
   scoped?(prefix: string): Storage;
 
-  /** Optional SQL passthrough for dashboard/debugging (SQLite only). */
+  /** Optional SQL passthrough for dashboard/debugging. */
   query?<T>(sql: string, params?: unknown[]): Promise<T[]>;
 }
 
@@ -167,9 +167,7 @@ export function matchesScanOptions(key: string, options: ScanOptions = {}): bool
  *
  * const a = new Uint8Array([1, 2, 3]);
  * const b = new Uint8Array([1, 2, 3]);
- * const c = new Uint8Array([1, 2, 4]);
  * console.log(storageValuesEqual(a, b)); // true
- * console.log(storageValuesEqual(a, c)); // false
  * console.log(storageValuesEqual(a, null)); // false
  * ```
  */
@@ -222,7 +220,6 @@ export async function storageHas(storage: Storage, key: string): Promise<boolean
  * import { storageKeys } from 'weft/storage/interface';
  *
  * await using storage = new MemoryStorage();
- * await storage.put('wf:abc', new Uint8Array([1]));
  * for await (const key of storageKeys(storage, 'wf:')) {
  *   console.log(key); // 'wf:abc'
  * }
@@ -392,14 +389,9 @@ function formatSortableTimestamp(timestamp: number): string {
  *
  * @example
  * ```ts
- * import { workflow, KEYS, MemoryStorage } from 'weft';
+ * import { KEYS } from 'weft/storage/interface';
  *
- * await using storage = new MemoryStorage();
- * const workflowKey = KEYS.workflow('my-workflow-id');
- * const checkpointKey = KEYS.checkpoint('my-workflow-id');
- * console.log(workflowKey);    // 'wf:my-workflow-id'
- * console.log(checkpointKey);  // 'wf:my-workflow-id:ckpt'
- * console.log(KEYS.deadline(Date.now(), 'wf-1'));
+ * console.log(KEYS.workflow('workflow-id'));
  * ```
  */
 export const KEYS = {
@@ -425,13 +417,26 @@ export const KEYS = {
   operationResolvedByTimePrefix: () => 'op:resolved-by-time:',
   operationResolvedByTime: (resolvedAt: number, id: string) =>
     `op:resolved-by-time:${formatSortableTimestamp(resolvedAt)}:${encodeStorageKeyComponent(id)}`,
+  activityReconciliationPrefix: (workflowId: string) =>
+    `actrec:v1:${encodeStorageKeyComponent(workflowId)}:`,
+  activityReconciliation: (
+    workflowId: string,
+    activityName: string,
+    idempotencyKeyDigest: string,
+  ) =>
+    `actrec:v1:${encodeStorageKeyComponent(workflowId)}:${encodeStorageKeyComponent(activityName)}:${idempotencyKeyDigest}`,
   eventPrefix: (workflowId: string) => `ev:${encodeStorageKeyComponent(workflowId)}:`,
   event: (workflowId: string, sequence: number) =>
     `ev:${encodeStorageKeyComponent(workflowId)}:${String(sequence).padStart(10, '0')}`,
   eventHead: (workflowId: string) => `ev:${encodeStorageKeyComponent(workflowId)}:head`,
   eventWatermark: (workflowId: string) => `ev:${encodeStorageKeyComponent(workflowId)}:watermark`,
   signal: (workflowId: string, name: string, id: string) =>
-    `sig:${encodeStorageKeyComponent(workflowId)}:${name}:${id}`,
+    `sig:${encodeStorageKeyComponent(workflowId)}:${name}:${encodeStorageKeyComponent(id)}`,
+  signalSequence: (workflowId: string) => `sigseq:v1:${encodeStorageKeyComponent(workflowId)}`,
+  signalAcceptedResponsePrefix: (workflowId: string) =>
+    `sigres:v1:${encodeStorageKeyComponent(workflowId)}:`,
+  signalAcceptedResponse: (workflowId: string, name: string, signalId: string) =>
+    `sigres:v1:${encodeStorageKeyComponent(workflowId)}:${encodeStorageKeyComponent(name)}:${encodeStorageKeyComponent(signalId)}`,
   deadline: (deadline: number, workflowId: string) =>
     `wf-deadline:${formatSortableTimestamp(deadline)}:${encodeStorageKeyComponent(workflowId)}`,
   terminalCleanup: (fireAt: number, timerId: string) =>
@@ -476,9 +481,7 @@ export const KEYS = {
   budgetCharged: (operationId: string) => `budget-charged:${operationId}`,
   toolEffect: (workflowId: string, agentId: string, semanticHash: string) =>
     `tool-effect:${encodeStorageKeyComponent(workflowId)}:${agentId}:${semanticHash}`,
-  // Visibility indexes. Sortable-padded timestamps lex-sort correctly under
-  // forward and reverse scans. See `src/core/engine/workflow-indexes.ts` for
-  // the lifecycle wiring and the per-workflow manifest contract.
+  // Visibility index timestamps lex-sort correctly; see `workflow-indexes.ts`.
   workflowVisibilityStatus: (status: string, workflowId: string) =>
     `wf-idx-status:${encodeStorageKeyComponent(status)}:${encodeStorageKeyComponent(workflowId)}`,
   workflowVisibilityType: (type: string, workflowId: string) =>
