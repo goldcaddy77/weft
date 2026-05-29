@@ -70,7 +70,9 @@ describe('create-schedule — validation precedence', () => {
       { operationRegistry: registry, restBindings: bindings },
     );
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: 'Missing required field: cronExpression' });
+    expect(await response.json()).toEqual({
+      error: 'Missing required field: cronExpression or every',
+    });
   });
 
   // --- adjacent pair: id before overlap ---
@@ -106,6 +108,23 @@ describe('create-schedule — validation precedence', () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
       error: 'Field "overlap" must be one of skip, queue, cancel-running, allow',
+    });
+  });
+
+  // --- engine-level interval validation reaches the REST boundary as 400 ---
+  it('returns 400 when the interval expression is syntactically invalid', async () => {
+    engine = createEngine();
+    const response = await handleRequest(
+      jsonRequest('POST', '/v1/schedules', {
+        type: 'echo',
+        every: 'not-a-duration',
+      }),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+    expect(response.status).toBe(400);
+    expect((await response.json()) as { error: string }).toMatchObject({
+      error: expect.stringContaining('interval'),
     });
   });
 
