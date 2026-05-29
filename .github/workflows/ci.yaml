@@ -38,7 +38,7 @@ jobs:
             --path-ignore-patterns 'examples/checkout/**' \
             --path-ignore-patterns 'src/service-worker/service-worker-browser.test.ts' \
             --path-ignore-patterns 'src/storage/indexeddb-browser.test.ts' \
-            --path-ignore-patterns 'src/storage/web-extension-chromium-smoke.test.ts' \
+            --path-ignore-patterns 'src/storage/web-extension-browser.test.ts' \
             --path-ignore-patterns 'src/dashboard/dashboard-serving.test.ts' \
             --path-ignore-patterns 'src/dashboard/svelte-test-harness.test-support.test.ts' \
             --path-ignore-patterns 'src/dashboard/fragments/workflow-execution-timeline.svelte.test.ts' \
