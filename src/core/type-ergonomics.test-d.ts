@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import type {
+  KnownWorkflowName as KnownWorkflowNameFromClientEntry,
+  UnknownNameWhenRegistryEmpty as UnknownNameWhenRegistryEmptyFromClientEntry,
+} from '../client/index.ts';
 import {
   activity,
   Context,
@@ -8,7 +12,11 @@ import {
   workflow,
   type AnyActivityDefinition,
   type AnyWorkflowDefinition,
+  type ClientHandle,
   type InferActivityEntry,
+  type KnownWorkflowName,
+  type UnknownNameWhenRegistryEmpty,
+  type WeftClient,
   type WorkflowContext,
   type WorkflowDefinition,
   type WorkflowHandle,
@@ -177,6 +185,69 @@ void verifyModuleAugmentedStart;
 
 // @ts-expect-error workflow names must be present in the augmented registry or registered.
 void engine.start('runtime-discovered', { id: 'dynamic' });
+
+// The same module augmentation (the surface `weft codegen` emits) also types
+// the CLIENT. A `WeftClient` narrows `start`/`schedule` input to the
+// augmented workflow's input type and the returned handle's `result()` to its
+// output type — proving per-workflow typed client methods, not just engine
+// methods, flow from the generated `WorkflowRegistry` declaration.
+declare const typedClient: WeftClient;
+
+async function verifyModuleAugmentedClientStart(): Promise<void> {
+  // @ts-expect-error client start input must match the module-augmented input type.
+  void typedClient.start('moduleAugmentedWelcome', { id: 'wrong' });
+
+  const handle = await typedClient.start('moduleAugmentedWelcome', { name: 'Grace' });
+
+  // The handle is parameterized by the augmented workflow's output type.
+  const typedHandle: ClientHandle<WelcomeOutput> = handle;
+  void typedHandle;
+
+  const output = await handle.result();
+  // `result()` resolves to the augmented output type, so property access is safe.
+  output.greeting.toUpperCase();
+  const outputCheck: Equals<typeof output, WelcomeOutput> = true;
+  void outputCheck;
+}
+void verifyModuleAugmentedClientStart;
+
+async function verifyModuleAugmentedClientSchedule(): Promise<void> {
+  // @ts-expect-error client schedule input must match the module-augmented input type.
+  void typedClient.schedule('moduleAugmentedWelcome', { id: 'wrong' }, '0 9 * * 1');
+  await typedClient.schedule('moduleAugmentedWelcome', { name: 'Grace' }, '0 9 * * 1');
+}
+void verifyModuleAugmentedClientSchedule;
+
+// Regression guard for the review finding: the helper types that appear in the
+// public `WeftClient.start`/`schedule` overload signatures must be importable
+// by consumers from the same public specifiers that expose `WeftClient`. They
+// are re-exported from both `weft` (this file's `../index.ts`) and
+// `weft/client` (`../client/index.ts`); if either re-export is dropped, the
+// imports above stop resolving and this file fails to typecheck. The aliases
+// must also resolve to the same type from both entrypoints — a single source
+// of truth, not two divergent declarations.
+type KnownWorkflowNameEntrypointsAgree = Equals<
+  KnownWorkflowName,
+  KnownWorkflowNameFromClientEntry
+>;
+type UnknownNameEntrypointsAgree = Equals<
+  UnknownNameWhenRegistryEmpty<'unknown-name'>,
+  UnknownNameWhenRegistryEmptyFromClientEntry<'unknown-name'>
+>;
+const knownWorkflowNameEntrypointsAgree: KnownWorkflowNameEntrypointsAgree = true;
+const unknownNameEntrypointsAgree: UnknownNameEntrypointsAgree = true;
+void knownWorkflowNameEntrypointsAgree;
+void unknownNameEntrypointsAgree;
+
+// Because `WorkflowRegistry` is module-augmented above, `KnownWorkflowName`
+// resolves to a non-empty union (the augmented name is assignable) and the
+// permissive `UnknownNameWhenRegistryEmpty<TName>` gate collapses to `never`,
+// matching the engine's `UnknownWorkflowNameWhenDefaultRegistryIsEmpty` gate.
+const augmentedNameIsKnown: 'moduleAugmentedWelcome' extends KnownWorkflowName ? true : never =
+  true;
+const registryEmptyGateIsClosed: Equals<UnknownNameWhenRegistryEmpty<'anything'>, never> = true;
+void augmentedNameIsKnown;
+void registryEmptyGateIsClosed;
 
 // Activity name brand-rejection at the `engine.register` boundary was
 // intentionally removed when the global `ActivityTypes` augmentation went
