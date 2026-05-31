@@ -10,10 +10,12 @@ import type {
   UpdateDefinition,
 } from '../core/types.ts';
 import { messageName } from '../core/types.ts';
+import type { WorkflowEventTail } from './event-tail.ts';
 import type { ClientHandle, ClientScheduleHandle } from './interface.ts';
 
 export interface WorkflowHandleDelegationClient {
   cancel(id: string): Promise<void>;
+  tail(id: string): WorkflowEventTail;
   signal(
     id: string,
     name: string,
@@ -111,6 +113,19 @@ export abstract class WorkflowHandleDelegation<
 
   async removeTags(...tags: string[]): Promise<void> {
     return this.client.removeTags(this.id, ...tags);
+  }
+
+  tail(): WorkflowEventTail {
+    return this.client.tail(this.id);
+  }
+
+  /**
+   * Default readiness: resolved immediately. Transports whose event stream has
+   * connection latency (e.g. the HTTP watch socket) override this to reflect
+   * their own connection state.
+   */
+  whenConnected(): Promise<void> {
+    return Promise.resolve();
   }
 
   abstract addEventListener<K extends keyof WeftEventMap>(

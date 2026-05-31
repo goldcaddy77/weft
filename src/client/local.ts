@@ -58,16 +58,12 @@ import type {
   WorkflowTimelineEntry,
 } from '../core/types.ts';
 import { messageName } from '../core/types.ts';
+import type { WorkflowEventTail } from './event-tail.ts';
 import { ScheduleHandleDelegation, WorkflowHandleDelegation } from './handle-delegation.ts';
 import { inProcessCatalogTransport } from './in-process-operations.ts';
-import type {
-  ClientHandle,
-  ClientScheduleHandle,
-  KnownWorkflowName,
-  UnknownNameWhenRegistryEmpty,
-  UpdateResult,
-  WeftClient,
-} from './interface.ts';
+import type { ClientHandle, ClientScheduleHandle, UpdateResult, WeftClient } from './interface.ts';
+import { createLocalWorkflowEventTail } from './local-event-tail.ts';
+import type { KnownWorkflowName, UnknownNameWhenRegistryEmpty } from './workflow-name-typing.ts';
 
 // ---------------------------------------------------------------------------
 // LocalHandle — wraps Engine's WorkflowHandle
@@ -148,6 +144,8 @@ class LocalScheduleHandle extends ScheduleHandleDelegation<LocalClient> {
  */
 export class LocalClient implements WeftClient {
   readonly #engine: RuntimeWorkflowEngine;
+  /** The raw engine, kept for the in-process event feed used by {@link tail}. */
+  readonly #rawEngine: Engine;
   /** Typed low-level accessor for every catalog operation, routed in-process. */
   readonly operations: CatalogOperations;
 
@@ -176,6 +174,7 @@ export class LocalClient implements WeftClient {
 
   constructor(engine: Engine) {
     this.#engine = runtimeWorkflowEngine(engine);
+    this.#rawEngine = engine;
     this.activity = {
       complete: (token, result) => this.#engine.completeAsyncActivity(token, result),
       completeExceptionally: (token, error) => this.#engine.failAsyncActivity(token, error),
@@ -363,6 +362,10 @@ export class LocalClient implements WeftClient {
 
   async getEvents(id: string): Promise<WorkflowEvent[]> {
     return this.#engine.getEvents(id);
+  }
+
+  tail(id: string): WorkflowEventTail {
+    return createLocalWorkflowEventTail(this.#rawEngine, id);
   }
 
   async getTimeline(id: string): Promise<WorkflowTimelineEntry[]> {

@@ -48,40 +48,8 @@ import type {
   WorkflowSummary,
   WorkflowTimelineEntry,
 } from '../core/types.ts';
-
-// ---------------------------------------------------------------------------
-// Registry-driven typing for client call sites
-// ---------------------------------------------------------------------------
-
-/**
- * Workflow names known to the augmented {@link WorkflowRegistry}. Empty
- * (`never`) until a project augments the registry — typically by running
- * `weft codegen` and including the generated `.d.ts` in its compilation. The
- * client's typed `start`/`schedule` overloads key off this set, so without
- * codegen they degrade to the permissive string-name overloads.
- *
- * `weft codegen` only ever emits explicit string-literal entries, so in
- * practice this resolves to a finite union of registered names. If a project
- * hand-augments `WorkflowRegistry` with an index signature
- * (`[name: string]: ...`), `KnownWorkflowName` widens to `string` and the
- * typed overload accepts any name with that entry's input type — the same
- * behavior the engine exhibits, and a deliberate consequence of opting into a
- * permissive augmentation.
- */
-export type KnownWorkflowName = Extract<keyof WorkflowRegistry, string>;
-
-/**
- * Resolves to `TName` only when the {@link WorkflowRegistry} carries no known
- * names (codegen has not run, or no workflow types were emitted). This gates
- * the permissive string-name `start`/`schedule` overload so that, once the
- * registry is populated, callers must pass a registered name (or fall through
- * to the typed overload). Mirrors the engine's
- * `UnknownWorkflowNameWhenDefaultRegistryIsEmpty` gate, scoped to the global
- * registry the client consumes.
- */
-export type UnknownNameWhenRegistryEmpty<TName extends string> = [KnownWorkflowName] extends [never]
-  ? TName
-  : never;
+import type { WorkflowEventTail } from './event-tail.ts';
+import type { KnownWorkflowName, UnknownNameWhenRegistryEmpty } from './workflow-name-typing.ts';
 
 // ---------------------------------------------------------------------------
 // Client handle — lightweight reference to a running workflow
@@ -174,6 +142,23 @@ export interface ClientHandle<TResult = unknown>
 
   /** Remove free-form tags from this workflow. */
   removeTags(...tags: string[]): Promise<void>;
+
+  /**
+   * Open a live, push-based tail of this workflow's events. Async-iterate the
+   * returned {@link WorkflowEventTail} to consume events as they happen. In
+   * server mode this rides the WebSocket watch channel (no polling); in library
+   * mode it bridges the engine's event stream directly.
+   */
+  tail(): WorkflowEventTail;
+
+  /**
+   * Resolves once this handle's live event subscription is connected, opening
+   * it if necessary. Await this after attaching `addEventListener` listeners
+   * and before triggering work whose events you intend to observe, so nothing
+   * is missed in the window before the underlying transport connects. In
+   * library mode it resolves immediately — engine events are already live.
+   */
+  whenConnected(): Promise<void>;
 }
 
 /**
@@ -384,6 +369,16 @@ export interface WeftClient {
 
   /** Get the event history for a workflow. */
   getEvents(id: string): Promise<WorkflowEvent[]>;
+
+  /**
+   * Open a live, push-based tail of a workflow's events. Async-iterate the
+   * returned {@link WorkflowEventTail} to consume events as they happen. In
+   * server mode this rides the per-workflow `/v1/workflows/:id/watch` WebSocket
+   * channel (replacing the old 2-second poll); in library mode it bridges the
+   * engine's event stream directly. Both transports deliver the same
+   * {@link WorkflowEvent} records and terminate cleanly on completion or close.
+   */
+  tail(id: string): WorkflowEventTail;
 
   /**
    * Get the structured execution timeline for a workflow.
