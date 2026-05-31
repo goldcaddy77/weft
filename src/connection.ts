@@ -82,9 +82,13 @@ export type ResolvedConnection = {
 export const DEFAULT_WEFT_ADDRESS = 'http://localhost:7233';
 
 /**
- * Raised when a present `~/.weft/config` file cannot be parsed. A missing file
- * is not an error; a malformed one is surfaced so callers do not silently
- * connect to the wrong server.
+ * Raised when connection resolution fails. Two cases surface as this error:
+ * a present `~/.weft/config` file that cannot be parsed (a missing file is not
+ * an error), and a resolved server value that is not a valid URL — regardless
+ * of where it came from (`--server`/explicit option, `WEFT_ADDR`, the profile
+ * `server` field, or the run lockfile). Both are surfaced rather than silently
+ * connecting to the wrong server; the message carries the offending value (the
+ * invalid URL string, or the config path for a parse failure).
  *
  * @example
  * ```ts
@@ -145,9 +149,26 @@ export function resolveConnection(options: ConnectionOptions = {}): ResolvedConn
   const token = resolveToken(options.token ?? Bun.env['WEFT_TOKEN'], fallbackProfile);
 
   return {
-    server: new URL(server),
+    server: parseServerUrl(server),
     ...(token === undefined ? {} : { token }),
   };
+}
+
+/**
+ * Parse the resolved server string into a {@link URL}. A malformed value is a
+ * user-caused configuration error regardless of which source it came from
+ * (explicit option, `WEFT_ADDR`, profile `server`, or the run lockfile), so it
+ * surfaces as a {@link ConnectionConfigurationError} carrying the offending
+ * string rather than a bare `TypeError`. Callers that shape user diagnostics
+ * (for example `weft codegen`) can then report the actual invalid value.
+ */
+function parseServerUrl(server: string): URL {
+  try {
+    return new URL(server);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new ConnectionConfigurationError(`Invalid server URL '${server}': ${reason}`);
+  }
 }
 
 /**

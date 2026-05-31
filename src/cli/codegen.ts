@@ -172,19 +172,15 @@ function resolveCodegenConnection(options: CodegenOptions): Result<CodegenConnec
       value: { baseUrl: connection.server.toString(), token: connection.token },
     };
   } catch (error) {
+    // `resolveConnection` raises a `ConnectionConfigurationError` for both a
+    // malformed `~/.weft/config` and a malformed resolved server URL (from any
+    // source: `--server`, `WEFT_ADDR`, the profile `server`, or the run
+    // lockfile). Its message already carries the relevant context — the invalid
+    // URL string for a bad server value, or the config path for a parse failure.
+    // Surface it as a `CommandOutput` diagnostic rather than letting it escape
+    // `executeCodegen` as an uncaught throw.
     if (error instanceof ConnectionConfigurationError) {
       return { ok: false, error: `codegen: ${error.message}` };
-    }
-    // `resolveConnection` constructs `new URL(server)`, which throws a
-    // `TypeError` for a malformed `--server`/`WEFT_ADDR`. That is a user-caused
-    // failure, so surface it as a `CommandOutput` diagnostic rather than letting
-    // it escape `executeCodegen` as an uncaught throw.
-    if (error instanceof TypeError) {
-      const resolvedServer = options.server ?? Bun.env['WEFT_ADDR'] ?? '';
-      return {
-        ok: false,
-        error: `codegen: invalid server URL '${resolvedServer}': ${error.message}`,
-      };
     }
     throw error;
   }
