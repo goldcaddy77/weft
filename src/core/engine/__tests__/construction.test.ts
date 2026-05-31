@@ -138,18 +138,21 @@ describe('resolveEngineOptions', () => {
 describe('normalizeWorkerExecutionConfiguration', () => {
   const workerUrl = new URL('../../../workers/test-browser-worker.ts', import.meta.url);
 
-  it('preserves legacy selection defaults', () => {
+  it('defaults to inline when workflowExecutionMode is omitted', () => {
     expect(normalizeWorkerExecutionConfiguration(undefined)).toEqual({
       mode: 'inline',
       workerExecution: null,
     });
-    expect(normalizeWorkerExecutionConfiguration({ workerExecution: { workerUrl } })).toMatchObject(
-      {
-        mode: 'worker',
-        workflowTurnTimeoutMs: undefined,
-        maxProtocolMessageBytes: undefined,
-      },
-    );
+    expect(normalizeWorkerExecutionConfiguration({})).toEqual({
+      mode: 'inline',
+      workerExecution: null,
+    });
+  });
+
+  it('rejects worker configuration without explicit worker mode', () => {
+    expect(() =>
+      normalizeWorkerExecutionConfiguration({ workerExecution: { workerUrl } }),
+    ).toThrow('options.workflowExecutionMode must be "worker" when options.workerExecution is provided');
   });
 
   it('applies hardened defaults for explicit worker mode', () => {
@@ -162,6 +165,40 @@ describe('normalizeWorkerExecutionConfiguration', () => {
       mode: 'worker',
       workflowTurnTimeoutMs: 1_000,
       maxProtocolMessageBytes: 1_048_576,
+      requireProtocolVersion: true,
+      discardOnCancel: true,
+    });
+  });
+
+  it('always hardens worker mode even without timeout or protocol overrides', () => {
+    // Worker mode is reachable only via explicit `workflowExecutionMode: 'worker'`,
+    // so the protocol-version and discard-on-cancel guards are always on and the
+    // timeout/protocol-size defaults always apply — there is no weaker branch.
+    expect(
+      normalizeWorkerExecutionConfiguration({
+        workflowExecutionMode: 'worker',
+        workerExecution: { workerUrl },
+      }),
+    ).toEqual({
+      mode: 'worker',
+      workerExecution: { workerUrl },
+      workflowTurnTimeoutMs: 1_000,
+      maxProtocolMessageBytes: 1_048_576,
+      requireProtocolVersion: true,
+      discardOnCancel: true,
+    });
+  });
+
+  it('honors caller-provided worker turn timeout and protocol-message overrides', () => {
+    expect(
+      normalizeWorkerExecutionConfiguration({
+        workflowExecutionMode: 'worker',
+        workerExecution: { workerUrl, workflowTurnTimeoutMs: 5_000, maxProtocolMessageBytes: 8_192 },
+      }),
+    ).toMatchObject({
+      mode: 'worker',
+      workflowTurnTimeoutMs: 5_000,
+      maxProtocolMessageBytes: 8_192,
       requireProtocolVersion: true,
       discardOnCancel: true,
     });
@@ -214,6 +251,7 @@ describe('normalizeWorkerExecutionConfiguration', () => {
     it(`rejects invalid worker turn timeout value ${String(value)}`, () => {
       expect(() =>
         normalizeWorkerExecutionConfiguration({
+          workflowExecutionMode: 'worker',
           workerExecution: { workerUrl, workflowTurnTimeoutMs: value as any },
         }),
       ).toThrow('workflowTurnTimeoutMs');
@@ -223,9 +261,19 @@ describe('normalizeWorkerExecutionConfiguration', () => {
   it('rejects protocol message limits below the bounded failure envelope minimum', () => {
     expect(() =>
       normalizeWorkerExecutionConfiguration({
+        workflowExecutionMode: 'worker',
         workerExecution: { workerUrl, maxProtocolMessageBytes: 4_095 },
       }),
     ).toThrow('at least 4096');
+  });
+
+  it('accepts the minimum valid protocol message byte limit', () => {
+    expect(
+      normalizeWorkerExecutionConfiguration({
+        workflowExecutionMode: 'worker',
+        workerExecution: { workerUrl, maxProtocolMessageBytes: 4_096 },
+      }),
+    ).toMatchObject({ mode: 'worker', maxProtocolMessageBytes: 4_096 });
   });
 
   it('routes explicit worker mode through the Worker execution strategy bundle', () => {
