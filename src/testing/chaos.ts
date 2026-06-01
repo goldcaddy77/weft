@@ -8,6 +8,7 @@
  * @module testing/chaos
  */
 
+import { timeoutFailureCategoryMarker } from '../core/failure-categories.ts';
 import { sleep } from '../runtime/portable.ts';
 
 // ---------------------------------------------------------------------------
@@ -23,7 +24,7 @@ export type { FailureCategory } from '../core/types.ts';
  *
  * @example
  * ```ts
- * import { withChaos, type FaultClass } from 'weft/testing';
+ * import { withChaos, type FaultClass } from '@lostgradient/weft/testing';
  *
  * const faults: FaultClass[] = ['transient', 'error'];
  * const noisy = withChaos(
@@ -42,7 +43,7 @@ export type FaultClass = 'transient' | 'timeout' | 'error' | 'delay';
  *
  * @example
  * ```ts
- * import { withChaos, type ChaosScenario } from 'weft/testing';
+ * import { withChaos, type ChaosScenario } from '@lostgradient/weft/testing';
  *
  * const scenario: ChaosScenario = {
  *   faultRate: 0.2,
@@ -100,7 +101,7 @@ function makePrng(seed: number): () => number {
  *
  * @example
  * ```ts
- * import { ChaosTransientError } from 'weft/testing';
+ * import { ChaosTransientError } from '@lostgradient/weft/testing';
  *
  * const err = new ChaosTransientError();
  * console.log(err.retryable); // true
@@ -125,7 +126,7 @@ export class ChaosTransientError extends Error {
  *
  * @example
  * ```ts
- * import { ChaosNonRetryableError } from 'weft/testing';
+ * import { ChaosNonRetryableError } from '@lostgradient/weft/testing';
  *
  * const err = new ChaosNonRetryableError();
  * console.log(err.retryable); // false
@@ -150,7 +151,7 @@ export class ChaosNonRetryableError extends Error {
  *
  * @example
  * ```ts
- * import { ChaosTimeoutError } from 'weft/testing';
+ * import { ChaosTimeoutError } from '@lostgradient/weft/testing';
  *
  * const err = new ChaosTimeoutError(25);
  * console.log(err.timeoutMilliseconds); // 25
@@ -160,6 +161,7 @@ export class ChaosNonRetryableError extends Error {
 export class ChaosTimeoutError extends Error {
   /** Milliseconds the chaos wrapper waited before raising the timeout. */
   readonly timeoutMilliseconds: number;
+  readonly [timeoutFailureCategoryMarker] = true;
 
   constructor(timeoutMilliseconds: number) {
     super(`[chaos] timeout fault fired after ${timeoutMilliseconds}ms`);
@@ -219,7 +221,7 @@ async function raiseTimeoutFault(timeoutMilliseconds: number): Promise<never> {
  *
  * @example
  * ```ts
- * import { TestEngine, withChaos } from 'weft/testing';
+ * import { TestEngine, withChaos } from '@lostgradient/weft/testing';
  *
  * const noisySendEmail = withChaos(
  *   async (input: unknown) => ({ sent: true }),
