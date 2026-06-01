@@ -4,18 +4,21 @@
 
 import { describe, expect, it } from 'bun:test';
 
-import { Engine } from '../../core/engine.ts';
+import type { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
 import { workflow } from '../../core/types.ts';
-import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
+import { createJsonRequest } from '../http-request.test-support.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
 import type { OperationFault } from '../operation-fault.ts';
-import { principalFromApiKey } from '../principal.ts';
 import {
   bulkMutateWorkflowTagsOperation,
   bulkMutateWorkflowTagsRestBinding,
 } from './bulk-mutate-workflow-tags.ts';
+import {
+  createBulkTestEngine,
+  bulkAdminHandlerOptions as makeBulkAdminHandlerOptions,
+} from './bulk-operation.test-support.ts';
 
 const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
   _ctx: WorkflowContext,
@@ -25,43 +28,23 @@ const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
 });
 
 function createEngine(): Engine {
-  const engine = new Engine({ storage: new MemoryStorage() });
-  engine.register(echoWorkflow);
-  return engine;
+  return createBulkTestEngine(echoWorkflow);
 }
 
 function request(body?: unknown): Request {
-  return new Request('http://localhost/v1/workflows/bulk/tags', {
-    method: 'PATCH',
-    ...(body === undefined
-      ? {}
-      : {
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-        }),
-  });
+  return createJsonRequest({ method: 'PATCH', path: '/v1/workflows/bulk/tags', body });
 }
 
 const registry = createOperationRegistry([bulkMutateWorkflowTagsOperation]);
 const bindings = [bulkMutateWorkflowTagsRestBinding];
 
 function bulkAdminHandlerOptions(customRegistry = registry) {
-  return {
-    operationRegistry: customRegistry,
-    restBindings: bindings,
-    authContext: {
-      method: 'api-key' as const,
-      principal: principalFromApiKey({
-        subject: 'bulk-admin-operator',
-        scopes: ['workflows:admin'],
-      }),
-    },
-  };
+  return makeBulkAdminHandlerOptions({ registry: customRegistry, bindings });
 }
 
 describe('weft.workflows.bulk.tags', () => {
   it('adds and removes tags on matching workflows', async () => {
-    const engine = createEngine();
+    using engine = createEngine();
 
     const firstHandle = await engine.start('echo', 'first', {
       id: 'bulk-tags-selected-a',
@@ -183,7 +166,7 @@ describe('weft.workflows.bulk.tags', () => {
   });
 
   it('returns 400 when the request body is not a JSON object', async () => {
-    const engine = createEngine();
+    using engine = createEngine();
 
     const response = await handleRequest(request(['not-an-object']), engine, {
       ...bulkAdminHandlerOptions(),
@@ -195,7 +178,7 @@ describe('weft.workflows.bulk.tags', () => {
   });
 
   it('returns 400 for invalid tag mutation input', async () => {
-    const engine = createEngine();
+    using engine = createEngine();
 
     let response = await handleRequest(
       request({
@@ -234,7 +217,7 @@ describe('weft.workflows.bulk.tags', () => {
   });
 
   it('masks EngineFailure faults to a 500 with a generic error body', async () => {
-    const engine = createEngine();
+    using engine = createEngine();
     const failingOperation = {
       ...bulkMutateWorkflowTagsOperation,
       invoke: async () => {

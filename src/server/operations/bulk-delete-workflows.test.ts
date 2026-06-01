@@ -1,22 +1,25 @@
-import { sleepForTesting } from '../../testing/fake-timers.test-support.ts';
 /**
  * `weft.workflows.bulk.delete` operation + REST binding — behavior tests.
  */
 
 import { describe, expect, it } from 'bun:test';
 
-import { Engine } from '../../core/engine.ts';
+import type { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
 import { workflow } from '../../core/types.ts';
-import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
+import { createJsonRequest } from '../http-request.test-support.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
 import type { OperationFault } from '../operation-fault.ts';
-import { principalFromApiKey } from '../principal.ts';
+import { waitForStatus } from '../workflow-status.test-support.ts';
 import {
   bulkDeleteWorkflowsOperation,
   bulkDeleteWorkflowsRestBinding,
 } from './bulk-delete-workflows.ts';
+import {
+  createBulkTestEngine,
+  bulkAdminHandlerOptions as makeBulkAdminHandlerOptions,
+} from './bulk-operation.test-support.ts';
 
 const echoWorkflow = workflow({ name: 'echo' }).execute(async function* (
   _ctx: WorkflowContext,
@@ -31,62 +34,23 @@ const waitingWorkflow = workflow({ name: 'waiting' }).execute(async function* (
 });
 
 function createEngine(): Engine {
-  const engine = new Engine({ storage: new MemoryStorage() });
-  engine.register(echoWorkflow);
-  engine.register(waitingWorkflow);
-  return engine;
-}
-
-async function waitForStatus(
-  engine: Engine,
-  workflowId: string,
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'timed-out',
-  timeoutMilliseconds = 500,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMilliseconds;
-  while (Date.now() < deadline) {
-    const state = await engine.get(workflowId);
-    if (state?.status === status) {
-      return;
-    }
-    await sleepForTesting(5);
-  }
-
-  throw new Error(`Workflow ${workflowId} did not reach ${status} within ${timeoutMilliseconds}ms`);
+  return createBulkTestEngine(echoWorkflow, waitingWorkflow);
 }
 
 function request(body?: unknown): Request {
-  return new Request('http://localhost/v1/workflows/bulk', {
-    method: 'DELETE',
-    ...(body === undefined
-      ? {}
-      : {
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-        }),
-  });
+  return createJsonRequest({ method: 'DELETE', path: '/v1/workflows/bulk', body });
 }
 
 const registry = createOperationRegistry([bulkDeleteWorkflowsOperation]);
 const bindings = [bulkDeleteWorkflowsRestBinding];
 
 function bulkAdminHandlerOptions(customRegistry = registry) {
-  return {
-    operationRegistry: customRegistry,
-    restBindings: bindings,
-    authContext: {
-      method: 'api-key' as const,
-      principal: principalFromApiKey({
-        subject: 'bulk-admin-operator',
-        scopes: ['workflows:admin'],
-      }),
-    },
-  };
+  return makeBulkAdminHandlerOptions({ registry: customRegistry, bindings });
 }
 
 describe('weft.workflows.bulk.delete', () => {
   it('deletes matching terminal workflows', async () => {
-    const engine = createEngine();
+    using engine = createEngine();
 
     const firstHandle = await engine.start('echo', 'first', {
       id: 'bulk-delete-selected-a',
@@ -149,7 +113,7 @@ describe('weft.workflows.bulk.delete', () => {
   });
 
   it('requires a confirmation token before deleting matching terminal workflows', async () => {
-    const engine = createEngine();
+    using engine = createEngine();
 
     const handle = await engine.start('echo', 'first', {
       id: 'bulk-delete-token-required',
@@ -170,7 +134,7 @@ describe('weft.workflows.bulk.delete', () => {
   });
 
   it('returns 422 when the filter matches non-terminal workflows', async () => {
-    const engine = createEngine();
+    using engine = createEngine();
 
     const completedHandle = await engine.start('echo', 'done', {
       id: 'bulk-delete-completed',
@@ -200,7 +164,7 @@ describe('weft.workflows.bulk.delete', () => {
   });
 
   it('returns 400 when the bulk filter is unscoped', async () => {
-    const engine = createEngine();
+    using engine = createEngine();
 
     const response = await handleRequest(request({ filter: {} }), engine, {
       ...bulkAdminHandlerOptions(),
@@ -215,7 +179,7 @@ describe('weft.workflows.bulk.delete', () => {
   });
 
   it('returns 400 with the "Field \\"filter.tags\\"" label when filter tags contain an empty string', async () => {
-    const engine = createEngine();
+    using engine = createEngine();
 
     const response = await handleRequest(request({ filter: { tags: [''] } }), engine, {
       ...bulkAdminHandlerOptions(),
@@ -229,7 +193,7 @@ describe('weft.workflows.bulk.delete', () => {
   });
 
   it('returns 400 when a filter time-range bound is not a finite number', async () => {
-    const engine = createEngine();
+    using engine = createEngine();
 
     const response = await handleRequest(
       request({ filter: { tags: ['selected'], createdAt: { gt: 'not-a-number' } } }),
@@ -245,7 +209,7 @@ describe('weft.workflows.bulk.delete', () => {
   });
 
   it('masks EngineFailure faults to a 500 with a generic error body', async () => {
-    const engine = createEngine();
+    using engine = createEngine();
     const failingOperation = {
       ...bulkDeleteWorkflowsOperation,
       invoke: async () => {
