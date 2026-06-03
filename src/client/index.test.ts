@@ -5,8 +5,13 @@ import { query, workflow } from '../core/types.ts';
 import { handleRequest } from '../server/handler.ts';
 import { serve, type WeftServer } from '../server/index.ts';
 import { MemoryStorage } from '../storage/memory.ts';
+import {
+  CONTRACT_PAYLOAD_CAP_BYTES,
+  nextAsyncPendingToken,
+} from '../testing/async-activity.test-support.ts';
 import { sleepForTesting } from '../testing/fake-timers.test-support.ts';
 import {
+  clientContractAsyncActivityWorkflow,
   clientContractEchoWorkflow,
   clientContractWaitingObjectWorkflow,
   clientContractWaitingTwiceWorkflow,
@@ -449,12 +454,14 @@ let client: WeftClient;
 beforeAll(() => {
   engine = new Engine({
     storage: new MemoryStorage(),
+    payloadSize: { maxBytes: CONTRACT_PAYLOAD_CAP_BYTES },
   });
   engine.register(echoWorkflow);
   engine.register(clientContractEchoWorkflow);
   engine.register(clientContractWaitingObjectWorkflow);
   engine.register(clientContractWaitingWorkflow);
   engine.register(clientContractWaitingTwiceWorkflow);
+  engine.register(clientContractAsyncActivityWorkflow);
   engine.register(clientContractSearchAttributesWorkflow);
 
   // Use the full `serve()` stack (not a bare `Bun.serve({ fetch })`) so the
@@ -494,6 +501,13 @@ describe('HttpClient', () => {
       waiting: 'client-contract-waiting',
       waitingObject: 'client-contract-waiting-object',
       waitingTwice: 'client-contract-waiting-twice',
+      asyncActivity: 'client-contract-async-activity',
+    },
+    captureNextAsyncToken: () => nextAsyncPendingToken(engine),
+    asyncResultCapBytes: CONTRACT_PAYLOAD_CAP_BYTES,
+    expectTokenNotFound: (error) => {
+      expect(error).toBeInstanceOf(HttpClientError);
+      expect((error as HttpClientError).status).toBe(404);
     },
   });
 

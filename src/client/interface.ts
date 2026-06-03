@@ -201,9 +201,7 @@ export interface ClientScheduleHandle extends Disposable {
   describe(): Promise<ScheduleSummary | null>;
 }
 
-// ---------------------------------------------------------------------------
-// Update result (subset of internal UpdateResponse)
-// ---------------------------------------------------------------------------
+// Update result + async-activity completion surface.
 
 /** Result of a coordinated update request. */
 export type UpdateResult = {
@@ -211,6 +209,34 @@ export type UpdateResult = {
   result?: unknown;
   error?: string;
 } | null;
+
+/**
+ * Out-of-band ("async") activity completion surface, shared by every client.
+ *
+ * An activity that called `ActivityContext.completeAsync()` parks its workflow
+ * until an external system resolves it by the durable task token announced on
+ * the engine's `activity:async-pending` event. Library mode calls the engine
+ * directly; server mode POSTs to `/v1/activities/{complete,fail}`. After a
+ * restart, wait for recovery to settle first — a completion racing `recoverAll()`
+ * consumes the single-use token before re-adoption and strands the workflow. The
+ * token is a deterministic identifier, not a secret (see `completeAsync`).
+ *
+ * @example
+ * ```ts
+ * import { Engine, LocalClient, type WeftClientActivity } from '@lostgradient/weft';
+ *
+ * const activity: WeftClientActivity = new LocalClient(new Engine()).activity;
+ * // `token` comes from the engine's `activity:async-pending` event:
+ * // await activity.complete(token, { approved: true });
+ * void activity;
+ * ```
+ */
+export interface WeftClientActivity {
+  /** Complete a deferred activity by token, resuming its workflow with `result` (optional; omitted/`undefined` resumes with `undefined`). */
+  complete(token: string, result?: unknown): Promise<void>;
+  /** Fail a deferred activity by token; the error is thrown into its workflow. */
+  completeExceptionally(token: string, error: unknown): Promise<void>;
+}
 
 // ---------------------------------------------------------------------------
 // WeftClient interface
@@ -345,6 +371,9 @@ export interface WeftClient {
     payload?: unknown,
     options?: { timeout?: number },
   ): Promise<unknown>;
+
+  /** Out-of-band ("async") activity completion by task token. See {@link WeftClientActivity}. */
+  readonly activity: WeftClientActivity;
 
   /** Resume a failed or timed-out workflow. */
   resume(id: string): Promise<ClientHandle>;

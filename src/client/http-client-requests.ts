@@ -12,15 +12,19 @@ import type {
   RetentionOverview,
   ReviewListEntry,
   ReviewListFilter,
+  ScheduleSpec,
+  ScheduleSummary,
   SearchAttributeValue,
   SignalDeliveryOptions,
   SubmitReviewOptions,
   WorkflowReplay,
+  WorkflowState,
   WorkflowTimelineEntry,
 } from '../core/types.ts';
 import { HttpClientError, request } from './http-request.ts';
 import type { UpdateResult } from './interface.ts';
 import { buildReviewListSearchParams } from './search-params.ts';
+import { scheduleSpecToWireFields } from './start-body.ts';
 
 export type HttpClientRequestContext = {
   readonly baseUrl: string;
@@ -315,6 +319,136 @@ export async function signalWorkflowRequest(
       body: JSON.stringify({ payload, ...options }),
     },
   );
+}
+
+/**
+ * Complete a deferred ("async") activity by task token, resuming its parked
+ * workflow with `result`. Mirrors `LocalClient.activity.complete` over HTTP.
+ */
+export async function completeAsyncActivityRequest(
+  context: HttpClientRequestContext,
+  token: string,
+  result?: unknown,
+): Promise<void> {
+  // `JSON.stringify` drops a `result` of `undefined`, so the wire body omits it
+  // and the server resumes the workflow with `undefined` — matching LocalClient.
+  await request<unknown>(context.baseUrl, '/activities/complete', context.headers, {
+    method: 'POST',
+    body: JSON.stringify({ token, result }),
+  });
+}
+
+/**
+ * Fail a deferred ("async") activity by task token. A live `Error` cannot cross
+ * the wire, so the error is reduced to `message` + `name` — exactly the fields
+ * the engine itself keeps when failing an async activity — before sending.
+ */
+export async function failAsyncActivityRequest(
+  context: HttpClientRequestContext,
+  token: string,
+  error: unknown,
+): Promise<void> {
+  const message = error instanceof Error ? error.message : String(error);
+  const reduced: { message: string; name?: string } = { message };
+  if (error instanceof Error) {
+    reduced.name = error.name;
+  }
+  await request<unknown>(context.baseUrl, '/activities/fail', context.headers, {
+    method: 'POST',
+    body: JSON.stringify({ token, error: reduced }),
+  });
+}
+
+/** Fetch a workflow's full persisted state, or `null` if it does not exist. */
+export function getWorkflowRequest(
+  context: HttpClientRequestContext,
+  id: string,
+): Promise<WorkflowState | null> {
+  return request<WorkflowState | null>(
+    context.baseUrl,
+    `/workflows/${encodeURIComponent(id)}`,
+    context.headers,
+  );
+}
+
+/** Fetch a schedule's current summary, or `null` if it does not exist. */
+export function getScheduleRequest(
+  context: HttpClientRequestContext,
+  id: string,
+): Promise<ScheduleSummary | null> {
+  return request<ScheduleSummary | null>(
+    context.baseUrl,
+    `/schedules/${encodeURIComponent(id)}`,
+    context.headers,
+  );
+}
+
+/** Cancel a running workflow (`DELETE /v1/workflows/:id`). */
+export function cancelWorkflowRequest(
+  context: HttpClientRequestContext,
+  id: string,
+): Promise<void> {
+  return request<void>(context.baseUrl, `/workflows/${encodeURIComponent(id)}`, context.headers, {
+    method: 'DELETE',
+  });
+}
+
+/** Force-timeout a workflow (`POST /v1/workflows/:id/timeout`). */
+export function timeoutWorkflowRequest(
+  context: HttpClientRequestContext,
+  id: string,
+): Promise<void> {
+  return request<void>(
+    context.baseUrl,
+    `/workflows/${encodeURIComponent(id)}/timeout`,
+    context.headers,
+    { method: 'POST' },
+  );
+}
+
+/** Pause a recurring schedule (`POST /v1/schedules/:id/pause`). */
+export function pauseScheduleRequest(context: HttpClientRequestContext, id: string): Promise<void> {
+  return request<void>(
+    context.baseUrl,
+    `/schedules/${encodeURIComponent(id)}/pause`,
+    context.headers,
+    { method: 'POST' },
+  );
+}
+
+/** Resume a paused schedule (`POST /v1/schedules/:id/resume`). */
+export function resumeScheduleRequest(
+  context: HttpClientRequestContext,
+  id: string,
+): Promise<void> {
+  return request<void>(
+    context.baseUrl,
+    `/schedules/${encodeURIComponent(id)}/resume`,
+    context.headers,
+    { method: 'POST' },
+  );
+}
+
+/** Cancel a recurring schedule (`DELETE /v1/schedules/:id`). */
+export function cancelScheduleRequest(
+  context: HttpClientRequestContext,
+  id: string,
+): Promise<void> {
+  return request<void>(context.baseUrl, `/schedules/${encodeURIComponent(id)}`, context.headers, {
+    method: 'DELETE',
+  });
+}
+
+/** Update a schedule's recurrence specification (`PATCH /v1/schedules/:id`). */
+export function updateScheduleRequest(
+  context: HttpClientRequestContext,
+  id: string,
+  newSpec: string | ScheduleSpec,
+): Promise<void> {
+  return request<void>(context.baseUrl, `/schedules/${encodeURIComponent(id)}`, context.headers, {
+    method: 'PATCH',
+    body: JSON.stringify(scheduleSpecToWireFields(newSpec)),
+  });
 }
 
 /**

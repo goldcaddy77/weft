@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { Engine } from '../core/engine.ts';
+import { AsyncActivityTokenNotFoundError, Engine } from '../core/engine.ts';
 import { WorkflowCompletedEvent, WorkflowFailedEvent } from '../core/events.ts';
 import type { ScheduleSummary, WorkflowContext } from '../core/types.ts';
 import { workflow } from '../core/types/workflow-function.ts';
 import { MemoryStorage } from '../storage/memory.ts';
+import {
+  CONTRACT_PAYLOAD_CAP_BYTES,
+  nextAsyncPendingToken,
+} from '../testing/async-activity.test-support.ts';
 import { sleepForTesting } from '../testing/fake-timers.test-support.ts';
 import {
+  clientContractAsyncActivityWorkflow,
   clientContractEchoWorkflow,
   clientContractWaitingObjectWorkflow,
   clientContractWaitingTwiceWorkflow,
@@ -37,12 +42,14 @@ const failingWorkflow = workflow({ name: 'failing' }).execute(async function* (
 function createTestEngine(): Engine {
   const engine = new Engine({
     storage: new MemoryStorage(),
+    payloadSize: { maxBytes: CONTRACT_PAYLOAD_CAP_BYTES },
   });
   engine.register(echoWorkflow);
   engine.register(clientContractEchoWorkflow);
   engine.register(clientContractWaitingObjectWorkflow);
   engine.register(clientContractWaitingWorkflow);
   engine.register(clientContractWaitingTwiceWorkflow);
+  engine.register(clientContractAsyncActivityWorkflow);
   engine.register(failingWorkflow);
   return engine;
 }
@@ -88,8 +95,14 @@ describe('LocalClient', () => {
       waiting: 'client-contract-waiting',
       waitingObject: 'client-contract-waiting-object',
       waitingTwice: 'client-contract-waiting-twice',
+      asyncActivity: 'client-contract-async-activity',
     },
     waitForRunning: (workflowId) => waitForWorkflowStatus(engine, workflowId, 'running'),
+    captureNextAsyncToken: () => nextAsyncPendingToken(engine),
+    asyncResultCapBytes: CONTRACT_PAYLOAD_CAP_BYTES,
+    expectTokenNotFound: (error) => {
+      expect(error).toBeInstanceOf(AsyncActivityTokenNotFoundError);
+    },
   });
 
   it('implements WeftClient', () => {

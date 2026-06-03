@@ -31,6 +31,7 @@
 import { KEYS, encodeStorageKeyComponent, type Storage } from '../../storage/interface.ts';
 import { decode, encode } from '../codec.ts';
 import { ActivityAsyncPendingEvent } from '../events.ts';
+import { assertPayloadWithinLimit } from '../payload-size.ts';
 import type { OperationOutcome } from '../types.ts';
 import { WeftError } from '../weft-error.ts';
 import type { EngineInternals } from './internals.ts';
@@ -273,11 +274,21 @@ async function consumePendingAsyncActivity(
   if (!pending) {
     throw new AsyncActivityTokenNotFoundError(token);
   }
-  // Delete the durable record first so that if storage rejects the in-memory
-  // token is not silently lost. If storage.delete fails, the token remains in
-  // memory and the caller can retry.
-  await internals.storage.delete(KEYS.asyncActivity(pending.workflowId, token));
+  // Claim the in-memory token SYNCHRONOUSLY, before any await. Two concurrent
+  // completions for the same token (trivially race-able now that the token is
+  // resolvable over a public HTTP endpoint) would otherwise both pass the
+  // `get` above and both drive the workflow generator past the parked step.
+  // The synchronous delete makes the second caller's `get` miss and throw
+  // `AsyncActivityTokenNotFoundError`.
   internals.pendingAsyncActivities.delete(token);
+  try {
+    await internals.storage.delete(KEYS.asyncActivity(pending.workflowId, token));
+  } catch (error) {
+    // Restore the in-memory token on storage failure so the caller can retry —
+    // preserving the original "don't lose the token if storage rejects" invariant.
+    internals.pendingAsyncActivities.set(token, pending);
+    throw error;
+  }
   return pending;
 }
 
@@ -315,6 +326,14 @@ export async function completeAsyncActivity(
   feedOperationResult: (workflowId: string, outcome: OperationOutcome) => void,
   finalizeTimeline: (workflowId: string, status: 'completed' | 'failed', output: unknown) => void,
 ): Promise<void> {
+  // An async completion produces the same logical object as an inline activity
+  // return — an activity result — but reaches the workflow through
+  // `feedOperationResult`, which (unlike the inline reconciliation path) does not
+  // size-check. Enforce the cap here so the async path matches inline activities
+  // and `signal`. Checked BEFORE the token is consumed so an oversized payload is
+  // rejectable and retryable with a smaller value rather than stranding the
+  // single-use token.
+  assertPayloadWithinLimit(result, internals.options.payloadSizePolicy.maxBytes, 'activity result');
   await resolvePendingAsyncActivity(
     internals,
     token,
@@ -374,8 +393,19 @@ export async function failAsyncActivity(
   ) => void,
   finalizeTimeline: (workflowId: string, status: 'completed' | 'failed', output: unknown) => void,
 ): Promise<void> {
-  const pending = await consumePendingAsyncActivity(internals, token);
   const message = error instanceof Error ? error.message : String(error);
+  const errorName = error instanceof Error ? error.name : undefined;
+  // Both the failure message AND name are caller-supplied over the public
+  // completion endpoint and get persisted (timeline + fed outcome). Cap the full
+  // persisted shape — not just the message — for the same reason the complete
+  // path caps its result. Checked BEFORE consuming the single-use token so an
+  // oversized failure is rejectable and retryable rather than stranding it.
+  assertPayloadWithinLimit(
+    { message, name: errorName },
+    internals.options.payloadSizePolicy.maxBytes,
+    'activity result',
+  );
+  const pending = await consumePendingAsyncActivity(internals, token);
   finalizeTimeline(pending.workflowId, 'failed', message);
   feedOperationResult(
     pending.workflowId,
