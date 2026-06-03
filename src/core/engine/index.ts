@@ -251,6 +251,7 @@ export {
   BulkDeleteRequiresTerminalWorkflowsError,
   BulkOperationConfirmationError,
   EngineCreateNameMismatchError,
+  EngineDisposedError,
   PersistedDataIncompatibleError,
   WorkflowAlreadyExistsError,
   WorkflowNotFoundError,
@@ -447,6 +448,7 @@ export class Engine<
     });
     getInternals(this).storage = storage;
     getInternals(this).abortController = new AbortController();
+    getInternals(this).disposed = false;
     getInternals(this).handleCache = new Map();
     getInternals(this).resultResolvers = new Map();
     getInternals(this).signalWaiters = new Map();
