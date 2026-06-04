@@ -137,6 +137,7 @@ import {
 import {
   createCleanupIntervalTick,
   createQueuedInlineWorkflowStartHandler,
+  drainQueuedInlineWorkflowStartsForEngine,
   isActivityDefinition,
 } from './engine-runtime-helpers.ts';
 import type { EngineStateNamespace } from './engine-state-namespace.ts';
@@ -1313,10 +1314,42 @@ export class Engine<
       this.#createUpdateCallbacks(),
     );
   }
+  /**
+   * Synchronous teardown (`using engine = ...`). Pending inline launches that
+   * have not yet run are **discarded**, not executed. When you need queued
+   * starts to complete before teardown — or want a clean event loop with no
+   * dangling deferred-launch macrotask — prefer {@link Engine[Symbol.asyncDispose]}
+   * via `await using`.
+   */
   [Symbol.dispose](): void {
     disposeEngine(getInternals(this));
   }
+  /**
+   * Async teardown (`await using engine = ...`). Drains pending inline launches
+   * so each queued workflow completes its first turn before disposal, leaving no
+   * deferred-launch macrotask to fire against torn-down state. The drain is
+   * bounded (a pass cap and the abort signal); in the pathological case where it
+   * cannot converge, anything still queued is discarded by the synchronous
+   * teardown that always follows. Prefer this over the synchronous
+   * {@link Engine[Symbol.dispose]} in async contexts and tests.
+   */
   async [Symbol.asyncDispose](): Promise<void> {
+    // Drain pending inline launches BEFORE synchronous disposal aborts the
+    // signal (which would discard them). This makes a disposed engine leave no
+    // dangling deferred-launch macrotask — the clean async teardown that lets
+    // callers (and test runners) avoid manual macrotask draining.
+    //
+    // The drain runs in try/finally so synchronous disposal ALWAYS completes,
+    // even if the drain rejects: a half-disposed engine (abort un-fired,
+    // awaiters hung, channels open) is worse than the footgun this fixes.
+    if (!getInternals(this).disposed) {
+      try {
+        await drainQueuedInlineWorkflowStartsForEngine(this);
+      } finally {
+        this[Symbol.dispose]();
+      }
+      return;
+    }
     this[Symbol.dispose]();
   }
   get storage(): WeftStorage {
