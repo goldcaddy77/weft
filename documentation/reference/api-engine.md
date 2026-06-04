@@ -248,7 +248,7 @@ schedule(
 ): Promise<ScheduleHandle>;
 ```
 
-Register a recurring schedule that starts a workflow on a cron expression or fixed interval, returning a `ScheduleHandle` for pausing, resuming, updating, or cancelling it. Call it either with a `ScheduleDefinition` object (`{ workflow, cron | every, input, overlapPolicy? }`) or positionally with a workflow type, input, and a cron string or `ScheduleSpec`. The `ScheduleOptions.overlap` policy governs what happens when a tick fires while the previous run is still in flight. The `ScheduleDefinition`, `ScheduleSpec`, and `ScheduleOptions` types carry JSDoc describing the spec formats (`{ cron }` vs `{ every }`) and the overlap values.
+Register a recurring schedule that starts a workflow on a cron expression or fixed interval, returning a `ScheduleHandle` for pausing, resuming, updating, or cancelling it. Call it either with a `ScheduleDefinition` object (`{ workflow, cron | every, input, overlapPolicy? }`) or positionally with a workflow type, input, and a cron string or `ScheduleSpec`. The `ScheduleOptions.overlap` policy governs what happens when a tick fires while the previous run is still in flight. A _suspended_ previous run counts as in flight: it still holds the schedule slot, so under a non-`allow` policy (`skip`/`queue`/`cancel-running`) the next tick does not start a second run until the suspended run is resumed to completion or cancelled. The `ScheduleDefinition`, `ScheduleSpec`, and `ScheduleOptions` types carry JSDoc describing the spec formats (`{ cron }` vs `{ every }`) and the overlap values.
 
 ### `scheduler` (getter)
 
@@ -320,6 +320,22 @@ async cancel(): Promise<void>
 ```
 
 Shorthand for `engine.cancel(handle.id)`.
+
+### `suspend()`
+
+```ts partial
+async suspend(): Promise<void>
+```
+
+Shorthand for `engine.suspend(handle.id)`. Pauses the workflow without terminating it — it moves to the non-terminal `'suspended'` status, keeps its checkpoint, and stops driving without aborting. Unlike `cancel()`, it does not run cancel handlers and does not settle `result()`. Resume it later with `resume()`. Inline execution mode only.
+
+### `resume()`
+
+```ts partial
+async resume(): Promise<void>
+```
+
+Shorthand for `engine.resume(handle.id)`. Re-drives the workflow from its persisted checkpoint — after a `suspend()`, or after a process restart left it `'running'`. `result()` on this handle resolves when the resumed run completes.
 
 ### `update()`
 
@@ -454,7 +470,14 @@ interface WorkflowSummary {
 ### `WorkflowStatus`
 
 ```ts partial
-type WorkflowStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'timed-out';
+type WorkflowStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'timed-out'
+  | 'suspended';
 ```
 
 ### `WorkflowFunction`
