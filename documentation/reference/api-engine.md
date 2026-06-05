@@ -130,6 +130,10 @@ async start<TName extends keyof WorkflowRegistry & string>(
 
 Start a new workflow execution. Names declared in the augmentable `WorkflowRegistry` get typed input and typed `handle.result()` output. When a workflow registry is present, TypeScript rejects names outside that registry; use `workflow()` definitions with `Engine.create({ workflows })` or `engine.withWorkflow()` to add names explicitly. Throws if `type` is not registered or a workflow with the given `id` already exists.
 
+Pass `options.idempotencyKey` for at-most-once starts: the first call commits the workflow and a durable key→id mapping in one compare-and-swap, and every later call with the same key returns a handle to that run instead of starting a second (even after it reaches a terminal state). Concurrent same-key callers converge on one run. `id` and `idempotencyKey` are mutually exclusive — idempotency assigns its own generated id and dedups through the key, so supply one or the other. Idempotent start requires a storage backend with `conditionalBatch` and throws if it is absent.
+
+The key→id mapping is permanent: it deliberately outlives terminal cleanup so repeat calls keep returning the same handle. When the workflow **record** is purged or swept by retention, the mapping itself **survives** (purge and retention do not touch the `start-idem:` keyspace) but now points at a run that no longer exists. The key is then **spent** — a subsequent call with the same key resolves the surviving mapping, finds no record, and throws `IdempotencyKeyPurgedError` (HTTP 409 over REST/JSON-RPC) rather than silently starting a new run (a fresh create would fail the still-present mapping CAS and strand the caller). Treat that error as "this key is consumed; start fresh with a different key," or keep retention longer than your deduplication window.
+
 `options.services` is inline-only host data exposed as `ctx.services`. It is never checkpointed. When recovering a workflow that was launched with services in a fresh process, configure `EngineOptions.resolveWorkflowServices` to rebuild the value before the generator advances. Passing `services` in Worker execution mode throws at start because the value cannot cross to a Worker.
 
 | Parameter | Type           | Description                                 |
@@ -143,6 +147,43 @@ const handle = await engine.start('send-email', {
   to: 'user@example.com',
   body: 'Hello!',
 });
+```
+
+### `startOrSignal()`
+
+```ts partial
+async startOrSignal<TName extends keyof WorkflowRegistry & string>(
+  type: TName,
+  input: WorkflowInput<WorkflowRegistry, TName>,
+  signal: StartOrSignalSignal,
+  options?: StartOptions,
+): Promise<WorkflowHandle<WorkflowOutput<WorkflowRegistry, TName>>>
+```
+
+Atomically start a workflow or signal it if it already exists (signal-with-start). When the target is absent, the workflow record and the first signal commit in one batch and the freshly-launched run consumes the signal on its first drive. When the target is **non-terminal** — running, pending, or suspended — the signal is delivered through the normal signal path. When the target is **terminal**, this throws `StartOrSignalConflictError`: a finished run cannot be signalled and is not silently replaced.
+
+Pass `options.idempotencyKey` to deduplicate independent callers such as retried webhooks. Convergence requires a **shared workflow identity**: a shared `options.idempotencyKey` (the signal id derives from the key, so callers that share only the key converge on one workflow and one signal) or a shared `options.id` plus `signal.signalId`. A bare `signal.signalId` with neither `options.id` nor `options.idempotencyKey` does **not** converge — each absent-target call generates its own workflow id, so concurrent callers create distinct runs. In that mode `startOrSignal` is an atomic start-with-one-initial-signal, not a convergence primitive. Supply exactly one of `signal.signalId` or `options.idempotencyKey` (not both); `options.idempotencyKey` and `options.id` are likewise mutually exclusive. Requires a storage backend with `conditionalBatch`.
+
+> [!NOTE] Terminal-transition race
+> The non-terminal check and the signal write are not a single atomic step. If the target workflow transitions to terminal in the narrow window between the two, the signal is dropped (the underlying signal path does not buffer onto a terminal run) and the returned handle is for the now-terminal run. This is the same at-least-once-detection / no-delivery-on-terminal behavior as `engine.signal`; it is not specific to `startOrSignal`.
+
+> [!NOTE] Concurrent same-id pre-commit abort
+> When two callers race on the same `options.id`, one reserves the id in memory before its durable record commits. If that winner then _aborts_ before committing — a storage failure, an oversized payload, or a start interceptor that throws — no run ever materializes. `startOrSignal` recovers from this internally: the losing caller waits for the reservation to clear, sees no committed run, and retries its own create, so it converges on a real run rather than stranding (a bounded retry guards the pathological case where every winner keeps aborting). A bare `engine.start` does _not_ retry — it surfaces the collision as `WorkflowAlreadyExistsError` for the caller to retry, preserving its strict at-most-once-per-id contract.
+
+| Parameter | Type                  | Description                                           |
+| --------- | --------------------- | ----------------------------------------------------- |
+| `type`    | `string`              | Name of the registered workflow                       |
+| `input`   | `unknown`             | Input data passed to the workflow generator           |
+| `signal`  | `StartOrSignalSignal` | The signal `name`, optional `payload`, and `signalId` |
+| `options` | `StartOptions`        | Optional start configuration                          |
+
+```ts partial
+const handle = await engine.startOrSignal(
+  'order',
+  { orderId: 'order-42' },
+  { name: 'payment', payload: { status: 'succeeded' } },
+  { idempotencyKey: 'webhook-order-42' },
+);
 ```
 
 ### `signal()`

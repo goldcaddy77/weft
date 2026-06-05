@@ -56,6 +56,7 @@ import {
   type SignalDefinition,
   type SignalDeliveryOptions,
   type StartOptions,
+  type StartOrSignalSignal,
   type SubmitReviewOptions,
   type TypedListFilter,
   type UpdateDefinition,
@@ -159,9 +160,12 @@ import {
   fork as forkFromLifecycle,
   recoverAll as recoverAllFromLifecycle,
   resume as resumeFromLifecycle,
+  startOrSignal as startOrSignalFromLifecycle,
+  startWithIdempotency as startWithIdempotencyFromLifecycle,
   startWorkflow as startWorkflowFromLifecycle,
   type LifecycleCallbacks,
   type RecoverAllOptions,
+  type StartOrSignalCallbacks,
 } from './lifecycle.ts';
 import {
   addTags as addWorkflowTags,
@@ -257,7 +261,9 @@ export {
   BulkOperationConfirmationError,
   EngineCreateNameMismatchError,
   EngineDisposedError,
+  IdempotencyKeyPurgedError,
   PersistedDataIncompatibleError,
+  StartOrSignalConflictError,
   WorkflowAlreadyExistsError,
   WorkflowNotFoundError,
   WorkflowNotRegisteredError,
@@ -807,6 +813,15 @@ export class Engine<
     options?: StartOptions,
   ): Promise<WorkflowHandle>;
   async start(type: string, input: unknown, options?: StartOptions): Promise<WorkflowHandle> {
+    if (options?.idempotencyKey !== undefined) {
+      return startWithIdempotencyFromLifecycle(
+        getInternals(this),
+        type,
+        input,
+        options,
+        this.#createLifecycleCallbacks(),
+      );
+    }
     return startWorkflowFromLifecycle(
       getInternals(this),
       type,
@@ -815,6 +830,57 @@ export class Engine<
       undefined,
       this.#createLifecycleCallbacks(),
     );
+  }
+  /**
+   * Atomically start a workflow or signal it if it already exists
+   * (signal-with-start). With an absent target, the workflow record and the
+   * first signal commit in one batch and the freshly-launched run consumes the
+   * signal on its first drive. A non-terminal target (running, pending, or
+   * suspended) is signalled through the normal signal path; a terminal target
+   * throws {@link StartOrSignalConflictError} rather than starting a new run or
+   * dropping the signal.
+   *
+   * Concurrent callers converge on one workflow and one delivered signal. Pass
+   * `options.idempotencyKey` to dedup independent callers (e.g. retried
+   * webhooks); the signal id derives from the key when `signal.signalId` is
+   * omitted, so callers that share only the key still converge. `signal.signalId`
+   * and `options.idempotencyKey` are mutually exclusive (provide exactly one), as
+   * are `options.id` and `options.idempotencyKey`. Requires a storage backend
+   * with `conditionalBatch`.
+   */
+  async startOrSignal<TName extends KnownWorkflowNames<TWorkflows>>(
+    type: TName,
+    input: WorkflowInput<TWorkflows, TName>,
+    signal: StartOrSignalSignal,
+    options?: StartOptions,
+  ): Promise<WorkflowHandle<WorkflowOutput<TWorkflows, TName>>>;
+  async startOrSignal<TName extends string>(
+    type: UnknownWorkflowNameWhenDefaultRegistryIsEmpty<TWorkflows, TName>,
+    input: unknown,
+    signal: StartOrSignalSignal,
+    options?: StartOptions,
+  ): Promise<WorkflowHandle>;
+  async startOrSignal(
+    type: string,
+    input: unknown,
+    signal: StartOrSignalSignal,
+    options?: StartOptions,
+  ): Promise<WorkflowHandle> {
+    return startOrSignalFromLifecycle(
+      getInternals(this),
+      type,
+      input,
+      signal,
+      options,
+      this.#createStartOrSignalCallbacks(),
+    );
+  }
+  #createStartOrSignalCallbacks(): StartOrSignalCallbacks {
+    return {
+      ...this.#createLifecycleCallbacks(),
+      signalExistingWorkflow: (workflowId, signalName, payload, signalId) =>
+        this.signal(workflowId, signalName, payload, { signalId }),
+    };
   }
   getHandle(workflowId: string): WorkflowHandle {
     const entry = getInternals(this).handleCache.get(workflowId);

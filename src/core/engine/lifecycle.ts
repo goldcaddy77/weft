@@ -36,6 +36,12 @@ export {
 } from './lifecycle/start.ts';
 
 export {
+  startOrSignal,
+  startWithIdempotency,
+  type StartOrSignalCallbacks,
+} from './lifecycle/start-or-signal.ts';
+
+export {
   buildInitialSearchAttributeOperations,
   buildStartBatchOperations,
   validateSearchAttributes,

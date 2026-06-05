@@ -1,3 +1,4 @@
+import type { WorkflowStatus } from '../types/identity.ts';
 import { WeftError } from '../weft-error.ts';
 
 /**
@@ -321,6 +322,73 @@ export class ActivityResolutionError extends WeftError<'ActivityResolutionError'
     );
     this.workflowType = workflowType;
     this.activityName = activityName;
+  }
+}
+
+/**
+ * Thrown by {@link Engine.startOrSignal} when the target workflow already exists
+ * and is in a terminal state (completed, failed, cancelled, or timed out). A
+ * terminal run cannot accept a signal and must not be silently replaced, so
+ * `startOrSignal` surfaces this conflict instead of starting a fresh run under
+ * the same id or dropping the signal.
+ *
+ * Inspect `workflowId` to identify the conflicting run and `status` to see why
+ * it was rejected. To deliberately start a new run, choose a different id (or
+ * idempotency key); to deliver to a fresh run, terminal-state reuse is not a
+ * supported policy.
+ *
+ * @example
+ * ```ts
+ * import { StartOrSignalConflictError } from '@lostgradient/weft';
+ *
+ * function isTerminalStartOrSignalConflict(error: unknown): boolean {
+ *   return error instanceof StartOrSignalConflictError;
+ * }
+ * ```
+ */
+export class StartOrSignalConflictError extends WeftError<'StartOrSignalConflictError'> {
+  readonly workflowId: string;
+  readonly status: WorkflowStatus;
+
+  constructor(workflowId: string, status: WorkflowStatus) {
+    super(
+      'StartOrSignalConflictError',
+      `Workflow "${workflowId}" is already in terminal state "${status}" and cannot accept a ` +
+        'startOrSignal: a terminal run cannot be signalled and is not replaced. Use a different ' +
+        'id or idempotency key to start a new run.',
+    );
+    this.workflowId = workflowId;
+    this.status = status;
+  }
+}
+
+/**
+ * Thrown by {@link Engine.start} / {@link Engine.startOrSignal} when an
+ * `idempotencyKey` resolves to a workflow that no longer exists — its run was
+ * purged or bulk-deleted while the durable `start-idem:` mapping (intentionally
+ * not swept on cleanup) lived on. The key is "spent": it can neither return the
+ * gone run nor safely start a fresh one under the same key (a concurrent caller
+ * may still hold the mapping). Use a different idempotency key to start anew.
+ *
+ * @example
+ * ```ts
+ * import { IdempotencyKeyPurgedError } from '@lostgradient/weft';
+ *
+ * function isPurgedIdempotencyKey(error: unknown): boolean {
+ *   return error instanceof IdempotencyKeyPurgedError;
+ * }
+ * ```
+ */
+export class IdempotencyKeyPurgedError extends WeftError<'IdempotencyKeyPurgedError'> {
+  readonly workflowId: string;
+
+  constructor(workflowId: string) {
+    super(
+      'IdempotencyKeyPurgedError',
+      `The idempotency key maps to workflow "${workflowId}", which no longer exists (it was ` +
+        'purged or deleted). Use a different idempotency key to start a new run.',
+    );
+    this.workflowId = workflowId;
   }
 }
 
