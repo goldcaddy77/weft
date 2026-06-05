@@ -36,6 +36,7 @@ type ValidatedTaskResult = {
   workerId: string | undefined;
   value: unknown;
   error: string | undefined;
+  attemptToken: string | undefined;
 };
 
 function authorizeWorkerPrincipal(principal: Principal | undefined): Response | null {
@@ -62,12 +63,29 @@ function validateTaskResultBody(body: Record<string, unknown>): ValidatedTaskRes
     return Response.json({ error: 'status must be "completed" or "failed"' }, { status: 400 });
   }
 
+  // Distinguish a MISSING attemptToken (an old worker that does not echo —
+  // backward-compatible, falls back to the workerId guard) from a PRESENT but
+  // malformed one. A present non-string token is a protocol error, rejected here
+  // the same way the WebSocket parser rejects it, so the two transports stay
+  // consistent and a `{ attemptToken: 42 }` is never silently treated as absent.
+  const rawAttemptToken = body['attemptToken'];
+  if (
+    rawAttemptToken !== undefined &&
+    (typeof rawAttemptToken !== 'string' || rawAttemptToken === '')
+  ) {
+    return Response.json(
+      { error: 'attemptToken must be a non-empty string when present' },
+      { status: 400 },
+    );
+  }
+
   return {
     operationId,
     status,
     workerId: typeof body['workerId'] === 'string' ? body['workerId'] : undefined,
     value: body['value'],
     error: typeof body['error'] === 'string' ? body['error'] : undefined,
+    attemptToken: rawAttemptToken,
   };
 }
 
@@ -106,7 +124,17 @@ async function applyTaskResult(
   }
 }
 
-export function createLongPollInflightRecord(queue: string, task: PendingTask): InflightRecord {
+/**
+ * A freshly created long-poll inflight record always carries an `attemptToken`.
+ * The intersection makes that invariant a compile-time fact so the claim can read
+ * the token directly without an unreachable empty-string fallback.
+ */
+type TokenedInflightRecord = InflightRecord & { attemptToken: string };
+
+export function createLongPollInflightRecord(
+  queue: string,
+  task: PendingTask,
+): TokenedInflightRecord {
   const now = Date.now();
   const visibilityTimeout = task.visibilityTimeout ?? DEFAULT_VISIBILITY_TIMEOUT;
   const deadline = now + visibilityTimeout;
@@ -122,6 +150,11 @@ export function createLongPollInflightRecord(queue: string, task: PendingTask): 
     visibilityTimeout,
     retryPolicy: task.retryPolicy,
     workflowId: task.workflowId,
+    // Fresh per-claim token. The long-poll completion handler validates the
+    // echoed token against the durable record, rejecting a stale earlier claim
+    // whose visibility timed out and was reclaimed. Re-claim writes a new record
+    // (delete-then-create) so the token rotates by construction.
+    attemptToken: crypto.randomUUID(),
     firstQueuedAt: task.firstQueuedAt ?? task.enqueuedAt ?? now,
     lastQueuedAt: task.lastQueuedAt ?? task.enqueuedAt ?? now,
     lastDispatchedAt: now,
@@ -132,12 +165,18 @@ export function createLongPollInflightRecord(queue: string, task: PendingTask): 
   };
 }
 
+/** The worker-facing identity of a long-poll claim: the synthetic worker id and its per-claim token. */
+export interface LongPollClaim {
+  workerId: string;
+  attemptToken: string;
+}
+
 export async function markTaskClaimedByLongPollWorker(
   context: ServerContext,
   options: ServeOptions,
   queue: string,
   task: PendingTask,
-): Promise<string> {
+): Promise<LongPollClaim> {
   const inflightRecord = createLongPollInflightRecord(queue, task);
   context.deadlineTracker.add({
     operationId: task.operationId,
@@ -150,7 +189,13 @@ export async function markTaskClaimedByLongPollWorker(
   );
   recordTaskQueueLatencyMetric(context.metricsCollector, normalizedInflightRecord);
   recordTaskBacklogMetric(context.metricsCollector, context.taskQueue);
-  return normalizedInflightRecord.workerId;
+  return {
+    workerId: normalizedInflightRecord.workerId,
+    // The token is read from the freshly created record (typed to always carry
+    // one), not from the normalized round-trip, so the claim never hands the
+    // worker an empty or missing token to echo.
+    attemptToken: inflightRecord.attemptToken,
+  };
 }
 
 export async function handleTaskPollRequest(
@@ -193,8 +238,8 @@ export async function handleTaskPollRequest(
 
   const task = await context.taskQueue.poll(queue, activities, timeout, request.signal);
   if (task !== null) {
-    const workerId = await markTaskClaimedByLongPollWorker(context, options, queue, task);
-    return Response.json({ ...task, workerId });
+    const claim = await markTaskClaimedByLongPollWorker(context, options, queue, task);
+    return Response.json({ ...task, workerId: claim.workerId, attemptToken: claim.attemptToken });
   }
 
   return new Response(null, { status: 204 });
@@ -229,20 +274,47 @@ export async function handleTaskResultRequest(
     return validated;
   }
 
-  // Ownership guard. When the task is still in flight, the submitter must echo
-  // the exact workerId the server handed out on claim — a missing workerId
-  // (`undefined`) is rejected rather than treated as a wildcard match. A null
-  // record means the task already resolved/expired/was reclaimed, so there is
-  // no owner to match against; the completion lands on whatever the queue does
-  // with an unknown operationId (a no-op for already-settled work).
+  // A null record means the task already resolved/expired/was reclaimed, so there
+  // is no owner to match against; the completion lands as a no-op on already-
+  // settled work. Otherwise the submitter must clear both the workerId and the
+  // attempt-token guards before the result is applied.
   const inflightRecord = await readInflightRecord(options.engine.storage, validated.operationId);
-  if (
-    inflightRecord !== null &&
-    (validated.workerId === undefined || inflightRecord.workerId !== validated.workerId)
-  ) {
+  if (inflightRecord !== null && !isLongPollCompletionAuthorized(inflightRecord, validated)) {
     return Response.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   await applyTaskResult(context, options, validated, inflightRecord);
   return Response.json({ ok: true });
+}
+
+/**
+ * Whether a long-poll completion may apply to an in-flight task. Two layered
+ * checks, both no-ops on rejection (the caller never reaches `applyTaskResult`):
+ *
+ * - **workerId**: the submitter must echo the exact synthetic workerId handed out
+ *   on claim — a missing workerId is rejected, not treated as a wildcard.
+ * - **attemptToken**: the per-claim token distinguishes a re-claimed earlier
+ *   attempt (same operationId, possibly reusable workerId) from the current one.
+ *   The check is purely additive (no protocol version bump): it rejects only when
+ *   the record has a token AND the completion echoes one AND they differ. Records
+ *   written before this field existed carry no token, and a worker that does not
+ *   echo one falls back to the workerId-only guard — neither is stranded. A stale
+ *   earlier attempt echoes the OLD token it was dispatched with (present, wrong)
+ *   and is still rejected.
+ */
+function isLongPollCompletionAuthorized(
+  inflightRecord: InflightRecord,
+  validated: ValidatedTaskResult,
+): boolean {
+  if (validated.workerId === undefined || inflightRecord.workerId !== validated.workerId) {
+    return false;
+  }
+  if (
+    inflightRecord.attemptToken !== undefined &&
+    validated.attemptToken !== undefined &&
+    validated.attemptToken !== inflightRecord.attemptToken
+  ) {
+    return false;
+  }
+  return true;
 }

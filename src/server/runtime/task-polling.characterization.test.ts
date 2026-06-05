@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import { principalFromApiKey } from '../principal.ts';
+import { transitionQueuedToInflight } from '../task-state.ts';
 import { minimalServeOptions, minimalServerContext } from './server-context.test-support.ts';
 import { handleTaskPollRequest, handleTaskResultRequest } from './task-polling.ts';
 
@@ -248,6 +249,7 @@ describe('handleTaskPollRequest', () => {
         status: 'completed',
         value: 42,
         workerId: task.workerId,
+        attemptToken: task.attemptToken,
       }),
       makeUrl('/v1/tasks/default/result'),
       WORKER_PRINCIPAL,
@@ -285,6 +287,192 @@ describe('handleTaskPollRequest', () => {
       WORKER_PRINCIPAL,
     );
     expect(rejected?.status).toBe(403);
+  });
+
+  it('rejects an in-flight result whose attempt token does not match the claim', async () => {
+    const context = minimalServerContext();
+    const options = minimalServeOptions();
+    context.taskQueue.enqueue('default', {
+      operationId: 'op-stale-token',
+      activityName: 'charge',
+      input: { amount: 42 },
+    });
+
+    const pollRequest = new Request('http://localhost/v1/tasks/default?activity=charge&timeout=0', {
+      method: 'GET',
+    });
+    const pollResponse = await handleTaskPollRequest(
+      context,
+      options,
+      pollRequest,
+      new URL(pollRequest.url),
+      WORKER_PRINCIPAL,
+    );
+    const task = await pollResponse?.json();
+    // The poll response carries the per-claim attempt token.
+    expect(task.attemptToken).toBeString();
+
+    // Same workerId (passes the ownership guard) but a stale/wrong token — as a
+    // re-claimed earlier attempt would echo. The attempt guard rejects it.
+    const rejected = await handleTaskResultRequest(
+      context,
+      options,
+      makePostRequest({
+        operationId: 'op-stale-token',
+        status: 'completed',
+        value: 42,
+        workerId: task.workerId,
+        attemptToken: 'stale-token-from-an-earlier-claim',
+      }),
+      makeUrl('/v1/tasks/default/result'),
+      WORKER_PRINCIPAL,
+    );
+    expect(rejected?.status).toBe(403);
+
+    // The matching token is accepted.
+    const accepted = await handleTaskResultRequest(
+      context,
+      options,
+      makePostRequest({
+        operationId: 'op-stale-token',
+        status: 'completed',
+        value: 42,
+        workerId: task.workerId,
+        attemptToken: task.attemptToken,
+      }),
+      makeUrl('/v1/tasks/default/result'),
+      WORKER_PRINCIPAL,
+    );
+    expect(accepted?.status).toBe(200);
+  });
+
+  it('rejects a present-but-malformed attemptToken with 400 (not silently treated as absent)', async () => {
+    // A MISSING token is backward-compatible (falls back to the workerId guard).
+    // A PRESENT but non-string/empty token is a malformed frame and must be
+    // rejected — the same strictness the WebSocket parser applies — so the long-
+    // poll transport cannot be coerced into treating `{ attemptToken: 42 }` as an
+    // old-worker absent echo and bypassing the attempt guard on a token-bearing record.
+    const context = minimalServerContext();
+    const options = minimalServeOptions();
+    context.taskQueue.enqueue('default', {
+      operationId: 'op-malformed-token',
+      activityName: 'charge',
+      input: { amount: 1 },
+    });
+
+    const pollRequest = new Request('http://localhost/v1/tasks/default?activity=charge&timeout=0', {
+      method: 'GET',
+    });
+    const pollResponse = await handleTaskPollRequest(
+      context,
+      options,
+      pollRequest,
+      new URL(pollRequest.url),
+      WORKER_PRINCIPAL,
+    );
+    const task = await pollResponse?.json();
+    expect(task.attemptToken).toBeString();
+
+    for (const malformed of [42, null, '']) {
+      const rejected = await handleTaskResultRequest(
+        context,
+        options,
+        makePostRequest({
+          operationId: 'op-malformed-token',
+          status: 'completed',
+          value: 1,
+          workerId: task.workerId,
+          attemptToken: malformed,
+        }),
+        makeUrl('/v1/tasks/default/result'),
+        WORKER_PRINCIPAL,
+      );
+      expect(rejected?.status).toBe(400);
+      const body = await rejected?.json();
+      expect(body.error).toMatch(/attemptToken/);
+    }
+  });
+
+  it('authorizes a matching-workerId completion when the worker omits the echoed token', async () => {
+    // Backward-compat / no-version-bump: the claim's in-flight record HAS a token
+    // (the current server always stamps one), but an older long-poll worker echoes
+    // none. The attempt guard fires only on a present-but-wrong token, so a missing
+    // echo falls back to the workerId-only guard and is accepted — the only worker
+    // in a singleton deployment is never live-locked.
+    const context = minimalServerContext();
+    const options = minimalServeOptions();
+    context.taskQueue.enqueue('default', {
+      operationId: 'op-omit-echo',
+      activityName: 'charge',
+      input: { amount: 42 },
+    });
+
+    const pollRequest = new Request('http://localhost/v1/tasks/default?activity=charge&timeout=0', {
+      method: 'GET',
+    });
+    const pollResponse = await handleTaskPollRequest(
+      context,
+      options,
+      pollRequest,
+      new URL(pollRequest.url),
+      WORKER_PRINCIPAL,
+    );
+    const task = await pollResponse?.json();
+    // The record carries a token, and the claim never hands out an empty one.
+    expect(task.attemptToken).toBeString();
+    expect(task.attemptToken.length).toBeGreaterThan(0);
+
+    const accepted = await handleTaskResultRequest(
+      context,
+      options,
+      // No attemptToken echoed — the old-worker case.
+      makePostRequest({
+        operationId: 'op-omit-echo',
+        status: 'completed',
+        value: 42,
+        workerId: task.workerId,
+      }),
+      makeUrl('/v1/tasks/default/result'),
+      WORKER_PRINCIPAL,
+    );
+    expect(accepted?.status).toBe(200);
+  });
+
+  it('authorizes a matching-workerId completion against a token-less in-flight record', async () => {
+    // Backward-compat: an in-flight record written before the attempt-token field
+    // existed carries no token. A completion that echoes the correct workerId must
+    // still be accepted — the attempt guard is skipped when there is no stored
+    // token to compare against, so an in-flight upgrade does not strand work.
+    const options = minimalServeOptions();
+    const context = minimalServerContext();
+
+    await transitionQueuedToInflight(options.engine.storage, 'op-legacy', {
+      operationId: 'op-legacy',
+      workerId: 'longpoll-legacy',
+      deadline: Date.now() + 30_000,
+      activityName: 'charge',
+      queue: 'default',
+      input: { amount: 42 },
+      attempt: 1,
+      visibilityTimeout: 30_000,
+      // No attemptToken — simulates a record persisted before the field existed.
+    });
+
+    const accepted = await handleTaskResultRequest(
+      context,
+      options,
+      makePostRequest({
+        operationId: 'op-legacy',
+        status: 'completed',
+        value: 42,
+        workerId: 'longpoll-legacy',
+        // The worker echoes a token, but the token-less record accepts any.
+        attemptToken: 'token-the-record-never-stored',
+      }),
+      makeUrl('/v1/tasks/default/result'),
+      WORKER_PRINCIPAL,
+    );
+    expect(accepted?.status).toBe(200);
   });
 
   it('accepts a result with no in-flight record without an ownership check', async () => {
