@@ -900,12 +900,17 @@ const COVERAGE_ALLOWANCE_OVERRIDES = new Map<string, CoverageAllowance>([
   [
     'src/storage/resolve.ts',
     {
+      // Pre-existing untestable runtime-detection and driver-import fallback
+      // branches: Node/web-extension/IndexedDB resolver paths (never the active
+      // runtime under the Bun test suite), the SQLite "neither runtime" throw,
+      // and the LMDB/Turso resolver + Turso validator bodies (need a real driver).
+      // Line numbers refreshed after the WS2 refactor moved the configuration
+      // types out into storage-configuration.ts; the function count is unchanged.
       functions: 6,
       lines: new Set([
-        238, 239, 240, 241, 242, 247, 248, 249, 250, 251, 255, 264, 266, 267, 268, 269, 270, 271,
-        273, 281, 283, 284, 285, 286, 287, 288, 290, 291, 292, 293, 294, 303, 304, 305, 308, 309,
-        310, 311, 312, 313, 346, 354, 367, 368, 379, 400, 407, 408, 409, 410, 436, 437, 438, 439,
-        440, 441,
+        70, 71, 72, 73, 74, 79, 80, 81, 82, 83, 87, 96, 98, 99, 100, 101, 102, 103, 105, 113, 115,
+        116, 117, 118, 119, 120, 122, 123, 124, 125, 126, 135, 136, 137, 140, 141, 142, 143, 144,
+        145, 183, 191, 216, 237, 244, 245, 246, 247, 273, 274, 275, 276, 277, 278,
       ]),
     },
   ],
@@ -1123,15 +1128,6 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_OVERRIDES = new Map<string, CoverageAllowa
   [
     'src/server/operations/worker-drain.ts',
     { functions: 2, lines: new Set([251, 258, 259, 260, 264, 265, 266, 267, 268]) },
-  ],
-  [
-    'src/storage/node-sqlite.ts',
-    {
-      functions: 1,
-      lines: new Set([
-        57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78,
-      ]),
-    },
   ],
   [
     'src/storage/turso.ts',
@@ -1402,15 +1398,6 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_REFRESH = new Map<string, CoverageAllowanc
     'src/storage/indexeddb-fault-harness.test-support.ts',
     {
       functions: 2,
-    },
-  ],
-  [
-    'src/storage/node-sqlite.ts',
-    {
-      functions: 1,
-      lines: new Set([
-        58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
-      ]),
     },
   ],
   [
@@ -1750,17 +1737,6 @@ const CURRENT_BRANCH_COVERAGE_ALLOWANCE_REFRESH = new Map<string, CoverageAllowa
   ['src/server/runtime/websocket-upgrade.ts', { lines: new Set([123, 124]) }],
   ['src/server/runtime/websocket-worker.ts', { lines: new Set([405, 406, 409, 410]) }],
   ['src/server/serve-internals.ts', { lines: new Set([236, 279, 334]) }],
-  [
-    'src/storage/node-sqlite.ts',
-    {
-      functions: 3,
-      lines: new Set([
-        58, 59, 60, 61, 62, 63, 64, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
-        82, 83, 84, 85, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104,
-        105, 106,
-      ]),
-    },
-  ],
 ]);
 
 const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([

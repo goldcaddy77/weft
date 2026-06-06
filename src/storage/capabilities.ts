@@ -185,8 +185,16 @@ export function requireStorageCapability(
 /**
  * Fail fast when a storage backend is not conservative enough for boot-time
  * durable recovery. This is intentionally stricter than the engine's per-feature
- * gates: it rejects ephemeral, remote, eventual, best-effort, non-atomic, and
- * non-CAS storage before an application starts in durable mode.
+ * gates: it rejects ephemeral, eventual, best-effort, non-atomic, and non-CAS
+ * storage before an application starts in durable mode.
+ *
+ * Persistence may be `local` (a same-process file-backed store) or `remote` (a
+ * durable service such as Neon Postgres). A `remote` backend is acceptable only
+ * because the other four axes are still required at their strongest:
+ * `linearizable` read-after-write, `snapshot` scans, atomic batches, and
+ * compare-and-swap. A remote store that cannot promise all four (an eventually
+ * consistent HTTP backend, say) is still rejected — by those axes, not by its
+ * persistence scope.
  *
  * @throws {Error} When the backend's capability row is not suitable for recovery.
  *
@@ -203,8 +211,11 @@ export function assertDurableStorageForRecovery(storage: Storage): void {
   const capabilities = storage.capabilities();
   const failures: string[] = [];
 
-  if (capabilities.persistence !== 'local') {
-    failures.push(`persistence must be "local" (got "${capabilities.persistence}")`);
+  // `remote` is accepted here, not just `local`: a durable remote store (Neon)
+  // is fine for recovery as long as the other four axes below hold at full
+  // strength. `ephemeral` is the only persistence value this rejects.
+  if (capabilities.persistence !== 'local' && capabilities.persistence !== 'remote') {
+    failures.push(`persistence must be "local" or "remote" (got "${capabilities.persistence}")`);
   }
   if (capabilities.readAfterWrite !== 'linearizable') {
     failures.push(`readAfterWrite must be "linearizable" (got "${capabilities.readAfterWrite}")`);
