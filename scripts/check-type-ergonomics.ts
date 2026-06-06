@@ -59,9 +59,16 @@ const gitListOutput =
     .quiet()
     .text();
 
+// The owner of the `Context` internals WeakMap. Its `hasContextInternals`
+// probe casts an arbitrary `object` to the WeakMap's `Context` key type purely
+// to ask `INTERNALS.has(value)` — a presence check, not handler code or an
+// authoring example. This rule guards the latter, not the WeakMap owner.
+const CONTEXT_INTERNALS_FILE = 'src/core/context/internals.ts';
+
 for (const relPath of gitListOutput.split('\0')) {
   if (
     relPath === '' ||
+    relPath === CONTEXT_INTERNALS_FILE ||
     relPath.endsWith('.test.ts') ||
     relPath.endsWith('.spec.ts') ||
     relPath.endsWith('.test-d.ts') ||

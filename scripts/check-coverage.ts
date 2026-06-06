@@ -783,10 +783,12 @@ const COVERAGE_ALLOWANCE_OVERRIDES = new Map<string, CoverageAllowance>([
     },
   ],
   [
+    // One overload/declaration function Bun cannot attribute line coverage to.
+    // (The former line allowance pointed past end-of-file — the file is 400
+    // lines — and covered no real uncovered line, so it was removed.)
     'src/core/types/workflow-function.ts',
     {
       functions: 1,
-      lines: new Set([413, 414, 415, 416, 417, 418, 419, 420, 421, 422, 423, 424, 425, 426, 427]),
     },
   ],
   [
@@ -1627,8 +1629,16 @@ const CURRENT_BRANCH_COVERAGE_ALLOWANCE_REFRESH = new Map<string, CoverageAllowa
     { functions: 1, lines: new Set([57, 58, 59, 60, 61, 62, 63, 137, 141, 142, 143]) },
   ],
   [
+    // Invariant-violation guards unreachable by construction: the three
+    // "Invalid checkpointed/completed activity retry ..." throws (112-114,
+    // 135-137, 199-202) and the "Missing activity retry policy" throw (395)
+    // fire only on corrupt persisted retry state; line 323 is the non-`Error`
+    // fall-through in `isNonRetryableActivityError`, which the suite never hits
+    // because activities always throw `Error` instances. Line numbers shifted
+    // when `asConcreteContext` / `hasContextInternals` were added near the top
+    // of the file.
     'src/core/context/run-operation.ts',
-    { lines: new Set([83, 84, 85, 106, 107, 108, 170, 171, 172, 173, 293, 363, 383]) },
+    { lines: new Set([112, 113, 114, 135, 136, 137, 199, 200, 201, 202, 323, 395]) },
   ],
   [
     'src/core/engine/activity-reconciliation.ts',
