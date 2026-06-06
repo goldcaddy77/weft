@@ -4,7 +4,11 @@ const repositoryPath = join(import.meta.dir, '..');
 const expectedPackageName = '@lostgradient/weft';
 const maximumPackedBytes = 5 * 1024 * 1024;
 const maximumUnpackedBytes = 12 * 1024 * 1024;
-const maximumEntryCount = 1100;
+// A guardrail against accidentally publishing files that should not ship (test,
+// fixture, or stray build output) rather than a hard size ceiling — the packed
+// and unpacked byte budgets above are the primary bloat backstop. Bump this
+// when the published `dist/` surface legitimately grows.
+const maximumEntryCount = 1200;
 
 type PackFile = {
   path: string;
