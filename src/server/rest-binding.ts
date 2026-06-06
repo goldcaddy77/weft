@@ -107,14 +107,25 @@ export type RestBinding<Input, Output> = {
   readonly shapeSuccess?: (output: Output, request: Request) => Response;
   /**
    * Optional override for fault → HTTP response mapping. When absent,
-   * the transport adapter falls back to `faultToHttpResponse` (the
-   * canonical `{ error: { code, message, data? } }` shape).
+   * the transport adapter falls back to `faultToHttpResponse`, which emits
+   * the REST fault body `{ error: { code, message, data? } }`. This is
+   * distinct from the JSON-RPC fault object (`faultToJsonRpcError`): JSON-RPC
+   * uses a flat `{ code, message, data }` with a numeric `code` and the
+   * symbolic name relocated to `data.weftCode`. REST and JSON-RPC deliberately
+   * differ in fault shape, so each transport owns its own projection.
    *
-   * During Milestone 1, bindings for REST operations that already exist
-   * with a different legacy error shape MUST provide this so their
-   * parity diff test passes byte-for-byte against the legacy handler.
-   * Milestone 2 drops the per-binding override and all REST endpoints
-   * move to the canonical fault shape.
+   * REST operations provide this to shape faults the way a REST client
+   * expects: most use `shapeRestFault`, which masks an `EngineFailure` to a
+   * flat `{ error: "Internal server error" }` with status `500` (never
+   * leaking internal detail over REST) and maps the remaining fault codes to
+   * their HTTP statuses. A few operations supply a bespoke shaper to special-case
+   * a particular fault — typically to override its message or to handle one code
+   * explicitly — while delegating the rest. The status often matches what the
+   * shared map would already produce; the shaper exists for the operation-specific
+   * detail (for example, `get-workflow-result` returns the custom message
+   * `"Timeout waiting for workflow result"` on a `Timeout`, and `get-stream-chunks`
+   * handles `InvalidParams` inline). This per-operation hook is the current
+   * contract, not a transitional shim.
    */
   readonly shapeFault?: (fault: OperationFault) => Response;
 };
