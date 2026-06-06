@@ -139,6 +139,7 @@ import {
 import {
   createCleanupIntervalTick,
   createQueuedInlineWorkflowStartHandler,
+  createSecondInstanceDetectorResolver,
   drainQueuedInlineWorkflowStartsForEngine,
   isActivityDefinition,
 } from './engine-runtime-helpers.ts';
@@ -210,6 +211,10 @@ import {
   toScheduleSummary,
   updateSchedule as updateScheduleFromInternals,
 } from './schedules.ts';
+import {
+  createSecondInstanceDetectionTick,
+  createSecondInstanceDetector,
+} from './second-instance-detector.ts';
 import { signal as signalWorkflow } from './signals.ts';
 import { loadScheduleState, loadWorkflowState } from './storage-io.ts';
 import {
@@ -537,6 +542,7 @@ export class Engine<
     const cleanupIntervalDisposalTracker: EngineCleanupIntervalDisposalTracker = {
       disposed: false,
       cleanupInterval: null,
+      secondInstanceDetectionInterval: null,
       testToken: consumeNextEngineLeakWarningTokenForTesting(),
     };
     const cleanupInterval = setInterval(
@@ -554,6 +560,8 @@ export class Engine<
     getInternals(this).retentionSweepInterval = null;
     getInternals(this).retentionSweepInFlight = null;
     getInternals(this).nextRetentionSweepAt = null;
+    getInternals(this).secondInstanceDetectionInterval = null;
+    getInternals(this).secondInstanceDetector = null;
     getInternals(this).eventLogHeads = new Map();
     getInternals(this).workflowFeedListeners = new Map();
     getInternals(this).workflowVersionTuples = new Map();
@@ -563,6 +571,43 @@ export class Engine<
     getInternals(this).strategy.onMessage(this.#handleStrategyMessage.bind(this));
     getInternals(this).alertManager = createAlertManagerForEngine(this, options?.alerts, getNow);
     this.#ensureRetentionSweepInterval();
+    this.#startSecondInstanceDetection();
+  }
+
+  /**
+   * Start the best-effort second-instance liveness detector when enabled. The
+   * engine owns the interval so disposal clears it through the same path as the
+   * other engine intervals (no leak warning). A `WeakRef` keeps the interval from
+   * pinning the engine alive past garbage collection. On a GC-without-dispose the
+   * interval is cleared two ways: the tick self-clears on its first post-GC fire
+   * (prompt, via the tracker handle) and the shared finalizer clears it on
+   * collection (backstop). Mirrors the cleanup-interval lifecycle exactly.
+   */
+  #startSecondInstanceDetection(): void {
+    const internals = getInternals(this);
+    if (!internals.options.secondInstanceDetectionEnabled) return;
+    const detector = createSecondInstanceDetector({
+      storage: internals.storage,
+      instanceId: crypto.randomUUID(),
+      getNow: internals.options.getNow,
+      intervalMs: internals.options.secondInstanceHeartbeatIntervalMs,
+    });
+    internals.secondInstanceDetector = detector;
+    const tracker = internals.cleanupIntervalDisposalTracker;
+    // The tracker is constructed unconditionally just before this method runs, so
+    // it is always present here; guard defensively rather than assert.
+    if (tracker === null) return;
+    const weakEngine = new WeakRef(this);
+    const detectionInterval = setInterval(
+      createSecondInstanceDetectionTick(createSecondInstanceDetectorResolver(weakEngine), tracker),
+      internals.options.secondInstanceHeartbeatIntervalMs,
+    );
+    internals.secondInstanceDetectionInterval = detectionInterval;
+    // Track the interval on the cleanup disposal tracker so BOTH cleanup paths
+    // clear it: the tick self-clears via this handle on the first post-GC fire
+    // (prompt), and the shared engine finalizer clears it on collection (backstop,
+    // since FinalizationRegistry callbacks are not guaranteed to run promptly).
+    tracker.secondInstanceDetectionInterval = detectionInterval;
   }
 
   #hasConfiguredRetention(): boolean {
