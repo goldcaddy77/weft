@@ -31,7 +31,7 @@ Typically constructed by the engine -- you will not create `Context` instances d
 | `nestingDepth`           | `number`      | How many levels deep this workflow is as a child workflow. `0` for top-level workflows. |
 
 > [!NOTE]
-> `stepIndex` and `nestingDepth` are available on the concrete `Context` class for debugging purposes. They are not part of the `WorkflowContext` public interface defined in `types.ts`.
+> `workflowType` is part of the public `WorkflowContext` interface. `stepIndex` and `nestingDepth` are available on the concrete `Context` class for debugging purposes; they are not part of the public interface.
 
 ---
 
@@ -445,6 +445,25 @@ Register a synchronous handler for named updates. When `engine.update()` is call
 ```ts partial
 let progress = 0;
 context.onUpdate('getProgress', () => progress);
+```
+
+### `onQuery()`
+
+```ts partial
+onQuery(name: string, handler: (input: unknown) => unknown): void
+```
+
+Register a read-only handler for named workflow queries. When `engine.query()` or `handle.query()` is called with this name, the handler runs against the workflow's current context and returns its value to the caller.
+
+Signal-parked inline workflows keep query handlers callable while they wait at `waitForSignal()`. If the workflow resumes and parks again, queries use the fresh post-resume context. After the workflow is suspended or reaches a terminal state, the retained context is torn down and a query with that name returns `undefined`.
+
+```ts partial
+async function* example(context: Context) {
+  let phase = 'starting';
+  context.onQuery('phase', () => phase);
+  phase = 'waiting';
+  yield* context.waitForSignal('continue');
+}
 ```
 
 ### `expose()`

@@ -131,4 +131,28 @@ Each item is a `WorkflowSummary` with the workflow's `id`, `type`, `status`, `ve
 
 For richer state inspection, workflows can set search attributes via `ctx.setAttribute()` and `ctx.setAttributes()`, which are indexed and queryable. See the [workflows guide](workflows.md) for details on search attributes.
 
+## Querying a running workflow
+
+For live, workflow-owned read models, register query handlers with `ctx.onQuery()` and call them through `engine.query()` or `handle.query()`.
+
+```typescript partial
+const phaseQuery = query<void, string>('phase');
+
+engine.register(
+  workflow({ name: 'approval' }).execute(async function* (ctx) {
+    let phase = 'waiting';
+    ctx.onQuery(phaseQuery, () => phase);
+
+    yield* ctx.waitForSignal(approvalSignal);
+    phase = 'approved';
+    return phase;
+  }),
+);
+
+const handle = await engine.start('approval', {});
+const phase = await engine.query(handle.id, phaseQuery);
+```
+
+Inline workflows that are parked on `waitForSignal()` retain their query context, so query handlers remain callable while the workflow is waiting for an external signal. When a signal resumes the workflow and it parks again, later queries use the newly resumed context. Suspended or terminal workflows do not keep serving those handlers; querying an unregistered, suspended, or terminal handler returns `undefined`.
+
 Signals turn your workflows into interactive, event-driven processes. Combined with [durable timers](durable-timers.md), you can model arbitrarily complex human-in-the-loop processes—approval chains, escalation deadlines, SLA monitoring—all within a single workflow function.
