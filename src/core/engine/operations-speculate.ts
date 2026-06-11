@@ -1,5 +1,7 @@
 import type { ContextOperationRequest } from '../context.ts';
+import { finalizeAndUnwrap } from './deferred-consume-envelope.ts';
 import type { EngineInternals } from './internals.ts';
+import { assertSupportedSignalBranches } from './operations-coordination.ts';
 import type { OperationWithCallerStack } from './operations-router.ts';
 import { SpeculativeExecutionState } from './speculative-execution-state.ts';
 
@@ -99,13 +101,41 @@ export async function driveSpeculativeGenerator(
 
     const nextOperation = iterationResult.value;
     try {
+      // The top-level `processRaceOperation` / `processParallelOperation`
+      // reject a `race` / `all` whose branches wait on the same signal name
+      // (a shared waiter key would clobber). The speculate driver routes a
+      // yielded `race` / `parallel` straight to the nested executors, which
+      // never run that check — so enforce it here, on the input op, BEFORE
+      // dispatch (the clobbering registration happens inside execute) and
+      // INSIDE the try (so a throw routes through `generator.throw` and
+      // surfaces at the workflow's `yield*`, matching top-level catchability).
+      // `assertSupportedSignalBranches` walks nested race/parallel recursively,
+      // so one call covers the whole subtree.
+      if (nextOperation.type === 'race' || nextOperation.type === 'parallel') {
+        assertSupportedSignalBranches(nextOperation.operations);
+      }
       const nextResult = await callbacks.executeSubOperation(
         workflowId,
         nextOperation,
         undefined,
         speculativeState,
       );
-      return advance(nextResult, undefined);
+      // This driver is a top-level coordinator: a `race` / `parallel` sub-operation
+      // yielded here resolves with an unfinalized deferred-consume envelope (or an
+      // array of them, from a nested coordinator) when a `wait-signal` branch wins,
+      // because only the TOP coordinator finalizes. There is no outer
+      // `processRaceOperation` wrapping this — `executeSubOperation` routes straight
+      // to the nested executors — so the speculate driver IS the linearization
+      // point of "this yielded op produced this result". Finalize-and-unwrap before
+      // feeding the value to the generator, both so the workflow sees the payload
+      // (not a `{ finalize }` function) and so the winner's durable signal is
+      // consumed exactly once. `finalizeAndUnwrap` is idempotent on non-envelope
+      // values and the envelope is Symbol-branded, so applying it unconditionally is
+      // safe for every operation type. The consume is a durable effect that, like an
+      // uncompensated speculative activity write, persists even if the speculation
+      // later rolls back.
+      const finalizedResult = await finalizeAndUnwrap(nextResult);
+      return advance(finalizedResult, undefined);
     } catch (error) {
       return advance(lastResult, error instanceof Error ? error : new Error(String(error)));
     }

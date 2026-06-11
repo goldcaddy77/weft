@@ -11,6 +11,10 @@ import {
   executeChildWorkflow,
   type ChildWorkflowOperationCallbacks,
 } from './child-workflow.ts';
+import {
+  executeSleepSubOperation,
+  executeWaitSignalSubOperation,
+} from './coordination-branch-executors.ts';
 import type { EngineInternals } from './internals.ts';
 import {
   executeActivityOperationResult,
@@ -139,6 +143,10 @@ const subOperationExecutors: SubOperationExecutorMap = {
       context.callbacks.createCoordinationOperationCallbacks(),
       context.speculativeState,
     ),
+  sleep: (context, operation) =>
+    executeSleepSubOperation(context.internals, operation, context.signal),
+  'wait-signal': (context, operation) =>
+    executeWaitSignalSubOperation(context.internals, context.workflowId, operation, context.signal),
 };
 
 async function executeActivitySubOperation(
@@ -216,10 +224,44 @@ async function executeParallelSubOperation(
 ): Promise<unknown> {
   signal?.throwIfAborted();
 
+  // A nested `ctx.all` keeps `Promise.all`'s reject-fast result semantics (the
+  // outer coordinator owns durability and partial-result preservation), but it
+  // must NOT leave abortable siblings — a sleep or wait-signal branch — parked
+  // when one branch rejects. Without an AbortController, a rejecting sibling
+  // would leave a parked wait-signal waiter registered until engine disposal.
+  // A dedicated controller, aborted as soon as the all settles (reject OR
+  // resolve), releases those waiters. The parent `signal` is chained into it so
+  // a grandparent abort (e.g. this nested all losing an outer race) still
+  // propagates down to the branches. Activity branches ignore the signal and run
+  // to completion either way, so this changes nothing for activity-only alls.
+  const controller = new AbortController();
+  const abortNestedAll = () => {
+    controller.abort(signal?.reason);
+  };
+  signal?.addEventListener('abort', abortNestedAll, { once: true });
+
   const subOperationPromises = operation.operations.map((subOperation) =>
-    executeSubOperation(internals, workflowId, subOperation, callbacks, signal, speculativeState),
+    executeSubOperation(
+      internals,
+      workflowId,
+      subOperation,
+      callbacks,
+      controller.signal,
+      speculativeState,
+    ),
   );
-  return Promise.all(subOperationPromises);
+  // Swallow sibling rejections that surface only after the controller fires in
+  // the finally block (typically AbortError on the abandoned branches). Without
+  // this, aborting losers would produce unhandled promise rejections, since
+  // `Promise.all` already rejected with the FIRST error and nothing else awaits
+  // those promises.
+  void Promise.allSettled(subOperationPromises);
+  try {
+    return await Promise.all(subOperationPromises);
+  } finally {
+    signal?.removeEventListener('abort', abortNestedAll);
+    controller.abort();
+  }
 }
 
 async function executeRaceSubOperation(

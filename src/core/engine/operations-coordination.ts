@@ -10,6 +10,7 @@ import {
   type RunAllBranch,
   type RunAllBranchOutcome,
 } from '../engine-helpers.ts';
+import { finalizeAndUnwrap } from './deferred-consume-envelope.ts';
 import type { EngineInternals } from './internals.ts';
 import {
   executeActivityOperationResult as executeActivityOperationResultFromInternals,
@@ -30,6 +31,38 @@ type WaitSignalOperation = Extract<ContextOperationRequest, { type: 'wait-signal
 type ParallelOperation = Extract<ContextOperationRequest, { type: 'parallel' }>;
 type RaceOperation = Extract<ContextOperationRequest, { type: 'race' }>;
 type RunAllOperation = Extract<ContextOperationRequest, { type: 'run-all' }>;
+
+/**
+ * Reject a `ctx.race` / `ctx.all` whose branches wait on the SAME signal name,
+ * recursively through nested `race` / `parallel` branches. Sibling wait-signal
+ * branches share the `${workflowId}:${signalName}` waiter key, so two anywhere in
+ * the coordination tree would clobber each other at registration, leaving one
+ * branch permanently unreachable (the run would hang). Reject the meaningless
+ * shape deterministically rather than silently dropping a branch. Distinct names
+ * (the event-or-close idiom) are unaffected.
+ */
+export function assertSupportedSignalBranches(
+  operations: readonly ContextOperationRequest[],
+): void {
+  const seen = new Set<string>();
+  const walk = (subOperations: readonly ContextOperationRequest[]): void => {
+    for (const subOperation of subOperations) {
+      if (subOperation.type === 'wait-signal') {
+        if (seen.has(subOperation.signalName)) {
+          throw new Error(
+            `ctx.race / ctx.all cannot have two branches waiting on the same signal "${subOperation.signalName}": ` +
+              'sibling wait-signal branches share one waiter and would clobber each other. ' +
+              'Wait on the signal once, or use distinct signal names.',
+          );
+        }
+        seen.add(subOperation.signalName);
+      } else if (subOperation.type === 'race' || subOperation.type === 'parallel') {
+        walk(subOperation.operations);
+      }
+    }
+  };
+  walk(operations);
+}
 
 export type CoordinationOperationCallbacks = {
   completeOperation: (workflowId: string, value: unknown) => void;
@@ -109,6 +142,7 @@ export async function processParallelOperation(
   // instead of re-running, which fixes the duplicate-side-effects bug
   // when one branch in `ctx.all` fails.
   return callbacks.runOperationWithResult(workflowId, operation, async () => {
+    assertSupportedSignalBranches(operation.operations);
     const resumedSlots = extractResumedSlots(operation.resumedCacheEntry);
     const operationIds = operation.operations.map((sub, i) =>
       typeof sub.operationId === 'string' ? sub.operationId : `parallel:${operation.step}:${i}`,
@@ -116,19 +150,46 @@ export async function processParallelOperation(
     const { slots, hasFirstError, firstError } = await dispatchBranchesAllSettled(
       operationIds,
       resumedSlots,
+      // Branches return their RAW result (a wait-signal envelope stays unfinalized)
+      // so a fast wait-signal does not consume its durable signal while `ctx.all`
+      // is still waiting for slower siblings — that would open a wait-for-siblings
+      // window where the signal is gone but the `all` result is not yet
+      // checkpointed. Finalization is deferred to `finalizeFulfilledSlots` below,
+      // after every branch has settled.
       (index) => callbacks.executeSubOperation(workflowId, operation.operations[index]!),
     );
 
-    const entry = buildEntryFromSlots('all', slots);
-    const partialEntryWritten = writePartialEntry(internals, workflowId, operation.step, entry);
-
+    // On the failure path, decide whether this execution mode can persist the
+    // partial entry BEFORE finalizing — and throw the "unsupported" error first
+    // if it cannot. `assertPartialFailurePersistenceSupported` only throws when
+    // the partial cannot be written yet a fulfilled slot exists, so a worker-mode
+    // `ctx.all` with a fulfilled wait-signal branch is destined to throw. Running
+    // the check here, ahead of `finalizeFulfilledSlots`, means that doomed
+    // operation never consumes a durable signal it could never checkpoint.
+    // `canPersistPartialEntry` is finalize-independent and side-effect-free, so
+    // probing it early does not perturb the slots.
     if (hasFirstError) {
       assertPartialFailurePersistenceSupported(
-        partialEntryWritten,
+        canPersistPartialEntry(internals, workflowId),
         slots,
         'ctx.all',
         'worker execution mode',
       );
+    }
+
+    // Now that all branches have settled (and any unsupported worker-mode failure
+    // has already thrown without consuming), finalize the fulfilled wait-signal
+    // envelopes (and envelopes nested inside a coordinator array result) in place,
+    // immediately before the cache entry is built. This keeps envelopes — which
+    // carry a function and cannot encode — out of the durable cache, and shrinks
+    // the consume-vs-checkpoint window to the same adjacency the top-level signal
+    // path already has.
+    await finalizeFulfilledSlots(slots);
+
+    const entry = buildEntryFromSlots('all', slots);
+    writePartialEntry(internals, workflowId, operation.step, entry);
+
+    if (hasFirstError) {
       // Rethrow the original reason as-is (could be a string, number,
       // undefined, or any non-Error value) to mirror Promise.all.
       throw firstError;
@@ -137,10 +198,53 @@ export async function processParallelOperation(
   });
 }
 
+/**
+ * Finalize-and-unwrap the value of every fulfilled slot in place, after all
+ * `ctx.all` branches have settled. A fulfilled wait-signal branch's value is a
+ * deferred-consume envelope (or an array holding one, from a nested coordinator);
+ * `finalizeAndUnwrap` is idempotent on non-envelope values, so resumed/decoded
+ * slots pass through untouched. Finalizing here — rather than as each branch
+ * settles — avoids consuming a fast signal while slower siblings are still
+ * pending, keeping the durable signal alive until the operation is about to
+ * checkpoint.
+ *
+ * Uses `allSettled` rather than `Promise.all` so that EVERY finalizer completes
+ * before this returns or throws: a `Promise.all` reject on the first finalize
+ * failure would leave sibling `consumeSignal` deletions running in the background
+ * after the operation has already exited, mutating durable state for an operation
+ * that will never checkpoint. The first finalization error (if any) is re-thrown
+ * only after all consumes have stopped.
+ */
+async function finalizeFulfilledSlots(slots: ParallelBranchSlot[]): Promise<void> {
+  const outcomes = await Promise.allSettled(
+    slots.map(async (slot) => {
+      if (slot.status === 'fulfilled') {
+        slot.value = await finalizeAndUnwrap(slot.value);
+      }
+    }),
+  );
+  const failure = outcomes.find((outcome) => outcome.status === 'rejected');
+  if (failure) {
+    throw failure.reason;
+  }
+}
+
 /** Pull resumed slots out of an opaque cache entry, validating the shape. */
 function extractResumedSlots(resumedCacheEntry: unknown): ParallelBranchSlot[] | undefined {
   if (!isParallelOperationCacheEntry(resumedCacheEntry)) return undefined;
   return resumedCacheEntry.branches;
+}
+
+/**
+ * Whether the current execution mode can persist a partial cache entry for this
+ * workflow. Only the inline strategy exposes a context whose `accumulatedResults`
+ * the next checkpoint flushes; worker mode has no inline context, so a partial
+ * entry can never be written there. This read is side-effect-free, so it is safe
+ * to probe on the failure path BEFORE finalizing — letting an unsupported
+ * worker-mode `ctx.all` throw without first consuming a durable signal.
+ */
+function canPersistPartialEntry(internals: EngineInternals, workflowId: string): boolean {
+  return internals.inlineStrategy?.getContext(workflowId) !== undefined;
 }
 
 /**
@@ -186,6 +290,7 @@ export async function processRaceOperation(
   callbacks: Pick<CoordinationOperationCallbacks, 'executeSubOperation' | 'runOperationWithResult'>,
 ): Promise<void> {
   return callbacks.runOperationWithResult(workflowId, operation, async () => {
+    assertSupportedSignalBranches(operation.operations);
     // Abort losing sub-operations once the race settles so background work does
     // not keep consuming budget or emit events with no observer.
     const controller = new AbortController();
@@ -198,11 +303,23 @@ export async function processRaceOperation(
     // without a handler those would surface as unhandled promise
     // rejections.
     void Promise.allSettled(subOperations);
+    let winner: unknown;
     try {
-      return await Promise.race(subOperations);
+      winner = await Promise.race(subOperations);
     } finally {
+      // Abort losers as soon as the race settles — BEFORE the (possibly slow)
+      // finalize below — so background work does not keep running, consuming
+      // budget, or emitting events with no observer while the winner's signal is
+      // consumed. The winning branch has already settled, so aborting cannot
+      // un-resolve it or disturb its deferred-consume envelope.
       controller.abort();
     }
+    // Finalize-and-unwrap the winner: a winning wait-signal branch resolves with
+    // a deferred-consume envelope, and this is the linearization point of "this
+    // branch won", so consuming here (after the race settles, before the result
+    // reaches the durable cache) deletes the signal exactly once and only for the
+    // winner. Losers' envelopes are dropped unfinalized.
+    return finalizeAndUnwrap(winner);
   });
 }
 
