@@ -1521,7 +1521,11 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_REFRESH = new Map<string, CoverageAllowanc
   [
     'src/workers/workflow-runner.ts',
     {
-      lines: new Set([386]),
+      // Was line 386; shifted to 409 when `ctx.log` wiring (the
+      // createWorkerWorkflowLogger call, the WorkerWorkflowContext `log` field,
+      // and the worker `workflowType` field) was added above it. Same unchanged
+      // line, only its number moved.
+      lines: new Set([409]),
     },
   ],
 ]);
