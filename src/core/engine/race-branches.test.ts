@@ -10,13 +10,16 @@
  *
  * A `wait-signal` branch never consumes its durable signal itself: when woken it
  * resolves with a deferred-consume envelope, and ONLY the coordinator finalizes
- * (the single destructive consume) on the winner, strictly after the race/all
- * settles. So a losing wait-signal branch leaves the signal intact for a later
- * `waitForSignal` or a replay. The envelope propagates up through NESTED
- * coordinators (a nested `ctx.all` surfaces an array of envelopes), and the
- * top-level coordinator finalize-and-unwraps the winner — including walking
- * arrays — before the result reaches the durable cache. These tests pin both
- * halves of that contract, at the top level and nested.
+ * on the winner, strictly after the race/all settles. Finalization unwraps the
+ * payload and stages the destructive consume for the next durable workflow
+ * commit, so a losing wait-signal branch leaves the signal intact for a later
+ * `waitForSignal` or a replay, and a winning branch does not delete the `sig:`
+ * record until the result can commit and delete atomically. The
+ * envelope propagates up through NESTED coordinators (a nested `ctx.all` surfaces
+ * an array of envelopes), and the top-level coordinator finalize-and-unwraps the
+ * winner — including walking arrays — before the result reaches the durable
+ * cache. These tests pin both halves of that contract, at the top level and
+ * nested.
  */
 import { describe, expect, it } from 'bun:test';
 
@@ -44,6 +47,7 @@ function createSignalInternals(storage: unknown): EngineInternals {
   return {
     abortController: new AbortController(),
     inlineStrategy: null,
+    pendingCheckpointCommitSideEffects: new Map(),
     signalWaiters: new Map<string, () => void>(),
     signalWaitersByWorkflow: new Map(),
     storage,
@@ -410,7 +414,7 @@ describe('#456 a losing wait-signal branch must not consume the signal', () => {
     expect(result.second).toBe('late-signal');
   });
 
-  it('a winning wait-signal branch consumes the signal exactly once and leaves no waiter', async () => {
+  it('a winning wait-signal branch stages the consume and leaves no waiter', async () => {
     await using engine = new Engine();
     engine.register(
       workflow({ name: 'signal-consumed-once' }).execute(async function* (ctx: WorkflowContext) {
@@ -423,8 +427,9 @@ describe('#456 a losing wait-signal branch must not consume the signal', () => {
     await engine.signal('sig-once', 'ev', 'only-once');
     expect(await handle.result()).toBe('only-once');
 
-    // The durable signal record was consumed exactly once: the `sig:` record is
-    // gone (not just the in-memory waiter), proving finalize actually deleted it.
+    // Finalization unwraps the payload and leaves no waiter behind. The durable
+    // delete waits for a workflow commit boundary instead of happening adjacent
+    // to the consume; immediate terminal completion applies that staged delete.
     const internals = getInternals(engine);
     const residual = await peekSignal(internals, 'sig-once', 'ev');
     expect(residual.found).toBe(false);
@@ -605,8 +610,9 @@ describe('#456 wait-signal inside ctx.all is unbounded by design', () => {
     expect(stillBuffered.found).toBe(true);
     expect(stillBuffered.found && stillBuffered.payload).toBe('ev-payload');
 
-    // Release the slow sibling; now the all settles, finalize consumes `ev` once,
-    // and the result carries the consumed payload in branch order.
+    // Release the slow sibling; now the all settles, finalize unwraps `ev` once,
+    // and the result carries the payload in branch order. Immediate terminal
+    // completion applies the staged delete in the same durable state batch.
     releaseSlow('slow-done');
     expect(await handle.result()).toEqual(['ev-payload', 'slow-done']);
     const afterSettle = await peekSignal(internals, 'adf', 'ev');
@@ -843,13 +849,13 @@ describe('#456 a winning wait-signal survives replay without re-consuming', () =
 });
 
 describe('#456 wait-signal branches inside ctx.speculate finalize their envelope', () => {
-  it('speculative race won by waitForSignal yields the payload (not an envelope) and consumes once', async () => {
+  it('speculative race won by waitForSignal yields the payload without immediately consuming', async () => {
     // ctx.speculate drives its own generator: a yielded race/all routes straight to
     // the nested executors (no outer processRaceOperation), which return RAW
     // envelopes. The speculate driver is the top-level coordinator for that yield,
     // so it must finalize-and-unwrap before feeding the result to the generator —
     // otherwise the workflow sees a `{ finalize }` function and the signal is never
-    // consumed.
+    // staged for checkpoint consumption.
     await using engine = new Engine();
     engine.register(
       workflow({ name: 'speculate-race-signal' })
@@ -873,7 +879,8 @@ describe('#456 wait-signal branches inside ctx.speculate finalize their envelope
     const winner = await handle.result();
     expect(winner).toBe('ev-payload');
     expect(isDeferredConsumeEnvelope(winner)).toBe(false);
-    // The durable signal was consumed exactly once by the driver's finalize.
+    // Terminal completion applies the staged delete through the same pending
+    // side-effect queue used by checkpoint commits.
     const internals = getInternals(engine);
     const after = await peekSignal(internals, 'srs', 'ev');
     expect(after.found).toBe(false);
@@ -914,13 +921,11 @@ describe('#456 wait-signal branches inside ctx.speculate finalize their envelope
     expect(afterAll.found).toBe(false);
   });
 
-  it('a signal consumed inside a speculation that later rolls back stays consumed', async () => {
-    // The driver finalizes (consumes) the winning wait-signal's durable record
-    // during driving. A consume is a durable effect that — like an uncompensated
-    // speculative activity write — is NOT auto-reversed when the speculation rolls
-    // back (buildActivityCompensation returns undefined without a user `compensate`,
-    // so the engine never auto-undoes durable effects). This pins that the signal
-    // stays consumed after a verify-failure rollback, matching activity semantics.
+  it('a signal staged inside a speculation that later rolls back remains buffered', async () => {
+    // The driver finalizes the winning wait-signal envelope during driving, but
+    // the destructive consume is staged with the speculative state. If a later
+    // verification failure rolls the speculation back, the staged consume is
+    // discarded and the signal remains buffered for replay or a later waiter.
     await using engine = new Engine();
     const failingVerify = activity({
       name: 'failing-verify',
@@ -934,8 +939,9 @@ describe('#456 wait-signal branches inside ctx.speculate finalize their envelope
           try {
             yield* ctx.speculate(async function* (branch) {
               // Win the race via the signal FIRST (the slow branch never settles),
-              // which consumes `ev`. THEN run a verified activity whose verification
-              // fails → drainVerifications throws → the whole speculation rolls back.
+              // which stages `ev` for checkpoint consumption. THEN run a verified
+              // activity whose verification fails → drainVerifications throws → the
+              // whole speculation rolls back.
               const won = yield* branch.race([
                 branch.waitForSignal<string>('ev'),
                 branch.sleep('30s'),
@@ -959,10 +965,10 @@ describe('#456 wait-signal branches inside ctx.speculate finalize their envelope
 
     const result = (await handle.result()) as { rolledBack: boolean };
     expect(result.rolledBack).toBe(true);
-    // The signal consumed during the (now rolled-back) speculation stays consumed.
+    // The signal staged during the now-rolled-back speculation remains buffered.
     const internals = getInternals(engine);
     const afterRollback = await peekSignal(internals, 'srb', 'ev');
-    expect(afterRollback.found).toBe(false);
+    expect(afterRollback.found).toBe(true);
   });
 });
 

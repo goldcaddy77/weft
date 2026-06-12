@@ -319,6 +319,7 @@ export function cleanupTerminalWorkflowMemory(
   }
   internals.eventLogHeads.delete(workflowId);
   internals.pendingTimelineEntries.delete(workflowId);
+  internals.pendingCheckpointCommitSideEffects.delete(workflowId);
   internals.parkedInlineWorkflows.delete(workflowId);
   // Strategy-side twin of parkedInlineWorkflows above: a run that parked retains
   // its Context in the inline strategy so query handlers stay callable. Drop it

@@ -53,10 +53,30 @@ function createInternals(overrides: Record<string, unknown> = {}) {
     heartbeatDetails: new Map(),
     lastHeartbeatDetailsByStep: new Map(),
     options: { getNow: () => 1_700_000_000_000, payloadSizePolicy: { maxBytes: null } },
+    pendingCheckpointCommitSideEffects: new Map(),
     storage: new MemoryStorage(),
     workflowTypeByWorkflowId: new Map(),
     ...overrides,
   };
+}
+
+function getPendingCheckpointCommitSideEffects(
+  internals: Record<string, unknown>,
+  workflowId: string,
+):
+  | {
+      conditions: ConditionalBatchCondition[];
+      operations: BatchOperation[];
+    }
+  | undefined {
+  return (
+    internals as {
+      pendingCheckpointCommitSideEffects: Map<
+        string,
+        { conditions: ConditionalBatchCondition[]; operations: BatchOperation[] }
+      >;
+    }
+  ).pendingCheckpointCommitSideEffects.get(workflowId);
 }
 
 class NoConditionalBatchStorage extends MemoryStorage {
@@ -108,38 +128,6 @@ class InitialClaimLosingStorage extends MemoryStorage {
     if (isInitialClaim) {
       await this.put(condition.key, this.#competingRecord);
       return false;
-    }
-    return super.conditionalBatch(conditions, operations);
-  }
-}
-
-class CrashAfterActivityReturnStorage extends MemoryStorage {
-  #remainingCompletionCrashes: number;
-
-  constructor(remainingCompletionCrashes: number) {
-    super();
-    this.#remainingCompletionCrashes = remainingCompletionCrashes;
-  }
-
-  override async conditionalBatch(
-    conditions: ConditionalBatchCondition[],
-    operations: BatchOperation[],
-  ): Promise<boolean> {
-    const isCompletionTransition =
-      conditions.length === 1 &&
-      conditions[0]?.expectedValue !== null &&
-      operations.some((operation) => {
-        if (operation.type !== 'put') return false;
-        const decoded = decode(operation.value);
-        return (
-          typeof decoded === 'object' &&
-          decoded !== null &&
-          (decoded as Record<string, unknown>)['status'] === 'completed'
-        );
-      });
-    if (isCompletionTransition && this.#remainingCompletionCrashes > 0) {
-      this.#remainingCompletionCrashes--;
-      throw new Error('simulated crash before completion marker');
     }
     return super.conditionalBatch(conditions, operations);
   }
@@ -432,7 +420,7 @@ describe('activity operation helpers', () => {
     ).rejects.toThrow('Verification failed for activity "test-activity"');
   });
 
-  it('records and replays keyed activity results before checkpoint commit', async () => {
+  it('queues keyed activity completion for the next checkpoint commit', async () => {
     const storage = new MemoryStorage();
     const operation = createActivityOperation({
       fn: () => 'first-result',
@@ -457,23 +445,23 @@ describe('activity operation helpers', () => {
     expect(keys[0]).toStartWith('actrec:v1:workflow%3Aid:test-activity:');
     expect(keys[0]).not.toContain('order:123');
     const record = decode((await storage.get(keys[0]!))!);
-    expect(record).toMatchObject({ status: 'completed', result: 'first-result' });
+    expect(record).toMatchObject({ status: 'started' });
 
-    const replayOperation = createActivityOperation({
-      fn: () => {
-        throw new Error('should not execute');
-      },
-      operationId: 'replayed-operation',
-      options: { idempotencyKey: 'order:123' },
+    const pendingSideEffects = getPendingCheckpointCommitSideEffects(internals, 'workflow:id');
+    expect(pendingSideEffects?.conditions).toHaveLength(1);
+    expect(decode(pendingSideEffects!.conditions[0]!.expectedValue!)).toMatchObject({
+      status: 'started',
     });
-    await expect(
-      executeActivityOperationResult(
-        createInternals({ storage }) as never,
-        'workflow:id',
-        replayOperation,
-        createCallbacks(),
-      ),
-    ).resolves.toBe('first-result');
+    expect(pendingSideEffects?.operations).toHaveLength(1);
+    const transition = pendingSideEffects!.operations[0]!;
+    expect(transition).toMatchObject({ type: 'put', key: keys[0] });
+    if (transition.type !== 'put') {
+      throw new Error('expected completion transition to be a put');
+    }
+    expect(decode(transition.value)).toMatchObject({
+      result: 'first-result',
+      status: 'completed',
+    });
   });
 
   it('fails closed when a keyed activity has a prior started record and no verifier', async () => {
@@ -566,56 +554,50 @@ describe('activity operation helpers', () => {
     }
   });
 
-  it('reconciles after activity returns but completion marker write crashes', async () => {
-    const storage = new CrashAfterActivityReturnStorage(1);
+  it('keeps a started reconciliation marker until the checkpoint commit applies the completion', async () => {
+    const storage = new MemoryStorage();
     const firstExecute = mock(() => 'external-result');
     const operation = createActivityOperation({
       fn: firstExecute,
       options: { idempotencyKey: 'crash-window' },
     });
+    const internals = createInternals({ storage });
 
     await expect(
       executeActivityOperationResult(
-        createInternals({ storage }) as never,
+        internals as never,
         'workflow-id',
         operation,
         createCallbacks(),
       ),
-    ).rejects.toThrow('simulated crash before completion marker');
+    ).resolves.toBe('external-result');
     expect(firstExecute).toHaveBeenCalledTimes(1);
 
-    const verify = mock(async () => ({
-      status: 'completed-with-result' as const,
-      result: 'external-result',
-    }));
-    const replayExecute = mock(() => {
-      throw new Error('should not redispatch');
-    });
-    const replayActivity = Object.assign(replayExecute, { verify });
-    const replayOperation = createActivityOperation({
-      fn: replayActivity,
-      operationId: 'replayed-after-crash',
-      options: { idempotencyKey: 'crash-window' },
-    });
-
-    await expect(
-      executeActivityOperationResult(
-        createInternals({ storage }) as never,
-        'workflow-id',
-        replayOperation,
-        createCallbacks(),
-      ),
-    ).resolves.toBe('external-result');
-
-    expect(replayExecute).not.toHaveBeenCalled();
-    expect(verify).toHaveBeenCalledWith(
-      undefined,
-      expect.objectContaining({ phase: 'pre-dispatch-reconciliation' }),
+    const idempotencyKeyDigest = await digestIdempotencyKey('crash-window');
+    const key = KEYS.activityReconciliation(
+      'workflow-id',
+      operation.activityName,
+      idempotencyKeyDigest,
     );
+    const durableRecord = decode((await storage.get(key))!);
+    expect(durableRecord).toMatchObject({ status: 'started' });
+
+    const pendingSideEffects = getPendingCheckpointCommitSideEffects(internals, 'workflow-id');
+    expect(pendingSideEffects?.conditions).toHaveLength(1);
+    expect(pendingSideEffects?.operations).toHaveLength(1);
+    const transition = pendingSideEffects!.operations[0]!;
+    if (transition.type !== 'put') {
+      throw new Error('expected completion transition to be a put');
+    }
+    expect(transition.key).toBe(key);
+    expect(decode(transition.value)).toMatchObject({
+      result: 'external-result',
+      status: 'completed',
+    });
   });
 
-  it('redispatches exactly once after crash-window verifier reports not completed', async () => {
-    const storage = new CrashAfterActivityReturnStorage(1);
+  it('fails closed on replay before the queued completion reaches a checkpoint', async () => {
+    const storage = new MemoryStorage();
     const firstExecute = mock(() => 'lost-result');
     const operation = createActivityOperation({
       fn: firstExecute,
@@ -629,17 +611,15 @@ describe('activity operation helpers', () => {
         operation,
         createCallbacks(),
       ),
-    ).rejects.toThrow('simulated crash before completion marker');
+    ).resolves.toBe('lost-result');
     expect(firstExecute).toHaveBeenCalledTimes(1);
 
-    const verify = mock(async (_result: unknown, context?: { phase?: string }) =>
-      context?.phase === 'pre-dispatch-reconciliation' ? 'not-completed' : true,
-    );
-    const secondExecute = mock(() => 'second-result');
-    const replayActivity = Object.assign(secondExecute, { verify });
+    const replayExecute = mock(() => {
+      throw new Error('should not redispatch without verifier');
+    });
     const replayOperation = createActivityOperation({
-      fn: replayActivity,
-      operationId: 'replayed-after-not-completed',
+      fn: replayExecute,
+      operationId: 'replayed-before-checkpoint',
       options: { idempotencyKey: 'crash-redo' },
     });
 
@@ -650,13 +630,9 @@ describe('activity operation helpers', () => {
         replayOperation,
         createCallbacks(),
       ),
-    ).resolves.toBe('second-result');
+    ).rejects.toThrow('prior dispatch marker but no Tier-0 verifier');
 
-    expect(secondExecute).toHaveBeenCalledTimes(1);
-    expect(verify).toHaveBeenCalledWith(
-      undefined,
-      expect.objectContaining({ attempt: 1, phase: 'pre-dispatch-reconciliation' }),
-    );
+    expect(replayExecute).not.toHaveBeenCalled();
   });
 
   it('fails closed for boolean and throwing pre-dispatch verifiers', async () => {

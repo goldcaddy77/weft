@@ -43,6 +43,14 @@ export type ConsumedSignalResult =
       payload: unknown;
     };
 
+export type PreparedSignalConsumeResult =
+  | { found: false }
+  | {
+      found: true;
+      payload: unknown;
+      operations: BatchOperation[];
+    };
+
 const EMPTY_STORAGE_VALUE = new Uint8Array(0);
 const SIGNAL_ACCEPTED_RESPONSE = { ok: true } as const;
 
@@ -313,10 +321,22 @@ export async function consumeSignal(
   workflowId: string,
   signalName: string,
 ): Promise<ConsumedSignalResult> {
+  const prepared = await prepareSignalConsumeForCheckpointCommit(internals, workflowId, signalName);
+  if (!prepared.found) {
+    return prepared;
+  }
+  await internals.storage.delete(prepared.operations[0]!.key);
+  return { found: true, payload: prepared.payload };
+}
+
+export async function prepareSignalConsumeForCheckpointCommit(
+  internals: EngineInternals,
+  workflowId: string,
+  signalName: string,
+): Promise<PreparedSignalConsumeResult> {
   const prefix = `sig:${encodeStorageKeyComponent(workflowId)}:${signalName}:`;
   for await (const [key, value] of internals.storage.scan(prefix, { limit: 1 })) {
-    await internals.storage.delete(key);
-    return { found: true, payload: decode(value) };
+    return { found: true, payload: decode(value), operations: [{ type: 'delete', key }] };
   }
   return { found: false };
 }

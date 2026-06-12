@@ -146,7 +146,13 @@ const subOperationExecutors: SubOperationExecutorMap = {
   sleep: (context, operation) =>
     executeSleepSubOperation(context.internals, operation, context.signal),
   'wait-signal': (context, operation) =>
-    executeWaitSignalSubOperation(context.internals, context.workflowId, operation, context.signal),
+    executeWaitSignalSubOperation(
+      context.internals,
+      context.workflowId,
+      operation,
+      context.signal,
+      context.speculativeState,
+    ),
 };
 
 async function executeActivitySubOperation(

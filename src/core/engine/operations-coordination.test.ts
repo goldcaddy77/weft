@@ -1,13 +1,20 @@
 import { describe, expect, it, mock } from 'bun:test';
 
+import {
+  KEYS,
+  type BatchOperation,
+  type ConditionalBatchCondition,
+} from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { encode } from '../codec.ts';
 import type { ContextOperationRequest } from '../context.ts';
+import { executeWaitSignalSubOperation } from './coordination-branch-executors.ts';
 import { createDeferredConsumeEnvelope } from './deferred-consume-envelope.ts';
 import type { EngineInternals } from './internals.ts';
 import {
   executeRunAllOperationResult,
   processParallelOperation,
+  processRaceOperation,
   processRunAllOperation,
   processWaitSignalOperation,
 } from './operations-coordination.ts';
@@ -20,10 +27,30 @@ function createSignalInternals(storage = new MemoryStorage()): EngineInternals {
   return {
     abortController: new AbortController(),
     inlineStrategy: null,
+    pendingCheckpointCommitSideEffects: new Map(),
     signalWaiters: new Map<string, () => void>(),
     signalWaitersByWorkflow: new Map(),
     storage,
   } as unknown as EngineInternals;
+}
+
+function getPendingCheckpointCommitSideEffects(
+  internals: EngineInternals,
+  workflowId: string,
+):
+  | {
+      conditions: ConditionalBatchCondition[];
+      operations: BatchOperation[];
+    }
+  | undefined {
+  return (
+    internals as unknown as {
+      pendingCheckpointCommitSideEffects: Map<
+        string,
+        { conditions: ConditionalBatchCondition[]; operations: BatchOperation[] }
+      >;
+    }
+  ).pendingCheckpointCommitSideEffects.get(workflowId);
 }
 
 class WaiterTrackingMap extends Map<string, () => void> {
@@ -271,12 +298,13 @@ describe('partial-failure preservation worker-mode boundary', () => {
 
   it('delivers a buffered signal discovered after waiter registration', async () => {
     const payload = { ok: true };
+    const signalKey = 'sig:key';
     const internals = createSignalInternals(
       createSequencedStorage([
         [
           /* first scan empty */
         ],
-        [['sig:key', encode(payload)]],
+        [[signalKey, encode(payload)]],
       ]) as never,
     );
     const completed = mock(() => {});
@@ -297,6 +325,117 @@ describe('partial-failure preservation worker-mode boundary', () => {
     expect(completed).toHaveBeenCalledWith('workflow-id', payload);
     expect(internals.signalWaiters.size).toBe(0);
     expect(internals.signalWaitersByWorkflow.size).toBe(0);
+    expect(getPendingCheckpointCommitSideEffects(internals, 'workflow-id')).toEqual({
+      conditions: [],
+      operations: [{ type: 'delete', key: signalKey }],
+    });
+  });
+
+  it('queues an existing top-level signal consume for the next checkpoint batch', async () => {
+    const storage = new MemoryStorage();
+    const signalKey = KEYS.signal('workflow-id', 'release', 'signal-1');
+    await storage.put(signalKey, encode({ ok: true }));
+    const internals = createSignalInternals(storage);
+    const completed = mock(() => {});
+
+    await processWaitSignalOperation(
+      internals,
+      'workflow-id',
+      {
+        type: 'wait-signal',
+        operationId: 'wait:existing',
+        signalName: 'release',
+      },
+      {
+        completeOperation: completed,
+      },
+    );
+
+    expect(completed).toHaveBeenCalledWith('workflow-id', { ok: true });
+    expect(await storage.get(signalKey)).not.toBeNull();
+    expect(getPendingCheckpointCommitSideEffects(internals, 'workflow-id')).toEqual({
+      conditions: [],
+      operations: [{ type: 'delete', key: signalKey }],
+    });
+  });
+
+  it('queues a ctx.race wait-signal consume for the next checkpoint batch', async () => {
+    const storage = new MemoryStorage();
+    const signalKey = KEYS.signal('workflow-id', 'release', 'signal-1');
+    await storage.put(signalKey, encode('race-payload'));
+    const internals = createSignalInternals(storage);
+    let captured: unknown;
+
+    await processRaceOperation(
+      internals,
+      'workflow-id',
+      {
+        type: 'race',
+        operationId: 'race:signal',
+        operations: [{ type: 'wait-signal', operationId: 'race:signal:0', signalName: 'release' }],
+      },
+      {
+        executeSubOperation: (_workflowId, subOperation, signal) => {
+          if (subOperation.type !== 'wait-signal') {
+            throw new Error('unexpected operation');
+          }
+          return executeWaitSignalSubOperation(internals, 'workflow-id', subOperation, signal);
+        },
+        runOperationWithResult: async (_workflowId, _operation, execute) => {
+          captured = await execute();
+        },
+      },
+    );
+
+    expect(captured).toBe('race-payload');
+    expect(await storage.get(signalKey)).not.toBeNull();
+    expect(getPendingCheckpointCommitSideEffects(internals, 'workflow-id')).toEqual({
+      conditions: [],
+      operations: [{ type: 'delete', key: signalKey }],
+    });
+  });
+
+  it('queues a ctx.all wait-signal consume for the next checkpoint batch', async () => {
+    const storage = new MemoryStorage();
+    const signalKey = KEYS.signal('workflow-id', 'release', 'signal-1');
+    await storage.put(signalKey, encode('all-payload'));
+    const internals = createSignalInternals(storage);
+    let captured: unknown;
+
+    await processParallelOperation(
+      internals,
+      'workflow-id',
+      {
+        type: 'parallel',
+        operationId: 'parallel:signal',
+        step: 0,
+        operations: [
+          { type: 'wait-signal', operationId: 'parallel:signal:0', signalName: 'release' },
+          { type: 'memo', operationId: 'parallel:signal:1', key: 'memo', fn: () => 'memo-result' },
+        ],
+      },
+      {
+        executeSubOperation: (_workflowId, subOperation, signal) => {
+          if (subOperation.type === 'wait-signal') {
+            return executeWaitSignalSubOperation(internals, 'workflow-id', subOperation, signal);
+          }
+          if (subOperation.type === 'memo') {
+            return Promise.resolve(subOperation.fn());
+          }
+          throw new Error('unexpected operation');
+        },
+        runOperationWithResult: async (_workflowId, _operation, execute) => {
+          captured = await execute();
+        },
+      },
+    );
+
+    expect(captured).toEqual(['all-payload', 'memo-result']);
+    expect(await storage.get(signalKey)).not.toBeNull();
+    expect(getPendingCheckpointCommitSideEffects(internals, 'workflow-id')).toEqual({
+      conditions: [],
+      operations: [{ type: 'delete', key: signalKey }],
+    });
   });
 
   it('exits wait-signal cleanly when cancellation happens while awaiting the waiter promise', async () => {

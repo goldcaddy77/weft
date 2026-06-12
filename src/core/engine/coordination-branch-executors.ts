@@ -1,7 +1,14 @@
 import type { ContextOperationRequest } from '../context.ts';
+import { appendCheckpointCommitSideEffects } from './checkpoint-side-effects.ts';
 import { createDeferredConsumeEnvelope } from './deferred-consume-envelope.ts';
 import type { EngineInternals } from './internals.ts';
-import { consumeSignal, peekSignal, releaseSignalWaiter, trackWaiterKey } from './signals.ts';
+import {
+  peekSignal,
+  prepareSignalConsumeForCheckpointCommit,
+  releaseSignalWaiter,
+  trackWaiterKey,
+} from './signals.ts';
+import type { SpeculativeExecutionState } from './speculative-execution-state.ts';
 
 /**
  * The largest delay a host `setTimeout` can hold without overflow. Node and Bun
@@ -134,6 +141,7 @@ export function executeWaitSignalSubOperation(
   workflowId: string,
   operation: Extract<ContextOperationRequest, { type: 'wait-signal' }>,
   signal?: AbortSignal,
+  speculativeState?: SpeculativeExecutionState,
 ): Promise<unknown> {
   signal?.throwIfAborted();
 
@@ -158,7 +166,19 @@ export function executeWaitSignalSubOperation(
     // an envelope so a losing branch (which never reaches finalize) cannot delete
     // the durable record.
     const finalize = async (): Promise<unknown> => {
-      const consumed = await consumeSignal(internals, workflowId, signalName);
+      const consumed = await prepareSignalConsumeForCheckpointCommit(
+        internals,
+        workflowId,
+        signalName,
+      );
+      if (consumed.found) {
+        appendCheckpointCommitSideEffects(
+          internals,
+          workflowId,
+          { operations: consumed.operations },
+          speculativeState,
+        );
+      }
       return consumed.found ? consumed.payload : undefined;
     };
 

@@ -1,8 +1,17 @@
-import { KEYS, type BatchOperation } from '../../storage/interface.ts';
+import {
+  KEYS,
+  storageConditionalBatch,
+  type BatchOperation,
+  type ConditionalBatchCondition,
+} from '../../storage/interface.ts';
 import { encode } from '../codec.ts';
 import { buildTimerBatchOperations } from '../scheduler.ts';
 import { WorkflowTimeoutError } from '../timeouts.ts';
 import type { ScheduleState, WorkflowState } from '../types.ts';
+import {
+  appendPendingCheckpointCommitSideEffects,
+  clearPendingCheckpointCommitSideEffects,
+} from './checkpoint-side-effects.ts';
 import { getWorkflowExecutionStartedAt } from './handles.ts';
 import type { EngineInternals } from './internals.ts';
 import { createScheduleTimerId, decodeWorkflowStartHeaders } from './state-utilities.ts';
@@ -69,10 +78,29 @@ export async function loadWorkflowResult(
 /** Commit workflow state operations. */
 export async function commitWorkflowStateOperations(
   internals: EngineInternals,
-  _state: WorkflowState,
+  state: WorkflowState,
   operations: BatchOperation[],
 ): Promise<void> {
-  await internals.storage.batch(operations);
+  const commit = {
+    conditions: [] as ConditionalBatchCondition[],
+    operations,
+  };
+  appendPendingCheckpointCommitSideEffects(internals, state.id, commit);
+  if (commit.conditions.length === 0) {
+    await internals.storage.batch(commit.operations);
+  } else {
+    const committed = await storageConditionalBatch(
+      internals.storage,
+      commit.conditions,
+      commit.operations,
+    );
+    if (!committed) {
+      throw new Error(
+        `Workflow state commit for workflow "${state.id}" lost its CAS race against a side effect.`,
+      );
+    }
+  }
+  clearPendingCheckpointCommitSideEffects(internals, state.id);
 }
 
 /** Load and decode persisted schedule state by schedule ID. */

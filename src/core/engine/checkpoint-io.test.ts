@@ -8,6 +8,7 @@ import {
 } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { createCheckpoint, serializeCheckpoint } from '../checkpoint.ts';
+import { decode, encode } from '../codec.ts';
 import type { ContextOperationRequest } from '../context.ts';
 import { EMPTY_EVENT_HEAD } from '../event-log.ts';
 import type { Checkpoint } from '../types.ts';
@@ -41,17 +42,42 @@ class NoConditionalBatchStorage extends MemoryStorage {
 class CountingConditionalBatchStorage extends MemoryStorage {
   conditionalBatchCallCount = 0;
   mismatchedConditionCount = 0;
+  lastConditionalBatch:
+    | { conditions: ConditionalBatchCondition[]; operations: BatchOperation[] }
+    | undefined;
 
   override async conditionalBatch(
     conditions: ConditionalBatchCondition[],
     operations: BatchOperation[],
   ): Promise<boolean> {
     this.conditionalBatchCallCount++;
+    this.lastConditionalBatch = { conditions, operations };
     const applied = await super.conditionalBatch(conditions, operations);
     if (!applied) {
       this.mismatchedConditionCount++;
     }
     return applied;
+  }
+}
+
+class FailingCheckpointSideEffectStorage extends CountingConditionalBatchStorage {
+  readonly sideEffectKey: string;
+
+  constructor(sideEffectKey: string) {
+    super();
+    this.sideEffectKey = sideEffectKey;
+  }
+
+  override async conditionalBatch(
+    conditions: ConditionalBatchCondition[],
+    operations: BatchOperation[],
+  ): Promise<boolean> {
+    this.conditionalBatchCallCount++;
+    this.lastConditionalBatch = { conditions, operations };
+    if (operations.some((operation) => operation.key === this.sideEffectKey)) {
+      throw new Error('simulated checkpoint side-effect batch crash');
+    }
+    return super.conditionalBatch(conditions, operations);
   }
 }
 
@@ -102,11 +128,49 @@ function createCheckpointInternals(
       getNow: () => 1_000,
       historyPolicy: { maxEvents: null, retentionWindow: null },
     },
+    pendingCheckpointCommitSideEffects: new Map(),
     pendingTimelineEntries: new Map(),
     storage,
     workflowFeedListeners: new Map(),
     workflowVersionTuples: new Map(),
   } as never;
+}
+
+function setPendingCheckpointCommitSideEffects(
+  internals: EngineInternals,
+  workflowId: string,
+  sideEffects: { conditions?: ConditionalBatchCondition[]; operations: BatchOperation[] },
+): void {
+  (
+    internals as unknown as {
+      pendingCheckpointCommitSideEffects: Map<
+        string,
+        { conditions: ConditionalBatchCondition[]; operations: BatchOperation[] }
+      >;
+    }
+  ).pendingCheckpointCommitSideEffects.set(workflowId, {
+    conditions: sideEffects.conditions ?? [],
+    operations: sideEffects.operations,
+  });
+}
+
+function getPendingCheckpointCommitSideEffects(
+  internals: EngineInternals,
+  workflowId: string,
+):
+  | {
+      conditions: ConditionalBatchCondition[];
+      operations: BatchOperation[];
+    }
+  | undefined {
+  return (
+    internals as unknown as {
+      pendingCheckpointCommitSideEffects: Map<
+        string,
+        { conditions: ConditionalBatchCondition[]; operations: BatchOperation[] }
+      >;
+    }
+  ).pendingCheckpointCommitSideEffects.get(workflowId);
 }
 
 async function seedCheckpoint(storage: MemoryStorage, checkpoint: Checkpoint): Promise<void> {
@@ -225,6 +289,124 @@ describe('checkpoint commit compare-and-swap guard', () => {
     );
     expect(staleSecondOwner.eventLogHeads.get(initialCheckpoint.workflowId)).toEqual(
       EMPTY_EVENT_HEAD,
+    );
+  });
+
+  it('folds pending signal consume side effects into the checkpoint conditional batch', async () => {
+    const storage = new CountingConditionalBatchStorage();
+    const initialCheckpoint = createCheckpoint('checkpoint-workflow', '1', 1_000);
+    const internals = createCheckpointInternals(storage, initialCheckpoint);
+    await seedCheckpoint(storage, initialCheckpoint);
+    rememberRecoveredCheckpoint(internals, initialCheckpoint);
+    const signalKey = KEYS.signal(initialCheckpoint.workflowId, 'release', 'signal-1');
+    await storage.put(signalKey, encode('payload'));
+    setPendingCheckpointCommitSideEffects(internals, initialCheckpoint.workflowId, {
+      operations: [{ type: 'delete', key: signalKey }],
+    });
+
+    const nextCheckpoint = { ...initialCheckpoint, step: 1, createdAt: 2_000 };
+    await persistCheckpoint(
+      internals,
+      initialCheckpoint.workflowId,
+      checkpointOperation,
+      serializeCheckpointBuffer(nextCheckpoint),
+      createPersistCallbacks(),
+    );
+
+    expect(await storage.get(KEYS.checkpoint(initialCheckpoint.workflowId))).toEqual(
+      serializeCheckpoint(nextCheckpoint),
+    );
+    expect(await storage.get(signalKey)).toBeNull();
+    expect(getPendingCheckpointCommitSideEffects(internals, initialCheckpoint.workflowId)).toBe(
+      undefined,
+    );
+    expect(storage.lastConditionalBatch?.operations).toContainEqual({
+      type: 'delete',
+      key: signalKey,
+    });
+  });
+
+  it('leaves a queued signal consume intact when the checkpoint side-effect batch fails', async () => {
+    const initialCheckpoint = createCheckpoint('checkpoint-workflow', '1', 1_000);
+    const signalKey = KEYS.signal(initialCheckpoint.workflowId, 'release', 'signal-1');
+    const storage = new FailingCheckpointSideEffectStorage(signalKey);
+    const internals = createCheckpointInternals(storage, initialCheckpoint);
+    await seedCheckpoint(storage, initialCheckpoint);
+    rememberRecoveredCheckpoint(internals, initialCheckpoint);
+    await storage.put(signalKey, encode('payload'));
+    const sideEffects = {
+      conditions: [],
+      operations: [{ type: 'delete' as const, key: signalKey }],
+    };
+    setPendingCheckpointCommitSideEffects(internals, initialCheckpoint.workflowId, sideEffects);
+
+    await expect(
+      persistCheckpoint(
+        internals,
+        initialCheckpoint.workflowId,
+        checkpointOperation,
+        serializeCheckpointBuffer({ ...initialCheckpoint, step: 1, createdAt: 2_000 }),
+        createPersistCallbacks(),
+      ),
+    ).rejects.toThrow('simulated checkpoint side-effect batch crash');
+
+    expect(await storage.get(signalKey)).not.toBeNull();
+    expect(getPendingCheckpointCommitSideEffects(internals, initialCheckpoint.workflowId)).toEqual(
+      sideEffects,
+    );
+  });
+
+  it('leaves a queued activity reconciliation transition intact when the checkpoint side-effect batch fails', async () => {
+    const initialCheckpoint = createCheckpoint('checkpoint-workflow', '1', 1_000);
+    const reconciliationKey = KEYS.activityReconciliation(
+      initialCheckpoint.workflowId,
+      'charge',
+      'digest',
+    );
+    const storage = new FailingCheckpointSideEffectStorage(reconciliationKey);
+    const internals = createCheckpointInternals(storage, initialCheckpoint);
+    await seedCheckpoint(storage, initialCheckpoint);
+    rememberRecoveredCheckpoint(internals, initialCheckpoint);
+    const startedRecord = {
+      activityName: 'charge',
+      attempt: 1,
+      createdAt: 1_000,
+      idempotencyKeyDigest: 'digest',
+      operationId: 'activity:1',
+      ownerId: 'owner',
+      status: 'started',
+      updatedAt: 1_000,
+      version: 1,
+      workflowId: initialCheckpoint.workflowId,
+    };
+    const completedRecord = {
+      ...startedRecord,
+      result: 'charged',
+      status: 'completed',
+      updatedAt: 2_000,
+    };
+    await storage.put(reconciliationKey, encode(startedRecord));
+    const sideEffects = {
+      conditions: [{ key: reconciliationKey, expectedValue: encode(startedRecord) }],
+      operations: [
+        { type: 'put' as const, key: reconciliationKey, value: encode(completedRecord) },
+      ],
+    };
+    setPendingCheckpointCommitSideEffects(internals, initialCheckpoint.workflowId, sideEffects);
+
+    await expect(
+      persistCheckpoint(
+        internals,
+        initialCheckpoint.workflowId,
+        checkpointOperation,
+        serializeCheckpointBuffer({ ...initialCheckpoint, step: 1, createdAt: 2_000 }),
+        createPersistCallbacks(),
+      ),
+    ).rejects.toThrow('simulated checkpoint side-effect batch crash');
+
+    expect(decode((await storage.get(reconciliationKey))!)).toMatchObject({ status: 'started' });
+    expect(getPendingCheckpointCommitSideEffects(internals, initialCheckpoint.workflowId)).toEqual(
+      sideEffects,
     );
   });
 

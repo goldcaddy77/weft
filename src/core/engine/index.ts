@@ -544,6 +544,7 @@ export class Engine<
     getInternals(this).reviewTimerIds = new Map();
     getInternals(this).pendingWebhooks = new Set();
     getInternals(this).pendingTimelineEntries = new Map();
+    getInternals(this).pendingCheckpointCommitSideEffects = new Map();
     getInternals(this).cleanupIntervalDisposalTracker = null;
     const cleanupIntervalDisposalTracker: EngineCleanupIntervalDisposalTracker = {
       disposed: false,

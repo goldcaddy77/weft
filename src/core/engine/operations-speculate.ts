@@ -1,8 +1,9 @@
 import type { ContextOperationRequest } from '../context.ts';
+import { appendDirectCheckpointCommitSideEffects } from './checkpoint-side-effects.ts';
 import { finalizeAndUnwrap } from './deferred-consume-envelope.ts';
 import type { EngineInternals } from './internals.ts';
-import { assertSupportedSignalBranches } from './operations-coordination.ts';
 import type { OperationWithCallerStack } from './operations-router.ts';
+import { assertSupportedSignalBranches } from './signal-branch-validation.ts';
 import { SpeculativeExecutionState } from './speculative-execution-state.ts';
 
 type SpeculateOperation = Extract<ContextOperationRequest, { type: 'speculate' }>;
@@ -64,6 +65,9 @@ export async function executeSpeculativeBranch(
     );
     await speculativeState.drainVerifications();
     parentContext.commitSpeculativeChild(speculativeContext);
+    for (const sideEffects of speculativeState.takeCheckpointCommitSideEffects()) {
+      appendDirectCheckpointCommitSideEffects(internals, workflowId, sideEffects);
+    }
     return result;
   } catch (error) {
     await speculativeState.rollback();

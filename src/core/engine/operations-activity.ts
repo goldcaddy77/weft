@@ -5,12 +5,12 @@ import type { ActivityContext, ActivityVerificationResult } from '../types.ts';
 import { buildActivityContext } from './activity-heartbeat-tracking.ts';
 import {
   buildActivityReconciliationReference,
+  buildActivityReconciliationTransitionSideEffects,
   buildActivityVerificationContext,
   createCompletedActivityReconciliationRecord,
   resolveActivityIdempotencyKey,
   resolveStartedActivityReconciliationRecord,
   validateActivityResultForReconciliation,
-  writeActivityReconciliationTransition,
   type ActivityReconciliationMetadata,
 } from './activity-reconciliation.ts';
 import {
@@ -19,6 +19,7 @@ import {
   driveWorkflowInterceptorGenerator,
   parkDeferredAsyncActivity,
 } from './async-activity-completion.ts';
+import { appendCheckpointCommitSideEffects } from './checkpoint-side-effects.ts';
 import { ActivityResolutionError } from './errors.ts';
 import type { EngineInternals } from './internals.ts';
 import type { SpeculativeExecutionState } from './speculative-execution-state.ts';
@@ -388,11 +389,11 @@ export async function executeActivityOperationResult(
       result,
       internals.options.getNow(),
     );
-    await writeActivityReconciliationTransition(
-      internals.storage,
-      reference,
-      started,
-      completedRecord,
+    appendCheckpointCommitSideEffects(
+      internals,
+      workflowId,
+      buildActivityReconciliationTransitionSideEffects(reference, started, completedRecord),
+      speculativeState,
     );
     return result;
   }

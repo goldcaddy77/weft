@@ -9,6 +9,7 @@ import type { ContextOperationRequest } from '../context.ts';
 import { assertPayloadWithinLimit } from '../payload-size.ts';
 import type { ActivityVerificationContext, ActivityVerificationResult } from '../types.ts';
 import { WeftError } from '../weft-error.ts';
+import type { CheckpointCommitSideEffects } from './checkpoint-side-effects.ts';
 import type { EngineInternals } from './internals.ts';
 
 type ActivityOperation = Extract<ContextOperationRequest, { type: 'activity' }>;
@@ -254,16 +255,32 @@ export async function writeActivityReconciliationTransition(
   expectedRecord: ActivityReconciliationRecord,
   nextRecord: ActivityReconciliationRecord,
 ): Promise<void> {
+  const sideEffects = buildActivityReconciliationTransitionSideEffects(
+    reference,
+    expectedRecord,
+    nextRecord,
+  );
   const committed = await storageConditionalBatch(
     storage,
-    [{ key: reference.key, expectedValue: encode(expectedRecord) }],
-    [{ type: 'put', key: reference.key, value: encode(nextRecord) }],
+    sideEffects.conditions,
+    sideEffects.operations,
   );
   if (!committed) {
     throw new ActivityReconciliationConflictError(
       'Activity reconciliation completion lost compare-and-set ownership.',
     );
   }
+}
+
+export function buildActivityReconciliationTransitionSideEffects(
+  reference: ActivityReconciliationReference,
+  expectedRecord: ActivityReconciliationRecord,
+  nextRecord: ActivityReconciliationRecord,
+): CheckpointCommitSideEffects {
+  return {
+    conditions: [{ key: reference.key, expectedValue: encode(expectedRecord) }],
+    operations: [{ type: 'put', key: reference.key, value: encode(nextRecord) }],
+  };
 }
 
 export function normalizePreDispatchVerificationResult(

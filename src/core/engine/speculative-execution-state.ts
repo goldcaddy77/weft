@@ -1,10 +1,14 @@
+import type { CheckpointCommitSideEffects } from './checkpoint-side-effects.ts';
+
 export class SpeculativeExecutionState {
   readonly #verifications: Array<Promise<{ failed: false } | { failed: true; error: unknown }>>;
   readonly #compensations: Array<() => Promise<void>>;
+  readonly #checkpointCommitSideEffects: CheckpointCommitSideEffects[];
 
   constructor() {
     this.#verifications = [];
     this.#compensations = [];
+    this.#checkpointCommitSideEffects = [];
   }
 
   recordVerification(verification: Promise<void>): void {
@@ -18,6 +22,21 @@ export class SpeculativeExecutionState {
 
   recordCompensation(compensation: () => Promise<void>): void {
     this.#compensations.push(compensation);
+  }
+
+  recordCheckpointCommitSideEffects(sideEffects: CheckpointCommitSideEffects): void {
+    this.#checkpointCommitSideEffects.push({
+      conditions: [...sideEffects.conditions],
+      operations: [...sideEffects.operations],
+    });
+  }
+
+  takeCheckpointCommitSideEffects(): CheckpointCommitSideEffects[] {
+    const sideEffects = this.#checkpointCommitSideEffects.splice(0);
+    return sideEffects.map((entry) => ({
+      conditions: [...entry.conditions],
+      operations: [...entry.operations],
+    }));
   }
 
   async drainVerifications(): Promise<void> {

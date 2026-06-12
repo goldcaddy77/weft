@@ -199,6 +199,10 @@ export interface EngineInternals {
   workflowFeedListeners: Map<string, Set<WorkflowFeedListener>>;
   workflowVersionTuples: Map<string, WorkflowVersionTuple>;
   pendingTimelineEntries: Map<string, PendingTimelineEntry>;
+  pendingCheckpointCommitSideEffects: Map<
+    string,
+    import('./checkpoint-side-effects.ts').CheckpointCommitSideEffects
+  >;
 }
 
 const INTERNALS = new WeakMap<object, EngineInternals>();

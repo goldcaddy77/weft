@@ -189,6 +189,8 @@ The `timeout` kills the activity after the specified duration. The `queue` route
 
 > [!WARNING]
 > Activities are at-least-once side effects. Payment providers, queues, email APIs, and databases still need their own idempotency keys. Weft can replay a completed result it durably recorded, or ask your verifier whether a prior keyed side effect completed, but it cannot undo an external side effect that finished before Weft recorded the outcome.
+>
+> If you provide `idempotencyKey` without `verify`, a crash after the activity finishes but before the next checkpoint commits leaves only a `started` reconciliation marker. On recovery, Weft cannot prove whether the external side effect completed, so the workflow keeps failing closed until you provide a verifier or repair the marker manually.
 
 ## Activity definitions
 
