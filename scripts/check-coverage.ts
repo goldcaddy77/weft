@@ -1,5 +1,10 @@
-import { $ } from 'bun';
+import { $, Glob } from 'bun';
 import { execFileSync } from 'node:child_process';
+
+// Bun parses `bunfig.toml` natively when imported, so `coveragePathIgnorePatterns`
+// stays a single source of truth (no hand-rolled TOML parse that could drift). The
+// path resolves relative to THIS file, so it holds regardless of the invocation cwd.
+import bunfig from '../bunfig.toml';
 
 type ExecFileFailure = Error & {
   stderr?: Buffer | string;
@@ -99,6 +104,72 @@ export function assembleAllowanceLayers(
     }
   }
   return assembled;
+}
+
+/**
+ * Read `coveragePathIgnorePatterns` from `bunfig.toml`. A file matching one of these is
+ * excluded from LCOV instrumentation entirely — it never appears as an `SF:` record — so
+ * any allowance keyed to such a path is DEAD: it ignores nothing and its line numbers
+ * silently drift as the file is edited, looking live while being inert (this is what
+ * happened to the old `scripts/check-coverage.ts` self-allowance, dead since 501d14ef).
+ * Reading the patterns from `bunfig.toml` keeps it the single source of truth rather than
+ * hardcoding the list here.
+ */
+export function readCoveragePathIgnorePatterns(): string[] {
+  const patterns = bunfig.test?.coveragePathIgnorePatterns;
+  if (patterns === undefined) return [];
+  if (
+    !Array.isArray(patterns) ||
+    patterns.some((pattern: unknown) => typeof pattern !== 'string')
+  ) {
+    throw new Error(
+      'bunfig.toml [test].coveragePathIgnorePatterns must be an array of strings; ' +
+        `got ${JSON.stringify(patterns)}.`,
+    );
+  }
+  return patterns;
+}
+
+/**
+ * Whether an allowance key (a repo-relative file path) would be excluded by a
+ * `coveragePathIgnorePatterns` entry. Bun matches these patterns against LCOV file paths
+ * as GLOBS — NOT substrings — so this uses {@link Glob} for every pattern. Verified
+ * empirically (see the characterization test in `check-coverage.test.ts`): a bare
+ * `nested` does NOT exclude `sub/nested-file.ts` (a substring matcher would wrongly flag
+ * it — a false positive), while `*`, `?`, `[…]`, and `**` all behave as glob
+ * metacharacters (a `*`-only matcher would miss `?`/`[…]` — a false negative). An exact
+ * filename like `scripts/check-coverage.ts` is a glob with no metacharacters and matches
+ * the literal path. Matching Bun exactly is the whole point: a mismatch produces either a
+ * dead allowance that slips through or a live allowance wrongly rejected.
+ */
+function allowanceKeyMatchesIgnorePattern(key: string, pattern: string): boolean {
+  return new Glob(pattern).match(key);
+}
+
+/**
+ * Reject any allowance key that matches a `coveragePathIgnorePatterns` entry. Such a key
+ * is a dead allowance — the file it names is never instrumented, so the allowance can
+ * never fire — and worse, its line numbers drift silently as the file changes. This
+ * closes the dead-allowance class systematically, the same way {@link buildAllowanceLayer}
+ * (within-layer duplicates) and {@link assertRefreshLayersPartitionKeys} (cross-shadowed
+ * refresh keys) close the duplicate / cross-shadow classes (#539).
+ */
+export function assertNoAllowanceKeyIsCoverageIgnored(
+  allowances: ReadonlyMap<string, CoverageAllowance>,
+  ignorePatterns: readonly string[],
+): void {
+  for (const key of allowances.keys()) {
+    for (const pattern of ignorePatterns) {
+      if (allowanceKeyMatchesIgnorePattern(key, pattern)) {
+        throw new Error(
+          `Coverage-allowance key "${key}" matches coveragePathIgnorePatterns entry ` +
+            `"${pattern}" in bunfig.toml. That file is excluded from LCOV instrumentation, ` +
+            'so the allowance is dead (it ignores nothing and its line numbers drift ' +
+            'silently). Remove the allowance entry, or un-ignore the path in bunfig.toml.',
+        );
+      }
+    }
+  }
 }
 
 const COVERAGE_TEST_TIMEOUT_MS = 30_000;
@@ -2151,6 +2222,12 @@ const COVERAGE_ALLOWANCES = withCoverageAllowanceTopOffs(
   COVERAGE_ALLOWANCE_BASE,
   AUDIT_BACKLOG_COVERAGE_ALLOWANCE_TOP_OFFS,
 );
+
+// Reject any allowance keyed to a coveragePathIgnorePatterns path — such a file is never
+// instrumented, so the allowance is dead and its line numbers drift silently (#539). Run
+// this on the fully assembled COVERAGE_ALLOWANCES (base layers + audit-backlog top-offs)
+// so a dead key introduced in any layer is caught.
+assertNoAllowanceKeyIsCoverageIgnored(COVERAGE_ALLOWANCES, readCoveragePathIgnorePatterns());
 
 function summarizeCoverageFiles(files: ReadonlyMap<string, FileCoverageResult>): CoverageResult {
   const lines = { total: 0, hit: 0, missed: 0 };

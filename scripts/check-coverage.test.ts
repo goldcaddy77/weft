@@ -1,7 +1,13 @@
 import { describe, expect, it, mock, spyOn } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 
-import { assembleAllowanceLayers, buildAllowanceLayer, parseLcov } from './check-coverage.ts';
+import {
+  assembleAllowanceLayers,
+  assertNoAllowanceKeyIsCoverageIgnored,
+  buildAllowanceLayer,
+  parseLcov,
+  readCoveragePathIgnorePatterns,
+} from './check-coverage.ts';
 
 describe('parseLcov', () => {
   it('accepts DA lines with the optional checksum field', () => {
@@ -307,4 +313,190 @@ describe('assembleAllowanceLayers', () => {
     // BRANCH_REFRESH is the terminal layer, so its value wins over BASE.
     expect(assembled.get('src/shared.ts')).toEqual({ lines: new Set([2]) });
   });
+});
+
+describe('readCoveragePathIgnorePatterns', () => {
+  it('returns exactly the coveragePathIgnorePatterns array parsed from bunfig.toml', async () => {
+    // Single source of truth: the patterns come from bunfig.toml, not a hardcoded list.
+    // Assert against the file's actual contents (parsed independently here) rather than a
+    // pinned member, so the test does not break when the ignore list legitimately changes
+    // — it only fails if the function stops reflecting bunfig.toml.
+    const bunfigText = await Bun.file(new URL('../bunfig.toml', import.meta.url)).text();
+    const parsed = Bun.TOML.parse(bunfigText) as {
+      test?: { coveragePathIgnorePatterns?: unknown };
+    };
+    // The function normalizes an absent `[test].coveragePathIgnorePatterns` to `[]`, so
+    // mirror that here: a bunfig that drops the field entirely must still match (the
+    // function is still correct), not fail because raw parse yields `undefined`.
+    const expected = parsed.test?.coveragePathIgnorePatterns ?? [];
+
+    expect(readCoveragePathIgnorePatterns()).toEqual(expected);
+  });
+});
+
+describe('assertNoAllowanceKeyIsCoverageIgnored', () => {
+  it('throws when an allowance key matches a coveragePathIgnorePatterns entry, naming both', () => {
+    // A file in coveragePathIgnorePatterns is never instrumented, so an allowance for
+    // it is dead — it ignores nothing and its line numbers drift silently (#539). This
+    // is exactly the dead self-allowance that lingered on scripts/check-coverage.ts.
+    expect(() =>
+      assertNoAllowanceKeyIsCoverageIgnored(
+        new Map([['scripts/check-coverage.ts', { functions: 1 }]]),
+        ['scripts/check-coverage.ts'],
+      ),
+    ).toThrow(
+      /^Coverage-allowance key "scripts\/check-coverage\.ts" matches coveragePathIgnorePatterns entry "scripts\/check-coverage\.ts"/,
+    );
+  });
+
+  it('matches a glob pattern against an allowance key', () => {
+    // coveragePathIgnorePatterns supports globs; a `**`/`*` pattern must be matched
+    // structurally, not just by substring, so a glob-ignored path is also caught.
+    expect(() =>
+      assertNoAllowanceKeyIsCoverageIgnored(new Map([['src/generated/client.ts', {}]]), [
+        'src/generated/**',
+      ]),
+    ).toThrow(/matches coveragePathIgnorePatterns entry "src\/generated\/\*\*"/);
+  });
+
+  it('matches `?` and `[…]` glob metacharacters, not just `*`', () => {
+    // Bun matches coveragePathIgnorePatterns as globs, so `?` and character classes are
+    // metacharacters too — a `*`-only matcher would miss these (a false negative).
+    expect(() =>
+      assertNoAllowanceKeyIsCoverageIgnored(new Map([['src/question.ts', {}]]), [
+        'src/qu?stion.ts',
+      ]),
+    ).toThrow(/matches coveragePathIgnorePatterns entry/);
+    expect(() =>
+      assertNoAllowanceKeyIsCoverageIgnored(new Map([['src/bracket-x.ts', {}]]), [
+        'src/bracket-[xy].ts',
+      ]),
+    ).toThrow(/matches coveragePathIgnorePatterns entry/);
+  });
+
+  it('does NOT treat a bare pattern as a substring (Bun uses glob, not substring, matching)', () => {
+    // The crux: Bun does NOT substring-match. A bare `nested` does not exclude
+    // `sub/nested-file.ts` (verified empirically — see the characterization test below),
+    // so a substring matcher would WRONGLY reject a live allowance here.
+    expect(() =>
+      assertNoAllowanceKeyIsCoverageIgnored(new Map([['src/sub/nested-file.ts', {}]]), ['nested']),
+    ).not.toThrow();
+    expect(() =>
+      assertNoAllowanceKeyIsCoverageIgnored(new Map([['src/exact-match.ts', {}]]), ['match']),
+    ).not.toThrow();
+  });
+
+  it('does not throw when no allowance key matches an ignore pattern', () => {
+    expect(() =>
+      assertNoAllowanceKeyIsCoverageIgnored(
+        new Map([
+          ['src/core/engine/index.ts', { functions: 2 }],
+          ['src/workers/workflow-runner.ts', { lines: new Set([428]) }],
+        ]),
+        ['scripts/check-coverage.ts', 'src/generated/**'],
+      ),
+    ).not.toThrow();
+  });
+
+  it('is a no-op when there are no ignore patterns', () => {
+    expect(() =>
+      assertNoAllowanceKeyIsCoverageIgnored(new Map([['scripts/check-coverage.ts', {}]]), []),
+    ).not.toThrow();
+  });
+
+  it('the live module loads — its load-time guard accepts the real allowance set', async () => {
+    // The guard runs at module load against the REAL assembled COVERAGE_ALLOWANCES. A
+    // fresh dynamic import re-executes that top-level guard; a future dead allowance
+    // (a real allowance key matching a real ignore pattern) makes this import throw, so
+    // the regression is caught here, not only when `check-coverage.ts` is run directly.
+    await expect(import('./check-coverage.ts?live-guard')).resolves.toBeDefined();
+  });
+});
+
+describe('allowanceKeyMatchesIgnorePattern agrees with Bun coverage-ignore semantics', () => {
+  // Characterization test: the guard's correctness depends ENTIRELY on matching how Bun
+  // actually applies coveragePathIgnorePatterns. Rather than trust a hand-modeled matcher,
+  // run real `bun test --coverage` against temp fixtures with representative patterns,
+  // observe which files Bun excludes from LCOV, and assert assertNoAllowanceKeyIsCoverageIgnored
+  // throws for exactly the excluded files (and not the kept ones).
+  it('matches Bun for exact, *, ?, [], **, and bare-substring patterns', async () => {
+    const { mkdtemp, writeFile, mkdir, rm } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+
+    const root = await mkdtemp(join(tmpdir(), 'weft-cov-char-'));
+    try {
+      await mkdir(join(root, 'sub'), { recursive: true });
+      const files = [
+        'exact-match.ts',
+        'sub/nested-file.ts',
+        'question.ts',
+        'bracket-x.ts',
+        'plain-substr.ts',
+      ];
+      for (const [index, file] of files.entries()) {
+        await writeFile(
+          join(root, file),
+          `export const v${String(index)} = () => ${String(index)};\n`,
+        );
+      }
+      const imports = files
+        .map((file, index) => `import { v${String(index)} } from './${file}';`)
+        .join('\n');
+      await writeFile(
+        join(root, 'all.test.ts'),
+        `import { test, expect } from 'bun:test';\n${imports}\n` +
+          `test('t', () => { expect([${files.map((_f, i) => `v${String(i)}`).join(',')}].length).toBe(${String(files.length)}); });\n`,
+      );
+
+      // Representative patterns spanning every matcher class Bun supports.
+      const patterns = [
+        'exact-match.ts',
+        '*.ts',
+        'qu?stion.ts',
+        'bracket-[xy].ts',
+        'sub/**',
+        'nested', // bare substring — Bun does NOT exclude on this
+      ];
+
+      for (const pattern of patterns) {
+        await writeFile(
+          join(root, 'bunfig.toml'),
+          `[test]\ncoveragePathIgnorePatterns = ["${pattern}"]\n`,
+        );
+        await rm(join(root, 'coverage'), { recursive: true, force: true });
+        const coverageRun =
+          await Bun.$`bun test --coverage --coverage-reporter=lcov --coverage-dir=coverage`
+            .cwd(root)
+            .quiet()
+            .nothrow();
+        // Assert the coverage run itself succeeded. A non-zero exit can still leave a
+        // partial or empty lcov, which would silently skew the exclusion set below — so
+        // fail here, at the real cause, rather than later on an opaque file read.
+        expect(
+          coverageRun.exitCode,
+          `bun test --coverage failed for pattern "${pattern}": ${coverageRun.stderr.toString()}`,
+        ).toBe(0);
+        const lcov = await Bun.file(join(root, 'coverage', 'lcov.info')).text();
+        const bunExcluded = new Set(
+          files.filter((file) => !lcov.split('\n').some((line) => line === `SF:${file}`)),
+        );
+
+        // The guard must throw for exactly the files Bun excluded, and not for the kept.
+        for (const file of files) {
+          const run = () => assertNoAllowanceKeyIsCoverageIgnored(new Map([[file, {}]]), [pattern]);
+          if (bunExcluded.has(file)) {
+            expect(run, `guard should flag "${file}" excluded by Bun for "${pattern}"`).toThrow();
+          } else {
+            expect(
+              run,
+              `guard should NOT flag "${file}" kept by Bun for "${pattern}"`,
+            ).not.toThrow();
+          }
+        }
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
