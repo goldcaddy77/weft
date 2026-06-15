@@ -1,4 +1,8 @@
-import { KEYS, storageConditionalBatch, type BatchOperation } from '../../storage/interface.ts';
+import {
+  KEYS,
+  type BatchOperation,
+  type ConditionalBatchCondition,
+} from '../../storage/interface.ts';
 import { encode } from '../codec.ts';
 import { buildTimerBatchOperations } from '../scheduler.ts';
 import { WorkflowTimeoutError } from '../timeouts.ts';
@@ -7,6 +11,7 @@ import {
   clearPendingAtomicWorkflowCommitSideEffects,
   takePendingAtomicWorkflowCommitSideEffects,
 } from './checkpoint-side-effects.ts';
+import { commitFencedEngineWrite } from './fenced-write.ts';
 import { getWorkflowExecutionStartedAt } from './handles.ts';
 import type { EngineInternals } from './internals.ts';
 import { resolveEffectiveScheduleFireAt } from './schedule-jitter.ts';
@@ -75,15 +80,24 @@ type WorkflowStateCommitOptions = {
   includePendingAtomicSideEffects?: boolean;
 };
 
-/** Commit workflow state operations. */
-export async function commitWorkflowStateOperations(
+/**
+ * Assemble the operations + CAS conditions for a workflow-state commit, folding in
+ * any pending atomic side effects, so the side-effect batching and condition
+ * derivation live in one place that {@link commitFencedWorkflowStateOperations}
+ * reuses.
+ */
+function buildWorkflowStateCommit(
   internals: EngineInternals,
-  state: WorkflowState,
+  workflowId: string,
   operations: BatchOperation[],
-  options: WorkflowStateCommitOptions = {},
-): Promise<void> {
+  options: WorkflowStateCommitOptions,
+): {
+  operations: BatchOperation[];
+  conditions: ConditionalBatchCondition[];
+  hasPendingSideEffects: boolean;
+} {
   const pendingSideEffects = options.includePendingAtomicSideEffects
-    ? takePendingAtomicWorkflowCommitSideEffects(internals, state.id)
+    ? takePendingAtomicWorkflowCommitSideEffects(internals, workflowId)
     : undefined;
   const operationsWithSideEffects =
     pendingSideEffects === undefined
@@ -91,23 +105,43 @@ export async function commitWorkflowStateOperations(
       : [...operations, ...pendingSideEffects.operations];
   const storageSupportsConditionalBatch = internals.storage.capabilities().conditionalBatch;
   const conditions = storageSupportsConditionalBatch ? (pendingSideEffects?.conditions ?? []) : [];
+  return {
+    operations: operationsWithSideEffects,
+    conditions,
+    hasPendingSideEffects: pendingSideEffects !== undefined,
+  };
+}
 
-  if (conditions.length === 0) {
-    await internals.storage.batch(operationsWithSideEffects);
-  } else {
-    const committed = await storageConditionalBatch(
-      internals.storage,
-      conditions,
-      operationsWithSideEffects,
-    );
-    if (!committed) {
-      throw new Error(
+/**
+ * Commit an engine-generator-owned workflow-state advance, FENCED on the lease
+ * epoch under `ownership: 'lease'` (issue #470 Step 2). A deposed engine's write
+ * loses its CAS instead of corrupting the successor's state; the deposition is
+ * detected and the engine halts (see {@link commitFencedEngineWrite}). Under
+ * `ownership: 'none'` it is byte-for-byte the pre-Step-2 commit shape — the epoch
+ * condition is only appended when a lease is held. Use this for suspend,
+ * completion, and other state advances driven by the workflow lifecycle. Operator/
+ * external mutations (search-attribute and tag edits) do NOT use this helper; they
+ * batch directly and are intentionally never fenced.
+ */
+export async function commitFencedWorkflowStateOperations(
+  internals: EngineInternals,
+  state: WorkflowState,
+  operations: BatchOperation[],
+  options: WorkflowStateCommitOptions = {},
+): Promise<void> {
+  const commit = buildWorkflowStateCommit(internals, state.id, operations, options);
+
+  await commitFencedEngineWrite(
+    internals,
+    commit.operations,
+    commit.conditions,
+    () =>
+      new Error(
         `Workflow state commit for workflow "${state.id}" lost its atomic side-effect precondition.`,
-      );
-    }
-  }
+      ),
+  );
 
-  if (pendingSideEffects !== undefined) {
+  if (commit.hasPendingSideEffects) {
     clearPendingAtomicWorkflowCommitSideEffects(internals, state.id);
   }
 }

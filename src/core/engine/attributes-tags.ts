@@ -18,7 +18,10 @@ import type {
 import { buildWorkflowTagIndexOperations, normalizeWorkflowTags } from '../workflow-tags.ts';
 import { WorkflowNotFoundError } from './errors.ts';
 import type { EngineInternals } from './internals.ts';
-import { commitWorkflowStateOperations, runSerializedWorkflowStateWrite } from './storage-io.ts';
+import {
+  commitFencedWorkflowStateOperations,
+  runSerializedWorkflowStateWrite,
+} from './storage-io.ts';
 import {
   decodeWorkflowState,
   isTerminalWorkflowStatus,
@@ -148,7 +151,12 @@ export async function updateWorkflowState(
     };
     const additionalOperations = options.buildAdditionalOperations?.(state, updatedAt) ?? [];
 
-    await commitWorkflowStateOperations(
+    // `updateWorkflowState` only ever applies an engine-generator-owned workflow
+    // STATUS transition (its sole callers are the terminal completion/failure
+    // paths), so it is ALWAYS fenced on the lease epoch (issue #470 Step 2) — a
+    // deposed engine cannot write terminal state over a successor's run. Operator
+    // tag/attribute mutations do NOT use this helper; they batch directly.
+    await commitFencedWorkflowStateOperations(
       internals,
       state,
       [
