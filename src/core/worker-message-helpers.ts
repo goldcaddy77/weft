@@ -2,7 +2,30 @@ import { logRecordToConsole } from './context/workflow-logger.ts';
 import type { WorkerOutboundMessage } from './types.ts';
 import type { WorkflowLogRecord } from './types/workflow-log.ts';
 import { isValidWorkerLogRecord, type WorkerLogMessageCandidate } from './worker-protocol-log.ts';
-import { assertWorkerProtocolMessageWithinLimit } from './worker-protocol.ts';
+import {
+  assertWorkerProtocolMessageWithinLimit,
+  WorkerProtocolMessageSizeError,
+} from './worker-protocol.ts';
+
+/**
+ * The outcome of attempting to deliver one forwarded worker `ctx.log` (#545), produced
+ * by {@link deliverForwardedWorkerLog} and consumed by the abuse counter, which
+ * classifies each forwarded log by this outcome to feed its two buckets independently:
+ *
+ * - `accepted-valid`: a structurally valid, in-budget record. Counted toward the flood
+ *   budget (every owned arrival is) but never a strike. Returned even when no host sink
+ *   is installed — a valid log still consumes flood budget, because the host already
+ *   paid the structured-clone cost on receipt regardless of the sink.
+ * - `dropped-oversize`: the record exceeded the protocol size cap. An anomaly — a
+ *   well-behaved worker-side logger never emits oversize records — so it is a strike.
+ * - `dropped-invalid`: the record is not a structurally valid {@link WorkflowLogRecord},
+ *   or its `workflowId` does not match the envelope. Also a strike: a legitimate logger
+ *   always emits a well-formed record whose id matches the workflow it owns.
+ *
+ * `dropped-oversize` and `dropped-invalid` both feed the SAME lifetime strike bucket;
+ * the distinction is retained only for diagnostics/console fidelity.
+ */
+export type ForwardedWorkerLogOutcome = 'accepted-valid' | 'dropped-oversize' | 'dropped-invalid';
 
 export function emitWorkerMessageToEngine(
   handler: ((message: WorkerOutboundMessage) => void | Promise<void>) | null,
@@ -33,32 +56,53 @@ export function isParkableWaitSignalCheckpoint(
  * Deliver a forwarded worker `ctx.log` to the host `onLog` sink (#529), AFTER the
  * caller has verified the sending worker owns `message.workflowId` (the trust-boundary
  * ownership gate stays inline in the strategy). This is the mechanical tail: DROP unless
- * the record is a structurally valid {@link WorkflowLogRecord} whose `workflowId`
- * matches the envelope and the message is within the size cap; then deliver to `onLog`.
- * The log lane is non-fatal in every dimension — malformed, identity-mismatched,
- * oversize, throwing-sink — so it never throws and never signals a worker discard. A
- * throwing host sink falls back to the console via the shared {@link logRecordToConsole},
- * mirroring the inline sink, so a logging error can never fail the workflow.
+ * the message is within the size cap AND the record is a structurally valid
+ * {@link WorkflowLogRecord} whose `workflowId` matches the envelope; then deliver to
+ * `onLog`. The log lane is non-fatal per delivery — malformed, identity-mismatched,
+ * oversize, throwing-sink — so a SINGLE occurrence never throws and never discards the
+ * worker. A throwing host sink falls back to the console via the shared
+ * {@link logRecordToConsole}, mirroring the inline sink, so a logging error can never
+ * fail the workflow.
+ *
+ * The size check is intentionally performed BEFORE the structural check so that a huge
+ * but otherwise-encodable malformed record is classified `dropped-oversize` rather than
+ * `dropped-invalid` (#545): the dominant abuse cost of an oversize record — the runtime's
+ * structured clone on receipt — is paid regardless of whether the payload is well-formed.
+ * Only a genuine size-cap breach ({@link WorkerProtocolMessageSizeError}) is oversize; the
+ * estimator's other throw (cyclic / non-cloneable payloads) is classified `dropped-invalid`.
+ *
+ * The returned {@link ForwardedWorkerLogOutcome} is what the strategy feeds to the
+ * per-worker abuse counter (#545): `accepted-valid` counts a delivered (or, with no
+ * sink, would-be-delivered) record; `dropped-oversize`/`dropped-invalid` are anomalies
+ * that accumulate lifetime strikes. The helper still NEVER discards a worker — that
+ * remediation decision belongs to the counter and the strategy.
  */
 export function deliverForwardedWorkerLog(
   message: WorkerLogMessageCandidate,
   onLog: ((record: WorkflowLogRecord) => void) | undefined,
   maxProtocolMessageBytes: number | undefined,
-): void {
-  if (!isValidWorkerLogRecord(message.record)) return;
-  const record = message.record;
-  if (record.workflowId !== message.workflowId) return;
+): ForwardedWorkerLogOutcome {
   if (maxProtocolMessageBytes !== undefined) {
     try {
       assertWorkerProtocolMessageWithinLimit(message, maxProtocolMessageBytes);
-    } catch {
-      return;
+    } catch (error) {
+      // Only a true size-cap breach is `dropped-oversize`. The estimator also throws a
+      // plain `WorkerProtocolError` for cyclic/non-cloneable payloads — those are malformed,
+      // not oversize, so classify them `dropped-invalid` to keep the outcome distinction honest.
+      return error instanceof WorkerProtocolMessageSizeError
+        ? 'dropped-oversize'
+        : 'dropped-invalid';
     }
   }
-  if (onLog === undefined) return;
-  try {
-    onLog(record);
-  } catch {
-    logRecordToConsole(record);
+  if (!isValidWorkerLogRecord(message.record)) return 'dropped-invalid';
+  const record = message.record;
+  if (record.workflowId !== message.workflowId) return 'dropped-invalid';
+  if (onLog !== undefined) {
+    try {
+      onLog(record);
+    } catch {
+      logRecordToConsole(record);
+    }
   }
+  return 'accepted-valid';
 }

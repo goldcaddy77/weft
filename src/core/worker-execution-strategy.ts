@@ -6,7 +6,6 @@ import type {
   WorkerInboundMessage,
   WorkerOutboundMessage,
 } from './types.ts';
-import type { WorkflowLogRecord } from './types/workflow-log.ts';
 import { WorkerCheckpointResumeState } from './worker-checkpoint-resume-state.ts';
 import { WorkerExecutionDispatcher } from './worker-execution-dispatcher.ts';
 import { WorkerExecutionOwnership } from './worker-execution-ownership.ts';
@@ -18,7 +17,10 @@ import {
 } from './worker-inbound-message.ts';
 import { WorkerListenerRegistry } from './worker-listener-registry.ts';
 import {
-  deliverForwardedWorkerLog,
+  forwardedLogGateFromStrategyOptions,
+  type ForwardedLogGate,
+} from './worker-log-abuse-counter.ts';
+import {
   emitWorkerMessageToEngine,
   isParkableWaitSignalCheckpoint,
 } from './worker-message-helpers.ts';
@@ -38,7 +40,7 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
   readonly #maxProtocolMessageBytes: number | undefined;
   readonly #requireProtocolVersion: boolean;
   readonly #discardOnCancel: boolean;
-  readonly #onLog: ((record: WorkflowLogRecord) => void) | undefined;
+  readonly #forwardedLogGate: ForwardedLogGate;
   readonly #turnWatchdog: WorkerTurnWatchdog;
   readonly #protocolGuard: WorkerProtocolGuard;
   readonly #dispatcher: WorkerExecutionDispatcher;
@@ -51,7 +53,6 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     const {
       workflowTurnTimeoutMs,
       maxProtocolMessageBytes,
-      onLog,
       requireProtocolVersion = false,
       discardOnCancel = false,
       broadcastEvents = false,
@@ -64,7 +65,7 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     this.#maxProtocolMessageBytes = maxProtocolMessageBytes;
     this.#requireProtocolVersion = requireProtocolVersion;
     this.#discardOnCancel = discardOnCancel;
-    this.#onLog = onLog;
+    this.#forwardedLogGate = forwardedLogGateFromStrategyOptions(options, maxProtocolMessageBytes);
     this.#turnWatchdog = new WorkerTurnWatchdog(this.#workflowTurnTimeoutMs, (turn) => {
       this.#handleTurnTimeout(turn);
     });
@@ -179,7 +180,7 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     return {
       turnId: this.#nextTurnId++,
       maxProtocolMessageBytes: this.#maxProtocolMessageBytes,
-      hasLogSink: this.#onLog !== undefined,
+      hasLogSink: this.#forwardedLogGate.hasSink,
     };
   }
 
@@ -260,19 +261,12 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
   }
 
   async #handleWorkerMessage(worker: Worker, message: unknown): Promise<void> {
-    // A `log` is non-terminal observability: handle it BEFORE the strict accept-or-discard
-    // gate (an out-of-turn log must not discard the worker) and never touch the watchdog (#529).
-    // The ownership gate is the trust boundary in the hardened worker path: a worker may only
-    // forward logs for a workflow it owns (active or parked), so an untrusted worker cannot
-    // spoof a log as another workflow. Validity/identity/size/console-fallback live in the
-    // helper; a wrong-owner log is dropped here, never discards the worker.
+    // A `log` bypasses the strict gate and watchdog (#529); the gate delivers it and returns
+    // discard options only on sustained abuse (#545). See ForwardedLogGate for the lane.
     if (isWorkerLogMessage(message)) {
-      if (
-        typeof message.workflowId === 'string' &&
-        this.#ownership.getTargetWorker(message.workflowId) === worker
-      ) {
-        deliverForwardedWorkerLog(message, this.#onLog, this.#maxProtocolMessageBytes);
-      }
+      const owns = (id: string): boolean => this.#ownership.getTargetWorker(id) === worker;
+      const abuseDiscard = this.#forwardedLogGate.handle(worker, message, owns);
+      if (abuseDiscard) this.#discardWorkerAndFailWorkflows(worker, abuseDiscard);
       return;
     }
 
@@ -452,7 +446,13 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
   ): void {
     const workflowIds = this.#ownership.workflowIdsForWorker(worker);
     if (workflowIds.length === 0) {
+      // Redundant/already-cleaned-up case. Every discard trigger (timeout, crash, cancel,
+      // #545 log-abuse) owns >= 1 workflow when it fires — log-abuse runs only from
+      // #handleWorkerMessage, which needs an attached listener (>= 1 owned workflow); see the
+      // "cannot flood-count a worker that owns no workflows" test. Does NOT discard here: a
+      // fully-released worker may already be re-acquired for another workflow.
       this.#turnWatchdog.clear(worker);
+      this.#forwardedLogGate.forget(worker);
       return;
     }
 
@@ -475,6 +475,7 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     }
 
     this.#turnWatchdog.clear(worker);
+    this.#forwardedLogGate.forget(worker);
     this.#workerListeners.detach(worker);
     this.#pool.discard(worker);
   }
