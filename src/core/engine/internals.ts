@@ -48,6 +48,7 @@ import type {
 import type { EngineCleanupIntervalDisposalTracker } from './engine-leak-warnings.ts';
 import type { WorkflowHandle, WorkflowHandleEngine } from './handles.ts';
 import type { WorkflowFeedListener } from './index.ts';
+import type { LeaseManager } from './lease-manager.ts';
 import type { ScheduleHandleEngine } from './schedule-handle.ts';
 import type { SecondInstanceDetector } from './second-instance-detector.ts';
 
@@ -210,6 +211,23 @@ export interface EngineInternals {
   secondInstanceDetectionInterval: ReturnType<typeof setInterval> | null;
   /** The active second-instance detector; `null` when detection is disabled. */
   secondInstanceDetector: SecondInstanceDetector | null;
+  /**
+   * The active lease manager for `ownership: 'lease'`; `null` when ownership is
+   * `'none'`. Acquired before recovery, renewed on a heartbeat, released on
+   * dispose. Unlike the second-instance detector its acquire/renew errors are real
+   * (a failed acquire blocks recovery). Renewal loss is surfaced as a warning in
+   * Step 1; epoch fencing of durable writes (Step 2) is what makes it enforceable.
+   */
+  leaseManager: LeaseManager | null;
+  /**
+   * The in-flight lease acquisition, or `null` when none is running. Set while
+   * `#acquireLeaseIfConfigured` awaits `acquire()` (which can park for the whole
+   * `leaseWaitTimeout` waiting for a handoff) and cleared when it settles. Disposal
+   * awaits this so a dispose that races a parked acquire is a clean handoff — the
+   * holder this engine may take is released before `asyncDispose` resolves, rather
+   * than leaking until TTL on an already-disposed engine.
+   */
+  inFlightLeaseAcquire: Promise<void> | null;
   reviewCoordinator: ReviewCoordinator;
   reviewWaiters: Map<string, (decision: HumanReviewResult) => void>;
   reviewWaitersByWorkflow: Map<string, TrackedWaiterKeys>;

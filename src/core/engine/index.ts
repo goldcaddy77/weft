@@ -1,5 +1,9 @@
 /* oxlint-disable max-lines -- Engine's public overload signatures (~191 lines: register/start/signal/update/query, the five bulk dry-run-vs-commit methods, schedule, and static create) plus member JSDoc (~130 lines) ARE the published declaration surface, gated byte-for-byte by verify:jsdoc:declarations and the scoped Engine class-block .d.ts oracle; the irreducible declaration floor alone (>=531 lines, counted with skipBlankLines:false skipComments:false) exceeds the 500 ceiling before any method body is counted. The aggressive class split was attempted (task 3765ffa6, documentation/engine-split-log/PR-33.md): a class-expression mixin regresses the emitted .d.ts (Engine extends a synthetic any-typed Engine_base intersection; schedule methods leave the Engine block), and a verbatim class move only relocates this suppression because max-lines is repo-wide; rejected. All extractable bodies live in ~90 sibling modules under src/core/engine/. */
-import { KEYS, type Storage as WeftStorage } from '../../storage/interface.ts';
+import {
+  KEYS,
+  requireStorageCapability,
+  type Storage as WeftStorage,
+} from '../../storage/interface.ts';
 import {
   ActivityRegistry,
   type ActivityMetadata,
@@ -151,7 +155,7 @@ import {
   isActivityDefinition,
 } from './engine-runtime-helpers.ts';
 import type { EngineStateNamespace } from './engine-state-namespace.ts';
-import { EngineCreateNameMismatchError } from './errors.ts';
+import { EngineCreateNameMismatchError, EngineDisposedError } from './errors.ts';
 import {
   createWorkflowHandleWithResultPromise as createWorkflowHandleWithResultPromiseFromInternals,
   getWorkflowResultPromise as getWorkflowResultPromiseFromInternals,
@@ -164,6 +168,7 @@ import {
   type InlineParkingCallbacks,
 } from './inline-parking.ts';
 import { getInternals, initializeInternals } from './internals.ts';
+import { createLeaseManager, type LeaseLostReason } from './lease-manager.ts';
 import {
   fork as forkFromLifecycle,
   recoverAll as recoverAllFromLifecycle,
@@ -275,6 +280,8 @@ export {
   BulkOperationConfirmationError,
   EngineCreateNameMismatchError,
   EngineDisposedError,
+  EngineLeaseAcquisitionTimeoutError,
+  EngineLeaseCorruptedError,
   IdempotencyKeyPurgedError,
   PersistedDataIncompatibleError,
   StartOrSignalConflictError,
@@ -314,6 +321,26 @@ export const ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING = Symbol(
 );
 export const ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING = Symbol('engineSignalWaiterCountForTesting');
 export const ENGINE_SLEEP_RESOLVER_COUNT_FOR_TESTING = Symbol('engineSleepResolverCountForTesting');
+
+/**
+ * The `name` of the warning emitted when an `ownership: 'lease'` holder loses its
+ * lease while running. A stable, filterable identifier on the `Warning` object —
+ * consumers subscribe to the process `warning` event and match `warning.name`
+ * rather than hardcoding the string.
+ *
+ * @example
+ * ```ts
+ * import { ENGINE_LEASE_LOST_WARNING_NAME } from '@lostgradient/weft';
+ *
+ * process.on('warning', (warning) => {
+ *   if (warning.name === ENGINE_LEASE_LOST_WARNING_NAME) {
+ *     // This engine was deposed — another instance owns the store now.
+ *     // Step out of the way (stop accepting traffic, begin shutdown).
+ *   }
+ * });
+ * ```
+ */
+export const ENGINE_LEASE_LOST_WARNING_NAME = 'WeftEngineLeaseLostWarning';
 
 /**
  * Durable execution engine.
@@ -435,6 +462,13 @@ export class Engine<
         }
         engine.register(definition);
       }
+
+      // Acquire single-writer ownership BEFORE recovery so a rolling deploy is a
+      // clean handoff: the incoming instance parks here until the outgoing one
+      // releases (or its lease expires), and only then recovers. On the try's
+      // failure path the asyncDispose below releases the lease. Throws
+      // EngineLeaseAcquisitionTimeoutError if the lease cannot be acquired in time.
+      await engine.#acquireLeaseIfConfigured();
 
       if (options.recover !== false) {
         await engine.recoverAll(
@@ -585,6 +619,8 @@ export class Engine<
     getInternals(this).nextRetentionSweepAt = null;
     getInternals(this).secondInstanceDetectionInterval = null;
     getInternals(this).secondInstanceDetector = null;
+    getInternals(this).leaseManager = null;
+    getInternals(this).inFlightLeaseAcquire = null;
     getInternals(this).eventLogHeads = new Map();
     getInternals(this).workflowFeedListeners = new Map();
     getInternals(this).workflowVersionTuples = new Map();
@@ -644,6 +680,101 @@ export class Engine<
    * (prompt, via the tracker handle) and the shared finalizer clears it on
    * collection (backstop). Mirrors the cleanup-interval lifecycle exactly.
    */
+  /**
+   * Acquire the ownership lease when `ownership: 'lease'` is configured, then start
+   * renewing it. No-op for the default `'none'` posture. Requires the storage
+   * `conditionalBatch` capability (every durable recovery backend provides it);
+   * fails fast with a clear diagnostic otherwise. Called by {@link Engine.create}
+   * before recovery; the lease is released on dispose.
+   *
+   * In Step 1, losing the lease while running emits a process warning — the lease
+   * is deploy ergonomics, not yet a correctness backstop (epoch fencing of durable
+   * writes is the follow-on that makes loss enforceable).
+   */
+  async #acquireLeaseIfConfigured(): Promise<void> {
+    const internals = getInternals(this);
+    if (internals.options.ownershipMode !== 'lease') return;
+    // Never start (or report success for) an acquire on a disposed engine: that is
+    // the contract `recoverAll` relies on — `await` resolves ONLY when the lease is
+    // actually held right now, otherwise it throws.
+    if (internals.disposed) throw new EngineDisposedError();
+    // Idempotent across the concurrent `Engine.create` + `recoverAll` (and repeated
+    // `recoverAll`) callers. The genuine "lease held" signal is the in-flight
+    // acquisition promise, NOT `leaseManager` (which is published before `acquire()`
+    // resolves so disposal can reach `stop()`). A second caller that observes only
+    // `leaseManager` set could proceed into recovery before the lease is truly held —
+    // so when an acquire is in flight, await IT, then return. Once it has settled and
+    // the manager is live, the lease is held and we can short-circuit.
+    if (internals.inFlightLeaseAcquire !== null) {
+      await internals.inFlightLeaseAcquire;
+      return;
+    }
+    if (internals.leaseManager !== null) return;
+    requireStorageCapability(internals.storage, 'conditionalBatch', "ownership: 'lease'");
+    const manager = createLeaseManager({
+      storage: internals.storage,
+      holderId: crypto.randomUUID(),
+      getNow: internals.options.getNow,
+      ttlMs: internals.options.leaseTtlMs,
+      renewIntervalMs: internals.options.leaseRenewIntervalMs,
+      waitTimeoutMs: internals.options.leaseWaitTimeoutMs,
+      onLeaseLost: (reason: LeaseLostReason) => {
+        process.emitWarning(
+          `engine ownership lease lost (${reason}); another instance may now own this store. ` +
+            'Weft supports one engine process per store. In this release the lease is a ' +
+            'zero-downtime-deploy aid, not a correctness backstop — keep infrastructure-level ' +
+            'single-instance enforcement as the real control.',
+          ENGINE_LEASE_LOST_WARNING_NAME,
+        );
+      },
+    });
+    // Assign the manager BEFORE awaiting acquire(), so a concurrent disposal that
+    // races a parked acquire can still see it: disposeEngine() stops the manager,
+    // and the parked acquire's wait loop exits on its `stopped` check. The lease
+    // lifecycle is a small state machine; each transition is handled explicitly:
+    //
+    //   uninitialized → acquiring : assign manager, set inFlightLeaseAcquire
+    //   acquiring (acquire throws) : null the manager → a later recoverAll() retries
+    //                               (not stuck on the idempotency guard)
+    //   acquiring → disposed       : release the holder we may have just taken and
+    //                               do NOT startRenewal on a dead engine
+    //   acquiring → acquired       : startRenewal
+    //
+    // Disposal awaits `inFlightLeaseAcquire` so an acquire that commits a holder in
+    // the same tick disposal runs is released before asyncDispose resolves (clean
+    // handoff), rather than leaking a holder + heartbeat until TTL.
+    internals.leaseManager = manager;
+    const acquisition = (async () => {
+      try {
+        await manager.acquire();
+      } catch (error) {
+        // Nothing durable was taken (acquire is commit-or-throw). Detach so the
+        // idempotency guard does not skip a later retry.
+        if (internals.leaseManager === manager) internals.leaseManager = null;
+        throw error;
+      }
+      if (internals.disposed) {
+        // Disposal raced this parked acquire. We may have just committed a holder;
+        // release it, stay detached, and THROW — never renew on a disposed engine,
+        // and never let the caller (recoverAll / Engine.create) treat this as a
+        // held lease and proceed into recovery. The throw is the contract: `await`
+        // resolves only when the lease is genuinely held.
+        await manager.release();
+        if (internals.leaseManager === manager) internals.leaseManager = null;
+        throw new EngineDisposedError();
+      }
+      manager.startRenewal();
+    })();
+    internals.inFlightLeaseAcquire = acquisition;
+    try {
+      await acquisition;
+    } finally {
+      if (internals.inFlightLeaseAcquire === acquisition) {
+        internals.inFlightLeaseAcquire = null;
+      }
+    }
+  }
+
   #startSecondInstanceDetection(): void {
     const internals = getInternals(this);
     if (!internals.options.secondInstanceDetectionEnabled) return;
@@ -1399,6 +1530,22 @@ export class Engine<
    * {@link WorkflowRecoverySkippedEvent}.
    */
   async recoverAll(options?: RecoverAllOptions): Promise<WorkflowHandle[]> {
+    // Acquire the ownership lease before recovery on the `new Engine()` +
+    // `recoverAll()` boot path too, not just via `Engine.create`. Idempotent —
+    // a no-op when `Engine.create` already acquired it. NOTE: a caller that
+    // does `new Engine({ ownership: 'lease' })` then `engine.start(...)` WITHOUT
+    // ever calling `recoverAll` still writes without holding the lease; the
+    // lease is acquired only on the create/recover paths in Step 1. Use
+    // `Engine.create` (or call `recoverAll` before accepting traffic) to be safe.
+    await this.#acquireLeaseIfConfigured();
+    // Recovery must never run on a torn-down engine. This is the single closing
+    // guard for every disposal interleaving: a direct recoverAll() after dispose, a
+    // concurrent waiter that resumes after `#acquireLeaseIfConfigured` resolved, and
+    // the window where disposal + lease release land between the lease being acquired
+    // and recovery starting. (The lease itself is Step-1 deploy ergonomics, not a
+    // correctness backstop — but running recovery against disposed engine machinery
+    // is a real defect regardless of the lease, so it is gated here at the entry.)
+    if (getInternals(this).disposed) throw new EngineDisposedError();
     // Reload durable async-activity tokens first so a callback that arrives
     // before (or during) workflow replay still resolves a parked activity.
     await recoverPendingAsyncActivities(getInternals(this));
@@ -1596,7 +1743,13 @@ export class Engine<
    * via `await using`.
    */
   [Symbol.dispose](): void {
+    // Capture the lease manager before disposeEngine() detaches it (disposeEngine
+    // only stops renewals — it does NOT release the holder, so each disposal path
+    // releases exactly once). Fire the holder release best-effort: synchronous
+    // disposal cannot await a storage round-trip.
+    const leaseManager = getInternals(this).leaseManager;
     disposeEngine(getInternals(this));
+    void leaseManager?.release();
   }
   /**
    * Async teardown (`await using engine = ...`). Drains pending inline launches
@@ -1617,10 +1770,36 @@ export class Engine<
     // even if the drain rejects: a half-disposed engine (abort un-fired,
     // awaiters hung, channels open) is worse than the footgun this fixes.
     if (!getInternals(this).disposed) {
+      // Capture the lease manager before in-memory teardown detaches it; release it
+      // LAST (see below).
+      const leaseManager = getInternals(this).leaseManager;
       try {
         await drainQueuedInlineWorkflowStartsForEngine(this);
       } finally {
-        this[Symbol.dispose]();
+        // Call disposeEngine DIRECTLY rather than this[Symbol.dispose](): the sync
+        // path fires a best-effort release, which would double-release and race the
+        // authoritative awaited release below. disposeEngine only aborts the engine
+        // and tears down every workflow/activity/storage-writing path in memory
+        // (and stops lease renewals) — it issues no storage writes itself. The
+        // caller owns the storage lifecycle (`await using storage`), so storage
+        // stays open and the awaited release below can still delete the holder.
+        disposeEngine(getInternals(this));
+        // A lease acquire may still be parked (waiting for handoff) when disposal
+        // runs. disposeEngine() set `disposed` and stopped the manager, so the
+        // parked acquire's wait loop exits (or, if it already committed a holder
+        // this tick, its post-acquire `disposed` check releases it). Await it so
+        // cleanup completes before we resolve — otherwise a holder it takes could
+        // outlive dispose until TTL. A disposal-cancelled acquire now REJECTS
+        // (EngineDisposedError) — that rejection is the intended outcome, not a
+        // failure to surface, so swallow it here.
+        await getInternals(this).inFlightLeaseAcquire?.catch(() => {});
+        // Clean deploy handoff: release the ownership lease as the LAST durable
+        // action, AFTER queued starts have drained and all write paths are down, so
+        // the incoming instance cannot acquire and recover while this one is still
+        // writing. Awaiting makes `await using engine` a zero-overlap handoff, and
+        // this is the single release on the async path. Idempotent if the parked
+        // acquire's own `disposed`-branch already released.
+        await leaseManager?.release();
       }
       return;
     }
