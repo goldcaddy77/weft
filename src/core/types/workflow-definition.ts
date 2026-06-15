@@ -12,6 +12,7 @@ import type { RetentionPolicy } from './retry-retention.ts';
 import type { SearchAttributeSchema } from './search-attributes.ts';
 import type { WorkflowConcurrencyOptions } from './workflow-concurrency.ts';
 import type { WorkflowFunction } from './workflow-function.ts';
+import type { AnyActivityDefinition } from './workflow-registries.ts';
 
 /**
  * Named workflow definition returned by {@link workflow}. The runtime object
@@ -65,4 +66,32 @@ export interface WorkflowDefinition<
    * (`workerExecution` option) will silently skip constraint evaluation.
    */
   constraints?: ConstraintDefinition[];
+  /**
+   * Declares a definition-level teardown activity for durable, replay-safe
+   * cancellation cleanup (issue #446) — for example destroying a paid sandbox
+   * when a workflow is cancelled or times out.
+   *
+   * **Current behavior (this release): metadata only.** Declaring a finalizer
+   * records it on the workflow definition. **Nothing invokes it yet** — the
+   * engine-driven teardown that runs the finalizer (with retry, recovery
+   * re-drive, and idempotent at-least-once semantics) ships in a follow-up
+   * release. Until then, declaring a finalizer and recording state with
+   * {@link WorkflowContext.setFinalizerState} have no runtime effect. For
+   * teardown you need today, use `ctx.onCancel` (best-effort, in-memory) or a
+   * `ctx.run` destroy step after a `try/finally`.
+   *
+   * **Planned behavior (future release):** the engine will drive this finalizer
+   * to durable completion after a `cancelled`/`timed-out` terminal, passing the
+   * value recorded by `ctx.setFinalizerState(value)` as its input, skipping it
+   * when no state was recorded, and re-driving it on recovery. Because it may
+   * run more than once across a lease handoff or crash, the finalizer must be
+   * idempotent (destroying an already-destroyed resource must succeed); derive
+   * its `idempotencyKey` from the resource id. Completed and failed workflows
+   * will not run the finalizer.
+   *
+   * **Note**: Not supported in worker execution mode (`workerExecution`);
+   * registering a finalizer on a worker-mode engine throws today, and worker
+   * parity lands with the teardown driver.
+   */
+  finalizer?: AnyActivityDefinition;
 }

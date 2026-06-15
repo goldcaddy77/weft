@@ -10,12 +10,15 @@
  */
 
 import { describe, expect, it } from 'bun:test';
-import { sleepForTesting } from '../../testing/fake-timers.test-support.ts';
+import { sleepForTesting, waitForCondition } from '../../testing/fake-timers.test-support.ts';
 
+import type { BatchOperation, ConditionalBatchCondition } from '../../storage/interface.ts';
+import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
+import { decode } from '../codec.ts';
 import { Engine } from '../engine.ts';
 import type { ActivityDefinition, WorkflowContext } from '../types.ts';
-import { workflow } from '../types.ts';
+import { activity, workflow } from '../types.ts';
 
 async function flush(): Promise<void> {
   await sleepForTesting(10);
@@ -712,4 +715,151 @@ describe('cancel-handler race condition', () => {
 
     engine[Symbol.dispose]();
   });
+});
+
+// ---------------------------------------------------------------------------
+// ctx.setFinalizerState() — durable finalizer-state payload channel (#446)
+// ---------------------------------------------------------------------------
+
+describe('ctx.setFinalizerState() (#446)', () => {
+  const noop = activity({ name: 'finalizer-noop-step', execute: async () => undefined });
+
+  it('durably commits the recorded value, readable from storage after a checkpoint', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    const provision = workflow({ name: 'finalizer-durable' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
+      ctx.setFinalizerState({ sandboxId: 'sbx-durable' });
+      // A real step forces a checkpoint commit, which flushes the staged
+      // finalizer-state side-effect to durable storage.
+      yield* ctx.run(noop);
+      yield* ctx.waitForSignal('never');
+    });
+    engine.register(provision);
+
+    const handle = await engine.start('finalizer-durable', null, { id: 'finalizer-durable-1' });
+    // Poll until the checkpoint commit flushes the staged value to storage — a
+    // deterministic bounded wait, not a fixed sleep-before-assert.
+    await waitForCondition(
+      async () => (await storage.get(KEYS.finalizerState('finalizer-durable-1'))) !== null,
+      {
+        label: 'finalizer state committed after ctx.run checkpoint',
+        timeoutMs: 400,
+        intervalMs: 5,
+      },
+    );
+
+    const bytes = await storage.get(KEYS.finalizerState('finalizer-durable-1'));
+    expect(bytes).not.toBeNull();
+    expect(decode(bytes!)).toEqual({ sandboxId: 'sbx-durable' });
+
+    await engine.cancel(handle.id);
+    await expect(handle.result()).rejects.toThrow('Workflow cancelled');
+
+    engine[Symbol.dispose]();
+  });
+
+  it('commits the recorded value when the workflow parks, with no prior ctx.run checkpoint', async () => {
+    // No `ctx.run` before parking: the value is staged, then flushed by the
+    // suspend commit when the workflow parks on `waitForSignal`. This proves the
+    // staged side-effect rides the *suspend* commit even without an intervening
+    // `ctx.run` step. Read while the workflow is still parked, before any terminal
+    // cleanup runs.
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    const provision = workflow({ name: 'finalizer-park-flush' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
+      ctx.setFinalizerState({ sandboxId: 'sbx-parked' });
+      yield* ctx.waitForSignal('never');
+    });
+    engine.register(provision);
+
+    const handle = await engine.start('finalizer-park-flush', null, { id: 'finalizer-park-1' });
+    // Poll until the suspend commit flushes the staged value — a deterministic
+    // bounded wait, not a fixed sleep-before-assert.
+    await waitForCondition(
+      async () => (await storage.get(KEYS.finalizerState('finalizer-park-1'))) !== null,
+      {
+        label: 'finalizer state committed after the workflow parks',
+        timeoutMs: 400,
+        intervalMs: 5,
+      },
+    );
+
+    const bytes = await storage.get(KEYS.finalizerState('finalizer-park-1'));
+    expect(bytes).not.toBeNull();
+    expect(decode(bytes!)).toEqual({ sandboxId: 'sbx-parked' });
+
+    await engine.cancel(handle.id);
+    await expect(handle.result()).rejects.toThrow('Workflow cancelled');
+
+    engine[Symbol.dispose]();
+  });
+
+  it('rides the *same atomic batch* as the checkpoint commit (no torn write)', async () => {
+    // The leak-prevention guarantee of `stageAtomicWorkflowCommitSideEffects`:
+    // the finalizer-state put is not an independent write that could tear from
+    // the checkpoint — it commits in the same atomic batch. A storage-level
+    // `get` cannot observe this; only batch-layer instrumentation can. We record
+    // every batch's keys and assert the one carrying the finalizer-state put also
+    // carries the checkpoint key. (Empirically the suspend commit, not the
+    // terminal cancel batch, carries it — parking on `waitForSignal` is itself a
+    // checkpoint commit that front-runs the terminal transition. This property
+    // survives Phase 2, which changes the terminal *sweep*, not the staging.)
+    const finalizerKey = KEYS.finalizerState('finalizer-atomic-1');
+    const recordedBatches: Array<{ keys: string[]; hasFinalizerState: boolean }> = [];
+
+    class RecordingStorage extends MemoryStorage {
+      override async batch(operations: BatchOperation[]): Promise<void> {
+        const keys = operations.map((operation) => operation.key);
+        recordedBatches.push({ keys, hasFinalizerState: keys.includes(finalizerKey) });
+        return await super.batch(operations);
+      }
+
+      override async conditionalBatch(
+        conditions: ConditionalBatchCondition[],
+        operations: BatchOperation[],
+      ): Promise<boolean> {
+        const keys = operations.map((operation) => operation.key);
+        recordedBatches.push({ keys, hasFinalizerState: keys.includes(finalizerKey) });
+        return await super.conditionalBatch(conditions, operations);
+      }
+    }
+
+    const storage = new RecordingStorage();
+    const engine = new Engine({ storage });
+
+    const provision = workflow({ name: 'finalizer-atomic' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
+      ctx.setFinalizerState({ sandboxId: 'sbx-atomic' });
+      yield* ctx.waitForSignal('never');
+    });
+    engine.register(provision);
+
+    const handle = await engine.start('finalizer-atomic', null, { id: 'finalizer-atomic-1' });
+    await waitForCondition(async () => (await storage.get(finalizerKey)) !== null, {
+      label: 'finalizer state committed atomically',
+      timeoutMs: 400,
+      intervalMs: 5,
+    });
+
+    const finalizerBatches = recordedBatches.filter((batch) => batch.hasFinalizerState);
+    expect(finalizerBatches).toHaveLength(1);
+    // The same batch must also carry the checkpoint commit — proving atomicity.
+    expect(finalizerBatches[0]?.keys).toContain(KEYS.checkpoint('finalizer-atomic-1'));
+
+    await engine.cancel(handle.id);
+    await expect(handle.result()).rejects.toThrow('Workflow cancelled');
+
+    engine[Symbol.dispose]();
+  });
+
+  // Orphan cleanup — the `cleanupWorkflowStorage` finalizer-state sweep — is covered
+  // in `src/core/engine/finalizer-state.test.ts`, which may import engine internals
+  // (this `__tests__` directory may not, per `check-internal-imports.ts`).
 });

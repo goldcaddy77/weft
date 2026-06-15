@@ -525,6 +525,16 @@ export class Context implements WorkflowContext {
     }
     internals.registerCancelHandler(handler);
   }
+  setFinalizerState(value: unknown): void {
+    const internals = getInternals(this);
+    if (internals.recordFinalizerState === undefined) {
+      throw new Error(
+        'ctx.setFinalizerState() is only supported for inline workflow execution; ' +
+          'it is unavailable in worker execution mode and inside ctx.speculate() branches.',
+      );
+    }
+    internals.recordFinalizerState(value);
+  }
   streamUrl(reference: StreamReference): string {
     return `/v1/workflows/${encodeURIComponent(reference.workflowId)}/streams/${encodeURIComponent(reference.key)}`;
   }

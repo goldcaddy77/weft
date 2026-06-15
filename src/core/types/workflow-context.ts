@@ -443,4 +443,43 @@ export interface WorkflowContext<
    * ```
    */
   onCancel(handler: () => Promise<void> | void): void;
+  /**
+   * Durably record the payload that a future engine-driven teardown phase will
+   * pass to this workflow's definition-level `finalizer` activity (issue #446).
+   *
+   * **Current behavior (this release): records the value only.** The value is
+   * durably staged (as a pending atomic side-effect, committed with the next
+   * checkpoint or the terminal transition, and fenced under lease ownership), but
+   * **nothing consumes it yet** — no finalizer runs. This method has no teardown
+   * effect until the engine-driven driver ships in a follow-up release. For
+   * cleanup you need today, use {@link WorkflowContext.onCancel} (best-effort,
+   * in-memory) or a `ctx.run` destroy step after a `try/finally`.
+   *
+   * **Planned behavior (future release):** call this immediately after acquiring
+   * an external paid resource, passing whatever the finalizer needs to destroy it
+   * (e.g. a sandbox id). The recorded value is last-write-wins; recording `null`
+   * still counts as "recorded" (the finalizer would run with a `null` payload),
+   * while never recording anything means the future driver skips the finalizer.
+   *
+   * Calling this after the workflow is already terminalizing is a no-op (a
+   * development warning is logged); finalizer state is recordable only while the
+   * workflow is live.
+   *
+   * **Inline only**: this method throws under worker execution mode, matching the
+   * registration-time rejection of worker-mode finalizers.
+   *
+   * @example
+   * ```ts
+   * import { workflow, type WorkflowContext } from '@lostgradient/weft';
+   *
+   * const provision = workflow({ name: 'provision' })
+   *   .execute(async function* (ctx: WorkflowContext) {
+   *     const sandbox = yield* ctx.run(createSandbox);
+   *     ctx.setFinalizerState({ sandboxId: sandbox.id });
+   *     yield* ctx.run(doWork, sandbox.id);
+   *   });
+   * void provision;
+   * ```
+   */
+  setFinalizerState(value: unknown): void;
 }
