@@ -26,11 +26,17 @@ import {
 } from '../attributes-tags.ts';
 import { TERMINAL_CLEANUP_DELAY_MS } from '../bulk-operations.ts';
 import { takeCancelHandlers, type CancelHandler } from '../cancel-handlers.ts';
+import { pendingAtomicWorkflowCommitSideEffectsStagePut } from '../checkpoint-side-effects.ts';
 import { getWorkflowExecutionStartedAt } from '../handles.ts';
 import { dropQueuedInlineWorkflowStart } from '../inline-launch-queue.ts';
 import type { EngineInternals } from '../internals.ts';
 import { EMPTY_STORAGE_VALUE } from '../lifecycle.ts';
-import { createTerminalCleanupTimerId, summarizeTimelineValue } from '../state-utilities.ts';
+import {
+  createTeardownTimerId,
+  createTerminalCleanupTimerId,
+  summarizeTimelineValue,
+  type TeardownClaim,
+} from '../state-utilities.ts';
 import { releaseWorkflowConcurrencySlot } from '../workflow-concurrency.ts';
 import { buildWorkflowVisibilityIndexTransition } from '../workflow-indexes.ts';
 import {
@@ -101,6 +107,27 @@ export async function terminateWorkflow(
     const attributes = attributeBytes
       ? (decode(attributeBytes) as Record<string, SearchAttributeValue>)
       : {};
+    // A finalizer is only owed when the workflow recorded resource state
+    // (`ctx.setFinalizerState`) before terminating — read presence up front,
+    // alongside the attribute read, so the terminal batch can stage the marker
+    // and teardown timer atomically. Absent state means no resource to destroy.
+    //
+    // `setFinalizerState` STAGES its `wf-finalizer-state:` put as a pending atomic
+    // side-effect that the terminal `updateWorkflowState` batch below flushes
+    // (`includePendingAtomicSideEffects` is set for terminal transitions). If no
+    // checkpoint ran between the call and this terminal transition, that put has NOT
+    // reached durable storage yet, so `storage.get()` alone returns null and we would
+    // skip the marker even though the state is about to be committed — silently leaking
+    // the resource. Peek the staged buffer too (non-destructively; the commit flush
+    // still consumes it). The buffer is frozen here: `terminalizingWorkflows` already
+    // contains this id, so `recordFinalizerState` can stage nothing new.
+    const finalizerStatePresent =
+      (await internals.storage.get(KEYS.finalizerState(workflowId))) !== null ||
+      pendingAtomicWorkflowCommitSideEffectsStagePut(
+        internals,
+        workflowId,
+        KEYS.finalizerState(workflowId),
+      );
     const retainedAttributes = buildRetainedTerminalSearchAttributes(attributes);
     const terminationMessage = status === 'timed-out' ? 'Workflow timed out' : 'Workflow cancelled';
     const terminationResult = await updateWorkflowState(
@@ -138,6 +165,14 @@ export async function terminateWorkflow(
                   terminalCleanupToken,
                 )
               : []),
+            // Stage the durable teardown marker + timer atomically with the
+            // terminal transition (#446 Phase 2). Gated on recorded finalizer state
+            // ALONE — NOT on whether the current registration declares a finalizer —
+            // so a recorded resource is never silently dropped when the type isn't
+            // registered with a finalizer here (see buildTeardownOperations). A
+            // workflow that never recorded state pays nothing. The marker carries the
+            // execution claim, fenced on the lease epoch by the enclosing terminal batch.
+            ...buildTeardownOperations(workflowId, finalizerStatePresent, updatedAt),
           ];
         },
       },
@@ -477,6 +512,49 @@ export function buildTerminalCleanupTimerOperations(
     fireAt: terminalizedAt + TERMINAL_CLEANUP_DELAY_MS,
     kind: 'terminal-cleanup',
   });
+}
+
+/**
+ * Stage the durable teardown marker + timer for the terminal batch (#446 Phase 2).
+ * Returns no operations unless a resource was recorded via `ctx.setFinalizerState`
+ * (a workflow that never recorded state pays nothing). The durable `teardownOwed`
+ * marker rides this same terminal batch as the finalizer state, so the synchronous
+ * terminal cleanup that runs later in this call — and any cleanup after a crash/recover —
+ * reads the committed marker to skip sweeping the finalizer-needed keys while teardown is
+ * outstanding. The timer fires immediately (`fireAt = terminalizedAt`) because a paid
+ * external resource should be destroyed now, not after a delay.
+ *
+ * The gate is `finalizerStatePresent` ALONE — it does NOT also require the current
+ * registration to declare a `finalizer`. This matches the drive's stance: a fired timer
+ * whose workflow type isn't registered with a finalizer LEAVES the marker and re-arms (a
+ * node that recovers the type can run it), rather than clearing it. Skipping the marker
+ * here when the registration lacks a finalizer would commit `wf-finalizer-state:` and then
+ * let deferred cleanup delete it with no marker → a recorded external resource leaks
+ * silently. Tradeoff (assumed transient): if the workflow type is NEVER (re)registered
+ * with a finalizer, the marker is immortal and re-arms on the self-heal interval — a
+ * VISIBLE unpurgeable workflow, which we prefer over a silent resource leak.
+ */
+function buildTeardownOperations(
+  workflowId: string,
+  finalizerStatePresent: boolean,
+  terminalizedAt: number,
+): BatchOperation[] {
+  if (!finalizerStatePresent) {
+    return [];
+  }
+
+  const token = crypto.randomUUID();
+  const claim: TeardownClaim = { status: 'owed', attempts: 0, token };
+
+  return [
+    { type: 'put', key: KEYS.teardownOwed(workflowId), value: encode(claim) },
+    ...buildTimerBatchOperations({
+      id: createTeardownTimerId(token),
+      workflowId,
+      fireAt: terminalizedAt,
+      kind: 'teardown',
+    }),
+  ];
 }
 
 export async function ensureTerminalCleanupTracked(

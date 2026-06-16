@@ -138,6 +138,16 @@ export type BulkOperationDryRunResult = {
   sampleWorkflowIds: WorkflowId[];
   confirmationToken: string;
   confirmationTokenVersion: 1;
+  /**
+   * Delete-only, point-in-time advisory: ids in the matched scope that currently owe an
+   * engine-driven finalizer (#446) and so would be SKIPPED by the commit (mirrors
+   * {@link BulkDeleteResult.skippedTeardownPending}). Present only on a `delete` preview
+   * and only when non-empty. `matched`, `scope`, and `confirmationToken` still describe
+   * the full filter scope — they are stable and derive the commit token — so this field
+   * surfaces the skip without recomputing them (teardown-owed is transient and is
+   * re-evaluated at commit time, where the authoritative skip list is reported).
+   */
+  skippedTeardownPending?: WorkflowId[];
 };
 
 /**
@@ -338,10 +348,16 @@ export type BulkSignalResult = {
 
 /**
  * Result of a bulk delete operation (`engine.deleteAll`). Reports how many
- * terminal workflows were deleted from storage.
+ * terminal workflows were deleted from storage. Workflows that still owe an
+ * engine-driven finalizer (#446) are NOT deleted — deleting them would drop the
+ * finalizer payload before the resource is torn down — and are reported, by id, in
+ * `skippedTeardownPending` so the skip is visible rather than silent. The skip is
+ * transient: once the finalizer settles, a later `deleteAll` removes the record.
  */
 export type BulkDeleteResult = {
   deleted: number;
+  /** Ids of terminal workflows skipped because they still owe a finalizer run. */
+  skippedTeardownPending?: WorkflowId[];
   auditEvent?: BulkOperationAuditEvent;
 };
 

@@ -26,6 +26,88 @@ const PRESERVE_OUTPUT_TERMINAL_CLEANUP_TIMER_PREFIX = 'terminal-cleanup:preserve
 
 const FULL_TERMINAL_CLEANUP_TIMER_PREFIX = 'terminal-cleanup:full:';
 
+const TEARDOWN_TIMER_PREFIX = 'teardown:';
+
+/**
+ * Durable execution-claim record stored at {@link KEYS.teardownOwed} for a workflow
+ * that owes an engine-driven finalizer run (issue #446 Phase 2). A holder fenced-CAS's
+ * it from `'owed'` to `'running'` before invoking the finalizer, then back to `'owed'`
+ * (with `attempts` bumped) on a retryable failure, or deletes it on success/dead-letter.
+ *
+ * Liveness is decided by TIME, not by an in-memory set or a lease epoch: a `'running'`
+ * claim is reclaimable once `claimedAt` is older than the stale threshold (the
+ * finalizer's per-attempt timeout plus a margin — see `teardownStaleThresholdMs`). This
+ * makes crash recovery an ordinary stale-claim retry with no special re-hydration: a
+ * fresh process simply re-fires the surviving timer and reclaims the stale `'running'`
+ * marker. The cost is that a finalizer running past the threshold may be re-driven
+ * concurrently, which is why workflow finalizers must be idempotent.
+ *
+ * - `status`: `'owed'` until claimed, `'running'` while a holder is executing it.
+ * - `attempts`: count of finalizer attempts so far (`0` until the first claim).
+ * - `token`: ties the marker to its `wf-teardown:` timer so a stale timer for a
+ *   re-armed (different-token) claim cannot drive it.
+ * - `claimedAt`: engine clock at the `owed → running` transition; `undefined` while
+ *   `'owed'`. Drives the time-based reclaim of an abandoned `'running'` claim.
+ */
+export type TeardownClaim = {
+  status: 'owed' | 'running';
+  attempts: number;
+  token: string;
+  claimedAt?: number;
+};
+
+/** Build the durable teardown timer id from its claim token (parsed by {@link parseTeardownTimerId}). */
+export function createTeardownTimerId(token: string): string {
+  return `${TEARDOWN_TIMER_PREFIX}${token}`;
+}
+
+/** Recover the claim token from a teardown timer id, or `null` when the id is malformed. */
+export function parseTeardownTimerId(timerId: string): string | null {
+  if (!timerId.startsWith(TEARDOWN_TIMER_PREFIX)) {
+    return null;
+  }
+  const token = timerId.slice(TEARDOWN_TIMER_PREFIX.length);
+  return token.length === 0 ? null : token;
+}
+
+/**
+ * Runtime type guard for a decoded {@link TeardownClaim} read back from storage.
+ *
+ * `attempts` must be a non-negative SAFE INTEGER and `claimedAt` (when present) a
+ * finite non-negative number — not merely `typeof === 'number'`. A persisted `NaN`
+ * or `Infinity` would otherwise drive the marker forever: `attempt >= MAX_TEARDOWN_ATTEMPTS`
+ * is always false for `NaN` (never dead-letters) and `now - claimedAt >= threshold` never
+ * holds for a non-finite `claimedAt` (never reclaims a stale running claim). Rejecting them
+ * here routes a corrupt-but-claim-shaped marker through the clear path instead. `claimedAt`
+ * is checked with `isFinite` rather than `isSafeInteger` because `getNow()` may return a
+ * fractional timestamp.
+ */
+export function isTeardownClaim(value: unknown): value is TeardownClaim {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    (candidate['status'] === 'owed' || candidate['status'] === 'running') &&
+    typeof candidate['token'] === 'string' &&
+    isNonNegativeSafeInteger(candidate['attempts']) &&
+    isAbsentOrFiniteNonNegative(candidate['claimedAt'])
+  );
+}
+
+/** A non-negative safe integer — the valid shape for a teardown claim's `attempts`. */
+function isNonNegativeSafeInteger(value: unknown): boolean {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+/**
+ * Absent, or a finite non-negative number — the valid shape for `claimedAt`. Finite
+ * (not safe-integer) because `getNow()` may return a fractional timestamp.
+ */
+function isAbsentOrFiniteNonNegative(value: unknown): boolean {
+  return value === undefined || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+}
+
 type PaginationFilter = {
   limit?: number;
   offset?: number;

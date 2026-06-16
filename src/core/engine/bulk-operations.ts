@@ -2,6 +2,7 @@ import {
   KEYS,
   requireStorageCapability,
   storageConditionalBatch,
+  storageHas,
   type BatchOperation,
   type ConditionalBatchCondition,
 } from '../../storage/interface.ts';
@@ -581,11 +582,27 @@ async function runBulkDeletion(
     candidateWorkflowSnapshots,
     options,
   );
-  if (options.dryRun === true) return preparation.preview;
+  if (options.dryRun === true) {
+    // Surface the point-in-time teardown-owed subset so the preview does not silently
+    // imply every matched workflow will be deleted — the commit skips ids that still owe
+    // a finalizer (#446). `matched`/scope/token still describe the full scope (they derive
+    // the commit token, and the set is transient), so this is advisory only; the
+    // authoritative skip list is `skippedTeardownPending` on the commit result.
+    const skippedTeardownPending: string[] = [];
+    for (const workflowId of preparation.workflowIds) {
+      if (await storageHas(internals.storage, KEYS.teardownOwed(workflowId))) {
+        skippedTeardownPending.push(workflowId);
+      }
+    }
+    return skippedTeardownPending.length > 0
+      ? { ...preparation.preview, skippedTeardownPending }
+      : preparation.preview;
+  }
 
   validateBulkConfirmation(options, preparation);
   const bulkConcurrency = resolveBulkOperationConcurrency(options);
   let deleted = 0;
+  const skippedTeardownPending: string[] = [];
   for (
     let batchStart = 0;
     batchStart < preparation.workflowIds.length;
@@ -600,8 +617,22 @@ async function runBulkDeletion(
       batchWorkflowIds,
     );
 
+    // A workflow that still owes an engine-driven finalizer (#446) must not be
+    // deleted: the purge drops the `finalizerState` payload the finalizer needs as
+    // its input, silently abandoning the teardown of a paid external resource. Skip
+    // it and report the id — the skip is transient (the finalizer clears the marker
+    // on success/dead-letter, so a later `deleteAll` removes the record).
+    const deletableStates: typeof workflowStatesToDelete = [];
+    for (const workflowState of workflowStatesToDelete) {
+      if (await storageHas(internals.storage, KEYS.teardownOwed(workflowState.id))) {
+        skippedTeardownPending.push(workflowState.id);
+      } else {
+        deletableStates.push(workflowState);
+      }
+    }
+
     const deletionResults = await runBulkWorkflowPool(
-      workflowStatesToDelete,
+      deletableStates,
       bulkConcurrency,
       async (workflowState) => {
         await purgeWorkflow(internals, workflowState, cleanupWaiters);
@@ -626,7 +657,10 @@ async function runBulkDeletion(
     }
   }
 
-  const result: BulkDeleteResult = { deleted };
+  const result: BulkDeleteResult = {
+    deleted,
+    ...(skippedTeardownPending.length > 0 ? { skippedTeardownPending } : {}),
+  };
   if (!shouldPersistBulkAudit(options)) return result;
   return withBulkAuditEvent(internals, preparation, options, result, deleted);
 }
