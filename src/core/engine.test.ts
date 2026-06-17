@@ -456,6 +456,48 @@ describe('Engine', () => {
     builderEngine[Symbol.dispose]();
   });
 
+  it('Engine.create starts the scheduler polling loop after recovery (#586)', async () => {
+    // Regression test: Engine.create must call scheduler.start() so durable
+    // ctx.sleep timers fire in long-lived in-process hosts. Before this fix,
+    // the Scheduler was constructed but start() was never called, so the
+    // setInterval poller never armed and ctx.sleep timers never fired.
+    //
+    // We test the scheduler is started via spyOn on the prototype BEFORE the
+    // Engine constructor runs. Because `new Engine()` is called inside
+    // Engine.create, we install the spy on the class and the spy intercepts
+    // the instance call.
+    const { Scheduler } = await import('./scheduler.ts');
+    const startSpy = spyOn(Scheduler.prototype, 'start');
+
+    // Wrap engine creation inside the try/finally so spy is always restored
+    // even if Engine.create throws (e.g. schema-version check failure).
+    let engine: Engine | undefined;
+    try {
+      engine = await Engine.create({ recover: true });
+      expect(startSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      await engine?.[Symbol.asyncDispose]();
+      startSpy.mockRestore();
+    }
+  });
+
+  it('Engine.create does NOT start the scheduler when recover:false (#586)', async () => {
+    // When recover:false is passed, the scheduler must NOT be auto-started.
+    // TestEngine and isolated scoped engines use recover:false and drive the
+    // scheduler manually — auto-start would race their deterministic tick() calls.
+    const { Scheduler } = await import('./scheduler.ts');
+    const startSpy = spyOn(Scheduler.prototype, 'start');
+
+    let engine: Engine | undefined;
+    try {
+      engine = await Engine.create({ recover: false });
+      expect(startSpy).not.toHaveBeenCalled();
+    } finally {
+      await engine?.[Symbol.asyncDispose]();
+      startSpy.mockRestore();
+    }
+  });
+
   it('register(workflow) registers a workflow', async () => {
     const engine = new Engine();
     const handler = async function* (_ctx: WorkflowContext, input: unknown) {

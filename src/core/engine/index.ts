@@ -465,6 +465,11 @@ export class Engine<
             ? { acknowledgeUnknownWorkflowTypes: options.acknowledgeUnknownWorkflowTypes }
             : {},
         );
+        // Start polling after recovery so durable timers fire for long-lived
+        // in-process engines (#586). recover:false intentionally skips
+        // auto-starting the scheduler (tests / ScopedStorage / inspection);
+        // it does not imply callers tick the scheduler themselves.
+        getInternals(engine).scheduler.start();
       }
     } catch (error) {
       // Constructor side effects (broadcast channel, scheduler, dispatchers,
