@@ -7,24 +7,207 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed — durable finalizers register under worker execution mode
+## [0.4.0] - 2026-06-17
 
-Registering a workflow with a durable `finalizer` (#446) on an engine constructed
-with `workflowExecutionMode: 'worker'` no longer throws. The previous guard rested
-on a false premise: the finalizer drive (`runFinalizerActivity`) runs entirely on
-the engine host and never consults the worker's activity table, so worker mode —
-which isolates only the workflow generator — never prevented teardown from running.
-The behavior change is registration only: worker-mode registration no longer throws,
-and finalizer execution remains host-side. Durable teardown is still gated on the
-workflow having staged state via `ctx.setFinalizerState`, and that call works only
-under inline execution. A handler annotated `(ctx: WorkflowContext)` type-checks the
-call in any generator (the static type declares the method), but at runtime in worker
-mode the generator's `ctx` is a reduced worker-side context that does not carry
-`setFinalizerState` at all, so the call fails with a `TypeError` — and there is no
-host-side API to stage the state — so a worker-mode workflow that needs durable
-finalizer teardown must run in inline mode. Code that relied on catching the old
-registration error to detect "unsupported in worker mode" will no longer see that
-error (#564).
+### Added — replay-safe structured logging
+
+`WorkflowContext` now exposes `ctx.log`, a structured logger with `.debug()`,
+`.info()`, `.warn()`, and `.error()` methods (#447). Each call auto-carries
+`workflowId`, `workflowType`, `level`, and `timestamp` in an engine-owned
+envelope; caller attributes nest under an `attributes` key so they cannot shadow
+envelope fields. Logging is replay-safe in both inline and worker execution
+modes: a call within the already-committed replay window is suppressed without
+consuming a durable step, while a log at an uncached live frontier may re-emit
+after recovery. The `WorkflowLogger` type is exported from the package root for
+typing injected loggers.
+
+`EngineOptions.onLog` is a new optional host sink that receives `ctx.log`
+records from both execution modes — inline directly, and worker-mode forwarded
+back to the host over a non-terminal `log` protocol message (#491, #529). With
+no sink installed, inline logs go to the host console and worker logs to the
+worker console. A throwing sink falls back to console without failing the
+workflow, and the same sink behavior applies inside `ctx.speculate()` branches
+and across recovered and forked inline contexts (#533, #535, #549). The
+worker-forwarded log lane is internally rate-limited so a misbehaving worker
+that floods or repeatedly sends malformed records is torn down, without
+affecting honest high-log workflows (#545).
+
+### Added — `ctx.waitUntil` condition gate
+
+`ctx.waitUntil(predicate, timeout?)` is a new inline-only durable condition
+primitive (#448). It re-evaluates a pure predicate each time `ctx.onUpdate()`
+drives workflow-local state, and consumes one durable slot regardless of how
+many times it wakes. With a `timeout`, it resolves `true` once the predicate
+holds or `false` if the deterministic deadline elapses first (predicate-first,
+so a predicate true exactly at the deadline counts as met); without a timeout it
+waits indefinitely and resolves `void`. Signals do not re-drive it, and it is
+rejected inside `ctx.race()`, `ctx.all()`, and `ctx.speculate()` with an
+actionable error.
+
+### Added — sleep and wait-signal branches in `ctx.race` / `ctx.all`
+
+`ctx.race()` and `ctx.all()` now accept `ctx.sleep(duration)` and
+`ctx.waitForSignal(name)` branches alongside `ctx.run()` branches (#456). Sleep
+branches use abortable in-process timers. Wait-signal branches use a
+deferred-consume protocol that consumes a durable signal record only for a
+branch whose result is actually kept: under `ctx.race()` that is just the
+winning branch, so a losing wait-signal branch drops its envelope unfinalized
+and leaves the signal available for a later `waitForSignal`; under `ctx.all()`
+every branch is kept, so each fulfilled wait-signal branch consumes its signal,
+but only once all branches have settled and immediately before the coordinator
+checkpoints. Duplicate signal names within one coordination tree are rejected at
+validation time.
+
+### Added — `onTerminalConflict: 'start-new'` on `engine.start`
+
+`engine.start(..., { id, onTerminalConflict: 'start-new' })` restarts a workflow
+under an id whose prior run is in a terminal state (#452). The terminal run is
+purged and a fresh run created atomically. It requires an explicit `id`, rejects
+`idempotencyKey`, never displaces a non-terminal run, and is in-process
+`engine.start` only — it is absent from REST, JSON-RPC, `engine.startOrSignal()`,
+and `ctx.startChild()`.
+
+### Added — durable finalizers
+
+`WorkflowDefinition` accepts a new `finalizer` option — a definition-level
+teardown activity driven post-terminal when a workflow is cancelled or times out
+(#446). The engine drives it durably with retry and backoff, re-drives it on
+crash recovery, and dead-letters it after a bounded horizon.
+`ctx.setFinalizerState(value)` records the payload the finalizer receives and
+commits it atomically with the next checkpoint or the terminal batch. A new
+`WorkflowTeardownEvent` (kind `workflow:teardown`) is emitted as the finalizer
+progresses; its `status` field carries `WorkflowTeardownStatus` —
+`'completed'`, `'failed'`, or `'dead-lettered'`. Purge, bulk-delete, and
+`onTerminalConflict: 'start-new'` are blocked while teardown is pending: purge
+and bulk-delete skip the run and surface it under `skippedTeardownPending`,
+while a restart throws `WorkflowTeardownPendingError`. The finalizer activity
+always runs on the engine host, so registering a `finalizer` is allowed under
+both inline and worker execution modes; staging teardown state via
+`ctx.setFinalizerState` works only under inline execution, since the
+worker-side `ctx` does not carry that method.
+
+### Added — lease-fenced single-writer ownership
+
+`EngineOptions.ownership: 'lease'` opts an engine into durable single-writer
+ownership of its store (#470). The engine acquires a two-key storage lease
+before `recoverAll()`, renews it on a heartbeat, and releases it on dispose;
+`leaseTtl`, `leaseRenewInterval`, and `leaseWaitTimeout` tune the timings. Every
+engine-owned durable write — including the scheduler's fired-timer cleanup
+(#563) — is fenced on the lease epoch, so a deposed zombie engine's writes lose
+a CAS against the successor's newer epoch and trigger a deferred teardown. New
+error types `EngineLeaseAcquisitionTimeoutError`, `EngineLeaseCorruptedError`,
+and `EngineLeaseNotHeldError`, plus the `ENGINE_LEASE_LOST_WARNING_NAME`
+constant, are exported. The default remains `ownership: 'none'`.
+
+### Added — fleet-wide event streaming
+
+A new JSON-RPC WebSocket operation `weft.events.subscribe` provides a
+fleet-wide event feed with optional `workflowId` and `kind` filters and a
+`fromCursor` replay cursor over retained events (#577). It requires the
+`events:read` scope. Two new engine events accompany it — `worker:connected`
+(`WorkerConnectedEvent`) and `worker:disconnected` (`WorkerDisconnectedEvent`) —
+and the per-workflow `weft.workflows.events` subscription gains the same
+replay-from-cursor capability.
+
+### Added — client ergonomics
+
+`WeftClient.getHandle(id)` is a new transport-uniform handle lookup on
+`WeftClient`, `LocalClient`, and `HttpClient`: it returns `null` when no
+workflow with that id exists and a handle whose `result()` resolves immediately
+from persisted state for terminal runs (#467). `engine.startOrSignal()` now
+returns a per-call handle carrying `outcome: 'started' | 'signalled'`, with the
+REST `start-or-signal` response body gaining a top-level `outcome` field and
+`StartOrSignalOutcome` exported from the root (#466). A new `isWeftFault(error,
+code)` predicate matches both in-process `WeftError` subclasses and
+HTTP-wrapped faults carrying a `weftCode`, so transport-neutral code can branch
+on error codes without `instanceof` checks (#465).
+
+### Added — activity surface extensions
+
+- `ActivityCallOptions.scheduleToCloseTimeout` is a cross-attempt wall-clock
+  budget for an entire `ctx.run()` call, anchored on the step's first dispatch;
+  overshooting throws `ActivityScheduleToCloseTimeoutError` (failure category
+  `timeout`), now registered in `WeftErrorCode` and recognized by `isWeftFault`
+  (#449).
+- `ActivityContext.lastHeartbeatDetails` exposes the prior attempt's last
+  `heartbeat()` payload, keyed per `(workflowId, step)` so a later step never
+  inherits an earlier step's heartbeat (#450). It is cleared after a successful
+  attempt so the next attempt starts clean (#487), and a development warning
+  fires when a retry at `attempt > 1` recorded none (#493).
+- Each activity attempt receives an `AbortSignal` that fires cooperatively as
+  the per-attempt timeout budget is about to be exhausted, giving the
+  implementation a chance to cancel in-flight work before the framework marks
+  the attempt timed out (#494).
+
+### Added — `schedule:fired` event
+
+A new `ScheduleFiredEvent` (`schedule:fired`) is dispatched on the engine each
+time a schedule actually launches an occurrence (#471). It carries `scheduleId`,
+`workflowId`, `firedAt` (the actual launch time), and `occurrence` (the
+scheduled grid timestamp, `undefined` for queue-drained runs). Delivery is
+process-local and best-effort after the durable start commits; skipped ticks
+stay silent, and catch-up occurrences during recovery emit exactly once.
+
+### Added — MCP anonymous-session continuation token
+
+Every session-creating MCP `initialize` response now carries a random
+`Mcp-Session-Token` alongside its `Mcp-Session-Id`, disclosed exactly once and
+never echoed again (#525). The token is _required_ only to continue an anonymous
+session under `authRequired: false`: every subsequent `POST`, `GET`, and
+`DELETE` for such a session must echo it, and a missing or wrong token is
+rejected with `403`. Authenticated callers re-present their credential on each
+request, so their session binding is unchanged and is not gated on the token.
+
+### Added — Neon storage schema/table configuration
+
+`NeonStorageOptions` accepts optional `schema` and `table` identifiers (#468),
+validated at construction and injected as SQL identifiers rather than string
+parameters. A custom `schema` triggers `CREATE SCHEMA IF NOT EXISTS`, letting
+multiple engines share one Neon database under distinct schemas.
+
+### Changed — collapsed Neon batch round trips
+
+`NeonStorage.batch()` and `conditionalBatch()` now resolve to the net effect per
+key (last write wins, with the put-set and delete-set kept disjoint) and issue
+at most one `unnest(...)` upsert plus one `DELETE ... = ANY(...)` per call,
+regardless of operation count (#469). `conditionalBatch` reads all preconditions
+with a single `key = ANY(...)` query inside the same `SERIALIZABLE` transaction
+as its writes, and the whole `read → compare → write → commit` cycle is retried
+as a unit on a `40001` serialization failure. This collapses O(keys) sequential
+round trips to O(1) per attempt for checkpoint commits.
+
+### Changed — `startOrSignal` same-tick ordering and signal key format
+
+The start signal is now always consumed before any concurrent anonymous signal
+buffered for the same workflow in the same event-loop tick (#458). Making this
+deterministic required changing the internal buffered-signal storage key layout.
+**This is a breaking change to the persisted key format**: there is no migration
+path for in-flight buffered signals across the boundary, so drain in-flight
+signals and upgrade between runs rather than mid-run.
+
+### Changed — scheduled occurrences resolve workflow services
+
+`engine.schedule()` occurrences now run `resolveWorkflowServices` before
+launching, so per-run inline `services` are re-provided on scheduled launches
+(#459). A missing or throwing resolver fails only that occurrence (failure
+category `system`) and leaves the schedule active, ordered as `schedule:fired`
+before `workflow:failed`.
+
+### Changed — additional public surface refinements
+
+- `WorkflowContext.workflowType` is now a required `readonly` member of the
+  interface, not just a property on the concrete class (#451).
+- Inline workflows parked on `ctx.waitForSignal()` now keep their `ctx.onQuery()`
+  handlers callable while parked, switching to the fresh context on resume and
+  tearing down on suspend or terminal cleanup (#457).
+- `Engine.create({ workflows: {} })` is now equivalent to omitting `workflows`
+  and yields the default-registry engine accepted by `ServeOptions` (#455).
+
+### Removed (breaking) — historical compatibility shape
+
+The `{ definition: { name } }` element shape previously tolerated by
+`collectToolVersions` has been removed (#514). Callers must supply `{ name,
+version? }` directly; the old shape now fails at compile time and at runtime.
 
 ## [0.3.0] - 2026-06-06
 
