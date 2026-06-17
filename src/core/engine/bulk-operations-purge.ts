@@ -401,6 +401,28 @@ async function addWorkflowPrefixDeleteKeys(
     const keys = await collectKeysForPrefix(storage, prefix);
     for (const key of keys) deleteKeys.add(key);
   }
+  await addWorkflowLinkedFleetEventDeleteKeys(storage, deleteKeys, workflowId);
+}
+
+async function addWorkflowLinkedFleetEventDeleteKeys(
+  storage: WeftStorage,
+  deleteKeys: Set<string>,
+  workflowId: string,
+): Promise<void> {
+  const prefix = KEYS.fleetEventByWorkflowPrefix(workflowId);
+  for await (const [key] of storage.scan(prefix)) {
+    deleteKeys.add(key);
+    const sequence = parseFleetEventSequenceFromWorkflowIndexKey(prefix, key);
+    if (sequence !== null) deleteKeys.add(KEYS.fleetEvent(sequence));
+  }
+}
+
+function parseFleetEventSequenceFromWorkflowIndexKey(prefix: string, key: string): number | null {
+  if (!key.startsWith(prefix)) return null;
+  const rawSequence = key.slice(prefix.length);
+  if (!/^\d+$/.test(rawSequence)) return null;
+  const sequence = Number(rawSequence);
+  return Number.isSafeInteger(sequence) ? sequence : null;
 }
 
 function workflowPurgePrefixes(workflowId: string): string[] {

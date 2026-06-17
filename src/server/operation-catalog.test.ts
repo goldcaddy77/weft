@@ -145,6 +145,42 @@ describe('executeOperation — step 2: transport availability', () => {
     expect(result.fault.data.supported).toContain('jsonRpcWebSocket');
     expect(result.fault.data.supported).not.toContain('jsonRpcHttp');
   });
+
+  it('non-unary stream operation -> Unprocessable before invoke', async () => {
+    let invokeCount = 0;
+    const registry = createOperationRegistry([
+      makeOp({
+        name: 'weft.test.streamoverrequest',
+        kind: 'stream',
+        eventSchema: z.object({ chunk: z.string() }),
+        inputSchema: z.object({}),
+        outputSchema: z.object({}),
+        invoke: async () => {
+          invokeCount += 1;
+          async function* stream() {
+            yield { chunk: 'should-not-run' };
+          }
+          return stream();
+        },
+      }),
+    ]);
+    const result = await executeOperation(
+      'weft.test.streamoverrequest',
+      {},
+      {
+        principal: anonymousPrincipal(),
+        engine: fakeEngine,
+        transport: 'jsonRpcHttp',
+        registry,
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected fault');
+    expect(result.fault.code).toBe('Unprocessable');
+    expect(result.fault.message).toBe('operation "weft.test.streamoverrequest" is not unary');
+    expect(result.fault.data).toEqual({ reason: 'operation kind is "stream"' });
+    expect(invokeCount).toBe(0);
+  });
 });
 
 describe('executeOperation — step 3: access check', () => {
@@ -473,6 +509,34 @@ describe('executeOperation — step 6: authorize hook', () => {
     expect(denied.fault.code).toBe('Forbidden');
     if (denied.fault.code !== 'Forbidden') throw new Error('shape');
     expect(denied.fault.data.reason).toContain('workflow not permitted');
+  });
+
+  it('hook denial can classify unauthenticated callers as Unauthorized', async () => {
+    const registry = createOperationRegistry([
+      makeOp({
+        name: 'weft.test.hookunauthorized',
+        inputSchema: z.object({}),
+        outputSchema: z.object({}),
+        invoke: async () => ({}),
+        access: { kind: 'public' },
+        authorize: async () => ({
+          allowed: false,
+          classification: 'unauthorized',
+          reason: 'authentication required',
+        }),
+      }),
+    ]);
+
+    const result = await executeOperation(
+      'weft.test.hookunauthorized',
+      {},
+      { principal: anonymousPrincipal(), engine: fakeEngine, transport: 'http-rest', registry },
+    );
+
+    if (result.ok) throw new Error('expected fault');
+    expect(result.fault.code).toBe('Unauthorized');
+    if (result.fault.code !== 'Unauthorized') throw new Error('shape');
+    expect(result.fault.data.reason).toBe('authentication required');
   });
 
   it('hook throw -> EngineFailure (no internal detail leaked)', async () => {
@@ -1140,6 +1204,27 @@ describe('executeOperation — additional coverage', () => {
             Object.defineProperty({ allowed: false }, 'reason', {
               get() {
                 throw new Error('reason getter exploded');
+              },
+            }) as Awaited<ReturnType<NonNullable<ErasedOperation['authorize']>>>,
+        }),
+      },
+    );
+    if (result.ok) throw new Error('expected fault');
+    expect(result.fault).toEqual(ENGINE_FAILURE_FAULT);
+
+    result = await executeOperation(
+      'weft.test.defensive',
+      {},
+      {
+        principal: anonymousPrincipal(),
+        engine: fakeEngine,
+        transport: 'http-rest',
+        registry: registryFor({
+          ...baseOperation,
+          authorize: async () =>
+            Object.defineProperty({ allowed: false, reason: 'denied' }, 'classification', {
+              get() {
+                throw new Error('classification getter exploded');
               },
             }) as Awaited<ReturnType<NonNullable<ErasedOperation['authorize']>>>,
         }),

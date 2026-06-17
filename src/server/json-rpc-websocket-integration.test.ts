@@ -7,6 +7,7 @@ import { sleepForTesting } from '../testing/fake-timers.test-support.ts';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../core/engine.ts';
+import { WorkflowSuspendedEvent } from '../core/events.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { workflow } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -26,17 +27,17 @@ const holdWorkflow = workflow({ name: 'hold' }).execute(async function* (
 
 /**
  * `weft.workflows.events` (the operation that `weft.workflows.subscribe`
- * wraps) requires the `workflows:read` scope. Tests that subscribe must
+ * wraps) requires the `events:read` scope. Tests that subscribe must
  * authenticate with a key that carries that scope (passed to `openWebSocket`);
  * tests that only call public operations (e.g. `weft.workflows.get`) keep using
  * the no-auth `serve({ engine, port: 0 })` form.
  */
-const SUBSCRIBE_TEST_API_KEY = 'weft_test_subscribe_workflows_read_scope_key_xxx';
+const SUBSCRIBE_TEST_API_KEY = 'weft_test_subscribe_events_read_scope_key_xxxxxxx';
 const subscribeServeOptions = {
   port: 0,
   auth: {
     apiKeys: [SUBSCRIBE_TEST_API_KEY],
-    defaultApiKeyScopes: ['workflows:read'] as const,
+    defaultApiKeyScopes: ['events:read'] as const,
   },
 };
 
@@ -64,6 +65,42 @@ function waitForStatus(
 /** WebSocket URL for the `/jsonrpc` endpoint of a running server. */
 function jsonRpcWebSocketUrl(runningServer: WeftServer): string {
   return `${runningServer.url.replace('http://', 'ws://')}/jsonrpc`;
+}
+
+function workerWebSocketUrl(runningServer: WeftServer): string {
+  return `${runningServer.url.replace('http://', 'ws://')}/v1/tasks/default/stream`;
+}
+
+async function openWorkerWebSocket(runningServer: WeftServer, apiKey: string): Promise<WebSocket> {
+  const socket = new WebSocket(workerWebSocketUrl(runningServer), {
+    headers: { authorization: `Bearer ${apiKey}` },
+  } as any);
+
+  await new Promise<void>((resolve, reject) => {
+    socket.addEventListener('open', () => resolve());
+    socket.addEventListener('error', (event: Event) => reject(event));
+  });
+
+  return socket;
+}
+
+function registerWorker(
+  socket: WebSocket,
+  options: {
+    readonly workerId: string;
+    readonly activities: readonly string[];
+    readonly concurrency?: number;
+  },
+): void {
+  socket.send(
+    JSON.stringify({
+      type: 'register',
+      protocolVersion: 2,
+      workerId: options.workerId,
+      activities: options.activities,
+      concurrency: options.concurrency ?? 10,
+    }),
+  );
 }
 
 /**
@@ -475,7 +512,142 @@ describe('serve() — WebSocket /jsonrpc', () => {
     wsB.close();
   });
 
-  it('test i: server.stop with an active subscription drains sessions cleanly', async () => {
+  it('test i: fleet subscription receives events from multiple workflows through serve wiring', async () => {
+    engine = createHoldEngine();
+    await engine.start('hold', null, { id: 'fleet-wf-a' });
+    await engine.start('hold', null, { id: 'fleet-wf-b' });
+    await waitForStatus(engine, 'fleet-wf-a', 'running');
+    await waitForStatus(engine, 'fleet-wf-b', 'running');
+    server = serve({ engine, ...subscribeServeOptions });
+    const ws = await openWebSocket(jsonRpcWebSocketUrl(server), SUBSCRIBE_TEST_API_KEY);
+
+    const subscribeResponsePromise = waitForMessage(
+      ws,
+      (parsed: any) => parsed?.id === 30 && parsed?.result?.subscriptionId,
+    );
+    ws.send(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 30,
+        method: 'weft.events.subscribe',
+        params: { kind: WorkflowSuspendedEvent.type },
+      }),
+    );
+    const subscribeResponse = (await subscribeResponsePromise) as any;
+    const subscriptionId = subscribeResponse.result.subscriptionId as string;
+
+    const deliveryA = waitForMessage(
+      ws,
+      (parsed: any) =>
+        parsed?.method === 'weft.events.deliver' &&
+        parsed?.params?.subscriptionId === subscriptionId &&
+        parsed?.params?.envelope?.workflowId === 'fleet-wf-a',
+    );
+    const deliveryB = waitForMessage(
+      ws,
+      (parsed: any) =>
+        parsed?.method === 'weft.events.deliver' &&
+        parsed?.params?.subscriptionId === subscriptionId &&
+        parsed?.params?.envelope?.workflowId === 'fleet-wf-b',
+    );
+
+    engine.dispatchEvent(new WorkflowSuspendedEvent('fleet-wf-a'));
+    engine.dispatchEvent(new WorkflowSuspendedEvent('fleet-wf-b'));
+
+    const [deliveredA, deliveredB] = (await Promise.all([deliveryA, deliveryB])) as any[];
+    expect(deliveredA.params.envelope).toMatchObject({
+      kind: WorkflowSuspendedEvent.type,
+      workflowId: 'fleet-wf-a',
+    });
+    expect(deliveredB.params.envelope).toMatchObject({
+      kind: WorkflowSuspendedEvent.type,
+      workflowId: 'fleet-wf-b',
+    });
+    expect(typeof deliveredA.params.envelope.sequence).toBe('number');
+    expect(typeof deliveredA.params.envelope.cursor).toBe('string');
+    expect(typeof deliveredB.params.envelope.sequence).toBe('number');
+    expect(typeof deliveredB.params.envelope.cursor).toBe('string');
+
+    ws.close();
+  });
+
+  it('test j: fleet subscription receives worker lifecycle events through serve wiring', async () => {
+    engine = createHoldEngine();
+    server = serve({
+      engine,
+      port: 0,
+      workerReconnectGracePeriodMs: 0,
+      auth: {
+        apiKeys: [SUBSCRIBE_TEST_API_KEY],
+        defaultApiKeyScopes: ['events:read', 'workers:write'] as const,
+      },
+    });
+    const ws = await openWebSocket(jsonRpcWebSocketUrl(server), SUBSCRIBE_TEST_API_KEY);
+
+    const subscribeResponsePromise = waitForMessage(
+      ws,
+      (parsed: any) => parsed?.id === 40 && parsed?.result?.subscriptionId,
+    );
+    ws.send(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 40,
+        method: 'weft.events.subscribe',
+        params: {},
+      }),
+    );
+    const subscribeResponse = (await subscribeResponsePromise) as any;
+    const subscriptionId = subscribeResponse.result.subscriptionId as string;
+
+    const connectedDelivery = waitForMessage(
+      ws,
+      (parsed: any) =>
+        parsed?.method === 'weft.events.deliver' &&
+        parsed?.params?.subscriptionId === subscriptionId &&
+        parsed?.params?.envelope?.kind === 'worker:connected',
+    );
+    const disconnectedDelivery = waitForMessage(
+      ws,
+      (parsed: any) =>
+        parsed?.method === 'weft.events.deliver' &&
+        parsed?.params?.subscriptionId === subscriptionId &&
+        parsed?.params?.envelope?.kind === 'worker:disconnected',
+    );
+
+    const workerSocket = await openWorkerWebSocket(server, SUBSCRIBE_TEST_API_KEY);
+    registerWorker(workerSocket, {
+      workerId: 'fleet-lifecycle-worker',
+      activities: ['hold.activity'],
+      concurrency: 3,
+    });
+
+    const connected = (await connectedDelivery) as any;
+    expect(connected.params.envelope).toMatchObject({
+      kind: 'worker:connected',
+      payload: {
+        workerId: 'fleet-lifecycle-worker',
+        queue: 'default',
+        activities: ['hold.activity'],
+        concurrency: 3,
+      },
+    });
+    expect(connected.params.envelope.workflowId).toBeUndefined();
+
+    workerSocket.close();
+    const disconnected = (await disconnectedDelivery) as any;
+    expect(disconnected.params.envelope).toMatchObject({
+      kind: 'worker:disconnected',
+      payload: {
+        workerId: 'fleet-lifecycle-worker',
+        inFlightTaskCount: 0,
+      },
+    });
+    expect(disconnected.params.envelope.workflowId).toBeUndefined();
+
+    ws.close();
+  });
+
+  it('test k: server.stop with an active subscription drains sessions cleanly', async () => {
     // Shutdown-ordering regression guard. The shared
     // `WorkflowEventFeed` is registered in the AsyncDisposableStack
     // after the active-session close hook, so disposal runs:

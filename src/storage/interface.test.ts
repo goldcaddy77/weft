@@ -171,6 +171,9 @@ describe('WEFT_RESERVED_KEY_PREFIXES', () => {
       KEYS.event('workflow-id', 1),
       KEYS.eventHead('workflow-id'),
       KEYS.eventWatermark('workflow-id'),
+      KEYS.fleetEvent(1),
+      KEYS.fleetEventTail(),
+      KEYS.fleetEventByWorkflow('workflow-id', 1),
       KEYS.signal('workflow-id', 'signal-name', 'signal-id'),
       KEYS.signalSequence('workflow-id'),
       KEYS.signalAcceptedResponse('workflow-id', 'signal-name', 'signal-id'),
@@ -743,6 +746,15 @@ describe('KEYS', () => {
     expect(KEYS.eventPrefix(workflowId)).toBe(`ev:${encodedWorkflowId}:`);
     expect(KEYS.event(workflowId, 9)).toBe(`ev:${encodedWorkflowId}:0000000009`);
     expect(KEYS.eventHead(workflowId)).toBe(`ev:${encodedWorkflowId}:head`);
+    expect(KEYS.fleetEventPrefix()).toBe('fleet-event:');
+    expect(KEYS.fleetEvent(9)).toBe('fleet-event:0000000009');
+    expect(KEYS.fleetEventTail()).toBe('fleet-event-tail');
+    expect(KEYS.fleetEventByWorkflowPrefix(workflowId)).toBe(
+      `fleet-event-by-workflow:${encodedWorkflowId}:`,
+    );
+    expect(KEYS.fleetEventByWorkflow(workflowId, 9)).toBe(
+      `fleet-event-by-workflow:${encodedWorkflowId}:0000000009`,
+    );
     expect(KEYS.signal(workflowId, 'approve', 'signal:1')).toBe(
       `sig:${encodedWorkflowId}:approve:1:signal%3A1`,
     );

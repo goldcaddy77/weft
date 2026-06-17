@@ -627,13 +627,14 @@ The interface-level guarantee: all conditions are checked before any operation i
 
 WebSocket upgrade is supported on the following paths:
 
-| Path                          | Description                                                       |
-| ----------------------------- | ----------------------------------------------------------------- |
-| `/api/v1/workflows/:id/watch` | Observe workflow lifecycle events                                 |
-| `/api/v1/tasks/:queue/stream` | Worker task stream                                                |
-| `/api/jsonrpc`                | JSON-RPC over WebSocket session for the unified operation catalog |
+| Path                           | Description                                                         |
+| ------------------------------ | ------------------------------------------------------------------- |
+| `/api/v1/workflows/:id/watch`  | Observe workflow lifecycle events; requires `events:read` with auth |
+| `/api/v1/workflows/:id/stream` | Stream workflow token chunks; requires `streams:read` with auth     |
+| `/api/v1/tasks/:queue/stream`  | Worker task stream                                                  |
+| `/api/jsonrpc`                 | JSON-RPC over WebSocket session for the unified operation catalog   |
 
-Workflow stream and watch sockets share the `maxStreamConnectionsPerWorkflow` per-workflow cap. The default is `100`; excess connections are closed with WebSocket code `1008`.
+Workflow stream and watch sockets share the `maxStreamConnectionsPerWorkflow` per-workflow cap. The default is `100`; excess connections are closed with WebSocket code `1008`. Both routes accept `?resumeFrom=<sequence>` cursors. The cursor grammar is `-1` or a non-negative decimal integer; malformed values reject the WebSocket upgrade with `400`. A missing cursor starts before the first retained frame, and a future cursor above the durable tail is clamped to the tail so the socket can remain connected for later live frames. Raw watch replay sends at most 1,000 retained events per socket and buffers at most 1,000 live frames while replay is catching up; older cursors or overloaded replay buffers close the socket with code `1008`. The listed scope requirements apply when `auth` is configured; without `auth`, raw WebSocket routes are open to any client that can connect. Raw watch frames preserve the `{ type, timestamp, data }` event shape and include `sequence` / `cursor` fields for resumption. JSON-RPC clients can subscribe to per-workflow events with `weft.workflows.subscribe` or to one fleet-wide event feed with `weft.events.subscribe`; both deliver notifications as `weft.events.deliver`. Fleet-wide subscriptions expose workflow-facing operational events and worker connection lifecycle events, accept optional `workflowId` and `kind` filters, reject replay windows above 1,000 matching retained events, and order their cursor on the server process that owns the durable store under Weft's current one-server-process-per-durable-store model.
 
 ### Error Responses
 

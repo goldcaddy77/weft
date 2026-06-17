@@ -1,14 +1,27 @@
 import { z } from 'zod';
 
+import type { AuthorizationScope } from '../authorization-scope.ts';
 import { defineOperation } from '../operation-registry.ts';
-import type { Cursor, EventEnvelope, WorkflowEventFeed } from '../workflow-event-feed.ts';
+import { isAuthenticated } from '../principal.ts';
+import {
+  decodeCursor,
+  type Cursor,
+  type EventEnvelope,
+  type ReplayLiveSubscribeOptions,
+  type WorkflowEventFeed,
+} from '../workflow-event-feed.ts';
+import { invalidParamsFault } from './operation-helpers.ts';
 
 const INITIAL_SUBSCRIPTION_CURSOR: Cursor = '-1';
+const MAX_WORKFLOW_SUBSCRIPTION_REPLAY_EVENTS = 1_000;
 
 const workflowEventsSubscriptionInput = z.object({
   workflowId: z.string().min(1),
   selector: z.enum(['events', 'tokens']).optional().default('events'),
-  fromCursor: z.string().optional(),
+  fromCursor: z
+    .string()
+    .refine((cursor) => decodeCursor(cursor) !== null, { message: 'Invalid cursor' })
+    .optional(),
 });
 
 const workflowEventsSubscriptionEnvelope = z.object({
@@ -34,26 +47,28 @@ export type WorkflowEventsSubscriptionEnvelope = z.infer<typeof workflowEventsSu
  * subscriptions. This is documented as a known v1 constraint; per-event
  * filtering is a planned future refinement.
  *
- * Access is `scoped: { workflows:read }` (NOT optionalAuth, NOT public).
- * Anonymous callers and authenticated callers without `workflows:read` are
- * both denied. The earlier policies allowed unauthenticated clients to
- * subscribe to arbitrary workflow event streams — a real exposure the
- * security committee flagged. Operators running `serve({ engine })`
- * without auth must add an authentication layer before exposing this
- * endpoint to untrusted networks.
+ * Access is selector-specific: event envelopes require `events:read`, while
+ * token-stream envelopes require `streams:read`. Anonymous callers and
+ * authenticated callers without the matching scope are denied. Operators
+ * running `serve({ engine })` without auth must add an authentication layer
+ * before exposing this endpoint to untrusted networks.
  */
 export const workflowEventsSubscriptionOperation = defineOperation<
   WorkflowEventsSubscriptionInput,
-  WorkflowEventsSubscriptionEnvelope
+  WorkflowEventsSubscriptionEnvelope,
+  EventEnvelope
 >({
   name: 'weft.workflows.events',
   mcpExposable: false,
   kind: 'subscription',
   summary: 'Subscribe to workflow events with replay-from-cursor',
+  description:
+    '`selector: "events"` requires `events:read`; `selector: "tokens"` requires `streams:read`. The grant is checked when the WebSocket subscription starts and remains active until unsubscribe, socket close, or feed termination.',
   destructive: false,
   tags: ['Events'],
   inputSchema: workflowEventsSubscriptionInput,
   outputSchema: workflowEventsSubscriptionEnvelope,
+  producibleFaults: ['InvalidParams'],
   eventSchema: z.object({
     kind: z.string(),
     workflowId: z.string(),
@@ -63,18 +78,34 @@ export const workflowEventsSubscriptionOperation = defineOperation<
     emittedAtMs: z.number(),
     payload: z.unknown(),
   }),
-  // scoped + workflows:read: every caller (anonymous, api-key, jwt) must
-  // present a credential carrying the workflows:read scope. The earlier
-  // `public` and `optionalAuth` policies both allowed unauthenticated
-  // subscription to any workflow's event stream, which the security
-  // committee flagged as a real exposure (an attacker without credentials
-  // could subscribe with workflowId: <victim-id> and receive that
-  // workflow's events). Operators running without auth (`serve({ engine })`
-  // with no `auth` config) must add an authentication layer before
-  // exposing this endpoint to untrusted networks.
-  access: {
-    kind: 'scoped',
-    scopes: { kind: 'anyOf', scopes: ['workflows:read'] },
+  access: { kind: 'authenticated' },
+  parameterizedAccess: {
+    discriminator: 'selector',
+    defaultValue: 'events',
+    variants: [
+      {
+        value: 'events',
+        access: { kind: 'scoped', scopes: { kind: 'anyOf', scopes: ['events:read'] } },
+      },
+      {
+        value: 'tokens',
+        access: { kind: 'scoped', scopes: { kind: 'anyOf', scopes: ['streams:read'] } },
+      },
+    ],
+  },
+  authorize: async ({ input, principal }) => {
+    const requiredScope = workflowSubscriptionScope(input.selector);
+    if (!isAuthenticated(principal)) {
+      return { allowed: false, classification: 'unauthorized', reason: 'authentication required' };
+    }
+    if (principal.hasScope(requiredScope)) {
+      return { allowed: true };
+    }
+    return {
+      allowed: false,
+      classification: 'forbidden',
+      reason: `requires scope: ${requiredScope}`,
+    };
   },
   // Mark discoverable so /openapi.json, /openrpc.json, and /asyncapi.json
   // all include the subscription channel. Without this flag the discovery
@@ -89,12 +120,21 @@ export const workflowEventsSubscriptionOperation = defineOperation<
     const feed = (engine as { feed: WorkflowEventFeed }).feed;
     const controller = new AbortController();
     const startingCursor = input.fromCursor ?? INITIAL_SUBSCRIPTION_CURSOR;
-    const iterable: AsyncIterable<EventEnvelope> = feed.subscribe({
+    const subscribeOptions: {
+      workflowId: string;
+      selector: WorkflowEventsSubscriptionInput['selector'];
+    } & ReplayLiveSubscribeOptions<EventEnvelope> = {
       workflowId: input.workflowId,
       selector: input.selector,
       ...(input.fromCursor === undefined ? {} : { fromCursor: input.fromCursor }),
       signal: controller.signal,
-    });
+      replayLimit: MAX_WORKFLOW_SUBSCRIPTION_REPLAY_EVENTS,
+      createReplayLimitError: (count: number, limit: number) =>
+        invalidParamsFault(
+          `Workflow event replay window is ${count} events; maximum is ${limit}. Supply a more recent fromCursor.`,
+        ),
+    };
+    const iterable: AsyncIterable<EventEnvelope> = feed.subscribe(subscribeOptions);
 
     return {
       envelope: { subscriptionId: `sub_${crypto.randomUUID()}`, cursor: startingCursor },
@@ -105,3 +145,7 @@ export const workflowEventsSubscriptionOperation = defineOperation<
     };
   },
 });
+
+function workflowSubscriptionScope(selector: 'events' | 'tokens'): AuthorizationScope {
+  return selector === 'tokens' ? 'streams:read' : 'events:read';
+}

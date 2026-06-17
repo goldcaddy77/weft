@@ -27,6 +27,7 @@ import { z } from 'zod';
 import { definitionSchemaToJsonSchema } from '../core/types/definition-schema-to-json.ts';
 import type { McpToolDefinition } from '../mcp/tools.ts';
 import { VERSION } from '../version.ts';
+import type { ScopeRequirement } from './authorization.ts';
 import { isDiscoverable } from './discovery-filter.ts';
 import { applyDiscoveryInfo, type DiscoveryInfo } from './discovery-info.ts';
 import { asPlainObject, compareStrings } from './json-schema-utilities.ts';
@@ -80,6 +81,7 @@ type OpenRpcMethod = {
   result: ContentDescriptor;
   errors?: Array<{ $ref: string }>;
   'x-weft-paramsSchema': Record<string, unknown>;
+  'x-weft-parameterizedAccess'?: Record<string, unknown>;
   'x-weft-mcp'?: OpenRpcMcpMethodMetadata;
 };
 
@@ -269,8 +271,45 @@ function buildMethod(operation: ErasedOperation): OpenRpcMethod {
   if (operation.tags.length > 0) {
     method.tags = [...operation.tags].toSorted(compareStrings).map((name) => ({ name }));
   }
+  if (operation.parameterizedAccess !== undefined) {
+    method['x-weft-parameterizedAccess'] = {
+      discriminator: operation.parameterizedAccess.discriminator,
+      ...(operation.parameterizedAccess.defaultValue === undefined
+        ? {}
+        : { defaultValue: operation.parameterizedAccess.defaultValue }),
+      variants: operation.parameterizedAccess.variants.map((variant) => ({
+        value: variant.value,
+        access: accessPolicyExtension(variant.access),
+      })),
+    };
+  }
   method.errors = buildMethodErrorReferences(operation);
   return method;
+}
+
+function accessPolicyExtension(access: ErasedOperation['access']): Record<string, unknown> {
+  if (access.kind === 'public') return { kind: 'public' };
+  if (access.kind === 'authenticated') return { kind: 'authenticated' };
+  if (access.kind === 'scoped') {
+    return { kind: 'scoped', scopes: scopeRequirementExtension(access.scopes) };
+  }
+  if (access.kind === 'optionalAuth') {
+    return {
+      kind: 'optionalAuth',
+      authenticatedScopes: scopeRequirementExtension(access.authenticatedScopes),
+    };
+  }
+  return {
+    kind: 'scopedAlternatives',
+    alternatives: access.alternatives.map(scopeRequirementExtension),
+  };
+}
+
+function scopeRequirementExtension(requirement: ScopeRequirement): Record<string, unknown> {
+  return {
+    kind: requirement.kind,
+    scopes: [...requirement.scopes].toSorted(compareStrings),
+  };
 }
 
 function buildDiscoverMethod(): OpenRpcMethod {

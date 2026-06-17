@@ -2,6 +2,7 @@ import type { ServerWebSocket } from 'bun';
 
 import { decode } from '../../core/codec.ts';
 import type { Engine } from '../../core/engine.ts';
+import { WorkerDisconnectedEvent } from '../../core/events.ts';
 import { handleMcpHttpRequest } from '../../mcp/http.ts';
 import type { PrometheusExporter } from '../../observability/metrics.ts';
 import { KEYS } from '../../storage/interface.ts';
@@ -27,8 +28,10 @@ import {
   addStreamSocket,
   addWatchSocket,
   removeStreamSocket,
+  removeWatchSocket,
   removeWorkflowStreamConnection,
   replayTokenStream,
+  replayWatchEvents,
 } from './websocket-stream.ts';
 import { handleWebSocketUpgrade } from './websocket-upgrade.ts';
 import { handleWorkerWebSocketMessage, isInflightRecord } from './websocket-worker.ts';
@@ -148,13 +151,12 @@ async function dispatchServerFetchRequest(
   }
   const authentication = gate.authentication;
 
-  // `handleWebSocketUpgrade` resolves the principal only for
-  // `/jsonrpc` connections and only after the Upgrade-header
-  // check. This keeps jwt-without-claims throws out of the HTTP
-  // POST `/jsonrpc` path (which has its own try/catch that maps
-  // the failure to a -32603 error envelope) and prevents an
-  // auth-context failure on unrelated WS endpoints (`/stream`,
-  // `/watch`, `/workers`) from returning a spurious 5xx.
+  // `handleWebSocketUpgrade` resolves the principal only after the
+  // Upgrade-header check and only for WebSocket endpoints that need
+  // connection-level authorization. This keeps jwt-without-claims throws
+  // out of the HTTP POST `/jsonrpc` path (which has its own try/catch that
+  // maps the failure to a -32603 error envelope) while still rejecting raw
+  // watch/stream sockets without `events:read` / `streams:read`.
   //
   // The *original* request is handed to `server.upgrade()` — a rebuilt
   // `Request` (from `stripApiPrefix`) loses Bun's internal upgrade handle, so
@@ -283,20 +285,28 @@ export function createServerWebSocketHandlers(
       if (connectionType === 'watch' && workflowId && !addWatchSocket(context, workflowId, ws)) {
         return;
       }
+      if (connectionType === 'watch' && workflowId) {
+        ws.data.watchReplayInProgress = true;
+        ws.data.pendingWatchMessages = [];
+        void replayWatchEvents(context, options.engine, ws, workflowId);
+      }
 
-      // Watch and worker sockets ride Bun pub/sub by pathname. Stream
-      // sockets do not: `serve()` wires token delivery through
-      // `publishTokenMessage()` and the `streamSockets` registry instead,
-      // while `wireEventBroadcasting()` retains the `server.publish()`
-      // fallback for direct callers that manage subscriptions themselves.
-      if (pathname && connectionType !== 'stream' && connectionType !== 'jsonrpc') {
+      // Worker sockets ride Bun pub/sub by pathname. Stream and watch sockets
+      // do not: `serve()` wires delivery through per-workflow socket
+      // registries so reconnect replay can buffer concurrent live frames.
+      if (
+        pathname &&
+        connectionType !== 'stream' &&
+        connectionType !== 'watch' &&
+        connectionType !== 'jsonrpc'
+      ) {
         ws.subscribe(pathname);
       }
 
       // Stream sockets track replay state individually so reconnects can
       // catch up from durable storage without duplicate live tokens.
       if (connectionType === 'stream' && workflowId) {
-        ws.data.replayInProgress = true;
+        ws.data.streamReplayInProgress = true;
         ws.data.pendingStreamMessages = [];
         if (!addStreamSocket(context, workflowId, ws)) {
           return;
@@ -310,6 +320,7 @@ export function createServerWebSocketHandlers(
           registry: context.liveOperationRegistry,
           engine: options.engine,
           feed: context.workflowEventFeed,
+          fleetFeed: context.fleetEventFeed,
           activeSessions: context.activeJsonRpcSessions,
         });
         return;
@@ -350,6 +361,7 @@ export function createServerWebSocketHandlers(
       }
 
       if (ws.data.connectionType === 'watch') {
+        removeWatchSocket(context, ws);
         removeWorkflowStreamConnection(context, ws);
       }
 
@@ -422,6 +434,7 @@ function runWorkerDisconnectRequeue(
 
   context.registry.unregister(workerId);
   context.workerSockets.delete(workerId);
+  options.engine.dispatchEvent(new WorkerDisconnectedEvent(workerId, inFlightTasks.length));
 
   // Clean up affinity entries that pointed at this worker.
   for (const [workflowId, affinityWorkerId] of context.workerAffinity) {

@@ -24,7 +24,7 @@ import {
 } from './runtime/shutdown.ts';
 import { stopBunServerForShutdown } from './runtime/stop-server.ts';
 import { cancelTask, dispatchTaskImpl } from './runtime/task-dispatch.ts';
-import { publishTokenMessage } from './runtime/websocket-stream.ts';
+import { publishTokenMessage, publishWatchMessage } from './runtime/websocket-stream.ts';
 import {
   buildBunServeConfig,
   buildFetchHandler,
@@ -486,6 +486,10 @@ export function serve(options: ServeOptions): WeftServer {
       publishTokenMessage: (workflowId, sequence, message) => {
         publishTokenMessage(context, workflowId, sequence, message);
       },
+      publishWatchMessage: (workflowId, sequence, message) => {
+        publishWatchMessage(context, workflowId, sequence, message);
+      },
+      fleetEventFeed: context.fleetEventFeed,
     });
   } catch (error) {
     // Stop the server before propagating. The stack's async disposers have not

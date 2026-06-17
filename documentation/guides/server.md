@@ -62,7 +62,7 @@ const server = serve({
 });
 ```
 
-The built-in API-key configuration grants the configured key the default authenticated scope set. JWT and custom authenticators can provide narrower scope sets such as `workflows:read`, `workflows:write`, `workflows:admin`, and `system:read`; requests missing the required scope fail with `401` or `403` before the operation runs.
+The built-in API-key configuration grants the configured key the default authenticated scope set. JWT and custom authenticators can provide narrower scope sets such as `workflows:read`, `workflows:write`, `workflows:admin`, `events:read`, `streams:read`, and `system:read`; requests missing the required scope fail with `401` or `403` before the operation runs. Raw `/watch` sockets require `events:read`, raw token `/stream` sockets require `streams:read`, and `weft.events.subscribe` requires `events:read`. The `events:read` feeds expose workflow-facing operational events plus worker connection lifecycle events.
 
 ### Audit trail
 
@@ -339,10 +339,16 @@ The clear action requires `system:admin`. Clear a dead-letter entry only after t
 
 The server supports WebSocket connections for real-time streaming. When a request includes the `Upgrade: websocket` header, the server upgrades the connection and subscribes it to the matching path.
 
-Three WebSocket routes are available:
+Four WebSocket routes are available:
 
-- `/api/v1/workflows/:id/watch` — observe workflow state changes in real time
+- `/api/v1/workflows/:id/watch` — observe workflow state changes in real time; accepts `?resumeFrom=<sequence>`
+- `/api/v1/workflows/:id/stream` — stream workflow token chunks; accepts `?resumeFrom=<sequence>`
 - `/api/v1/tasks/:queue/stream` — [remote worker](./remote-workers.md) task dispatch
+- `/api/jsonrpc` — JSON-RPC WebSocket sessions, including `weft.workflows.subscribe` and fleet-wide `weft.events.subscribe`
+
+When `auth` is configured, raw `/watch` sockets require `events:read` and raw token `/stream` sockets require `streams:read`. When `auth` is omitted, these raw sockets follow the same open local-development posture as the rest of `serve({ engine })`: anyone who can connect can observe the matching workflow stream.
+
+`resumeFrom` accepts `-1` or a non-negative decimal sequence cursor. Missing `resumeFrom` starts before the first retained frame. Malformed values such as an empty string, decimals, hexadecimal, or exponent notation reject the WebSocket upgrade with `400`. Future cursors above the durable tail are clamped to the current tail, so the socket stays connected and receives later live frames instead of replaying from the beginning. Fleet-wide `weft.events.subscribe` uses a single fleet cursor, rejects replay windows above 1,000 retained events, and follows Weft's current one-server-process-per-durable-store deployment model for fleet event ordering.
 
 HTTP long-poll task requests use the request's `AbortSignal`. If the client
 disconnects before or during the poll, the waiter settles promptly and does

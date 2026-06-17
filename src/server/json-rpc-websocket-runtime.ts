@@ -1,5 +1,6 @@
 import type { ServerWebSocket } from 'bun';
 
+import type { FleetEventFeed } from './fleet-event-feed.ts';
 import {
   createJsonRpcWebSocketSession,
   type JsonRpcWebSocketSession,
@@ -19,9 +20,12 @@ export interface WebSocketData {
   workerId?: string;
   workerRegistered?: boolean;
   workerProtocolVersion?: number;
-  lastDeliveredSequence?: number;
-  replayInProgress?: boolean;
+  streamLastDeliveredSequence?: number;
+  streamReplayInProgress?: boolean;
   pendingStreamMessages?: Array<{ sequence: number; message: string }>;
+  watchLastDeliveredSequence?: number;
+  watchReplayInProgress?: boolean;
+  pendingWatchMessages?: Array<{ sequence: number; message: string }>;
   workflowStreamConnectionAccepted?: boolean;
   principal?: Principal;
   jsonRpcSession?: JsonRpcWebSocketSession;
@@ -49,6 +53,7 @@ export function openJsonRpcWebSocketSession(options: {
   registry: OperationRegistry;
   engine: unknown;
   feed: WorkflowEventFeed;
+  fleetFeed?: FleetEventFeed;
   activeSessions: Set<JsonRpcWebSocketSession>;
 }): void {
   try {
@@ -58,6 +63,7 @@ export function openJsonRpcWebSocketSession(options: {
       principal: options.ws.data.principal ?? anonymousPrincipal(),
       emitter: { send: (message) => options.ws.send(message) },
       feed: options.feed,
+      ...(options.fleetFeed !== undefined ? { fleetFeed: options.fleetFeed } : {}),
       transport: 'jsonRpcWebSocket',
     });
     options.ws.data.jsonRpcSession = session;

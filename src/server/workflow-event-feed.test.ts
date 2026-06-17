@@ -30,6 +30,7 @@ import {
   createWorkflowEventFeed,
   decodeCursor,
   encodeCursor,
+  ReplayWindowExceededError,
   type EventEnvelope,
   type WorkflowEventFeedBackend,
 } from './workflow-event-feed.ts';
@@ -155,38 +156,44 @@ describe('WorkflowEventFeed — replay', () => {
     expect(events).toEqual([0, 2]);
   });
 
-  it('rejects a malformed fromCursor by falling back to "from the start"', async () => {
+  it('rejects a malformed fromCursor instead of replaying from the start', async () => {
     const backend = createInMemoryEventBackend();
     for (let seq = 0; seq < 3; seq += 1) {
       await backend.append(makeEnvelope({ sequence: seq }));
     }
     const feed = createWorkflowEventFeed(backend);
-    const received: number[] = [];
-    for await (const envelope of feed.replay({
-      workflowId: 'wf-1',
-      selector: 'events',
-      fromCursor: 'not-a-cursor',
-    })) {
-      received.push(envelope.sequence);
-    }
-    expect(received).toEqual([0, 1, 2]);
+
+    await expect(
+      (async () => {
+        for await (const _envelope of feed.replay({
+          workflowId: 'wf-1',
+          selector: 'events',
+          fromCursor: 'not-a-cursor',
+        })) {
+          // The assertion is the thrown cursor validation before any replay value is yielded.
+        }
+      })(),
+    ).rejects.toThrow('Invalid cursor');
   });
 
-  it('does not skip sequence 0 when fromCursor is negative zero', async () => {
+  it('rejects negative zero instead of treating it as sequence zero', async () => {
     const backend = createInMemoryEventBackend();
     for (let seq = 0; seq < 3; seq += 1) {
       await backend.append(makeEnvelope({ sequence: seq }));
     }
     const feed = createWorkflowEventFeed(backend);
-    const received: number[] = [];
-    for await (const envelope of feed.replay({
-      workflowId: 'wf-1',
-      selector: 'events',
-      fromCursor: '-0',
-    })) {
-      received.push(envelope.sequence);
-    }
-    expect(received).toEqual([0, 1, 2]);
+
+    await expect(
+      (async () => {
+        for await (const _envelope of feed.replay({
+          workflowId: 'wf-1',
+          selector: 'events',
+          fromCursor: '-0',
+        })) {
+          // The assertion is the thrown cursor validation before any replay value is yielded.
+        }
+      })(),
+    ).rejects.toThrow('Invalid cursor');
   });
 });
 
@@ -491,7 +498,7 @@ describe('WorkflowEventFeed — subscribe (live + replay)', () => {
     const signal = {
       get aborted() {
         abortChecks += 1;
-        return abortChecks >= 3;
+        return abortChecks >= 4;
       },
       addEventListener() {},
       removeEventListener() {},
@@ -506,6 +513,31 @@ describe('WorkflowEventFeed — subscribe (live + replay)', () => {
 
     const result = await iterator.next();
     expect(result.done).toBe(true);
+  });
+
+  it('uses the default replay-window error when no custom factory is provided', async () => {
+    const backend = createInMemoryEventBackend();
+    await backend.append(makeEnvelope({ sequence: 0 }));
+    await backend.append(makeEnvelope({ sequence: 1 }));
+    const feed = createWorkflowEventFeed(backend);
+
+    const consume = async () => {
+      for await (const _envelope of feed.subscribe({
+        workflowId: 'wf-1',
+        selector: 'events',
+        replayLimit: 1,
+      })) {
+        // The second replayed envelope exceeds the cap before yielding.
+      }
+    };
+
+    await expect(consume()).rejects.toThrow(ReplayWindowExceededError);
+    await expect(consume()).rejects.toMatchObject({
+      name: 'ReplayWindowExceededError',
+      count: 2,
+      limit: 1,
+      message: 'Replay window is 2 events; maximum is 1.',
+    });
   });
 });
 
