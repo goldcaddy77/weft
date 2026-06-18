@@ -299,6 +299,17 @@ export interface EngineOptions<TServices = unknown> {
   checkpointHistory?: number;
   checkpointSizeWarningThreshold?: number;
   maxNestingDepth?: number;
+  /**
+   * Poll interval in milliseconds for the durable-timer scheduler, which scans
+   * for expired deadlines, delayed starts, and scheduled occurrences once per
+   * interval. Defaults to {@link DEFAULT_POLL_INTERVAL_MS} (1000ms). Must be a
+   * positive safe integer when provided; it drives a live `setInterval`, so an
+   * invalid value is rejected at construction rather than coerced. Primarily
+   * useful for tests that need a fast (real-time, not deterministic) poll cycle —
+   * for example to assert {@link EngineCreateOptions.startScheduler} arms the
+   * poller without waiting a full real poll cycle.
+   */
+  schedulerPollIntervalMs?: number;
   /** Enable BroadcastChannel for cross-worker event coordination. Default: false. */
   broadcastEvents?: boolean;
   /**

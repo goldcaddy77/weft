@@ -551,6 +551,50 @@ describe('Engine', () => {
     }
   });
 
+  it('Engine.create forwards schedulerPollIntervalMs to the durable-timer poller', async () => {
+    // schedulerPollIntervalMs lets a host (or test) shorten the real-time poll
+    // cycle. We prove the value reaches the Scheduler's setInterval by parking a
+    // run on a short durable ctx.sleep and asserting it completes well within a
+    // window the default 1000ms poll could not meet. The poll loop is a real
+    // setInterval (not a macrotask), so the assertion is event-driven — it awaits
+    // handle.result() bounded by a failure-guard timeout, not a fixed sleep.
+    const sleepingWorkflow = workflow({ name: 'short-sleep' }).execute(async function* (
+      ctx: WorkflowContext,
+    ) {
+      yield* ctx.sleep('5ms');
+      return 'awake';
+    });
+
+    const engine = await Engine.create({
+      recover: false,
+      startScheduler: true,
+      schedulerPollIntervalMs: 10,
+      workflows: { 'short-sleep': sleepingWorkflow },
+    });
+    try {
+      const handle = await engine.start('short-sleep', null);
+      const result = await withTimeout(
+        handle.result(),
+        500,
+        'short-sleep run should complete once the fast poller fires its timer',
+      );
+      expect(result).toBe('awake');
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it.each([0, -10, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    'Engine.create rejects a non-positive-safe-integer schedulerPollIntervalMs (%p)',
+    async (badInterval) => {
+      // The value drives a live setInterval poll loop, so an invalid interval is
+      // rejected at construction rather than silently coerced into a hot loop.
+      await expect(
+        Engine.create({ recover: false, schedulerPollIntervalMs: badInterval }),
+      ).rejects.toThrow('options.schedulerPollIntervalMs must be a positive safe integer');
+    },
+  );
+
   it('register(workflow) registers a workflow', async () => {
     const engine = new Engine();
     const handler = async function* (_ctx: WorkflowContext, input: unknown) {
