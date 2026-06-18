@@ -122,6 +122,39 @@ describe('buildPreflightResponse', () => {
     expect(response.headers.get('Cache-Control')).toBe('no-store');
   });
 
+  it('allows SSE reconnect headers under the default allowed headers', () => {
+    const defaultHeaderPolicy = resolveCorsPolicy({
+      allowedOrigins: ['https://app.example.com'],
+    });
+
+    const response = buildPreflightResponse(
+      defaultHeaderPolicy,
+      preflight({
+        origin: 'https://app.example.com',
+        'access-control-request-method': 'GET',
+        'access-control-request-headers': 'last-event-id, cache-control',
+      }),
+    );
+
+    expect(response.headers.get('Access-Control-Allow-Headers')).toContain('Last-Event-ID');
+    expect(response.headers.get('Access-Control-Allow-Headers')).toContain('Cache-Control');
+  });
+
+  it('allows preflight requests without requested headers', () => {
+    const response = buildPreflightResponse(
+      policy,
+      preflight({
+        origin: 'https://app.example.com',
+        'access-control-request-method': 'GET',
+      }),
+    );
+
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://app.example.com');
+    expect(response.headers.get('Access-Control-Allow-Headers')).toBe(
+      'Authorization, Content-Type',
+    );
+  });
+
   it('omits CORS headers for a disallowed origin', () => {
     const response = buildPreflightResponse(
       policy,

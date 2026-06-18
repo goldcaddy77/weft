@@ -12,10 +12,10 @@
 
 import type { Engine } from '../../core/engine.ts';
 import { MalformedRouteParameterError } from '../rest-binding.ts';
+import { authContextToPrincipal } from './auth-context-principal.ts';
 import { matchRestBinding } from './binding-dispatch.ts';
 import { errorResponse } from './response-helpers.ts';
 import {
-  authContextToPrincipal,
   defaultOperationRegistry,
   defaultRestBindings,
   DIRECT_ROUTE_EXECUTORS,
@@ -23,27 +23,24 @@ import {
   type HandlerOptions,
 } from './route-dispatch.ts';
 import { matchDirectRoute } from './route-matching.ts';
+import type { LiveEventStreamContext } from './sse-route-dispatch.ts';
 
-export {
-  authContextToPrincipal,
-  isOperationFaultLike,
-  type HandlerOptions,
-} from './route-dispatch.ts';
+export { authContextToPrincipal } from './auth-context-principal.ts';
+export { isOperationFaultLike, type HandlerOptions } from './route-dispatch.ts';
 export { extractRouteParameters, getRequiredRouteParameter } from './route-matching.ts';
 
 type RouteLookup<T> = { kind: 'matched'; value: T } | { kind: 'malformed'; response: Response };
-
-function routeParameterErrorResponse(error: unknown): Response | null {
-  if (error instanceof MalformedRouteParameterError) return errorResponse(error.message, 400);
-  return null;
-}
 
 function matchRouteBoundary<T>(matcher: () => T): RouteLookup<T> {
   try {
     return { kind: 'matched', value: matcher() };
   } catch (error) {
-    const response = routeParameterErrorResponse(error);
-    if (response !== null) return { kind: 'malformed', response };
+    // Only malformed route parameters are a client error (400). Any other
+    // throw is an unexpected bug in route matching; re-throw it so the caller
+    // logs it and returns 500 instead of silently masking it as a 400.
+    if (error instanceof MalformedRouteParameterError) {
+      return { kind: 'malformed', response: errorResponse(error.message, 400) };
+    }
     throw error;
   }
 }
@@ -56,6 +53,19 @@ function validateHandlerOptions(options: HandlerOptions | undefined): Response |
     '`restBindings` and `operationRegistry` must be supplied together (or both omitted).',
     500,
   );
+}
+
+function liveEventStreamContextFromOptions(
+  options: HandlerOptions | undefined,
+): LiveEventStreamContext {
+  const context: LiveEventStreamContext = {};
+  if (options?.workflowEventFeed !== undefined)
+    context.workflowEventFeed = options.workflowEventFeed;
+  if (options?.fleetEventFeed !== undefined) context.fleetEventFeed = options.fleetEventFeed;
+  if (options?.acquireWorkflowStreamConnection !== undefined) {
+    context.acquireWorkflowStreamConnection = options.acquireWorkflowStreamConnection;
+  }
+  return context;
 }
 
 async function dispatchRestBinding(
@@ -77,6 +87,8 @@ async function dispatchRestBinding(
       principal,
       options?.pipelineTrace,
       options?.maxRequestBodyBytes,
+      options?.supportedAuthenticationSchemes,
+      liveEventStreamContextFromOptions(options),
     );
   } catch (error) {
     console.error('Unhandled error in dispatchViaExecuteOperation', {
@@ -100,6 +112,63 @@ async function dispatchDirectRoute(
     return await executor({ request, engine, options });
   } catch (error) {
     console.error('Unhandled error in handleRequest', {
+      method: request.method,
+      path: url.pathname,
+      error,
+    });
+    return errorResponse('Internal server error', 500);
+  }
+}
+
+async function dispatchMatchedRoute(
+  request: Request,
+  engine: Engine,
+  options: HandlerOptions | undefined,
+  url: URL,
+): Promise<Response> {
+  const directRouteLookup = matchRouteBoundary(() =>
+    matchDirectRoute(request.method, url.pathname),
+  );
+  if (directRouteLookup.kind === 'malformed') return directRouteLookup.response;
+
+  if (directRouteLookup.value !== null) {
+    return dispatchDirectRoute(request, engine, directRouteLookup.value, options, url);
+  }
+
+  const restBindings = options?.restBindings ?? defaultRestBindings();
+  const operationRegistry = options?.operationRegistry ?? defaultOperationRegistry();
+  const bindingLookup = matchRouteBoundary(() =>
+    matchRestBinding(request.method, url.pathname, restBindings),
+  );
+  if (bindingLookup.kind === 'malformed') return bindingLookup.response;
+
+  if (bindingLookup.value !== null) {
+    return dispatchRestBinding(
+      request,
+      engine,
+      bindingLookup.value,
+      operationRegistry,
+      options,
+      url,
+    );
+  }
+
+  return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);
+}
+
+async function dispatchMatchedRouteBoundary(
+  request: Request,
+  engine: Engine,
+  options: HandlerOptions | undefined,
+  url: URL,
+): Promise<Response> {
+  try {
+    return await dispatchMatchedRoute(request, engine, options, url);
+  } catch (error) {
+    // Unexpected route-matching failure (not a MalformedRouteParameterError,
+    // which `matchRouteBoundary` already turns into a 400). Surface it as a
+    // logged 500 rather than letting it escape uncaught.
+    console.error('Unhandled error in handleRequest route matching', {
       method: request.method,
       path: url.pathname,
       error,
@@ -133,32 +202,5 @@ export async function handleRequest(
   const optionError = validateHandlerOptions(options);
   if (optionError !== null) return optionError;
 
-  const directRouteLookup = matchRouteBoundary(() =>
-    matchDirectRoute(request.method, url.pathname),
-  );
-  if (directRouteLookup.kind === 'malformed') return directRouteLookup.response;
-
-  if (directRouteLookup.value !== null) {
-    return dispatchDirectRoute(request, engine, directRouteLookup.value, options, url);
-  }
-
-  const restBindings = options?.restBindings ?? defaultRestBindings();
-  const operationRegistry = options?.operationRegistry ?? defaultOperationRegistry();
-  const bindingLookup = matchRouteBoundary(() =>
-    matchRestBinding(request.method, url.pathname, restBindings),
-  );
-  if (bindingLookup.kind === 'malformed') return bindingLookup.response;
-
-  if (bindingLookup.value !== null) {
-    return dispatchRestBinding(
-      request,
-      engine,
-      bindingLookup.value,
-      operationRegistry,
-      options,
-      url,
-    );
-  }
-
-  return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);
+  return dispatchMatchedRouteBoundary(request, engine, options, url);
 }
