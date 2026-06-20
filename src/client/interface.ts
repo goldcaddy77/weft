@@ -38,6 +38,7 @@ import type {
   SignalDefinition,
   SignalDeliveryOptions,
   StartOptions,
+  StartOrSignalOptions,
   StartOrSignalSignal,
   SubmitReviewOptions,
   TypedListFilter,
@@ -75,9 +76,20 @@ export type ClientStartOptions = Omit<StartOptions, 'defer' | 'services'> & {
   readonly services?: never;
 };
 
-// ---------------------------------------------------------------------------
-// Client handle — lightweight reference to a running workflow
-// ---------------------------------------------------------------------------
+/**
+ * Remote-capable start-or-signal options, including terminal restart policy.
+ * @example
+ * ```ts
+ * import type { ClientStartOrSignalOptions } from '@lostgradient/weft/client';
+ * const options: ClientStartOrSignalOptions = {
+ *   id: 'github:installations:42:sync',
+ *   onTerminalConflict: 'start-new',
+ * };
+ * void options;
+ * ```
+ */
+export type ClientStartOrSignalOptions = ClientStartOptions &
+  Pick<StartOrSignalOptions, 'onTerminalConflict'>;
 
 /**
  * Which atomic path a {@link WeftClient.startOrSignal} call took, returned
@@ -353,7 +365,9 @@ export interface WeftClient {
    * Atomically start a workflow or signal it if it already exists
    * (signal-with-start). An absent target is created and delivered the signal in
    * one batch; a non-terminal target (running, pending, or suspended) is
-   * signalled; a terminal target is rejected as a conflict.
+   * signalled; a terminal target is rejected as a conflict unless
+   * `options.onTerminalConflict: 'start-new'` is supplied with an explicit
+   * workflow id and deterministic `signal.signalId`.
    *
    * The rejection shape is transport-dependent: `LocalClient` throws the typed
    * `StartOrSignalConflictError` (and `IdempotencyKeyPurgedError` for a spent
@@ -369,19 +383,20 @@ export interface WeftClient {
    * atomic start-with-one-signal that does NOT converge concurrent callers (each
    * gets its own run). Supply exactly one of `signal.signalId` or
    * `options.idempotencyKey`; `options.id` and `options.idempotencyKey` are
-   * mutually exclusive.
+   * mutually exclusive. `options.onTerminalConflict: 'start-new'` is also
+   * mutually exclusive with `options.idempotencyKey`.
    */
   startOrSignal<TName extends KnownWorkflowName>(
     type: TName,
     input: WorkflowInput<WorkflowRegistry, TName>,
     signal: StartOrSignalSignal,
-    options?: ClientStartOptions,
+    options?: ClientStartOrSignalOptions,
   ): Promise<ClientHandle<WorkflowOutput<WorkflowRegistry, TName>>>;
   startOrSignal<TName extends string>(
     type: UnknownNameWhenRegistryEmpty<TName>,
     input: unknown,
     signal: StartOrSignalSignal,
-    options?: ClientStartOptions,
+    options?: ClientStartOrSignalOptions,
   ): Promise<ClientHandle>;
 
   /**

@@ -29,12 +29,9 @@ import type { WorkflowLogRecord } from './workflow-log.ts';
  * via filters. `id` and `idempotencyKey` are mutually exclusive — idempotency
  * assigns its own generated id and dedups through the key.
  *
- * This is the shared base accepted by every start-like surface
- * (`engine.start`, `engine.startOrSignal`, and the clients). `engine.start`
- * specifically accepts the wider {@link StartWorkflowOptions}, which adds
- * `onTerminalConflict`; that policy is intentionally absent here so it cannot be
- * passed to `startOrSignal` (whose at-most-once identity is the permanent
- * idempotency mapping).
+ * This is the shared base accepted by every start-like surface. `engine.start`
+ * specifically accepts the wider {@link StartWorkflowOptions}, while
+ * `engine.startOrSignal` accepts {@link StartOrSignalOptions}.
  *
  * The `idempotencyKey` mapping is durable and permanent: it survives the run
  * reaching a terminal state, so repeat calls keep returning the same handle. When
@@ -107,12 +104,12 @@ export interface StartOptions<TServices = unknown> {
  * Options accepted by `engine.start(type, input, options?)` — the shared
  * {@link StartOptions} plus the start-only `onTerminalConflict` policy.
  *
- * `onTerminalConflict` lives here, not on {@link StartOptions}, so it is
- * structurally rejected on every other start-like surface: `engine.startOrSignal`
- * (whose identity is the permanent at-most-once idempotency mapping),
- * `ctx.startChild` (which re-attaches to an existing run by id on replay), and the
- * REST/JSON-RPC transport (which keeps `weft.workflows.start` honestly
- * `destructive: false`). It is therefore an in-process `engine.start`-only policy.
+ * `onTerminalConflict` lives here, not on {@link StartOptions}, so
+ * `weft.workflows.start` stays non-restart-capable over REST/JSON-RPC and keeps
+ * its `destructive: false` operation contract. `ctx.startChild` also rejects the
+ * policy because it re-attaches to an existing run by id on replay. The
+ * signal-with-start surface accepts its own narrower
+ * {@link StartOrSignalOptions.onTerminalConflict} policy.
  */
 export interface StartWorkflowOptions<TServices = unknown> extends StartOptions<TServices> {
   /**
@@ -141,6 +138,47 @@ export interface StartWorkflowOptions<TServices = unknown> extends StartOptions<
    * are id-scoped, not run-attempt-scoped. The restart holds the same in-process
    * start reservation as a normal start, so two concurrent `'start-new'` calls for
    * one id cannot both win — the loser sees {@link WorkflowAlreadyExistsError}.
+   */
+  onTerminalConflict?: 'error' | 'start-new';
+}
+
+/**
+ * Options accepted by `engine.startOrSignal(type, input, signal, options?)` —
+ * the shared {@link StartOptions} plus the restart-capable
+ * `onTerminalConflict` policy for terminal stable ids.
+ *
+ * `onTerminalConflict: 'start-new'` is intentionally narrower here than on
+ * `engine.start`: it requires an explicit `id`, requires `signal.signalId`, and
+ * remains mutually exclusive with `idempotencyKey`. That preserves permanent
+ * start-idempotency mappings while giving callers with a deterministic stable id
+ * and deterministic signal id a single signal-with-start API for re-sync style
+ * workflows.
+ *
+ * @example
+ * ```ts
+ * import type { StartOrSignalOptions } from '@lostgradient/weft';
+ *
+ * const options: StartOrSignalOptions = {
+ *   id: 'github:installations:42:sync',
+ *   onTerminalConflict: 'start-new',
+ * };
+ * void options;
+ * ```
+ */
+export interface StartOrSignalOptions<TServices = unknown> extends StartOptions<TServices> {
+  /**
+   * What `engine.startOrSignal()` does when the supplied `id` already belongs to
+   * a terminal run.
+   *
+   * - `'error'` (default): preserve the existing contract — a terminal target
+   *   throws {@link StartOrSignalConflictError}.
+   * - `'start-new'`: if the prior run is terminal, purge it through the same
+   *   terminal-replacement path as `engine.start(..., { onTerminalConflict:
+   *   'start-new' })`, then start a fresh run and deliver the initial signal in
+   *   the create batch. Non-terminal targets are still signalled, not replaced.
+   *
+   * Requires `options.id` and `signal.signalId`. Mutually exclusive with
+   * `options.idempotencyKey`.
    */
   onTerminalConflict?: 'error' | 'start-new';
 }
