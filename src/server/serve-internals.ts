@@ -51,6 +51,28 @@ const RECONCILIATION_MULTIPLIER = 12;
 
 const DEFAULT_WORKER_RECONNECT_GRACE_PERIOD_MS = 2_000;
 const MAX_WORKER_RECONNECT_GRACE_PERIOD_MS = 5_000;
+
+/**
+ * Hard ceiling on the raw WebSocket frame size for every connection (worker
+ * stream, `/watch`, token `/stream`, and JSON-RPC). Bun's default is 16 MiB;
+ * this caps the frame at the transport layer before any JSON parse, so a
+ * malicious peer cannot force a 16 MiB parse per message. A bounded 4 MiB parse
+ * is not a CPU-burn, so this constant ceiling fully closes the DoS on its own.
+ *
+ * This is deliberately NOT derived from `payloadSize.maxBytes`. That option is
+ * an application-level admission policy measured on the codec-encoded (msgpack)
+ * byte length of the bare value, whereas `maxPayloadLength` bounds the raw
+ * UTF-8 JSON frame (envelope plus JSON-serialized value) — different units.
+ * Tightening the frame limit down to a smaller `payloadSize.maxBytes` would
+ * reject legitimate frames whose value is within the admission cap (JSON and
+ * envelope overhead inflate the frame past the msgpack value size) with an
+ * opaque transport close instead of a clean `PayloadSizeExceededError`, across
+ * every shared WebSocket endpoint — for no additional DoS protection. Value
+ * size stays enforced by the post-parse admission check.
+ *
+ * @internal Exported only for test assertions.
+ */
+export const WEBSOCKET_MAX_PAYLOAD_BYTES = 4 * 1024 * 1024; // 4 MiB
 const AUTHENTICATION_REQUIRED_ENVIRONMENT_VARIABLE = 'WEFT_SERVER_AUTHENTICATION_REQUIRED';
 /**
  * @internal
@@ -282,6 +304,13 @@ export function cleanupWorkflowIndex(context: ServerContext, operationId: string
 /**
  * Assembles the `Bun.serve()` options object. Separating this avoids a
  * conditional spread (`...(tlsOptions ? { tls } : {})`) inside `serve()`.
+ *
+ * Sets a constant `maxPayloadLength` of `WEBSOCKET_MAX_PAYLOAD_BYTES` (4 MiB)
+ * so Bun rejects oversized frames at the transport layer before any JSON parse
+ * occurs. The cap is intentionally a fixed transport-safety ceiling, not
+ * derived from `payloadSize.maxBytes` (see that constant's docs for why mixing
+ * the raw-frame limit with the application value-size policy would cause false
+ * rejections in the wrong unit).
  */
 export function buildBunServeConfig(
   port: number,
@@ -298,7 +327,7 @@ export function buildBunServeConfig(
     development,
     routes,
     fetch: fetchHandler,
-    websocket: websocketCallbacks,
+    websocket: { ...websocketCallbacks, maxPayloadLength: WEBSOCKET_MAX_PAYLOAD_BYTES },
   };
   if (tlsOptions) {
     config.tls = tlsOptions;

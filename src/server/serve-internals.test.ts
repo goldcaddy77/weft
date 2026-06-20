@@ -13,6 +13,7 @@ import {
   registerStackDisposers,
   resolveNetworkConfig,
   restoreInflightTasks,
+  WEBSOCKET_MAX_PAYLOAD_BYTES,
 } from './serve-internals.ts';
 import { transitionQueuedToInflight } from './task-state.ts';
 
@@ -238,6 +239,7 @@ describe('registerStackDisposers', () => {
       websocketCallbacks,
     );
     expect(baseConfig.tls).toBeUndefined();
+    expect(baseConfig.websocket!.maxPayloadLength).toBe(WEBSOCKET_MAX_PAYLOAD_BYTES);
 
     const tlsOptions = { key: 'key', cert: 'cert' } as unknown as ReturnType<
       typeof resolveNetworkConfig
@@ -252,6 +254,33 @@ describe('registerStackDisposers', () => {
       websocketCallbacks,
     );
     expect(tlsConfig.tls).toBe(tlsOptions);
+  });
+
+  describe('buildBunServeConfig websocket frame size', () => {
+    const websocketCallbacks: Parameters<typeof buildBunServeConfig>[6] = {
+      open() {},
+      message() {},
+      close() {},
+    };
+
+    it('sets maxPayloadLength to the constant 4 MiB transport ceiling', () => {
+      // The frame cap is a fixed transport-safety ceiling, independent of
+      // `payloadSize.maxBytes` (which is an application value-size policy in a
+      // different unit). A bounded 4 MiB parse is not a CPU-burn, so the
+      // constant ceiling closes the DoS without risking false rejections of
+      // legitimate frames whose value is within the admission cap.
+      const config = buildBunServeConfig(
+        7233,
+        '127.0.0.1',
+        false,
+        {},
+        undefined,
+        async () => new Response('ok'),
+        websocketCallbacks,
+      );
+      expect(config.websocket!.maxPayloadLength).toBe(WEBSOCKET_MAX_PAYLOAD_BYTES);
+      expect(config.websocket!.maxPayloadLength).toBe(4 * 1024 * 1024);
+    });
   });
 
   it('disposes the task queue from the timer-cleanup disposer', () => {
