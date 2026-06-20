@@ -4619,36 +4619,53 @@ describe('task assignment deduplication', () => {
     expect(server.registry.getWorker('w-missing-op-id')).toBeUndefined();
   });
 
-  it('ignores stale socket close events after a worker reconnects', async () => {
+  it('rejects a duplicate workerId registration while the first socket is still live', async () => {
+    // Security fix for #609: a new socket that claims an already-active workerId
+    // must receive a registerError and be closed. The original socket must remain
+    // the owner in the registry.
     engine = createEngine();
-    // Disable the reconnect grace period so the stale-socket guard is the
-    // only path that could ignore the close event (the assertion this test
-    // pins). With a non-zero grace period, the timer might fire after the
-    // 100ms test wait and produce a different observable.
     server = serveTestServer({ engine, port: 0, workerReconnectGracePeriodMs: 0 });
-    const warningSpy = spyOn(console, 'warn').mockImplementation(() => {});
 
-    try {
-      const ws1 = await connectWorker(server);
-      await registerWorker(ws1, { workerId: 'reconnecting-worker', activities: ['charge'] });
+    const ws1 = await connectWorker(server);
+    await registerWorker(ws1, { workerId: 'reconnecting-worker', activities: ['charge'] });
 
-      const ws2 = await connectWorker(server);
-      await registerWorker(ws2, { workerId: 'reconnecting-worker', activities: ['charge'] });
+    // ws2 tries to claim the same workerId while ws1 is still alive.
+    const ws2 = await connectWorker(server);
+    const registerError = waitForWorkerMessage(
+      ws2,
+      (message) => message['type'] === 'registerError',
+      'registerError for duplicate workerId',
+    );
+    ws2.send(
+      JSON.stringify({
+        type: 'register',
+        protocolVersion: 2,
+        workerId: 'reconnecting-worker',
+        activities: ['charge'],
+        concurrency: 10,
+      }),
+    );
 
-      ws1.close();
-      await waitFor(() => warningSpy.mock.calls.length > 0, {
-        label: 'stale socket close warning to be logged',
-      });
+    const error = await registerError;
+    expect(error['type']).toBe('registerError');
+    expect(error['code']).toBe('invalid_registration');
 
-      expect(server.registry.getWorker('reconnecting-worker')).toBeDefined();
-      expect(warningSpy).toHaveBeenCalled();
+    // ws1 must still own the workerId.
+    expect(server.registry.getWorker('reconnecting-worker')).toBeDefined();
 
-      ws2.close();
-      await waitForRealTimersForTesting(50);
-    } finally {
-      warningSpy.mockRestore();
-    }
+    ws1.close();
+    await waitForRealTimersForTesting(50);
   });
+
+  // NOTE: The grace-period reconnect bypass is covered deterministically by the
+  // characterization unit test "allows reconnect within the grace period for the
+  // same workerId" in websocket-worker.characterization.test.ts, which seeds the
+  // pending-requeue + stale-socket state directly. An end-to-end version here is
+  // intentionally omitted: the bypass only engages once the server has processed
+  // the first socket's close (which silently schedules the requeue with no public
+  // signal), so an integration test cannot deterministically wait for that state
+  // before reconnecting — reconnecting too early hits the documented reconnect-
+  // before-close race and the assertion flakes under CI load. See #615 review.
 
   it('allows re-dispatch of an operationId after completion', async () => {
     engine = createEngine();

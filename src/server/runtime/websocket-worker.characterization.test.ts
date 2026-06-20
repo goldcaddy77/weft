@@ -521,4 +521,178 @@ describe('handleWorkerWebSocketMessage', () => {
       expect(ws.sentMessages).toHaveLength(0);
     });
   });
+
+  describe('duplicate workerId registration', () => {
+    it('rejects a second register message for a workerId already mapped to a live socket', () => {
+      // Security regression: an unauthenticated or malicious client that knows an
+      // active workerId must not be able to displace the legitimate socket.
+      const context = minimalServerContext();
+      const options = minimalServeOptions();
+
+      // First socket — the legitimate worker.
+      const ws1 = createFakeWs();
+      handleWorkerWebSocketMessage(
+        context,
+        options,
+        ws1 as never,
+        JSON.stringify({
+          type: 'register',
+          protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
+          workerId: 'w-live',
+          activities: ['doWork'],
+          concurrency: 2,
+        }),
+        NOOP_CLEANUP,
+      );
+      expect(ws1.sentMessages).toHaveLength(1);
+      expect(JSON.parse(ws1.sentMessages[0]!).type).toBe('registerAck');
+      // `workerSockets` is typed against the real `ServerWebSocket`; the stored
+      // value is our `FakeWs` (passed in as `never`), so widen to `unknown` to
+      // assert reference identity without a `ServerWebSocket` overlap mismatch.
+      expect(context.workerSockets.get('w-live') as unknown).toBe(ws1);
+
+      // Second (attacker) socket — attempts to claim the same workerId.
+      const ws2 = createFakeWs();
+      handleWorkerWebSocketMessage(
+        context,
+        options,
+        ws2 as never,
+        JSON.stringify({
+          type: 'register',
+          protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
+          workerId: 'w-live',
+          activities: ['doWork'],
+          concurrency: 2,
+        }),
+        NOOP_CLEANUP,
+      );
+
+      // Attacker must receive registerError with code 'invalid_registration'.
+      expect(ws2.sentMessages).toHaveLength(1);
+      const rejection = JSON.parse(ws2.sentMessages[0]!);
+      expect(rejection.type).toBe('registerError');
+      expect(rejection.code).toBe('invalid_registration');
+      // Attacker socket must be closed.
+      expect(ws2.closeCode).toBeDefined();
+      // Original socket must remain the owner in the map.
+      expect(context.workerSockets.get('w-live') as unknown).toBe(ws1);
+    });
+
+    it('allows the same socket to re-register the same workerId (metadata refresh)', () => {
+      // The hijacking guard keys on socket IDENTITY, not mere presence: a second
+      // register on the SAME connection (e.g. to refresh its activity list or
+      // concurrency) is a legitimate refresh, not a takeover, and must be
+      // accepted. `WorkerRegistry.register` is built to refresh an existing id.
+      const context = minimalServerContext();
+      const options = minimalServeOptions();
+
+      const ws = createFakeWs();
+      const register = (activities: string[], concurrency: number) =>
+        handleWorkerWebSocketMessage(
+          context,
+          options,
+          ws as never,
+          JSON.stringify({
+            type: 'register',
+            protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
+            workerId: 'w-refresh',
+            activities,
+            concurrency,
+          }),
+          NOOP_CLEANUP,
+        );
+
+      register(['doWork'], 2);
+      expect(JSON.parse(ws.sentMessages[0]!).type).toBe('registerAck');
+
+      // Same socket re-registers with updated metadata — must be accepted, not
+      // rejected as a duplicate.
+      register(['doWork', 'doMore'], 5);
+      expect(ws.sentMessages).toHaveLength(2);
+      const second = JSON.parse(ws.sentMessages[1]!);
+      expect(second.type).toBe('registerAck');
+      expect(second.activities).toEqual(['doWork', 'doMore']);
+      expect(second.concurrency).toBe(5);
+      // No rejection, socket stays open and owns the id.
+      expect(ws.closeCode).toBeUndefined();
+      expect(context.workerSockets.get('w-refresh') as unknown).toBe(ws);
+      expect(context.registry.getWorker('w-refresh')?.concurrency).toBe(5);
+    });
+
+    it('allows reconnect within the grace period for the same workerId (clears pendingWorkerRequeues entry)', () => {
+      // A worker that disconnects and reconnects before its grace-period timer fires
+      // must still be accepted: the pending-requeue entry sets isGracePeriodReconnect,
+      // which bypasses the duplicate-active rejection.
+      const context = minimalServerContext();
+      const options = minimalServeOptions();
+
+      // Faithfully model the real close-handler state: the OLD socket is still in
+      // `workerSockets` (it is not removed until the grace timer fires or the new
+      // socket overwrites it), AND a pending requeue entry exists. With a stale
+      // entry present, the duplicate-active guard's `existingSocket !== ws` branch
+      // is true — so the ONLY thing letting this registration through is the
+      // `isGracePeriodReconnect` bypass. (Without the stale entry the test would
+      // still pass even if the bypass were removed, so it would not pin it.)
+      const staleSocket = createFakeWs();
+      context.workerSockets.set('w-reconnect', staleSocket as never);
+      const timerHandle = setTimeout(() => {}, 60_000);
+      context.pendingWorkerRequeues.set('w-reconnect', timerHandle);
+
+      // Reconnecting socket registers under the same workerId.
+      const ws = createFakeWs();
+      handleWorkerWebSocketMessage(
+        context,
+        options,
+        ws as never,
+        JSON.stringify({
+          type: 'register',
+          protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
+          workerId: 'w-reconnect',
+          activities: ['doWork'],
+          concurrency: 4,
+        }),
+        NOOP_CLEANUP,
+      );
+
+      // Must succeed: registerAck sent (not a registerError), timer cleared, and
+      // the fresh socket has overwritten the stale entry in the map.
+      expect(ws.sentMessages).toHaveLength(1);
+      expect(JSON.parse(ws.sentMessages[0]!).type).toBe('registerAck');
+      expect(ws.closeCode).toBeUndefined();
+      expect(context.pendingWorkerRequeues.has('w-reconnect')).toBe(false);
+      expect(context.workerSockets.get('w-reconnect') as unknown).toBe(ws);
+
+      clearTimeout(timerHandle);
+    });
+
+    it('keeps the registry and workerSockets map in agreement after a successful registration', () => {
+      // The duplicate-active guard reads `workerSockets` as the liveness source;
+      // the close handler's stale-socket guard relies on the same map agreeing
+      // with the registry. Pin that both are populated together on a successful
+      // register so a future change cannot let them diverge (which would either
+      // bypass the guard or falsely reject a fresh worker).
+      const context = minimalServerContext();
+      const options = minimalServeOptions();
+
+      const ws = createFakeWs();
+      handleWorkerWebSocketMessage(
+        context,
+        options,
+        ws as never,
+        JSON.stringify({
+          type: 'register',
+          protocolVersion: REMOTE_WORKER_PROTOCOL_VERSION,
+          workerId: 'w-sync',
+          activities: ['doWork'],
+          concurrency: 2,
+        }),
+        NOOP_CLEANUP,
+      );
+
+      expect(JSON.parse(ws.sentMessages[0]!).type).toBe('registerAck');
+      expect(context.workerSockets.has('w-sync')).toBe(true);
+      expect(context.registry.getWorker('w-sync')).toBeDefined();
+      expect(context.workerSockets.get('w-sync') as unknown).toBe(ws);
+    });
+  });
 });
