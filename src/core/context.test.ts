@@ -47,6 +47,12 @@ function task() {
   return 'result';
 }
 
+function createSingleActivityBranch<TActivity extends (...arguments_: never[]) => unknown>(
+  activity: TActivity,
+): [TActivity] {
+  return [activity];
+}
+
 const handler = (payload: unknown) => payload;
 const accessor = () => 42;
 
@@ -665,6 +671,50 @@ describe('Context', () => {
 
       expect(() => generator.next()).toThrow(BranchTopologyChangedError);
     });
+
+    it('throws when a cached all entry changes variant across replay', () => {
+      const context = createContext({
+        accumulatedResults: new Map<number, unknown>([
+          [
+            0,
+            {
+              __weftParallelOperationCache: true,
+              formatVersion: 2,
+              variant: 'race',
+              branches: [{ status: 'fulfilled', value: 'winner', operationId: 'race:0:winner' }],
+              subOperationCount: 2,
+            },
+          ],
+        ]),
+      });
+
+      const generator = context.all([context.run(taskA), context.run(taskB)]);
+      expect(() => generator.next()).toThrow(BranchTopologyChangedError);
+    });
+
+    it('throws when cached all branch count changes on replay', () => {
+      const context = createContext({
+        accumulatedResults: new Map<number, unknown>([
+          [
+            0,
+            {
+              __weftParallelOperationCache: true,
+              formatVersion: 2,
+              variant: 'all',
+              branches: [
+                { status: 'fulfilled', value: 'cached-a', operationId: 'parallel:0:0' },
+                { status: 'fulfilled', value: 'cached-b', operationId: 'parallel:0:1' },
+              ],
+              subOperationCount: 2,
+            },
+          ],
+        ]),
+      });
+
+      const generator = context.all([context.run(taskA), context.run(taskB), context.run(task)]);
+
+      expect(() => generator.next()).toThrow(BranchTopologyChangedError);
+    });
   });
 
   describe('ctx.race', () => {
@@ -742,6 +792,29 @@ describe('Context', () => {
 
       const generator = context.race([context.run(taskA), context.run(taskB), context.run(task)]);
 
+      expect(() => generator.next()).toThrow(BranchTopologyChangedError);
+    });
+
+    it('throws when a cached race entry has the wrong variant', () => {
+      const context = createContext({
+        accumulatedResults: new Map<number, unknown>([
+          [
+            0,
+            {
+              __weftParallelOperationCache: true,
+              formatVersion: 2,
+              variant: 'all',
+              branches: [
+                { status: 'fulfilled', value: 'winner-a', operationId: 'parallel:0:0' },
+                { status: 'fulfilled', value: 'winner-b', operationId: 'parallel:0:1' },
+              ],
+              subOperationCount: 2,
+            },
+          ],
+        ]),
+      });
+
+      const generator = context.race([context.run(taskA), context.run(taskB)]);
       expect(() => generator.next()).toThrow(BranchTopologyChangedError);
     });
   });
@@ -1068,8 +1141,8 @@ describe('Context', () => {
     it('yields a run-all operation request with named branches', () => {
       const context = createContext();
       const branches = {
-        charge: [taskA, 'arg1'] as [Function, unknown],
-        notify: [taskB] as [Function],
+        charge: [greet, 'arg1'] satisfies [typeof greet, string],
+        notify: createSingleActivityBranch(taskB),
       };
 
       const generator = context.runAll(branches);
@@ -1088,13 +1161,102 @@ describe('Context', () => {
       const context = createContext({ accumulatedResults });
 
       const generator = context.runAll({
-        charge: [taskA] as [Function],
-        notify: [taskB] as [Function],
+        charge: createSingleActivityBranch(taskA),
+        notify: createSingleActivityBranch(taskB),
       });
       const result = generator.next();
 
       expect(result.done).toBe(true);
       expect(result.value as unknown).toBe(cached);
+    });
+
+    it('reconstructs a fully fulfilled cached runAll entry without yielding', () => {
+      const context = createContext({
+        accumulatedResults: new Map<number, unknown>([
+          [
+            0,
+            {
+              __weftParallelOperationCache: true,
+              formatVersion: 2,
+              variant: 'run-all',
+              branchNames: ['charge', 'notify'],
+              branches: [
+                { status: 'fulfilled', value: 'paid', operationId: 'run-all:0:0' },
+                { status: 'fulfilled', value: 'sent', operationId: 'run-all:0:1' },
+              ],
+              subOperationCount: 2,
+            },
+          ],
+        ]),
+      });
+
+      const generator = context.runAll({
+        charge: createSingleActivityBranch(taskA),
+        notify: createSingleActivityBranch(taskB),
+      });
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value).toEqual({ charge: 'paid', notify: 'sent' });
+    });
+
+    it('throws when a cached runAll entry changes variant across replay', () => {
+      const context = createContext({
+        accumulatedResults: new Map<number, unknown>([
+          [
+            0,
+            {
+              __weftParallelOperationCache: true,
+              formatVersion: 2,
+              variant: 'all',
+              branches: [
+                { status: 'fulfilled', value: 'paid', operationId: 'parallel:0:0' },
+                { status: 'fulfilled', value: 'sent', operationId: 'parallel:0:1' },
+              ],
+              subOperationCount: 2,
+            },
+          ],
+        ]),
+      });
+
+      const generator = context.runAll({
+        charge: createSingleActivityBranch(taskA),
+        notify: createSingleActivityBranch(taskB),
+      });
+
+      expect(() => generator.next()).toThrow(BranchTopologyChangedError);
+    });
+
+    it('re-yields a partial cached runAll entry for the engine to resume', () => {
+      const context = createContext({
+        accumulatedResults: new Map<number, unknown>([
+          [
+            0,
+            {
+              __weftParallelOperationCache: true,
+              formatVersion: 2,
+              variant: 'run-all',
+              branchNames: ['charge', 'notify'],
+              branches: [
+                { status: 'fulfilled', value: 'paid', operationId: 'run-all:0:0' },
+                { status: 'pending', operationId: 'run-all:0:1' },
+              ],
+              subOperationCount: 2,
+            },
+          ],
+        ]),
+      });
+
+      const generator = context.runAll({
+        charge: createSingleActivityBranch(taskA),
+        notify: createSingleActivityBranch(taskB),
+      });
+      const request = expectRequest(generator.next(), 'run-all');
+
+      expect(request.resumedCacheEntry).toMatchObject({
+        variant: 'run-all',
+        branchNames: ['charge', 'notify'],
+      });
     });
   });
 
@@ -1177,8 +1339,8 @@ describe('Context', () => {
     it('returns the fed-back result', () => {
       const context = createContext();
       const branches = {
-        charge: [taskA] as [Function],
-        notify: [taskB] as [Function],
+        charge: createSingleActivityBranch(taskA),
+        notify: createSingleActivityBranch(taskB),
       };
 
       const generator = context.runAll(branches);
@@ -1461,8 +1623,8 @@ describe('Context', () => {
       context.explain(true);
 
       const branches = {
-        fetch: [taskA] as [Function],
-        compute: [taskB] as [Function],
+        fetch: createSingleActivityBranch(taskA),
+        compute: createSingleActivityBranch(taskB),
       };
       const generator = context.runAll(branches);
       generator.next();
@@ -1601,8 +1763,8 @@ describe('Context', () => {
     it('ctx.runAll yields a request with callerStack', () => {
       const context = createContext();
       const branches = {
-        a: [taskA] as [Function],
-        b: [taskB] as [Function],
+        a: createSingleActivityBranch(taskA),
+        b: createSingleActivityBranch(taskB),
       };
       const generator = context.runAll(branches);
       const request = expectRequest(generator.next(), 'run-all');
