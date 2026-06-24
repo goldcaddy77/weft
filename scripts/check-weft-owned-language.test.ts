@@ -24,6 +24,7 @@ const disallowedTerms = [
 const allowedHistoricalChangelogToken = ['`', 'Agent', 'Bureau', 'ConversationHistory', '`'].join(
   '',
 );
+const allowedDownstreamReleaseRepositoryToken = ['agent', '-bureau'].join('');
 
 // Tracked text surfaces that can carry prose, identifiers, or configuration.
 // The list is built from the actual set of tracked file shapes in this repo
@@ -62,11 +63,14 @@ function contentForCheck(relativePath: string, content: string): string {
   if (relativePath === 'CHANGELOG.md') {
     return content.replaceAll(allowedHistoricalChangelogToken, '');
   }
+  if (relativePath === 'downstream-release-repositories.toml') {
+    return content.replaceAll(allowedDownstreamReleaseRepositoryToken, '');
+  }
   return content;
 }
 
 describe('Weft-owned language', () => {
-  it('does not name downstream projects outside the documented historical changelog export token', async () => {
+  it('does not name downstream projects outside documented allowlisted tokens', async () => {
     const matches: string[] = [];
 
     for (const relativePath of await trackedFiles()) {
