@@ -1,10 +1,39 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolveDefaultStorage } from './auto.ts';
+
+async function withActualGlobals(
+  overrides: Partial<Record<'browser' | 'chrome', unknown>>,
+  callback: () => Promise<void>,
+): Promise<void> {
+  const previousDescriptors = new Map<string, PropertyDescriptor | undefined>();
+  for (const key of ['browser', 'chrome'] as const) {
+    previousDescriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      writable: true,
+      value: overrides[key],
+    });
+  }
+
+  try {
+    await callback();
+  } finally {
+    for (const key of ['browser', 'chrome'] as const) {
+      const descriptor = previousDescriptors.get(key);
+      if (descriptor === undefined) {
+        Reflect.deleteProperty(globalThis, key);
+      } else {
+        Object.defineProperty(globalThis, key, descriptor);
+      }
+    }
+  }
+}
 
 describe('resolveDefaultStorage', () => {
   // All tests run inside an isolated temp directory and route the
@@ -67,5 +96,110 @@ describe('resolveDefaultStorage', () => {
     } finally {
       rmSync(temporaryDirectory, { recursive: true, force: true });
     }
+  });
+
+  it('selects the Node adapter when Bun is absent but process.versions.node is present', async () => {
+    const runtimeGlobals = { process };
+    const resolved = await resolveDefaultStorage(runtimeGlobals).catch((error) => error);
+    if (resolved instanceof Error) {
+      expect(resolved.message.length).toBeGreaterThan(0);
+      return;
+    }
+
+    expect(resolved.constructor.name).toBe('NodeSQLiteStorage');
+    resolved[Symbol.dispose]?.();
+  });
+
+  it('selects WebExtension and IndexedDB adapters from injected runtime globals', async () => {
+    const browserStorage = {
+      local: {
+        get: async () => ({}),
+        remove: async () => {},
+        set: async () => {},
+      },
+      onChanged: {
+        addListener: () => {},
+        removeListener: () => {},
+      },
+    };
+
+    await withActualGlobals(
+      {
+        browser: undefined,
+        chrome: undefined,
+      },
+      async () => {
+        await using webExtensionStorage = await resolveDefaultStorage({
+          browser: { storage: browserStorage },
+        });
+        expect(webExtensionStorage.constructor.name).toBe('WebExtensionStorage');
+        expect(Object.getOwnPropertyDescriptor(globalThis, 'browser')?.value).toBeUndefined();
+        expect(Object.getOwnPropertyDescriptor(globalThis, 'chrome')?.value).toBeUndefined();
+      },
+    );
+
+    await withActualGlobals(
+      {
+        browser: undefined,
+        chrome: undefined,
+      },
+      async () => {
+        await using webExtensionStorage = await resolveDefaultStorage({
+          browser: {},
+          chrome: { storage: browserStorage },
+        });
+        expect(webExtensionStorage.constructor.name).toBe('WebExtensionStorage');
+      },
+    );
+
+    const injectedIndexedDb = new IDBFactory();
+    let openCallCount = 0;
+    let keyRangeBoundCallCount = 0;
+    const indexedDbRuntime = {
+      indexedDB: {
+        open: (...args: Parameters<IDBFactory['open']>) => {
+          openCallCount += 1;
+          return injectedIndexedDb.open(...args);
+        },
+      },
+      IDBKeyRange: {
+        bound: (...args: Parameters<typeof IDBKeyRange.bound>) => {
+          keyRangeBoundCallCount += 1;
+          return IDBKeyRange.bound(...args);
+        },
+      },
+    };
+
+    await using indexedDbStorage = await resolveDefaultStorage(indexedDbRuntime);
+    expect(indexedDbStorage.constructor.name).toBe('IndexedDBStorage');
+    await indexedDbStorage.put('pref:a', new TextEncoder().encode('a'));
+    await indexedDbStorage.put('pref:b', new TextEncoder().encode('b'));
+    expect(indexedDbStorage.deletePrefix).toBeDefined();
+    if (indexedDbStorage.deletePrefix === undefined) {
+      throw new Error('IndexedDBStorage.deletePrefix is unavailable');
+    }
+    expect(await indexedDbStorage.deletePrefix('pref:')).toBe(2);
+    expect(openCallCount).toBeGreaterThan(0);
+    expect(keyRangeBoundCallCount).toBeGreaterThan(0);
+  });
+
+  it('describes missing runtime globals when no default adapter is available', async () => {
+    await expect(resolveDefaultStorage({})).rejects.toThrow(
+      'resolveDefaultStorage: requires Bun, Node, WebExtension storage, or IndexedDB.',
+    );
+  });
+
+  it('rejects incomplete injected IndexedDB runtime globals', async () => {
+    await expect(
+      resolveDefaultStorage({
+        indexedDB: {
+          open: () => {
+            throw new Error('should not be called');
+          },
+        },
+      }),
+    ).rejects.toThrow(
+      'resolveDefaultStorage: IndexedDB resolution requires both indexedDB and IDBKeyRange.',
+    );
   });
 });
