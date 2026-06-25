@@ -30,6 +30,26 @@ interface RegistrationWithPeriodicSync extends ServiceWorkerRegistration {
 // Options
 // ---------------------------------------------------------------------------
 
+/**
+ * Constructor options for {@link ServiceWorkerScheduler}.
+ *
+ * @example
+ * ```ts
+ * import { ServiceWorkerScheduler, type ServiceWorkerSchedulerOptions } from '@lostgradient/weft/service-worker';
+ * import { MemoryStorage } from '@lostgradient/weft';
+ *
+ * const storage = new MemoryStorage();
+ *
+ * const options: ServiceWorkerSchedulerOptions = {
+ *   storage,
+ *   onTimerFired: (entry) => {
+ *     console.log(`Timer ${entry.id} fired.`);
+ *   },
+ * };
+ * const scheduler = new ServiceWorkerScheduler(options);
+ * void scheduler;
+ * ```
+ */
 export interface ServiceWorkerSchedulerOptions {
   storage: Storage;
   onTimerFired: (entry: TimerEntry) => void | Promise<void>;
@@ -51,7 +71,27 @@ const DEFAULT_PERIODIC_SYNC_MIN_INTERVAL = 60_000;
 // ServiceWorkerScheduler
 // ---------------------------------------------------------------------------
 
-/** Scheduler for browser Service Worker environments, backed by durable storage. */
+/**
+ * Scheduler for browser Service Worker environments, backed by durable storage.
+ *
+ * @example
+ * ```ts
+ * import { ServiceWorkerScheduler, createPeriodicSyncHandler } from '@lostgradient/weft/service-worker';
+ * import { MemoryStorage } from '@lostgradient/weft';
+ *
+ * const storage = new MemoryStorage();
+ *
+ * const scheduler = new ServiceWorkerScheduler({
+ *   storage,
+ *   onTimerFired: (entry) => {
+ *     console.log(`Timer ${entry.id} fired.`);
+ *   },
+ * });
+ *
+ * const handlePeriodicSync = createPeriodicSyncHandler(scheduler);
+ * void handlePeriodicSync;
+ * ```
+ */
 export class ServiceWorkerScheduler implements Disposable {
   readonly #storage: Storage;
   readonly #onTimerFired: (entry: TimerEntry) => void | Promise<void>;
