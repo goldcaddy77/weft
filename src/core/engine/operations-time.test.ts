@@ -3,10 +3,15 @@ import { describe, expect, it, mock } from 'bun:test';
 import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { serializeCheckpoint } from '../checkpoint/serialization.ts';
-import { encode } from '../codec.ts';
+import { decode, encode } from '../codec.ts';
 import { DevelopmentWarningEvent } from '../events.ts';
+import { buildTimerBatchOperations } from '../scheduler.ts';
 import type { Checkpoint, TimerEntry, WorkflowState } from '../types.ts';
-import { startDelayedWorkflow, type TimeOperationCallbacks } from './operations-time.ts';
+import {
+  processSleepOperation,
+  startDelayedWorkflow,
+  type TimeOperationCallbacks,
+} from './operations-time.ts';
 
 function createWorkflowState(
   workflowId: string,
@@ -499,5 +504,187 @@ describe('engine time operation helpers', () => {
 
     expect(workflowsNeedingTerminalCleanup.has('workflow-delayed-no-marker')).toBe(false);
     expect(beginWorkflowExecution).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('processSleepOperation', () => {
+  // Shared fixture for both race-condition tests.
+  function createSleepInternals(
+    storage: MemoryStorage,
+    scheduler: { schedule(entry: TimerEntry): Promise<void> },
+    sleepTimersFiredWithoutResolver = new Map<string, Set<string>>(),
+  ) {
+    return {
+      options: { getNow: () => 0 },
+      scheduler,
+      sleepResolvers: new Map<string, () => void>(),
+      sleepResolversByWorkflow: new Map<string, Set<string>>(),
+      sleepTimersFiredWithoutResolver,
+      storage,
+    } as never;
+  }
+
+  function createSleepCallbacks(workflowId: string) {
+    const completeOperation = mock((_id: string, _value: unknown) => {});
+    const loadWorkflowState = mock(async () => ({
+      createdAt: 1_000,
+      id: workflowId,
+      input: null,
+      status: 'running' as const,
+      type: 'test-workflow',
+      updatedAt: 1_000,
+      versionTuple: { workflowVersion: '1' },
+    }));
+    return { completeOperation, loadWorkflowState };
+  }
+
+  it('resolves via storage check when the tick deletes the timer index before registration (Window B)', async () => {
+    // Race: tick fires, finds no resolver, deletes timer from storage, THEN
+    // registerSleepResolver() runs. storageHas() returns false → self-resolve.
+    const storage = new MemoryStorage();
+    const workflowId = 'sleep-race-window-b';
+    const operationId = 'op-b';
+
+    const scheduler = {
+      schedule: async (entry: TimerEntry) => {
+        await storage.batch(buildTimerBatchOperations(entry));
+        // Simulate tick: onTimerFired finds no resolver, then deletes the index.
+        const indexKey = `timer-idx:${entry.id}`;
+        const indexValue = await storage.get(indexKey);
+        if (indexValue !== null) {
+          const deadlineKey = decode(indexValue) as string;
+          await storage.batch([
+            { type: 'delete', key: deadlineKey },
+            { type: 'delete', key: indexKey },
+          ]);
+        }
+      },
+    };
+
+    const { completeOperation, loadWorkflowState } = createSleepCallbacks(workflowId);
+    await expect(
+      processSleepOperation(
+        createSleepInternals(storage, scheduler),
+        workflowId,
+        { type: 'sleep', operationId, duration: 3_600_000, scheduledFireAt: 3_600_000 },
+        { completeOperation, loadWorkflowState },
+      ),
+    ).resolves.toBeUndefined();
+    expect(completeOperation).toHaveBeenCalledWith(workflowId, undefined);
+  });
+
+  it('resolves via in-memory marker when the tick fires before index deletion (Window A)', async () => {
+    // Race: tick fires, finds no resolver, sets marker in sleepTimersFiredWithoutResolver,
+    // but has NOT yet deleted the storage index. storageHas() would return true (index
+    // still present), so the storage-only check would miss this window. The in-memory
+    // marker catches it instead.
+    const storage = new MemoryStorage();
+    const workflowId = 'sleep-race-window-a';
+    const operationId = 'op-a';
+    const firedWithoutResolver = new Map<string, Set<string>>();
+
+    const scheduler = {
+      schedule: async (entry: TimerEntry) => {
+        await storage.batch(buildTimerBatchOperations(entry));
+        // Simulate tick calling resolveSleepTimer with no resolver registered yet:
+        // the marker is added to the per-workflowId set but the storage index is
+        // deliberately left in place to reproduce the pre-deletion window.
+        let markers = firedWithoutResolver.get(workflowId);
+        if (!markers) {
+          markers = new Set();
+          firedWithoutResolver.set(workflowId, markers);
+        }
+        markers.add(operationId);
+      },
+    };
+
+    const { completeOperation, loadWorkflowState } = createSleepCallbacks(workflowId);
+    await expect(
+      processSleepOperation(
+        createSleepInternals(storage, scheduler, firedWithoutResolver),
+        workflowId,
+        { type: 'sleep', operationId, duration: 3_600_000, scheduledFireAt: 3_600_000 },
+        { completeOperation, loadWorkflowState },
+      ),
+    ).resolves.toBeUndefined();
+    expect(completeOperation).toHaveBeenCalledWith(workflowId, undefined);
+    // Marker consumed — no leak into sleepTimersFiredWithoutResolver.
+    expect(firedWithoutResolver.size).toBe(0);
+  });
+
+  it('does not add a spurious marker when the tick settles the resolver normally after registration', async () => {
+    // Regression for: tick fires AFTER registerSleepResolver() and calls the
+    // resolver through the normal path. The timer index is then deleted. When
+    // the storage check (Window B) fires and finds the index gone, it must NOT
+    // call resolveSleepTimer() — because the resolver is already gone from
+    // sleepResolvers, and calling resolveSleepTimer() with no resolver would
+    // add a stale sleepTimersFiredWithoutResolver marker that could
+    // prematurely self-resolve a later replay of the same sleep step.
+    const storage = new MemoryStorage();
+    const workflowId = 'sleep-race-spurious-marker';
+    const operationId = 'op-spurious';
+    const firedWithoutResolver = new Map<string, Set<string>>();
+    const sleepResolvers = new Map<string, () => void>();
+    const sleepResolversByWorkflow = new Map<string, Set<string>>();
+
+    // Scheduler that deletes the timer index as a real tick would after firing
+    // via the normal (post-registration) path, then uses queueMicrotask to call
+    // the resolver that processSleepOperation registered between schedule() and
+    // the storageHas() check. The index is gone when the storageHas check runs,
+    // but the resolver guard (`sleepResolvers.has`) must prevent a spurious marker.
+    const internals = {
+      options: { getNow: () => 0 },
+      scheduler: {
+        schedule: async (entry: TimerEntry) => {
+          await storage.batch(buildTimerBatchOperations(entry));
+          // Simulate tick that fires AFTER registration: delete the index from
+          // storage as the tick would, but do NOT add a marker — the resolver
+          // will be called via resolveSleepTimer in the afterSchedule hook below.
+          const indexKey = `timer-idx:${entry.id}`;
+          const indexValue = await storage.get(indexKey);
+          if (indexValue !== null) {
+            const deadlineKey = decode(indexValue) as string;
+            await storage.batch([
+              { type: 'delete', key: deadlineKey },
+              { type: 'delete', key: indexKey },
+            ]);
+          }
+          // After schedule() completes, processSleepOperation calls
+          // registerSleepResolver synchronously. queueMicrotask fires before
+          // the subsequent storageHas() await settles, simulating a tick
+          // calling the resolver via the normal post-registration path.
+          queueMicrotask(() => {
+            const resolver = sleepResolvers.get(`${workflowId}:${operationId}`);
+            if (resolver) {
+              sleepResolvers.delete(`${workflowId}:${operationId}`);
+              const ops = sleepResolversByWorkflow.get(workflowId);
+              if (ops) {
+                ops.delete(operationId);
+                if (ops.size === 0) sleepResolversByWorkflow.delete(workflowId);
+              }
+              resolver();
+            }
+          });
+        },
+      },
+      sleepResolvers,
+      sleepResolversByWorkflow,
+      sleepTimersFiredWithoutResolver: firedWithoutResolver,
+      storage,
+    } as never;
+
+    const { completeOperation, loadWorkflowState } = createSleepCallbacks(workflowId);
+    await expect(
+      processSleepOperation(
+        internals,
+        workflowId,
+        { type: 'sleep', operationId, duration: 3_600_000, scheduledFireAt: 3_600_000 },
+        { completeOperation, loadWorkflowState },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(completeOperation).toHaveBeenCalledWith(workflowId, undefined);
+    // The tick settled the resolver normally — no spurious marker must remain.
+    expect(firedWithoutResolver.size).toBe(0);
   });
 });

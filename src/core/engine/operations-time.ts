@@ -69,6 +69,30 @@ export function createDelayedStartTimerEntry(
   };
 }
 
+/**
+ * Returns true when the scheduler tick fired a sleep timer in the window
+ * between `schedule()` completing and `registerSleepResolver()` running.
+ *
+ * Window A (pre-deletion): `resolveSleepTimer` ran with no resolver and set
+ *   an in-memory marker. Timer index may still be in storage.
+ * Window B (post-deletion): tick completed its cleanup batch first; the
+ *   storage index is gone but no marker was set (or was consumed on a prior
+ *   replay). `storageHas()` catches this case.
+ */
+async function sleepTimerFiredEarly(
+  internals: EngineInternals,
+  workflowId: string,
+  operation: Pick<SleepOperation, 'operationId'>,
+): Promise<boolean> {
+  const workflowMarkers = internals.sleepTimersFiredWithoutResolver.get(workflowId);
+  const firedBeforeRegistration = workflowMarkers?.delete(operation.operationId) ?? false;
+  if (firedBeforeRegistration && workflowMarkers?.size === 0) {
+    internals.sleepTimersFiredWithoutResolver.delete(workflowId);
+  }
+  if (firedBeforeRegistration) return true;
+  return !(await storageHas(internals.storage, `timer-idx:sleep:${operation.operationId}`));
+}
+
 export async function processSleepOperation(
   internals: EngineInternals,
   workflowId: string,
@@ -88,6 +112,24 @@ export async function processSleepOperation(
     kind: 'sleep',
   });
   registerSleepResolver(internals, workflowId, operation.operationId, resolve);
+
+  // Guard against the race where the scheduler tick fires the timer in the
+  // window between the schedule() write and registerSleepResolver(). The
+  // resolver guard prevents a spurious resolveSleepTimer call when the tick
+  // already settled the resolver via the normal post-registration path.
+  const resolverKey = `${workflowId}:${operation.operationId}`;
+  if (
+    (await sleepTimerFiredEarly(internals, workflowId, operation)) &&
+    internals.sleepResolvers.has(resolverKey)
+  ) {
+    resolveSleepTimer(internals, {
+      id: `sleep:${operation.operationId}`,
+      workflowId,
+      fireAt: operation.scheduledFireAt,
+      kind: 'sleep',
+    });
+  }
+
   await promise;
 
   const postSleepState = await callbacks.loadWorkflowState(workflowId);
@@ -395,7 +437,19 @@ function resolveSleepTimer(internals: EngineInternals, entry: TimerEntry): void 
   const operationId = entry.id.replace('sleep:', '');
   const resolverKey = `${entry.workflowId}:${operationId}`;
   const resolver = internals.sleepResolvers.get(resolverKey);
-  if (!resolver) return;
+  if (!resolver) {
+    // No resolver registered yet — the tick fired in the window between
+    // schedule() completing and registerSleepResolver() running. Mark it so
+    // processSleepOperation can self-resolve after registration instead of
+    // parking on a promise that will never be called.
+    let workflowMarkers = internals.sleepTimersFiredWithoutResolver.get(entry.workflowId);
+    if (!workflowMarkers) {
+      workflowMarkers = new Set();
+      internals.sleepTimersFiredWithoutResolver.set(entry.workflowId, workflowMarkers);
+    }
+    workflowMarkers.add(operationId);
+    return;
+  }
 
   internals.sleepResolvers.delete(resolverKey);
   untrackSleepResolver(internals, entry.workflowId, operationId);

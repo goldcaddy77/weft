@@ -103,14 +103,16 @@ function cleanupTrackedWaiter(
 
 function cleanupSleepResolvers(internals: EngineInternals, workflowId: string): void {
   const sleepOps = internals.sleepResolversByWorkflow.get(workflowId);
-  if (!sleepOps) return;
-  for (const operationId of sleepOps) {
-    const key = `${workflowId}:${operationId}`;
-    const resolver = internals.sleepResolvers.get(key);
-    if (resolver) resolver();
-    internals.sleepResolvers.delete(key);
+  if (sleepOps) {
+    for (const operationId of sleepOps) {
+      const key = `${workflowId}:${operationId}`;
+      const resolver = internals.sleepResolvers.get(key);
+      if (resolver) resolver();
+      internals.sleepResolvers.delete(key);
+    }
+    internals.sleepResolversByWorkflow.delete(workflowId);
   }
-  internals.sleepResolversByWorkflow.delete(workflowId);
+  internals.sleepTimersFiredWithoutResolver.delete(workflowId);
 }
 
 /**
@@ -124,11 +126,13 @@ function cleanupSleepResolvers(internals: EngineInternals, workflowId: string): 
  */
 function evictSleepResolversWithoutResolving(internals: EngineInternals, workflowId: string): void {
   const sleepOps = internals.sleepResolversByWorkflow.get(workflowId);
-  if (!sleepOps) return;
-  for (const operationId of sleepOps) {
-    internals.sleepResolvers.delete(`${workflowId}:${operationId}`);
+  if (sleepOps) {
+    for (const operationId of sleepOps) {
+      internals.sleepResolvers.delete(`${workflowId}:${operationId}`);
+    }
+    internals.sleepResolversByWorkflow.delete(workflowId);
   }
-  internals.sleepResolversByWorkflow.delete(workflowId);
+  internals.sleepTimersFiredWithoutResolver.delete(workflowId);
 }
 
 /**
