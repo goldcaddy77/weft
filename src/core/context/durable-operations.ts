@@ -28,7 +28,19 @@ export function prepareSleepOperation(
     console.log(`  → Scheduling timer for ${milliseconds}ms`);
   }
 
-  const operationId = crypto.randomUUID();
+  // Deterministic operationId, NOT a random UUID: it keys the durable sleep
+  // timer (`sleep:${operationId}`). On a crash while parked, the step never
+  // lands in accumulatedResults, so recovery replays this branch and must
+  // reproduce the SAME id to re-arm the original timer rather than orphan it
+  // (a fresh id would arm a second timer; the engine fires the orphan, the
+  // replayed generator waits on the new one, and the workflow hangs).
+  //
+  // `${workflowId}:${step}` is stable across replay and distinct across forks
+  // (a fork gets a fresh workflowId). It is NOT unique across a `start-new`
+  // restart of the same id at the same step, but that is handled at the engine:
+  // a sleep resolver only settles for a timer whose `fireAt` reaches its run's
+  // deadline, so a terminated run's stale timer is ignored (see resolveSleepTimer).
+  const operationId = `${internals.context.workflowId}:${step}`;
   const callerStack = captureCallerStack();
   const referenceTime = internals.sleepReferenceTime ?? internals.getNow();
   internals.sleepReferenceTime = undefined;

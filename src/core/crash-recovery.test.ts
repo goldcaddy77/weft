@@ -615,6 +615,117 @@ describe('crash recovery', () => {
     engine2[Symbol.dispose]();
   });
 
+  it('re-arms the same durable sleep timer on recovery instead of orphaning a second one', async () => {
+    // Regression: the sleep operationId is deterministic (`${workflowId}:${step}`)
+    // so it is stable across replay. When a workflow crashes while parked on
+    // ctx.sleep, the step never lands in accumulatedResults, so recovery re-enters
+    // the sleep branch. A random id would arm a SECOND durable timer under a new
+    // key while the original timer is orphaned — the engine fires the orphaned
+    // timer, the replayed generator waits on the new one, and the workflow hangs.
+    // Reproducing the same id re-arms the original key so exactly one timer survives.
+    const storage = new MemoryStorage();
+    let currentTime = 1000;
+
+    const sleeper = workflow({ name: 'sleeper' }).execute(async function* (ctx) {
+      yield* ctx.sleep(5000);
+      return 'awake';
+    });
+
+    const engine1 = new Engine({ storage, getNow: () => currentTime });
+    engine1.register(sleeper);
+    await engine1.start('sleeper', null, { id: 'wf-sleep-deterministic' });
+    await flush();
+
+    const timerKeysBeforeCrash: string[] = [];
+    for await (const [key] of storage.scan('timer-idx:sleep:')) {
+      timerKeysBeforeCrash.push(key);
+    }
+    expect(timerKeysBeforeCrash).toHaveLength(1);
+
+    // Crash while still parked — do NOT advance past the deadline, so recovery
+    // re-arms the timer rather than taking the expired-timer fast path.
+    engine1[Symbol.dispose]();
+
+    // Fresh engine on the same storage; the in-memory sleep resolver is gone.
+    const engine2 = new Engine({ storage, getNow: () => currentTime });
+    engine2.register(sleeper);
+    const handles = await engine2.recoverAll();
+    expect(handles).toHaveLength(1);
+    await flush();
+
+    const timerKeysAfterRecovery: string[] = [];
+    for await (const [key] of storage.scan('timer-idx:sleep:')) {
+      timerKeysAfterRecovery.push(key);
+    }
+    expect(timerKeysAfterRecovery).toEqual(timerKeysBeforeCrash);
+
+    // A single tick past the deadline must fire the re-armed timer and complete.
+    currentTime = 7000;
+    await engine2.scheduler.tick(currentTime);
+    await flush();
+    expect(await handles[0]!.result()).toBe('awake');
+
+    engine2[Symbol.dispose]();
+  });
+
+  it('does not let a stale sleep timer from a terminated run resolve a start-new replacement early', async () => {
+    // Regression (resolver deadline guard): a run cancelled while parked on
+    // ctx.sleep leaves its durable timer behind (terminal cleanup only drops the
+    // in-memory resolver; purge does not collect sleep timers). If the id is
+    // restarted with onTerminalConflict: 'start-new' and the fresh run sleeps at
+    // the same step, it reuses the SAME deterministic `${workflowId}:${step}`
+    // timer key as the stale timer. The engine guards against this: a sleep
+    // resolver only settles for a fired timer whose `fireAt` reaches its run's
+    // deadline, so the stale (earlier-deadline) timer is ignored.
+    const storage = new MemoryStorage();
+    let currentTime = 1000;
+
+    const sleeper = workflow({ name: 'sleeper' }).execute(async function* (ctx) {
+      yield* ctx.sleep(5000);
+      return 'awake';
+    });
+
+    const engine = new Engine({ storage, getNow: () => currentTime });
+    engine.register(sleeper);
+
+    // First run parks on a durable sleep timer (deadline 1000 + 5000 = 6000).
+    await engine.start('sleeper', null, { id: 'wf-restart' });
+    await flush();
+
+    // Cancel while parked. The durable timer must survive (otherwise the scenario
+    // this guards is not reachable) — confirm it is still in storage.
+    await engine.cancel('wf-restart');
+    await flush();
+    const staleTimers: string[] = [];
+    for await (const [key] of storage.scan('timer-idx:sleep:')) staleTimers.push(key);
+    expect(staleTimers).toHaveLength(1);
+
+    // Restart the same id; the fresh run parks at the same step (deadline
+    // 2000 + 5000 = 7000), distinct from the stale timer's 6000 deadline.
+    currentTime = 2000;
+    const replacement = await engine.start('sleeper', null, {
+      id: 'wf-restart',
+      onTerminalConflict: 'start-new',
+    });
+    await flush();
+
+    // Fire the STALE timer (deadline 6000) — it must NOT resolve the fresh run,
+    // whose own deadline (7000) has not elapsed.
+    currentTime = 6500;
+    await engine.scheduler.tick(currentTime);
+    await flush();
+    const stateAfterStaleTimer = await engine.get('wf-restart');
+    expect(stateAfterStaleTimer?.status).toBe('running');
+
+    // The fresh run's own timer fires at its deadline and completes it.
+    currentTime = 7500;
+    await engine.scheduler.tick(currentTime);
+    await flush();
+    expect(await replacement.result()).toBe('awake');
+
+    engine[Symbol.dispose]();
+  });
+
   it('resolves expired sleep immediately on resume via fast path', async () => {
     const { MemoryStorage: TestMemoryStorage } = await import('../storage/memory.ts');
 

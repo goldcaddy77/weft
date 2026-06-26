@@ -514,6 +514,22 @@ describe('Context', () => {
       expect(request.duration).toBe(5000);
       expect(request.scheduledFireAt).toBe(now + 5000);
     });
+
+    it('uses a deterministic operationId derived from workflowId and step, stable across replay', () => {
+      // The sleep operationId keys the durable timer and must be reproduced
+      // identically on replay so recovery re-arms the SAME timer instead of
+      // orphaning it. It is derived from `${workflowId}:${step}` — not a random
+      // UUID — and writes nothing to checkpointLocals. Cross-run safety (a
+      // start-new restart at the same id+step) is handled at the engine by the
+      // resolver deadline guard, not by id uniqueness.
+      const first = expectRequest(createContext().sleep(5000).next(), 'sleep');
+      const replay = expectRequest(createContext().sleep(5000).next(), 'sleep');
+
+      expect(first.operationId).toBe('wf-test-123:0');
+      expect(replay.operationId).toBe(first.operationId);
+      expect(first.operationId).not.toMatch(UUID_PATTERN);
+      expect(createContext().checkpointLocals).toEqual({});
+    });
   });
 
   describe('ctx.waitForSignal', () => {
