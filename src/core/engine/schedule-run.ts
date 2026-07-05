@@ -1,11 +1,11 @@
 import type { BatchOperation } from '../../storage/interface.ts';
 import { KEYS } from '../../storage/interface.ts';
-import { encode } from '../codec.ts';
 import { ScheduleFiredEvent } from '../events.ts';
 import type { ScheduleState } from '../types.ts';
 import type { EngineInternals } from './internals.ts';
 import { unavailableServicesError } from './lifecycle/recovered-services.ts';
 import { EMPTY_STORAGE_VALUE } from './lifecycle/shared.ts';
+import { encodeScheduleRunMetadata } from './schedule-run-metadata.ts';
 import type { ScheduleCallbacks } from './schedules.ts';
 
 /**
@@ -28,42 +28,44 @@ export async function startScheduledRun(
   occurrence?: number,
 ): Promise<string> {
   const workflowId = crypto.randomUUID();
-  const scheduleRunOperations: BatchOperation[] =
-    state.overlap === 'allow'
-      ? []
-      : [{ type: 'put', key: KEYS.scheduleRun(workflowId), value: encode(state.id) }];
+  const scheduleRunOperations: BatchOperation[] = [
+    {
+      type: 'put',
+      key: KEYS.scheduleRun(workflowId),
+      value: encodeScheduleRunMetadata(state.id, occurrence),
+    },
+    {
+      type: 'put',
+      key: KEYS.terminalCleanupNeeded(workflowId),
+      value: EMPTY_STORAGE_VALUE,
+    },
+  ];
 
   const resolution = await resolveScheduledRunServices(internals, workflowId, state, occurrence);
 
   if (resolution !== null) {
-    // Write the "expects services" marker and terminal-cleanup flag atomically
-    // with the workflow record. This mirrors startWorkflow's buildPerRunScratchOperations
-    // path and is required for both the available and unavailable cases so a
-    // fresh-process recovery can tell "never had services" from "had services".
-    scheduleRunOperations.push(
-      { type: 'put', key: KEYS.workflowHasServices(workflowId), value: EMPTY_STORAGE_VALUE },
-      { type: 'put', key: KEYS.terminalCleanupNeeded(workflowId), value: EMPTY_STORAGE_VALUE },
-    );
+    // Write the "expects services" marker atomically with the workflow record.
+    // This mirrors startWorkflow's buildPerRunScratchOperations path and is
+    // required for both the available and unavailable cases so a fresh-process
+    // recovery can tell "never had services" from "had services".
+    scheduleRunOperations.push({
+      type: 'put',
+      key: KEYS.workflowHasServices(workflowId),
+      value: EMPTY_STORAGE_VALUE,
+    });
 
-    // Register the terminal-cleanup obligation and, for the available case,
-    // store the services in engine memory BEFORE startWorkflow is called.
-    //
-    // Critically, `startWorkflow` internally calls `queueInlineWorkflowExecutionStart`
-    // which posts a MessageChannel message. In Bun/Node.js the handler for that
-    // message can fire before our code after `await startWorkflow(...)` runs —
-    // making a post-startWorkflow set arrive too late for the completion check
-    // in `completeWorkflow` (which reads `workflowsNeedingTerminalCleanup` to
-    // decide whether to schedule the deferred terminal cleanup timer). Setting
-    // both values synchronously before the call guarantees the completion path
-    // always sees them regardless of MessageChannel scheduling.
-    //
-    // If `startWorkflow` throws, `rollbackTransientStartState` inside it clears
-    // both maps for the workflowId, so no leak occurs on the failure path.
-    internals.workflowsNeedingTerminalCleanup.add(workflowId);
     if (resolution.status === 'available') {
       internals.workflowServices.set(workflowId, resolution.services);
     }
   }
+
+  // Register the terminal-cleanup obligation before startWorkflow is called.
+  // Every scheduled run writes `schedule-run` metadata, and the inline start can
+  // complete before this function resumes after the await. The in-memory set is
+  // what makes completion schedule the deferred durable cleanup timer that
+  // sweeps that metadata if the fire-and-forget scheduled-terminal handler is
+  // interrupted. If startWorkflow throws, rollbackTransientStartState clears it.
+  internals.workflowsNeedingTerminalCleanup.add(workflowId);
 
   // An empty array and `undefined` are equivalent at the receiving end
   // (buildStartBatchOperations spreads `?? []`), so pass the array directly.

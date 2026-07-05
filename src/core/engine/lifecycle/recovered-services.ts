@@ -1,7 +1,13 @@
 import { KEYS } from '../../../storage/interface.ts';
 import { DevelopmentWarningEvent } from '../../events.ts';
-import type { WorkflowServicesResolverLaunchOptions, WorkflowState } from '../../types.ts';
+import type {
+  WorkflowServicesResolverLaunchOptions,
+  WorkflowServicesResolverScheduleInfo,
+  WorkflowState,
+} from '../../types.ts';
 import type { EngineInternals } from '../internals.ts';
+import { decodeScheduleRunMetadata } from '../schedule-run-metadata.ts';
+import { loadScheduleState } from '../storage-io.ts';
 
 const RESOLVE_WORKFLOW_SERVICES_OPTION_PATH = 'EngineOptions.resolveWorkflowServices';
 
@@ -79,12 +85,14 @@ export async function reprovideRecoveredServices(
   }
 
   let reason: string;
+  const schedule = await scheduleFromWorkflowState(internals, state);
   try {
     const resolution = await resolver({
       workflowId: state.id,
       workflowType: state.type,
       input: state.input,
       launchOptions: launchOptionsFromWorkflowState(state),
+      ...(schedule !== null ? { schedule } : {}),
     });
     if (resolution.status === 'available') {
       internals.workflowServices.set(state.id, resolution.services);
@@ -134,4 +142,49 @@ function launchOptionsFromWorkflowState(
     id: state.id,
     ...(state.tags !== undefined && state.tags.length > 0 ? { tags: [...state.tags] } : {}),
   };
+}
+
+async function scheduleFromWorkflowState(
+  internals: EngineInternals,
+  state: WorkflowState,
+): Promise<WorkflowServicesResolverScheduleInfo | null> {
+  const bytes = await internals.storage.get(KEYS.scheduleRun(state.id));
+  if (bytes === null) {
+    return null;
+  }
+
+  const metadata = decodeScheduleRunMetadata(bytes);
+  if (metadata === null) {
+    return null;
+  }
+
+  const scheduleState = await loadScheduleState(internals, metadata.id);
+  if (scheduleState === null) {
+    return null;
+  }
+  if (scheduleState.workflowType !== state.type) {
+    return null;
+  }
+
+  if (scheduleState.overlap === 'allow') {
+    return metadata.occurrence !== undefined ? metadata : null;
+  }
+
+  if (scheduleState.currentWorkflowId === state.id) {
+    return metadata;
+  }
+
+  if (metadata.occurrence !== undefined && scheduleState.nextFireAt === metadata.occurrence) {
+    return metadata;
+  }
+
+  if (
+    metadata.occurrence === undefined &&
+    scheduleState.overlap === 'queue' &&
+    scheduleState.queuedRuns > 0
+  ) {
+    return metadata;
+  }
+
+  return null;
 }

@@ -10,8 +10,9 @@ import { describe, expect, it, mock } from 'bun:test';
 
 import { KEYS } from '../../../storage/interface.ts';
 import { MemoryStorage } from '../../../storage/memory.ts';
+import { encode } from '../../codec.ts';
 import { DevelopmentWarningEvent } from '../../events.ts';
-import type { WorkflowState } from '../../types.ts';
+import type { ScheduleState, WorkflowServicesResolverInfo, WorkflowState } from '../../types.ts';
 import { reprovideRecoveredServices } from './recovered-services.ts';
 
 type ServicesMap = Map<string, unknown>;
@@ -30,6 +31,35 @@ function makeState(id = 'run-1', type = 'wf'): WorkflowState {
   };
 }
 
+function makeScheduleState(
+  id: string,
+  options: {
+    currentWorkflowId?: string;
+    overlap?: ScheduleState['overlap'];
+    workflowType?: string;
+    nextFireAt?: number;
+    queuedRuns?: number;
+  } = {},
+): ScheduleState {
+  return {
+    id,
+    workflowType: options.workflowType ?? 'wf',
+    input: { tenant: 'acme' },
+    intervalMs: 60_000,
+    status: 'active',
+    overlap: options.overlap ?? 'skip',
+    backfill: false,
+    createdAt: 1,
+    updatedAt: 1,
+    nextFireAt: options.nextFireAt ?? 60_001,
+    missedFireCount: 0,
+    queuedRuns: options.queuedRuns ?? 0,
+    ...(options.currentWorkflowId !== undefined
+      ? { currentWorkflowId: options.currentWorkflowId }
+      : {}),
+  };
+}
+
 /**
  * Minimal internals stub: an inline engine with a services map, resolver, and a
  * real {@link MemoryStorage} so the helper's durable "expects services" marker
@@ -39,11 +69,13 @@ function makeState(id = 'run-1', type = 'wf'): WorkflowState {
  */
 function makeInternals(options: {
   inline?: boolean;
-  resolver?: (info: {
-    workflowId: string;
-    workflowType: string;
-    input: unknown;
-  }) =>
+  resolver?: (
+    info: {
+      workflowId: string;
+      workflowType: string;
+      input: unknown;
+    } & Pick<WorkflowServicesResolverInfo, 'launchOptions' | 'schedule'>,
+  ) =>
     | { status: 'available'; services: unknown }
     | { status: 'unavailable'; reason: string }
     | Promise<
@@ -95,6 +127,218 @@ describe('reprovideRecoveredServices', () => {
     expect(seenInput).toEqual({ tenant: 'acme' });
   });
 
+  it('passes recovered schedule context from schedule-run metadata to the resolver', async () => {
+    let seenSchedule: unknown;
+    const { internals, storage } = makeInternals({
+      resolver: (info) => {
+        seenSchedule = info.schedule;
+        return { status: 'available', services: {} };
+      },
+    });
+    await storage.put(
+      KEYS.scheduleRun('run-1'),
+      encode({ id: 'nightly-schedule', occurrence: 1_767_225_600_000 }),
+    );
+    await storage.put(
+      KEYS.schedule('nightly-schedule'),
+      encode(makeScheduleState('nightly-schedule', { currentWorkflowId: 'run-1' })),
+    );
+
+    await reprovideRecoveredServices(internals, makeState(), async () => {}, noopCommitError);
+
+    expect(seenSchedule).toEqual({
+      id: 'nightly-schedule',
+      occurrence: 1_767_225_600_000,
+    });
+  });
+
+  it('tolerates historical string schedule-run metadata during recovery', async () => {
+    let seenSchedule: unknown;
+    const { internals, storage } = makeInternals({
+      resolver: (info) => {
+        seenSchedule = info.schedule;
+        return { status: 'available', services: {} };
+      },
+    });
+    await storage.put(KEYS.scheduleRun('run-1'), encode('historical-schedule'));
+    await storage.put(
+      KEYS.schedule('historical-schedule'),
+      encode(makeScheduleState('historical-schedule', { currentWorkflowId: 'run-1' })),
+    );
+
+    await reprovideRecoveredServices(internals, makeState(), async () => {}, noopCommitError);
+
+    expect(seenSchedule).toEqual({ id: 'historical-schedule' });
+  });
+
+  it('ignores stale schedule-run metadata when the schedule points at another workflow', async () => {
+    let seenSchedule: unknown = 'not-called';
+    const { internals, storage } = makeInternals({
+      resolver: (info) => {
+        seenSchedule = info.schedule;
+        return { status: 'available', services: {} };
+      },
+    });
+    await storage.put(
+      KEYS.scheduleRun('run-1'),
+      encode({ id: 'stale-schedule', occurrence: 1_767_225_600_000 }),
+    );
+    await storage.put(
+      KEYS.schedule('stale-schedule'),
+      encode(makeScheduleState('stale-schedule', { currentWorkflowId: 'other-run' })),
+    );
+
+    await reprovideRecoveredServices(internals, makeState(), async () => {}, noopCommitError);
+
+    expect(seenSchedule).toBeUndefined();
+  });
+
+  it('passes schedule context during the post-start schedule-state crash window', async () => {
+    let seenSchedule: unknown = 'not-called';
+    const occurrence = 1_767_225_600_000;
+    const { internals, storage } = makeInternals({
+      resolver: (info) => {
+        seenSchedule = info.schedule;
+        return { status: 'available', services: {} };
+      },
+    });
+    await storage.put(KEYS.scheduleRun('run-1'), encode({ id: 'crash-window', occurrence }));
+    await storage.put(
+      KEYS.schedule('crash-window'),
+      encode(makeScheduleState('crash-window', { nextFireAt: occurrence })),
+    );
+
+    await reprovideRecoveredServices(internals, makeState(), async () => {}, noopCommitError);
+
+    expect(seenSchedule).toEqual({ id: 'crash-window', occurrence });
+  });
+
+  it('ignores crash-window schedule context for a different workflow type', async () => {
+    let seenSchedule: unknown = 'not-called';
+    const occurrence = 1_767_225_600_000;
+    const { internals, storage } = makeInternals({
+      resolver: (info) => {
+        seenSchedule = info.schedule;
+        return { status: 'available', services: {} };
+      },
+    });
+    await storage.put(KEYS.scheduleRun('run-1'), encode({ id: 'wrong-type-schedule', occurrence }));
+    await storage.put(
+      KEYS.schedule('wrong-type-schedule'),
+      encode(
+        makeScheduleState('wrong-type-schedule', {
+          workflowType: 'other-workflow',
+          nextFireAt: occurrence,
+        }),
+      ),
+    );
+
+    await reprovideRecoveredServices(internals, makeState(), async () => {}, noopCommitError);
+
+    expect(seenSchedule).toBeUndefined();
+  });
+
+  it('passes queued-drain schedule context during the post-start schedule-state crash window', async () => {
+    let seenSchedule: unknown = 'not-called';
+    const { internals, storage } = makeInternals({
+      resolver: (info) => {
+        seenSchedule = info.schedule;
+        return { status: 'available', services: {} };
+      },
+    });
+    await storage.put(KEYS.scheduleRun('run-1'), encode({ id: 'queued-crash-window' }));
+    await storage.put(
+      KEYS.schedule('queued-crash-window'),
+      encode(
+        makeScheduleState('queued-crash-window', {
+          currentWorkflowId: 'terminal-previous-run',
+          overlap: 'queue',
+          queuedRuns: 1,
+        }),
+      ),
+    );
+
+    await reprovideRecoveredServices(internals, makeState(), async () => {}, noopCommitError);
+
+    expect(seenSchedule).toEqual({ id: 'queued-crash-window' });
+  });
+
+  it('ignores malformed schedule-run metadata during services recovery', async () => {
+    let seenSchedule: unknown = 'not-called';
+    const { internals, storage } = makeInternals({
+      resolver: (info) => {
+        seenSchedule = info.schedule;
+        return { status: 'available', services: {} };
+      },
+    });
+    await storage.put(
+      KEYS.scheduleRun('run-1'),
+      encode({ id: 'malformed-schedule', occurrence: 1.5 }),
+    );
+
+    await reprovideRecoveredServices(internals, makeState(), async () => {}, noopCommitError);
+
+    expect(seenSchedule).toBeUndefined();
+  });
+
+  it('ignores unreadable schedule-run metadata bytes during services recovery', async () => {
+    let seenSchedule: unknown = 'not-called';
+    const { internals, storage } = makeInternals({
+      resolver: (info) => {
+        seenSchedule = info.schedule;
+        return { status: 'available', services: {} };
+      },
+    });
+    await storage.put(KEYS.scheduleRun('run-1'), new Uint8Array([0xc1]));
+
+    await reprovideRecoveredServices(internals, makeState(), async () => {}, noopCommitError);
+
+    expect(seenSchedule).toBeUndefined();
+  });
+
+  it('ignores orphaned schedule-run metadata when the schedule record is gone', async () => {
+    let seenSchedule: unknown = 'not-called';
+    const { internals, storage } = makeInternals({
+      resolver: (info) => {
+        seenSchedule = info.schedule;
+        return { status: 'available', services: {} };
+      },
+    });
+    await storage.put(
+      KEYS.scheduleRun('run-1'),
+      encode({ id: 'missing-schedule', occurrence: 1_767_225_600_000 }),
+    );
+
+    await reprovideRecoveredServices(internals, makeState(), async () => {}, noopCommitError);
+
+    expect(seenSchedule).toBeUndefined();
+  });
+
+  it('accepts allow-overlap schedule-run metadata without currentWorkflowId', async () => {
+    let seenSchedule: unknown;
+    const { internals, storage } = makeInternals({
+      resolver: (info) => {
+        seenSchedule = info.schedule;
+        return { status: 'available', services: {} };
+      },
+    });
+    await storage.put(
+      KEYS.scheduleRun('run-1'),
+      encode({ id: 'allow-schedule', occurrence: 1_767_225_600_000 }),
+    );
+    await storage.put(
+      KEYS.schedule('allow-schedule'),
+      encode(makeScheduleState('allow-schedule', { overlap: 'allow' })),
+    );
+
+    await reprovideRecoveredServices(internals, makeState(), async () => {}, noopCommitError);
+
+    expect(seenSchedule).toEqual({
+      id: 'allow-schedule',
+      occurrence: 1_767_225_600_000,
+    });
+  });
+
   it('stops, fails the run, and emits an actionable warning when the marker exists but no resolver is configured', async () => {
     const { internals } = makeInternals({});
     const failed: Array<[string, Error]> = [];
@@ -123,6 +367,29 @@ describe('reprovideRecoveredServices', () => {
     expect(warnings[0]!.workflowId).toBe('run-1');
     expect(warnings[0]!.message).toContain('resolveWorkflowServices');
     expect(warnings[0]!.fieldPaths).toContain('EngineOptions.resolveWorkflowServices');
+  });
+
+  it('still stops and records a commit error when missing-resolver failure cannot commit', async () => {
+    const { internals } = makeInternals({});
+    const failRun = mock(async () => {
+      throw new Error('terminal write failed');
+    });
+    const commitErrors: Array<[string, unknown, string]> = [];
+
+    const stop = await reprovideRecoveredServices(
+      internals,
+      makeState(),
+      failRun,
+      (source, error, workflowId) => {
+        commitErrors.push([source, error, workflowId]);
+      },
+    );
+
+    expect(stop).toBe(true);
+    expect(failRun).toHaveBeenCalled();
+    expect(commitErrors).toHaveLength(1);
+    expect(commitErrors[0]![0]).toBe('reprovideRecoveredServices');
+    expect(commitErrors[0]![2]).toBe('run-1');
   });
 
   it('proceeds with no resolver configured when the run never expected services', async () => {
