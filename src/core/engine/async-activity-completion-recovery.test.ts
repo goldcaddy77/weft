@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 
+import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { nextAsyncPendingToken } from '../../testing/async-activity.test-support.ts';
 import { withTimeout } from '../../testing/fake-timers.test-support.ts';
+import { encode } from '../codec.ts';
 import { Engine } from '../engine.ts';
 import type { ActivityContext, WorkflowContext } from '../types.ts';
 import { activity, workflow } from '../types.ts';
@@ -89,5 +91,26 @@ describe('async activity completion recovery buffering', () => {
     );
 
     recoveredEngine[Symbol.dispose]();
+  });
+
+  it('ignores malformed persisted resolution outcomes while recovering records', async () => {
+    await using storage = new MemoryStorage();
+    await storage.put(
+      KEYS.asyncActivityResolution('workflow-1', 'token-1'),
+      encode({
+        version: 1,
+        kind: 'resolution',
+        token: 'token-1',
+        workflowId: 'workflow-1',
+        outcome: { status: 'cancelled', error: 'not-a-real-outcome' },
+      }),
+    );
+
+    const engine = new Engine({ storage });
+    await recoverPendingAsyncActivities(getInternals(engine));
+
+    expect(getInternals(engine).pendingAsyncActivityResolutions?.size ?? 0).toBe(0);
+
+    engine[Symbol.dispose]();
   });
 });
