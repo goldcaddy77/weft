@@ -743,6 +743,41 @@ describe('Context', () => {
       expect(request.operations).toHaveLength(2);
     });
 
+    it('yields keyed race branch names in deterministic object order', () => {
+      const context = createContext();
+
+      const generator = context.raceKeyed({
+        first: context.run(taskA),
+        second: context.run(taskB),
+      });
+      const request = expectRequest(generator.next(), 'race');
+
+      expect(request.operations).toHaveLength(2);
+      expect(request.branchNames).toEqual(['first', 'second']);
+    });
+
+    it('rejects an empty keyed race before yielding', () => {
+      const context = createContext();
+
+      expect(() => context.raceKeyed({}).next()).toThrow(
+        'ctx.raceKeyed requires at least one branch',
+      );
+    });
+
+    it('rejects symbol-keyed branches before enumeration can omit them', () => {
+      const context = createContext();
+      const symbolBranch = Symbol('symbol-branch');
+
+      expect(() =>
+        context
+          .raceKeyed({
+            named: context.run(taskA),
+            [symbolBranch]: context.run(taskB),
+          })
+          .next(),
+      ).toThrow('ctx.raceKeyed branch names must be strings or numbers, not symbols');
+    });
+
     it('returns a non-marker cached race value directly without advancing past sub-operations', () => {
       const context = createContext({
         accumulatedResults: new Map<number, unknown>([
@@ -760,6 +795,37 @@ describe('Context', () => {
       const nextStep = context.run(task).next();
       expect(nextStep.done).toBe(true);
       expect(nextStep.value).toBe('next-cached-result');
+    });
+
+    it('rejects a raw cached positional race value when replay changes to raceKeyed', () => {
+      const context = createContext({
+        accumulatedResults: new Map<number, unknown>([[0, 'raw-positional-winner']]),
+      });
+
+      const generator = context.raceKeyed({
+        first: context.run(taskA),
+        second: context.run(taskB),
+      });
+
+      expect(() => generator.next()).toThrow(BranchTopologyChangedError);
+    });
+
+    it('returns a synchronously completed keyed branch with its original key', () => {
+      const context = createContext({
+        accumulatedResults: new Map<number, unknown>([[1, 'cached-memo-winner']]),
+      });
+
+      const result = context
+        .raceKeyed({
+          cached: context.memo('cached', () => 'not-run'),
+          activity: context.run(taskA),
+        })
+        .next();
+
+      expect(result).toEqual({
+        done: true,
+        value: { key: 'cached', value: 'cached-memo-winner' },
+      });
     });
 
     it('advances recovery past cached race sub-operations for new checkpoints', () => {
@@ -788,6 +854,67 @@ describe('Context', () => {
       const nextStep = context.run(task).next();
       expect(nextStep.done).toBe(true);
       expect(nextStep.value).toBe('next-cached-result');
+    });
+
+    it('replays a keyed winner with its durable branch identity', () => {
+      const context = createContext({
+        accumulatedResults: new Map<number, unknown>([
+          [
+            0,
+            {
+              __weftParallelOperationCache: true,
+              formatVersion: 2,
+              variant: 'race',
+              branches: [
+                {
+                  status: 'fulfilled',
+                  value: { key: 'second', value: 'winner' },
+                  operationId: 'race:0:winner',
+                },
+              ],
+              branchNames: ['first', 'second'],
+              subOperationCount: 2,
+            },
+          ],
+        ]),
+      });
+
+      const result = context
+        .raceKeyed({ first: context.run(taskA), second: context.run(taskB) })
+        .next();
+
+      expect(result).toEqual({ done: true, value: { key: 'second', value: 'winner' } });
+    });
+
+    it('rejects keyed branch-name changes across replay', () => {
+      const context = createContext({
+        accumulatedResults: new Map<number, unknown>([
+          [
+            0,
+            {
+              __weftParallelOperationCache: true,
+              formatVersion: 2,
+              variant: 'race',
+              branches: [
+                {
+                  status: 'fulfilled',
+                  value: { key: 'second', value: 'winner' },
+                  operationId: 'race:0:winner',
+                },
+              ],
+              branchNames: ['first', 'second'],
+              subOperationCount: 2,
+            },
+          ],
+        ]),
+      });
+
+      const generator = context.raceKeyed({
+        first: context.run(taskA),
+        renamed: context.run(taskB),
+      });
+
+      expect(() => generator.next()).toThrow(BranchTopologyChangedError);
     });
 
     it('throws when cached race branch count changes on replay', () => {

@@ -160,6 +160,7 @@ export function* race(
   context: Context,
   internals: ContextInternals,
   operations: Generator<ContextOperationRequest, unknown, unknown>[],
+  branchNames?: string[],
 ): Generator<ContextOperationRequest, unknown, unknown> {
   const step = internals.stepIndex++;
 
@@ -172,41 +173,44 @@ export function* race(
           `ctx.race step ${step} found a cached entry of variant '${cached.variant}'. The same step must use the same parallel primitive across retries.`,
         );
       }
-      // Branch count must be deterministic across retries. A workflow
-      // that changed `operations.length` between attempts would
-      // otherwise skip the wrong number of sub-operations on stepIndex
-      // advancement.
-      if (operations.length !== cached.subOperationCount) {
-        throw new BranchTopologyChangedError(
-          `ctx.race branch count changed across retry: expected ${cached.subOperationCount}, got ${operations.length}. Branch count must be deterministic.`,
-        );
-      }
-      // Race only ever caches a fulfilled winner. The topology guard in
-      // hasValidBranchTopology requires race entries to have exactly one
-      // fulfilled slot, so by the time we reach this code the winner is
-      // guaranteed to exist — but assert defensively to make the
-      // invariant readable at the call site.
-      const winner = cached.branches[0];
-      if (winner?.status !== 'fulfilled') {
-        throw new BranchTopologyChangedError(
-          `ctx.race step ${step} cached entry has no fulfilled winner slot — entry is malformed.`,
-        );
-      }
+      assertRaceBranchTopology(operations.length, branchNames, cached);
+      // isParallelOperationCacheEntry validates that a race cache contains
+      // exactly one fulfilled winner, so the narrowed slot is trusted here.
+      const winner = cached.branches[0] as Extract<ParallelBranchSlot, { status: 'fulfilled' }>;
       internals.stepIndex += cached.subOperationCount;
       return winner.value;
     }
 
+    if (branchNames !== undefined) {
+      throw new BranchTopologyChangedError(
+        `ctx.raceKeyed step ${step} found a raw cached race value without keyed branch topology. The same step must use raceKeyed across retries.`,
+      );
+    }
     return cached;
   }
 
-  const subOperations = primeParallelOperations(operations);
   const operationId = `race:${step}`;
+  let subOperations: ContextOperationRequest[];
+  if (branchNames === undefined) {
+    subOperations = primeParallelOperations(operations);
+  } else {
+    const primed = primeKeyedRaceOperations(operations);
+    subOperations = primed.subOperations;
+    if (primed.synchronousWinner !== undefined) {
+      // raceKeyed supplies one name per operation in the same object-entry order.
+      const key = branchNames[primed.synchronousWinner.index]!;
+      const result = { key, value: primed.synchronousWinner.value };
+      cacheRaceWinner(context, step, result, operationId, operations.length, branchNames);
+      return result;
+    }
+  }
   stampDeterministicOperationIds(subOperations, operationId);
   const callerStack = captureCallerStack();
   const result = yield {
     type: 'race',
     operationId,
     operations: subOperations,
+    ...(branchNames !== undefined ? { branchNames } : {}),
     callerStack,
   };
 
@@ -216,14 +220,76 @@ export function* race(
   // on resume. `subOperationCount` keeps the original branch count so
   // the resume path can still advance the workflow's stepIndex past the
   // race's primed sub-operations.
+  cacheRaceWinner(context, step, result, operationId, subOperations.length, branchNames);
+  return result;
+}
+
+function primeKeyedRaceOperations(
+  operations: Generator<ContextOperationRequest, unknown, unknown>[],
+): {
+  subOperations: ContextOperationRequest[];
+  synchronousWinner: { index: number; value: unknown } | undefined;
+} {
+  const subOperations: ContextOperationRequest[] = [];
+  let synchronousWinner: { index: number; value: unknown } | undefined;
+
+  for (const [index, operation] of operations.entries()) {
+    const primed = operation.next();
+    if (primed.done) {
+      synchronousWinner ??= { index, value: primed.value };
+    } else {
+      subOperations.push(primed.value);
+    }
+  }
+
+  return { subOperations, synchronousWinner };
+}
+
+function cacheRaceWinner(
+  context: Context,
+  step: number,
+  result: unknown,
+  operationId: string,
+  subOperationCount: number,
+  branchNames: string[] | undefined,
+): void {
   context.accumulatedResults.set(step, {
     __weftParallelOperationCache: true,
     formatVersion: 2,
     variant: 'race',
     branches: [{ status: 'fulfilled', value: result, operationId: `${operationId}:winner` }],
-    subOperationCount: subOperations.length,
+    ...(branchNames !== undefined ? { branchNames } : {}),
+    subOperationCount,
   } satisfies ParallelOperationCacheEntry);
-  return result;
+}
+
+function sameBranchNames(left: string[] | undefined, right: string[] | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.length === right.length && left.every((name, index) => name === right[index]);
+}
+
+function assertRaceBranchTopology(
+  operationCount: number,
+  branchNames: string[] | undefined,
+  cached: ParallelOperationCacheEntry,
+): void {
+  // Count and keyed branch order must be deterministic across retries. A changed
+  // topology would otherwise skip the wrong sub-operation steps or attach the
+  // cached winner value to a different public key.
+  if (operationCount !== cached.subOperationCount) {
+    throw new BranchTopologyChangedError(
+      `ctx.race branch count changed across retry: expected ${cached.subOperationCount}, got ${operationCount}. Branch count must be deterministic.`,
+    );
+  }
+  if (!sameBranchNames(branchNames, cached.branchNames)) {
+    throw new BranchTopologyChangedError(
+      `ctx.race branch names changed across retry: expected ${formatBranchNames(cached.branchNames)}, got ${formatBranchNames(branchNames)}. Branch names and order must be deterministic.`,
+    );
+  }
+}
+
+function formatBranchNames(branchNames: string[] | undefined): string {
+  return branchNames === undefined ? 'positional branches' : JSON.stringify(branchNames);
 }
 
 /**

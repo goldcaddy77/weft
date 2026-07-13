@@ -21,8 +21,10 @@ import {
   type ActivityOperationCallbacks,
 } from './operations-activity.ts';
 import {
+  assertValidRaceBranchNames,
   executeRaceSubOperations,
   executeRunAllOperationResult,
+  wrapRaceWinner,
   type CoordinationOperationCallbacks,
 } from './operations-coordination.ts';
 import type { OperationWithCallerStack } from './operations-router.ts';
@@ -290,6 +292,7 @@ async function executeRaceSubOperation(
   speculativeState?: SpeculativeExecutionState,
 ): Promise<unknown> {
   signal?.throwIfAborted();
+  assertValidRaceBranchNames(operation);
   return executeRaceSubOperations(
     internals,
     workflowId,
@@ -304,5 +307,6 @@ async function executeRaceSubOperation(
         speculativeState,
       ),
     signal,
+    (winnerIndex, value) => wrapRaceWinner(operation, winnerIndex, value),
   );
 }

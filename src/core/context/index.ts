@@ -18,6 +18,7 @@ import type {
   SignalDefinition,
   UpdateDefinition,
   WorkflowContext,
+  WorkflowKeyedRaceResult,
   WorkflowLogger,
   WorkflowMapOptions,
   WorkflowOperation,
@@ -340,6 +341,27 @@ export class Context implements WorkflowContext {
       unknown,
       unknown
     >[])) as WorkflowOperationTupleResult<TOperations>[number];
+  }
+  *raceKeyed<const TOperations extends Readonly<Record<string, WorkflowOperation<unknown>>>>(
+    operations: TOperations,
+  ): Generator<ContextOperationRequest, WorkflowKeyedRaceResult<TOperations>, unknown> {
+    if (Object.getOwnPropertySymbols(operations).length > 0) {
+      throw new TypeError('ctx.raceKeyed branch names must be strings or numbers, not symbols');
+    }
+    const entries = Object.entries(operations);
+    if (entries.length === 0) {
+      throw new TypeError('ctx.raceKeyed requires at least one branch');
+    }
+    return (yield* parallelOperations.race(
+      this,
+      getInternals(this),
+      entries.map(([, operation]) => operation) as Generator<
+        ContextOperationRequest,
+        unknown,
+        unknown
+      >[],
+      entries.map(([key]) => key),
+    )) as WorkflowKeyedRaceResult<TOperations>;
   }
   *memo<T>(key: string, fn: () => T | Promise<T>): Generator<ContextOperationRequest, T, unknown> {
     return yield* parallelOperations.memo(this, getInternals(this), key, fn);

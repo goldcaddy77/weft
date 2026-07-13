@@ -30,7 +30,7 @@ import { isDeferredConsumeEnvelope } from './deferred-consume-envelope.ts';
 import { Engine } from './index.ts';
 import type { EngineInternals } from './internals.ts';
 import { getInternals } from './internals.ts';
-import { executeRaceSubOperations } from './operations-coordination.ts';
+import { assertValidRaceBranchNames, executeRaceSubOperations } from './operations-coordination.ts';
 import { peekSignal } from './signals.ts';
 import { executeSubOperation } from './sub-operation.ts';
 
@@ -497,6 +497,131 @@ describe('#456 ctx.race / ctx.all with wait-signal branches', () => {
 
     const handle = await engine.start('dup-signal-race', null);
     await expect(handle.result()).rejects.toThrow(/same signal "ev"/);
+  });
+});
+
+describe('#679 ctx.raceKeyed winner metadata', () => {
+  it('rejects branch-name metadata that does not match the operation count', () => {
+    expect(() =>
+      assertValidRaceBranchNames({
+        type: 'race',
+        operationId: 'malformed-keyed-race',
+        operations: [],
+        branchNames: ['event'],
+      }),
+    ).toThrow('ctx.raceKeyed branch names must match its operation count');
+  });
+
+  it('preserves keyed winner and loser semantics across signal, sleep, activity, and nesting', async () => {
+    await using engine = new Engine();
+    engine.register(
+      workflow({ name: 'keyed-race-signal' }).execute(async function* (ctx: WorkflowContext) {
+        return yield* ctx.raceKeyed({
+          event: ctx.waitForSignal<string>('event'),
+          idle: ctx.sleep('5s'),
+        });
+      }),
+    );
+    engine.register(
+      workflow({ name: 'keyed-race-sleep' }).execute(async function* (ctx: WorkflowContext) {
+        return yield* ctx.raceKeyed({
+          event: ctx.waitForSignal<string>('event'),
+          idle: ctx.sleep('10ms'),
+        });
+      }),
+    );
+    engine.register(
+      workflow({ name: 'keyed-race-activity' })
+        .activities({ work: async () => 'complete' })
+        .execute(async function* (ctx: WorkflowContext) {
+          return yield* ctx.raceKeyed({
+            work: ctx.run('work'),
+            idle: ctx.sleep('5s'),
+          });
+        }),
+    );
+    engine.register(
+      workflow({ name: 'keyed-race-signal-loser' })
+        .activities({ work: async () => 'complete' })
+        .execute(async function* (ctx: WorkflowContext) {
+          const winner = yield* ctx.raceKeyed({
+            event: ctx.waitForSignal<string>('event'),
+            work: ctx.run('work'),
+          });
+          const laterEvent = yield* ctx.waitForSignal<string>('event');
+          return { winner, laterEvent };
+        }),
+    );
+    engine.register(
+      workflow({ name: 'nested-keyed-race-signal' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
+        return yield* ctx.race([
+          ctx.raceKeyed({
+            event: ctx.waitForSignal<string>('event'),
+            innerIdle: ctx.sleep('5s'),
+          }),
+          ctx.sleep('10s'),
+        ]);
+      }),
+    );
+    engine.register(
+      workflow({ name: 'keyed-race-duplicate-signal' }).execute(async function* (
+        ctx: WorkflowContext,
+      ) {
+        return yield* ctx.raceKeyed({
+          first: ctx.waitForSignal('event'),
+          second: ctx.waitForSignal('event'),
+        });
+      }),
+    );
+    engine.register(
+      workflow({ name: 'keyed-race-cached-memo' }).execute(async function* (ctx: WorkflowContext) {
+        yield* ctx.memo('cached-winner', () => 'memo-value');
+        return yield* ctx.raceKeyed({
+          cached: ctx.memo('cached-winner', () => 'not-run'),
+          idle: ctx.sleep('5s'),
+        });
+      }),
+    );
+
+    const signalHandle = await engine.start('keyed-race-signal', null, { id: 'keyed-signal' });
+    await engine.signal('keyed-signal', 'event', 'payload');
+    expect(await signalHandle.result()).toEqual({ key: 'event', value: 'payload' });
+
+    const sleepHandle = await engine.start('keyed-race-sleep', null);
+    expect(await sleepHandle.result()).toEqual({ key: 'idle', value: undefined });
+
+    const activityHandle = await engine.start('keyed-race-activity', null);
+    expect(await activityHandle.result()).toEqual({ key: 'work', value: 'complete' });
+
+    const loserHandle = await engine.start('keyed-race-signal-loser', null, {
+      id: 'keyed-signal-loser',
+    });
+    await waitForCondition(
+      () => getInternals(engine).parkedInlineWorkflows.has('keyed-signal-loser'),
+      { timeoutMs: 2000, label: 'workflow parked on the later event wait' },
+    );
+    await engine.signal('keyed-signal-loser', 'event', 'later-payload');
+    expect(await loserHandle.result()).toEqual({
+      winner: { key: 'work', value: 'complete' },
+      laterEvent: 'later-payload',
+    });
+
+    const nestedHandle = await engine.start('nested-keyed-race-signal', null, {
+      id: 'nested-keyed-signal',
+    });
+    await engine.signal('nested-keyed-signal', 'event', 'payload');
+    expect(await nestedHandle.result()).toEqual({ key: 'event', value: 'payload' });
+
+    const cachedMemoHandle = await engine.start('keyed-race-cached-memo', null);
+    expect(await cachedMemoHandle.result()).toEqual({ key: 'cached', value: 'memo-value' });
+
+    const duplicateSignalHandle = await engine.start('keyed-race-duplicate-signal', null);
+
+    await expect(duplicateSignalHandle.result()).rejects.toThrow(
+      'cannot have two branches waiting on the same signal',
+    );
   });
 });
 

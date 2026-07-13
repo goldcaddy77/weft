@@ -10,7 +10,7 @@ import {
   type RunAllBranch,
   type RunAllBranchOutcome,
 } from '../engine-helpers.ts';
-import { finalizeAndUnwrap } from './deferred-consume-envelope.ts';
+import { createKeyedRaceResultEnvelope, finalizeAndUnwrap } from './deferred-consume-envelope.ts';
 import type { EngineInternals } from './internals.ts';
 import {
   executeActivityOperationResult as executeActivityOperationResultFromInternals,
@@ -304,11 +304,14 @@ export async function processRaceOperation(
 ): Promise<void> {
   return callbacks.runOperationWithResult(workflowId, operation, async () => {
     assertSupportedSignalBranches(operation.operations);
+    assertValidRaceBranchNames(operation);
     const winner = await executeRaceSubOperations(
       internals,
       workflowId,
       operation.operations,
       (subOperation, signal) => callbacks.executeSubOperation(workflowId, subOperation, signal),
+      undefined,
+      (winnerIndex, value) => wrapRaceWinner(operation, winnerIndex, value),
     );
     // Finalize-and-unwrap the winner: a winning wait-signal branch resolves with
     // a deferred-consume envelope, and this is the linearization point of "this
@@ -317,6 +320,24 @@ export async function processRaceOperation(
     // winner. Losers' envelopes are dropped unfinalized.
     return finalizeAndUnwrap(winner);
   });
+}
+
+export function assertValidRaceBranchNames(operation: RaceOperation): void {
+  if (
+    operation.branchNames !== undefined &&
+    operation.branchNames.length !== operation.operations.length
+  ) {
+    throw new Error('ctx.raceKeyed branch names must match its operation count');
+  }
+}
+
+export function wrapRaceWinner(
+  operation: RaceOperation,
+  winnerIndex: number,
+  value: unknown,
+): unknown {
+  const key = operation.branchNames?.[winnerIndex];
+  return key === undefined ? value : createKeyedRaceResultEnvelope(key, value);
 }
 
 /**
@@ -336,6 +357,7 @@ export async function executeRaceSubOperations(
   operations: readonly ContextOperationRequest[],
   execute: (operation: ContextOperationRequest, signal: AbortSignal) => Promise<unknown>,
   parentSignal?: AbortSignal,
+  wrapWinner?: (winnerIndex: number, value: unknown) => unknown,
 ): Promise<unknown> {
   parentSignal?.throwIfAborted();
 
@@ -348,14 +370,18 @@ export async function executeRaceSubOperations(
     parentSignal?.throwIfAborted();
 
     if (bufferedSignal !== undefined) {
-      return await execute(bufferedSignal, controller.signal);
+      const value = await execute(bufferedSignal.operation, controller.signal);
+      return wrapWinner === undefined ? value : wrapWinner(bufferedSignal.index, value);
     }
 
-    const subOperations = operations.map((operation) => execute(operation, controller.signal));
+    const subOperations = operations.map((operation, index) =>
+      execute(operation, controller.signal).then((value) => ({ index, value })),
+    );
     // Swallow rejections from losing branches — only the race winner's result
     // (or error) is surfaced. Losers usually reject after the controller aborts.
     void Promise.allSettled(subOperations);
-    return await Promise.race(subOperations);
+    const winner = await Promise.race(subOperations);
+    return wrapWinner === undefined ? winner.value : wrapWinner(winner.index, winner.value);
   } finally {
     parentSignal?.removeEventListener('abort', abortFromParent);
     // Abort losers before the owning coordinator finalizes a signal envelope.
@@ -367,7 +393,7 @@ async function findBufferedSignalDrainBranch(
   internals: EngineInternals,
   workflowId: string,
   operations: readonly ContextOperationRequest[],
-): Promise<WaitSignalOperation | undefined> {
+): Promise<{ index: number; operation: WaitSignalOperation } | undefined> {
   if (operations.length !== 2) {
     return undefined;
   }
@@ -383,7 +409,8 @@ async function findBufferedSignalDrainBranch(
   }
 
   const bufferedSignal = await peekSignal(internals, workflowId, waitSignalOperation.signalName);
-  return bufferedSignal.found ? waitSignalOperation : undefined;
+  if (!bufferedSignal.found) return undefined;
+  return { index: operations.indexOf(waitSignalOperation), operation: waitSignalOperation };
 }
 
 export async function processRunAllOperation(
