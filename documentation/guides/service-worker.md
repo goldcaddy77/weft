@@ -167,6 +167,8 @@ The `weft-timers` tag on `periodicSync.register` must match the `periodicSyncTag
 
 `ctx.sleep()` persists timer records in IndexedDB. A sleeping workflow does not advance until something wakes the Service Worker and calls `scheduler.tick()`.
 
+The scheduler deletes a fired sleep timer only after the awakened inline workflow acknowledges durable progress by committing its next checkpoint or reaching a terminal state. If callback handling fails, recovery is not ready, or the browser evicts the Service Worker before that acknowledgement, the timer record stays in IndexedDB and a later tick can retry it.
+
 Periodic Background Sync is the best browser primitive for this when available. Browser support is uneven:
 
 - [MDN marks Periodic Background Sync](https://developer.mozilla.org/en-US/docs/Web/API/Web_Periodic_Background_Synchronization_API) as experimental and limited availability.
