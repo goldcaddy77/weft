@@ -1,14 +1,14 @@
 import { storageValuesEqual, type ConditionalBatchCondition } from './interface.ts';
 import { toBytea, toStorageValue, type BatchNetEffect } from './neon-value-mapping.ts';
-import type { NeonPoolClient } from './neon.ts';
 import type { PostgresKeyValueQueries } from './postgres-key-value-queries.ts';
+import type { PostgresPoolClient } from './postgres-key-value-storage.ts';
 
 /**
- * The collapsed transaction-phase helpers for {@link NeonStorage}'s `batch()` and
- * `conditionalBatch()`. Each phase runs as ONE statement regardless of operation
- * count, so a checkpoint commit no longer pays one WebSocket round trip per key.
- * Split out of `neon.ts` to keep that module under the size ceiling; all run on a
- * caller-supplied pinned-transaction `client`.
+ * The collapsed transaction-phase helpers for the Postgres storage adapters'
+ * `batch()` and `conditionalBatch()`. Each phase runs as ONE statement regardless
+ * of operation count, so a checkpoint commit no longer pays one round trip per
+ * key. Split out of the storage class to keep that module under the size ceiling;
+ * all run on a caller-supplied pinned-transaction `client`.
  *
  * @module storage/neon-batch
  */
@@ -22,7 +22,7 @@ import type { PostgresKeyValueQueries } from './postgres-key-value-queries.ts';
  * query.
  */
 export async function conditionsHold(
-  client: NeonPoolClient,
+  client: PostgresPoolClient,
   queries: PostgresKeyValueQueries,
   conditions: ConditionalBatchCondition[],
 ): Promise<boolean> {
@@ -55,7 +55,7 @@ export async function conditionsHold(
  * skipped when its set is empty.
  */
 export async function writeBatchNetEffect(
-  client: NeonPoolClient,
+  client: PostgresPoolClient,
   queries: PostgresKeyValueQueries,
   netEffect: BatchNetEffect,
 ): Promise<void> {
