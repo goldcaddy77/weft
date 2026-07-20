@@ -21,6 +21,8 @@ That `yield*` is a checkpoint boundary. The timer's fire time is persisted to [s
 
 Sleep timers are keyed from the workflow identifier and checkpoint step, not from a random identifier. That replay-stable identity matters when the process crashes while the workflow is already parked on a sleep: recovery re-arms the same durable timer key instead of creating a second timer and leaving the original behind. If you restart a terminal workflow with `onTerminalConflict: 'start-new'`, Weft also checks the timer deadline before settling the new run, so a stale timer from the prior run cannot complete the replacement sleep early.
 
+When a sleep timer fires, Weft does not treat the timer as safely consumed merely because the in-memory resolver woke the workflow. The timer is acknowledged after the awakened inline workflow commits its next durable checkpoint or reaches a terminal state. If that durable progress cannot be observed, the fired timer remains in storage for a later scheduler tick. This is most visible in Service Worker deployments, where the browser may evict the worker between a timer callback and the next checkpoint.
+
 ## Duration formats
 
 You can pass a number (interpreted as milliseconds) or a string with a unit. The parser is case-insensitive and tolerates whitespace between the number and unit.
