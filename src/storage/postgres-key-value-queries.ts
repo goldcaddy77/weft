@@ -38,7 +38,7 @@ const POSTGRES_IDENTIFIER_PATTERN = /^[a-z_][a-z0-9_]*$/i;
 export function assertPostgresIdentifier(value: string, role: 'schema' | 'table'): void {
   if (!POSTGRES_IDENTIFIER_PATTERN.test(value)) {
     throw new Error(
-      `NeonStorage ${role} name "${value}" is not a valid Postgres identifier. Use only letters, digits, and underscores, starting with a letter or underscore (matching ${POSTGRES_IDENTIFIER_PATTERN.source}).`,
+      `Postgres storage ${role} name "${value}" is not a valid Postgres identifier. Use only letters, digits, and underscores, starting with a letter or underscore (matching ${POSTGRES_IDENTIFIER_PATTERN.source}).`,
     );
   }
 }
@@ -148,7 +148,7 @@ function buildPostgresKeyRangeQuery(
 
 /**
  * The complete set of SQL statements an adapter instance runs, all bound to one
- * `tableReference`. Built once per {@link NeonStorage} via
+ * `tableReference`. Built once per storage instance via
  * {@link buildPostgresKeyValueQueries}; the range builders close over the
  * reference so callers never re-pass it.
  */
