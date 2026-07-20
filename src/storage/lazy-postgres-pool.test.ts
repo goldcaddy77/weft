@@ -24,7 +24,7 @@ function fakePool(record: { queries: string[]; ends: number }): PostgresPool {
 
 describe('createLazyPostgresPool', () => {
   it('imports the driver at most once and forwards the url', async () => {
-    const record = { queries: [], ends: 0 };
+    const record: { queries: string[]; ends: number } = { queries: [], ends: 0 };
     let loads = 0;
     let seenUrl: string | undefined;
     const pool = createLazyPostgresPool('postgresql://u:p@h/db', {
@@ -47,7 +47,7 @@ describe('createLazyPostgresPool', () => {
   });
 
   it('closes the built pool exactly once on end()', async () => {
-    const record = { queries: [], ends: 0 };
+    const record: { queries: string[]; ends: number } = { queries: [], ends: 0 };
     const pool = createLazyPostgresPool('postgresql://u:p@h/db', {
       driverName: 'pg',
       storageName: 'PostgresStorage',
@@ -78,7 +78,7 @@ describe('createLazyPostgresPool', () => {
   });
 
   it('throws on use after dispose instead of silently building an unreachable pool', async () => {
-    const record = { queries: [], ends: 0 };
+    const record: { queries: string[]; ends: number } = { queries: [], ends: 0 };
     let loads = 0;
     const pool = createLazyPostgresPool('postgresql://u:p@h/db', {
       driverName: 'pg',
@@ -101,7 +101,7 @@ describe('createLazyPostgresPool', () => {
 
   it('rewraps a missing driver as an actionable install hint and allows retry', async () => {
     let attempts = 0;
-    const record = { queries: [], ends: 0 };
+    const record: { queries: string[]; ends: number } = { queries: [], ends: 0 };
     const pool = createLazyPostgresPool('postgresql://u:p@h/db', {
       driverName: 'pg',
       storageName: 'PostgresStorage',
