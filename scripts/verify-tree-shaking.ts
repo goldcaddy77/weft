@@ -153,10 +153,17 @@ const memoryBundle = await buildEntry('storage/memory.js', 'MemoryStorage', [
   'lmdb',
   '@libsql/client',
   '@neondatabase/serverless',
+  'pg',
   'bun:sqlite',
 ]);
 
-const heavyTokens = ['LMDBStorage', 'TursoStorage', 'NeonStorage', 'BunSQLiteStorage'];
+const heavyTokens = [
+  'LMDBStorage',
+  'TursoStorage',
+  'NeonStorage',
+  'PostgresStorage',
+  'BunSQLiteStorage',
+];
 const foundHeavy = heavyTokens.filter((token) => memoryBundle.includes(token));
 
 if (foundHeavy.length > 0) {
@@ -174,6 +181,7 @@ const storageBarrelBundle = await buildEntry('storage/index.js', 'MemoryStorage'
   'lmdb',
   '@libsql/client',
   '@neondatabase/serverless',
+  'pg',
   'bun:sqlite',
 ]);
 
@@ -232,6 +240,7 @@ const neonBundle = await buildEntry('storage/neon.js', 'NeonStorage', [
   'lmdb',
   '@libsql/client',
   '@neondatabase/serverless',
+  'pg',
   'bun:sqlite',
 ]);
 
@@ -243,6 +252,32 @@ if (!neonBundle.includes('@neondatabase/serverless')) {
   fail('@lostgradient/weft/storage/neon bundle unexpectedly contains @libsql/client');
 } else {
   pass('@lostgradient/weft/storage/neon externalizes @neondatabase/serverless correctly');
+}
+
+// ---------------------------------------------------------------------------
+// Test 4c: storage/postgres keeps pg as an external (and pulls in no other driver)
+// ---------------------------------------------------------------------------
+const postgresBundle = await buildEntry('storage/postgres.js', 'PostgresStorage', [
+  'lmdb',
+  '@libsql/client',
+  '@neondatabase/serverless',
+  'pg',
+  'bun:sqlite',
+]);
+
+if (
+  !/import\(\s*["']pg["']\s*\)/.test(postgresBundle) &&
+  !/from\s*["']pg["']/.test(postgresBundle)
+) {
+  fail(
+    '@lostgradient/weft/storage/postgres bundle has no reference to pg (should be external import)',
+  );
+} else if (postgresBundle.includes('@neondatabase/serverless')) {
+  fail('@lostgradient/weft/storage/postgres bundle unexpectedly contains @neondatabase/serverless');
+} else if (postgresBundle.includes('@libsql/client')) {
+  fail('@lostgradient/weft/storage/postgres bundle unexpectedly contains @libsql/client');
+} else {
+  pass('@lostgradient/weft/storage/postgres externalizes pg correctly');
 }
 
 // Test 5: root entrypoint must not export testing primitives
@@ -473,11 +508,13 @@ const storageAdapterSubpathsScript = [
   "import { resolveDefaultStorage } from '@lostgradient/weft/storage/auto';",
   "import { WebExtensionStorage } from '@lostgradient/weft/storage/web-extension';",
   "import { NeonStorage } from '@lostgradient/weft/storage/neon';",
+  "import { PostgresStorage } from '@lostgradient/weft/storage/postgres';",
   "if (typeof HTTPStorage !== 'function') throw new Error('HTTPStorage subpath failed');",
   "if (typeof WebExtensionStorage !== 'function') throw new Error('WebExtensionStorage subpath failed');",
   "if (typeof resolveDefaultStorage !== 'function') throw new Error('resolveDefaultStorage subpath failed');",
   "if (typeof resolveStorage !== 'function') throw new Error('resolveStorage subpath failed');",
   "if (typeof NeonStorage !== 'function') throw new Error('NeonStorage subpath failed');",
+  "if (typeof PostgresStorage !== 'function') throw new Error('PostgresStorage subpath failed');",
 ].join('\n');
 
 const storageTestingSubpathScript = [
