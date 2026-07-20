@@ -1,3 +1,4 @@
+import { createLazyPostgresPool } from './lazy-postgres-pool.ts';
 import {
   PostgresKeyValueStorage,
   type PostgresKeyValueStorageOptions,
@@ -38,45 +39,22 @@ export type NeonStorageOptions = PostgresKeyValueStorageOptions;
 
 /**
  * Construct the Neon serverless default pool for `url`, deferring the
- * `@neondatabase/serverless` import until the pool is first used. The factory
- * itself stays synchronous (the base constructor is synchronous), but the driver
- * module is loaded lazily inside the first `query`/`connect`/`end` call, so the
+ * `@neondatabase/serverless` import until the pool is first used, so the
  * injected-pool path (tests, a shared application pool) needs zero
- * `@neondatabase/serverless` install — the driver is never imported when a pool is
- * supplied. The real driver's `Pool` is itself lazy (constructing it opens no
- * socket), so deferring the whole construction only moves the import, not the
- * connection, off the constructor.
- *
- * A single memoized `import()` backs every method, so the driver is imported at
- * most once per pool and all statements run against the same underlying `Pool`.
+ * `@neondatabase/serverless` install. The lazy-import memoization, dispose guards,
+ * and missing-dependency error live in {@link createLazyPostgresPool}; this
+ * factory only supplies HOW to load the driver. The driver's `Pool` is structurally
+ * assignable to {@link PostgresPool} (a strict subset of its surface), so no cast
+ * is needed; constructing it opens no socket, so deferring only moves the import,
+ * not the connection, off the constructor.
  */
 function neonPoolFactory(url: string): PostgresPool {
-  let poolPromise: Promise<PostgresPool> | undefined;
-  const resolvePool = (): Promise<PostgresPool> => {
-    // The driver's Pool is structurally assignable to PostgresPool (PostgresPool
-    // is a strict subset of its surface), so no cast is needed.
-    poolPromise ??= import('@neondatabase/serverless').then(
-      ({ Pool }) => new Pool({ connectionString: url }),
-    );
-    return poolPromise;
-  };
-  return {
-    query: async (sql, parameters) => {
-      const pool = await resolvePool();
-      return pool.query(sql, parameters);
-    },
-    connect: async () => {
-      const pool = await resolvePool();
-      return pool.connect();
-    },
-    end: async () => {
-      // Only tear down a pool that was actually built. A pool disposed before its
-      // first use never imported the driver, so end() is a no-op.
-      if (poolPromise === undefined) return;
-      const pool = await poolPromise;
-      await pool.end();
-    },
-  };
+  return createLazyPostgresPool(url, {
+    driverName: '@neondatabase/serverless',
+    storageName: 'NeonStorage',
+    loadPool: (connectionString) =>
+      import('@neondatabase/serverless').then(({ Pool }) => new Pool({ connectionString })),
+  });
 }
 
 /**
