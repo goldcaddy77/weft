@@ -188,7 +188,55 @@ if (stagedTouchesPublicSurface) {
   info('Skipping JSDoc audit (no public surface changes staged)');
 }
 
-// 9) lint-staged (format staged files; always last)
+// 9) markdown doctest skip-count ratchet (only when documentation or one of
+// the ratchet's own inputs changed). This is the fast half of
+// `verify:markdown-doctests` — classification and the skip-count ceiling
+// only, no doctest extraction/typecheck — so it stays cheap enough for every
+// commit. The full doctest compile still runs in CI's verify-jsdoc workflow.
+const stagedTouchesMarkdownDoctestRatchetInputs = staged.some(
+  (file) =>
+    (file.startsWith('documentation/') && file.endsWith('.md')) ||
+    file === 'scripts/markdown-doctest-skip-counts.json' ||
+    file === 'scripts/markdown-doctest-skip-reasons.txt',
+);
+if (stagedTouchesMarkdownDoctestRatchetInputs) {
+  info('Running markdown doctest skip-count check…');
+  // The ratchet reads documentation/ and the skip-counts JSON straight off
+  // disk, so unstaged edits (e.g. a skip-count bump the developer forgot to
+  // `git add`) would leak into the result and pass a commit CI then rejects.
+  // Stash unstaged/untracked changes (keeping the index intact) so the check
+  // runs against exactly what will be committed.
+  const stashListBefore = await $`git stash list`.text();
+  const stashCountBefore = stashListBefore.split('\n').filter(Boolean).length;
+  await $`git stash push --keep-index -u -m pre-commit-markdown-doctest-ratchet`.quiet();
+  const stashListAfter = await $`git stash list`.text();
+  const stashCountAfter = stashListAfter.split('\n').filter(Boolean).length;
+  const stashed = stashCountAfter > stashCountBefore;
+  try {
+    await $`bun run verify:markdown-doctests:ratchet`;
+    success('Markdown doctest skip-count check passed');
+  } catch {
+    error(
+      'Markdown doctest skip-count check failed — see hint above. Update scripts/markdown-doctest-skip-counts.json to match the new counts and stage it in this commit.',
+    );
+    ok = false;
+  } finally {
+    if (stashed) {
+      try {
+        await $`git stash pop`.quiet();
+      } catch {
+        error(
+          `Restoring your unstaged changes failed — the ratchet check needed to temporarily stash them and the restore ("git stash pop") hit a conflict (this can happen when the same lines are staged and then edited again, unstaged). Your changes are safe in the stash but NOT yet back in your working tree.\n  → Run \`git status\` to see the conflict, resolve it, then \`git stash drop\` once you've confirmed nothing is missing. \`git stash list\` shows the retained entry ("pre-commit-markdown-doctest-ratchet") if you need to recover it manually.`,
+        );
+        ok = false;
+      }
+    }
+  }
+} else {
+  info('Skipping markdown doctest skip-count check (no ratchet inputs staged)');
+}
+
+// 10) lint-staged (format staged files; always last)
 info('Running lint-staged…');
 try {
   await $`bunx lint-staged`;
