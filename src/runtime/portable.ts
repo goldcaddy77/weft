@@ -29,12 +29,23 @@ export function setPortableRuntimeTestOverridesForTesting(
   portableRuntimeTestOverrides = overrides;
 }
 
-function isBunRuntime(): boolean {
-  const bun =
-    portableRuntimeTestOverrides && 'bun' in portableRuntimeTestOverrides
-      ? portableRuntimeTestOverrides.bun
-      : globalThis.Bun;
-  return typeof bun !== 'undefined';
+function getBunGlobal(): typeof globalThis.Bun | undefined {
+  if (portableRuntimeTestOverrides && 'bun' in portableRuntimeTestOverrides) {
+    return portableRuntimeTestOverrides.bun;
+  }
+  return globalThis.Bun;
+}
+
+/**
+ * Whether the current runtime is Bun. Honors
+ * {@link setPortableRuntimeTestOverridesForTesting}, unlike a bare
+ * `typeof Bun !== 'undefined'` check, so callers that need to simulate a
+ * non-Bun runtime in tests (e.g. to exercise a Node or browser fallback
+ * branch) can do so without a real environment change.
+ * @internal
+ */
+export function isBunRuntime(): boolean {
+  return typeof getBunGlobal() !== 'undefined';
 }
 
 function getProcess(): typeof globalThis.process | undefined {
@@ -90,6 +101,25 @@ export function detectRuntime(): RuntimeKind {
     if (detector.matches()) return detector.kind;
   }
   return 'edge';
+}
+
+// ---------------------------------------------------------------------------
+// Environment variables
+// ---------------------------------------------------------------------------
+
+/**
+ * Read an environment variable without assuming a runtime.
+ *
+ * Prefers `Bun.env` under Bun, falls back to `process.env` under Node, and
+ * returns `undefined` anywhere else (browsers, edge runtimes) — where
+ * neither global exists and a bare `Bun.env[...]` or `process.env[...]`
+ * reference would throw a `ReferenceError`.
+ * @internal
+ */
+export function readEnvironmentVariable(name: string): string | undefined {
+  const bun = getBunGlobal();
+  if (bun !== undefined) return bun.env[name];
+  return getProcess()?.env?.[name];
 }
 
 // ---------------------------------------------------------------------------
@@ -200,14 +230,19 @@ type ProcessWithBuiltinModule = NodeJS.Process & {
 };
 
 /**
- * Load a Node.js built-in module without using `require()`.
+ * Load a Node.js built-in module without a static `node:*` import.
  *
  * This package is ESM (`"type": "module"` in package.json), so `require`
- * is not defined in Node runtime. `process.getBuiltinModule` (Node 22.5+)
- * is the correct way to load Node built-ins from ESM code without needing
- * `createRequire`. Returns `undefined` in non-Node runtimes.
+ * is not defined in Node runtime. `process.getBuiltinModule` (Node 22.5+,
+ * also implemented by Bun) is the correct way to load Node built-ins from
+ * ESM code without needing `createRequire` — and, crucially, without a
+ * static `import ... from 'node:*'` specifier that a browser bundler would
+ * try to resolve or stub. Returns `undefined` in the browser or any runtime
+ * lacking `process.getBuiltinModule`, so callers on a browser-reachable path
+ * must treat the result as optional rather than throwing at import time.
+ * @internal
  */
-function loadNodeBuiltin<T>(id: string): T | undefined {
+export function tryLoadNodeBuiltin<T>(id: string): T | undefined {
   const nodeProcess = getProcess() as ProcessWithBuiltinModule | undefined;
   const getBuiltinModule = nodeProcess?.getBuiltinModule;
   if (typeof getBuiltinModule !== 'function') {
@@ -235,7 +270,7 @@ export function fileSize(path: string): number {
     return Bun.file(path).size;
   }
 
-  const fs = loadNodeBuiltin<typeof import('node:fs')>('node:fs');
+  const fs = tryLoadNodeBuiltin<typeof import('node:fs')>('node:fs');
   if (!fs) {
     throw new Error(
       'fileSize() requires Bun or Node 22.5+ (process.getBuiltinModule). ' +
@@ -264,7 +299,7 @@ export function fileSize(path: string): number {
 // ---------------------------------------------------------------------------
 
 function loadNodeZlib(): typeof import('node:zlib') {
-  const zlib = loadNodeBuiltin<typeof import('node:zlib')>('node:zlib');
+  const zlib = tryLoadNodeBuiltin<typeof import('node:zlib')>('node:zlib');
   if (!zlib) {
     throw new Error(
       'gzip/gunzip require Bun or Node 22.5+ (process.getBuiltinModule). ' +
@@ -306,5 +341,5 @@ export function gunzipSync(data: Uint8Array): Uint8Array {
  * @internal
  */
 export function tryLoadNodeZlib(): typeof import('node:zlib') | undefined {
-  return loadNodeBuiltin<typeof import('node:zlib')>('node:zlib');
+  return tryLoadNodeBuiltin<typeof import('node:zlib')>('node:zlib');
 }
