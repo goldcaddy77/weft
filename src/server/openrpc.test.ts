@@ -20,6 +20,7 @@ import type { StandardJSONSchemaV1 } from '../core/types/definition-schema.ts';
 import { listMcpTools } from '../mcp/tools.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { VERSION } from '../version.ts';
+import { accessPolicyMetadataExamples } from './access-policy-metadata.test-support.ts';
 import { OpenRpcDocumentSchema } from './openrpc-document-schema.ts';
 import { generateOpenRpcDocument } from './openrpc.ts';
 import {
@@ -122,6 +123,23 @@ describe('generateOpenRpcDocument — basic shape', () => {
     expect((document['info'] as Record<string, unknown>)['title']).toBeDefined();
     expect((document['info'] as Record<string, unknown>)['version']).toBe(VERSION);
     expect(Array.isArray(document['methods'])).toBe(true);
+  });
+
+  it('advertises every operation access policy with faithful scope semantics', () => {
+    const registry = createOperationRegistry(
+      accessPolicyMetadataExamples.map(({ segment, access }) =>
+        makeOp({ name: `weft.policy.${segment}`, access, discoverable: true }),
+      ),
+    );
+
+    const document = generateOpenRpcDocument({ registry, transports: ['http'] });
+    const methods = document['methods'] as Array<Record<string, unknown>>;
+
+    for (const { segment, expected } of accessPolicyMetadataExamples) {
+      const method = methods.find((candidate) => candidate['name'] === `weft.policy.${segment}`);
+      expect(method?.['x-weft-access']).toEqual(expected);
+    }
+    expect(OpenRpcDocumentSchema.parse(document) as unknown).toEqual(document);
   });
 
   it('does not advertise a stale root /jsonrpc or /mcp endpoint URL', () => {
@@ -526,7 +544,25 @@ describe('generateOpenRpcDocument — rpc.discover', () => {
       transports: ['http'],
     });
     const methods = document['methods'] as Array<Record<string, unknown>>;
-    expect(methods.find((m) => m['name'] === 'rpc.discover')).toBeDefined();
+    const discoverMethod = methods.find((m) => m['name'] === 'rpc.discover');
+    expect(discoverMethod).toBeDefined();
+    expect(discoverMethod?.['x-weft-access']).toEqual({ kind: 'public' });
+  });
+
+  it('requires access metadata in the generated OpenRPC method JSON Schema', () => {
+    const document = generateOpenRpcDocument({
+      registry: createOperationRegistry([]),
+      transports: ['http'],
+    });
+    const methods = document['methods'] as Array<Record<string, unknown>>;
+    const discoverMethod = methods.find((method) => method['name'] === 'rpc.discover')!;
+    const result = discoverMethod['result'] as Record<string, unknown>;
+    const schema = result['schema'] as Record<string, unknown>;
+    const properties = schema['properties'] as Record<string, unknown>;
+    const methodsSchema = properties['methods'] as Record<string, unknown>;
+    const methodItems = methodsSchema['items'] as Record<string, unknown>;
+
+    expect(methodItems['required']).toContain('x-weft-access');
   });
 
   it('rpc.discover is listed even when no domain operations are registered', () => {
@@ -1045,5 +1081,19 @@ describe('OpenRPC document schema round-trip', () => {
     }
     expect(parsed.success).toBe(true);
     expect(parsed.data as unknown).toEqual(document);
+  });
+
+  it('rejects an operation-catalog method that omits x-weft-access', () => {
+    const document = generateOpenRpcDocument({
+      registry: createLiveOperationRegistry(),
+      transports: ['http', 'websocket'],
+    });
+    const methods = document['methods'] as Array<Record<string, unknown>>;
+    const operationMethod = methods.find((method) => method['name'] !== 'rpc.discover')!;
+    delete operationMethod['x-weft-access'];
+
+    const parsed = OpenRpcDocumentSchema.safeParse(document);
+
+    expect(parsed.success).toBe(false);
   });
 });
