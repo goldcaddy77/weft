@@ -1,5 +1,6 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 import {
+  createDeferred,
   flushMicrotasks,
   waitForCondition,
   yieldToEventLoop,
@@ -23,6 +24,7 @@ import {
   decodeScheduleState,
   normalizeScheduleOptions,
   normalizeScheduleSpec,
+  normalizeScheduleUpdateOptions,
 } from './engine/validation/schedule.ts';
 import {
   CleanupWarningEvent,
@@ -118,6 +120,30 @@ class FailingScheduleBatchStorage extends MemoryStorage {
     if (failingKey !== null && operations.some((operation) => operation.key === failingKey)) {
       this.#nextFailingKey = null;
       throw new Error(`simulated schedule batch failure for ${failingKey}`);
+    }
+
+    return super.batch(operations);
+  }
+}
+
+class ControlledScheduleBatchStorage extends MemoryStorage {
+  readonly batchEntered = createDeferred();
+  readonly releaseBatch = createDeferred();
+  #blockedKey: string | null = null;
+  #failure: Error | null = null;
+
+  blockNextBatchContaining(key: string, failure?: Error): void {
+    this.#blockedKey = key;
+    this.#failure = failure ?? null;
+  }
+
+  override async batch(operations: BatchOperation[]): Promise<void> {
+    const blockedKey = this.#blockedKey;
+    if (blockedKey !== null && operations.some((operation) => operation.key === blockedKey)) {
+      this.#blockedKey = null;
+      this.batchEntered.resolve();
+      await this.releaseBatch.promise;
+      if (this.#failure !== null) throw this.#failure;
     }
 
     return super.batch(operations);
@@ -236,6 +262,36 @@ function createScheduleState(overrides: Partial<ScheduleState> = {}): ScheduleSt
 }
 
 describe('schedule validation helpers', () => {
+  it('normalizes only supplied update options and rejects invalid update values', () => {
+    expect(normalizeScheduleUpdateOptions(undefined)).toEqual({});
+    expect(
+      normalizeScheduleUpdateOptions({
+        description: '',
+        overlap: 'allow',
+        backfill: false,
+        jitter: '1s',
+      }),
+    ).toEqual({
+      description: '',
+      overlap: 'allow',
+      backfill: false,
+      jitterMs: 1_000,
+    });
+
+    expect(() => normalizeScheduleUpdateOptions(null as never)).toThrow(
+      'options must be an object when provided',
+    );
+    expect(() => normalizeScheduleUpdateOptions({ overlap: 'parallel' as never })).toThrow(
+      'options.overlap must be one of skip, queue, cancel-running, allow',
+    );
+    expect(() => normalizeScheduleUpdateOptions({ backfill: 'yes' as never })).toThrow(
+      'options.backfill must be a boolean when provided',
+    );
+    expect(() => normalizeScheduleUpdateOptions({ jitter: null as never })).toThrow(
+      'options.jitter must be a duration string or a number of milliseconds',
+    );
+  });
+
   it('rejects a non-object schedule spec before checking cadence fields', () => {
     expect(() => normalizeScheduleSpec(null as never)).toThrow(
       'Schedule spec must be a cron string or an object with "cron" or "every"',
@@ -759,7 +815,7 @@ describe('recurring schedules', () => {
   it('engine.schedule(type, input) rejects missing cron expressions for the positional overload', async () => {
     const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
     const engine = createEngine(clock);
-    const scheduleWithoutCron = engine.schedule as unknown as (
+    const scheduleWithoutCron = engine.schedule.bind(engine) as unknown as (
       type: string,
       input: unknown,
     ) => Promise<unknown>;
@@ -958,6 +1014,221 @@ describe('recurring schedules', () => {
     engine[Symbol.dispose]();
   });
 
+  it('updates mutable schedule options while preserving omitted and immutable persisted fields.', async () => {
+    const storage = new MemoryStorage();
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const scheduledWorkflow = defineWorkflow({ name: 'mutable-schedule-options' }).execute(
+      async function* (_ctx: WorkflowContext, input: { tenant: string }) {
+        return input;
+      },
+    );
+    const engine = await Engine.create({
+      storage,
+      getNow: () => clock.now,
+      recover: false,
+      workflows: { 'mutable-schedule-options': scheduledWorkflow },
+    });
+
+    const schedule = await engine.schedule(
+      'mutable-schedule-options',
+      { tenant: 'acme' },
+      '*/15 * * * * *',
+      {
+        id: 'mutable-options',
+        description: 'Original description',
+        overlap: 'queue',
+        backfill: true,
+        jitter: '10s',
+      },
+    );
+
+    clock.now += 1_000;
+    await schedule.update(
+      { every: '5m' },
+      {
+        description: 'Updated description',
+        overlap: 'allow',
+      },
+    );
+
+    const updated = await schedule.describe();
+    expect(updated).toMatchObject({
+      id: 'mutable-options',
+      workflowType: 'mutable-schedule-options',
+      description: 'Updated description',
+      intervalMs: 300_000,
+      overlap: 'allow',
+      backfill: true,
+      jitterMs: 10_000,
+      status: 'active',
+      nextFireAt: clock.now + 300_000,
+    });
+    expect(updated.cronExpression).toBeUndefined();
+    const firstUpdatedEffectiveFireAt = resolveEffectiveScheduleFireAt(
+      { id: 'mutable-options', jitterMs: 10_000 },
+      requireNextFireAt(updated),
+    );
+    expect(
+      await storage.get(KEYS.scheduleTick(firstUpdatedEffectiveFireAt, 'mutable-options')),
+    ).not.toBeNull();
+
+    clock.now += 1_000;
+    await schedule.update('*/20 * * * * *', {
+      backfill: false,
+      jitter: '20s',
+    });
+    const twiceUpdated = await schedule.describe();
+    expect(twiceUpdated).toMatchObject({
+      description: 'Updated description',
+      overlap: 'allow',
+      backfill: false,
+      jitterMs: 20_000,
+      cronExpression: '*/20 * * * * *',
+    });
+    const twiceUpdatedEffectiveFireAt = resolveEffectiveScheduleFireAt(
+      { id: 'mutable-options', jitterMs: 20_000 },
+      requireNextFireAt(twiceUpdated),
+    );
+    expect(
+      await storage.get(KEYS.scheduleTick(firstUpdatedEffectiveFireAt, 'mutable-options')),
+    ).toBeNull();
+    expect(
+      await storage.get(KEYS.scheduleTick(twiceUpdatedEffectiveFireAt, 'mutable-options')),
+    ).not.toBeNull();
+
+    const storedBytes = await storage.get(KEYS.schedule('mutable-options'));
+    expect(storedBytes).not.toBeNull();
+    expect(decode(storedBytes!)).toMatchObject({
+      id: 'mutable-options',
+      workflowType: 'mutable-schedule-options',
+      input: { tenant: 'acme' },
+      description: 'Updated description',
+      overlap: 'allow',
+      backfill: false,
+      jitterMs: 20_000,
+    });
+
+    engine[Symbol.dispose]();
+
+    const recoveredEngine = await Engine.create({
+      storage,
+      getNow: () => clock.now,
+      workflows: { 'mutable-schedule-options': scheduledWorkflow },
+    });
+    expect(await recoveredEngine.getSchedule('mutable-options')).toMatchObject({
+      description: 'Updated description',
+      overlap: 'allow',
+      backfill: false,
+      jitterMs: 20_000,
+    });
+    recoveredEngine[Symbol.dispose]();
+  });
+
+  it('updates paused schedule options without activating or arming the schedule.', async () => {
+    const storage = new MemoryStorage();
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const engine = createEngine(clock, storage);
+
+    registerWorkflow(engine, 'paused-schedule-update', async function* () {
+      return 'done';
+    });
+
+    const schedule = await engine.schedule('paused-schedule-update', null, '* * * * *', {
+      id: 'paused-options',
+      overlap: 'skip',
+    });
+    await schedule.pause();
+    clock.now += 1_000;
+
+    await schedule.update('*/5 * * * * *', {
+      overlap: 'cancel-running',
+      backfill: true,
+      jitter: '2s',
+      description: 'Paused maintenance',
+    });
+
+    expect(await schedule.describe()).toMatchObject({
+      status: 'paused',
+      overlap: 'cancel-running',
+      backfill: true,
+      jitterMs: 2_000,
+      description: 'Paused maintenance',
+      nextFireAt: getNextCronOccurrence('*/5 * * * * *', clock.now),
+    });
+    expect(await storage.get('timer-idx:schedule:paused-options')).toBeNull();
+
+    engine[Symbol.dispose]();
+  });
+
+  it('rejects a null description update without changing the persisted schedule.', async () => {
+    const storage = new MemoryStorage();
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const engine = createEngine(clock, storage);
+
+    registerWorkflow(engine, 'invalid-description-update', async function* () {
+      return 'done';
+    });
+
+    const schedule = await engine.schedule('invalid-description-update', null, '* * * * *', {
+      id: 'invalid-description',
+      description: 'Keep me',
+    });
+    const before = await storage.get(KEYS.schedule('invalid-description'));
+
+    await expect(schedule.update('*/5 * * * * *', { description: null as never })).rejects.toThrow(
+      'options.description must be a string when provided',
+    );
+    expect(await storage.get(KEYS.schedule('invalid-description'))).toEqual(before);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('keeps an active run and drains already-queued occurrences after the overlap policy changes.', async () => {
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const engine = createEngine(clock);
+
+    registerWorkflow(engine, 'queued-policy-update', async function* (ctx: WorkflowContext) {
+      yield* ctx.waitForSignal('release');
+      return 'released';
+    });
+
+    const schedule = await engine.schedule('queued-policy-update', null, '* * * * *', {
+      id: 'queued-policy-update',
+      overlap: 'queue',
+    });
+    await tickEngine(engine, clock, requireNextFireAt(await schedule.describe()));
+    const [firstWorkflowId] = await listRunningWorkflowIds(engine);
+    expect(firstWorkflowId).toBeDefined();
+
+    await tickEngine(engine, clock, requireNextFireAt(await schedule.describe()));
+    expect(await schedule.describe()).toMatchObject({
+      currentWorkflowId: firstWorkflowId,
+      queuedRuns: 1,
+    });
+
+    await schedule.update('* * * * *', { overlap: 'skip' });
+    expect(await schedule.describe()).toMatchObject({
+      currentWorkflowId: firstWorkflowId,
+      overlap: 'skip',
+      queuedRuns: 1,
+    });
+
+    await engine.signal(firstWorkflowId!, 'release');
+    await drainEngine();
+
+    const [queuedWorkflowId] = await listRunningWorkflowIds(engine);
+    expect(queuedWorkflowId).toBeDefined();
+    expect(queuedWorkflowId).not.toBe(firstWorkflowId);
+    expect(await schedule.describe()).toMatchObject({
+      currentWorkflowId: queuedWorkflowId,
+      queuedRuns: 0,
+    });
+
+    await engine.signal(queuedWorkflowId!, 'release');
+    await drainEngine();
+    engine[Symbol.dispose]();
+  });
+
   it('keeps the fired schedule timer retryable when the rearm batch fails.', async () => {
     const storage = new FailingScheduleBatchStorage();
     const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
@@ -1003,6 +1274,123 @@ describe('recurring schedules', () => {
       ).toBeNull();
       expect(await storage.get('timer-idx:schedule:rearm-atomicity-schedule')).not.toBeNull();
     } finally {
+      errorSpy.mockRestore();
+      engine[Symbol.dispose]();
+    }
+  });
+
+  it('serializes an update behind a scanned timer callback and applies it after rearm succeeds.', async () => {
+    const storage = new ControlledScheduleBatchStorage();
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const engine = createEngine(clock, storage);
+
+    registerWorkflow(
+      engine,
+      'serialized-update-success-workflow',
+      async function* (_ctx: WorkflowContext, input: string) {
+        return input;
+      },
+    );
+
+    const schedule = await engine.schedule(
+      'serialized-update-success-workflow',
+      'run-once',
+      '*/15 * * * * *',
+      { id: 'serialized-update-success' },
+    );
+    const originalFireAt = requireNextFireAt(await schedule.describe());
+    const oldRearmFireAt = getNextCronOccurrence('*/15 * * * * *', originalFireAt);
+    storage.blockNextBatchContaining(
+      KEYS.scheduleTick(oldRearmFireAt, 'serialized-update-success'),
+    );
+
+    clock.now = originalFireAt;
+    const tickPromise = engine.scheduler.tick(clock.now);
+    await storage.batchEntered.promise;
+
+    let updateSettled = false;
+    const updatePromise = schedule.update('*/45 * * * * *').finally(() => {
+      updateSettled = true;
+    });
+    await flushMicrotasks();
+
+    try {
+      expect(updateSettled).toBe(false);
+    } finally {
+      storage.releaseBatch.resolve();
+      await tickPromise;
+    }
+
+    await updatePromise;
+    const updated = await schedule.describe();
+    expect(updated).toMatchObject({
+      cronExpression: '*/45 * * * * *',
+      lastFireAt: originalFireAt,
+    });
+    expect(
+      await storage.get(KEYS.scheduleTick(oldRearmFireAt, 'serialized-update-success')),
+    ).toBeNull();
+    expect(
+      await storage.get(KEYS.scheduleTick(requireNextFireAt(updated), 'serialized-update-success')),
+    ).not.toBeNull();
+
+    engine[Symbol.dispose]();
+  });
+
+  it('rejects a concurrent update and preserves the fired timer when callback rearm fails.', async () => {
+    const storage = new ControlledScheduleBatchStorage();
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const engine = createEngine(clock, storage);
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+
+    registerWorkflow(
+      engine,
+      'serialized-update-failure-workflow',
+      async function* (_ctx: WorkflowContext, input: string) {
+        return input;
+      },
+    );
+
+    const schedule = await engine.schedule(
+      'serialized-update-failure-workflow',
+      'run-once',
+      '*/15 * * * * *',
+      { id: 'serialized-update-failure' },
+    );
+    const originalFireAt = requireNextFireAt(await schedule.describe());
+    const oldRearmFireAt = getNextCronOccurrence('*/15 * * * * *', originalFireAt);
+    storage.blockNextBatchContaining(
+      KEYS.scheduleTick(oldRearmFireAt, 'serialized-update-failure'),
+      new Error('simulated in-flight schedule rearm failure'),
+    );
+
+    clock.now = originalFireAt;
+    const tickPromise = engine.scheduler.tick(clock.now);
+    await storage.batchEntered.promise;
+
+    let updateSettled = false;
+    const updatePromise = schedule.update('*/45 * * * * *').finally(() => {
+      updateSettled = true;
+    });
+    await flushMicrotasks();
+
+    try {
+      expect(updateSettled).toBe(false);
+      storage.releaseBatch.resolve();
+      await tickPromise;
+      await expect(updatePromise).rejects.toThrow(
+        'Failed to persist schedule "serialized-update-failure" while processing its timer',
+      );
+
+      expect(await schedule.describe()).toMatchObject({
+        cronExpression: '*/15 * * * * *',
+        nextFireAt: originalFireAt,
+      });
+      expect(
+        await storage.get(KEYS.scheduleTick(originalFireAt, 'serialized-update-failure')),
+      ).not.toBeNull();
+    } finally {
+      storage.releaseBatch.resolve();
       errorSpy.mockRestore();
       engine[Symbol.dispose]();
     }

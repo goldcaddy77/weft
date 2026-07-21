@@ -8,6 +8,7 @@ import type {
   ScheduleSpec,
   ScheduleState,
   ScheduleSummary,
+  ScheduleUpdateOptions,
   WorkflowState,
 } from '../types.ts';
 import { WorkflowNotRegisteredError } from './errors.ts';
@@ -22,7 +23,12 @@ import {
   matchesScheduleFilter,
   paginateScheduleSummaries,
 } from './state-utilities.ts';
-import { loadScheduleState, requireScheduleState, writeScheduleState } from './storage-io.ts';
+import {
+  loadScheduleState,
+  requireScheduleState,
+  runSerializedScheduleStateOperation,
+  writeScheduleState,
+} from './storage-io.ts';
 import {
   coerceScheduleId,
   decodeScheduleState,
@@ -30,6 +36,7 @@ import {
   normalizeScheduleFilter,
   normalizeScheduleOptions,
   normalizeScheduleSpec,
+  normalizeScheduleUpdateOptions,
 } from './validation/schedule.ts';
 
 export { startScheduledRun } from './schedule-run.ts';
@@ -237,42 +244,50 @@ export async function updateSchedule(
   internals: EngineInternals,
   scheduleId: string,
   newSpec: string | ScheduleSpec,
+  options?: ScheduleUpdateOptions,
 ): Promise<void> {
   const normalizedScheduleId = coerceScheduleId(scheduleId, 'scheduleId');
   const normalizedSpec = normalizeScheduleSpec(newSpec);
-  const state = await requireScheduleState(internals, normalizedScheduleId);
-  const now = internals.options.getNow();
-  // Replace the cadence wholesale so switching kinds (cron <-> interval) never
-  // leaves a stale field behind. Interval cadence re-anchors at the update time.
-  // Strip both cadence fields from the carried-over state first, then attach
-  // only the one the new spec selects (exactOptionalPropertyTypes forbids
-  // carrying an explicit `undefined`).
-  const {
-    cronExpression: _droppedCron,
-    intervalMs: _droppedInterval,
-    ...stateWithoutCadence
-  } = state;
-  const cadenceFields =
-    normalizedSpec.kind === 'interval'
-      ? { intervalMs: normalizedSpec.intervalMs }
-      : { cronExpression: normalizedSpec.cronExpression };
-  // For interval specs the occurrence grid is anchored at `createdAt`. Re-anchor
-  // to `now` (the update time) so the timer's subsequent `getNextScheduleOccurrence`
-  // calls use the same origin as the `nextFireAt` computed here. Without this,
-  // the first fire after the update is correct but later fires drift back to the
-  // original creation-time grid.
-  const anchorFields = normalizedSpec.kind === 'interval' ? { createdAt: now } : {};
-  const updatedState: ScheduleState = {
-    ...stateWithoutCadence,
-    ...cadenceFields,
-    ...anchorFields,
-    updatedAt: now,
-    nextFireAt:
-      state.status === 'cancelled'
-        ? null
-        : getNextScheduleOccurrence({ ...cadenceFields, createdAt: now }, now),
-  };
-  await writeScheduleState(internals, updatedState, { includeTimer: state.status === 'active' });
+  const normalizedOptions = normalizeScheduleUpdateOptions(options);
+  await runSerializedScheduleStateOperation(internals, normalizedScheduleId, async () => {
+    const state = await requireScheduleState(internals, normalizedScheduleId);
+    const now = internals.options.getNow();
+    // Replace the cadence wholesale so switching kinds (cron <-> interval) never
+    // leaves a stale field behind. Interval cadence re-anchors at the update time.
+    // Strip both cadence fields from the carried-over state first, then attach
+    // only the one the new spec selects (exactOptionalPropertyTypes forbids
+    // carrying an explicit `undefined`).
+    const {
+      cronExpression: _droppedCron,
+      intervalMs: _droppedInterval,
+      ...stateWithoutCadence
+    } = state;
+    const cadenceFields =
+      normalizedSpec.kind === 'interval'
+        ? { intervalMs: normalizedSpec.intervalMs }
+        : { cronExpression: normalizedSpec.cronExpression };
+    // For interval specs the occurrence grid is anchored at `createdAt`. Re-anchor
+    // to `now` (the update time) so the timer's subsequent `getNextScheduleOccurrence`
+    // calls use the same origin as the `nextFireAt` computed here. Without this,
+    // the first fire after the update is correct but later fires drift back to the
+    // original creation-time grid.
+    const anchorFields = normalizedSpec.kind === 'interval' ? { createdAt: now } : {};
+    const updatedState: ScheduleState = {
+      ...stateWithoutCadence,
+      ...normalizedOptions,
+      ...cadenceFields,
+      ...anchorFields,
+      updatedAt: now,
+      nextFireAt:
+        state.status === 'cancelled'
+          ? null
+          : getNextScheduleOccurrence({ ...cadenceFields, createdAt: now }, now),
+    };
+    await writeScheduleState(internals, updatedState, {
+      includeTimer: state.status === 'active',
+      replaceTimerFrom: state,
+    });
+  });
 }
 
 /**
@@ -411,11 +426,10 @@ export async function handleScheduledWorkflowTerminal(
     ...clearScheduleCurrentWorkflow(state),
     updatedAt: now,
   };
-  if (
-    clearedState.status === 'active' &&
-    clearedState.overlap === 'queue' &&
-    clearedState.queuedRuns > 0
-  ) {
+  // A queued occurrence was accepted under the overlap policy active at that
+  // tick. Keep draining that durable obligation even if a later schedule update
+  // changes the policy; the new policy governs future occurrences.
+  if (clearedState.status === 'active' && clearedState.queuedRuns > 0) {
     const nextWorkflowId = await callbacks.startScheduledRun(clearedState);
     await writeScheduleState(
       internals,

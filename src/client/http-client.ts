@@ -27,6 +27,7 @@ import type {
   ScheduleOptions,
   ScheduleSpec,
   ScheduleSummary,
+  ScheduleUpdateOptions,
   SearchAttributeValue,
   SignalDefinition,
   SignalDeliveryOptions,
@@ -98,7 +99,7 @@ import type {
 import { openClientEventSubscription } from './open-event-subscription.ts';
 import { buildScheduleListSearchParams } from './schedule-list-search-params.ts';
 import { buildWorkflowListSearchParams } from './search-params.ts';
-import { buildStartBody, buildStartOrSignalBody, scheduleSpecToWireFields } from './start-body.ts';
+import { buildScheduleBody, buildStartBody, buildStartOrSignalBody } from './start-body.ts';
 import type { KnownWorkflowName, UnknownNameWhenRegistryEmpty } from './workflow-name-typing.ts';
 
 /**
@@ -257,14 +258,7 @@ export class HttpClient implements WeftClient {
     spec: string | ScheduleSpec,
     options?: ScheduleOptions,
   ): Promise<ClientScheduleHandle> {
-    const body: Record<string, unknown> = {
-      type,
-      input,
-      ...scheduleSpecToWireFields(spec),
-    };
-    if (options?.id !== undefined) body['id'] = options.id;
-    if (options?.overlap !== undefined) body['overlap'] = options.overlap;
-    if (options?.backfill !== undefined) body['backfill'] = options.backfill;
+    const body = buildScheduleBody(type, input, spec, options);
 
     const response = await request<{ id: string }>(this.baseUrl, '/schedules', this.headers, {
       method: 'POST',
@@ -333,8 +327,12 @@ export class HttpClient implements WeftClient {
     return cancelScheduleRequest(this, id);
   }
 
-  async updateSchedule(id: string, newSpec: string | ScheduleSpec): Promise<void> {
-    return updateScheduleRequest(this, id, newSpec);
+  async updateSchedule(
+    id: string,
+    newSpec: string | ScheduleSpec,
+    options?: ScheduleUpdateOptions,
+  ): Promise<void> {
+    return updateScheduleRequest(this, id, newSpec, options);
   }
 
   async signal(id: string, name: SignalDefinition): Promise<void>;

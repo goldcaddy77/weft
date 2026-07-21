@@ -30,6 +30,7 @@ import type {
   RetentionOverview,
   ReviewListEntry,
   ReviewListFilter,
+  ScheduleUpdateOptions as ScheduleEdit,
   ScheduleFilter,
   ScheduleOptions,
   ScheduleSpec,
@@ -270,8 +271,8 @@ export interface ClientScheduleHandle extends Disposable {
   /** Cancel this schedule. */
   cancel(): Promise<void>;
 
-  /** Update the schedule's recurrence specification (cron string or interval spec). */
-  update(newSpec: string | ScheduleSpec): Promise<void>;
+  /** Update the schedule cadence and optional mutable schedule settings. */
+  update(newSpec: string | ScheduleSpec, options?: ScheduleEdit): Promise<void>;
 
   /** Read the latest persisted summary for this schedule. */
   describe(): Promise<ScheduleSummary | null>;
@@ -342,7 +343,6 @@ export interface WeftClient {
    * returned handle's `result()` to its output type. Without augmentation the
    * permissive string-name overload applies, so the client stays usable with
    * plain string names and no hard dependency on codegen.
-   *
    * Pass `options.idempotencyKey` for at-most-once starts: a repeated key returns
    * a handle to the existing run rather than starting a second. Conflicts (a
    * duplicate `id`, or a key whose run was purged) are transport-dependent:
@@ -467,8 +467,8 @@ export interface WeftClient {
   /** Cancel a recurring schedule. */
   cancelSchedule(id: string): Promise<void>;
 
-  /** Update a recurring schedule's recurrence specification (cron string or interval spec). */
-  updateSchedule(id: string, newSpec: string | ScheduleSpec): Promise<void>;
+  /** Update a recurring schedule's cadence and optional mutable schedule settings. */
+  updateSchedule(id: string, newSpec: string | ScheduleSpec, options?: ScheduleEdit): Promise<void>;
 
   /** Send a named signal to a workflow. */
   signal(id: string, name: SignalDefinition): Promise<void>;

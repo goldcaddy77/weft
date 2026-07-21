@@ -209,12 +209,16 @@ export type CatalogOperationTypes = {
   };
   'weft.schedules.update': {
     readonly input: {
+      readonly backfill?: unknown;
       readonly cronExpression?: unknown;
+      readonly description?: unknown;
       readonly every?: unknown;
+      readonly jitter?: unknown;
+      readonly overlap?: unknown;
       readonly scheduleId: string;
     };
     readonly output: null;
-    readonly faults: 'Conflict' | 'NotFound';
+    readonly faults: 'Conflict' | 'InvalidParams' | 'NotFound';
   };
   'weft.system.metrics': {
     readonly input: {};

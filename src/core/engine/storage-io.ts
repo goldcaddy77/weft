@@ -43,6 +43,39 @@ export async function runSerializedWorkflowStateWrite<TResult>(
   }
 }
 
+/**
+ * Serialize a schedule read-modify-write operation with its timer callback.
+ *
+ * Unlike workflow-state write serialization, a failed predecessor is propagated
+ * to callers that were already queued behind it. In particular, an update that
+ * arrives while a scanned timer callback is rearming must not delete the fired
+ * timer after that callback fails; rejecting the queued update leaves the durable
+ * timer available for the scheduler (or a lease successor) to retry.
+ */
+export async function runSerializedScheduleStateOperation<TResult>(
+  internals: EngineInternals,
+  scheduleId: string,
+  operation: () => Promise<TResult>,
+): Promise<TResult> {
+  const previousOperation =
+    internals.scheduleStateOperationChains.get(scheduleId) ?? Promise.resolve();
+  const execution = previousOperation.then(operation);
+  const trackedExecution = execution.then(() => undefined);
+  // Keep the rejected state available to an already-queued successor while
+  // marking this bookkeeping promise handled when there is no successor.
+  void trackedExecution.catch(() => undefined);
+
+  internals.scheduleStateOperationChains.set(scheduleId, trackedExecution);
+
+  try {
+    return await execution;
+  } finally {
+    if (internals.scheduleStateOperationChains.get(scheduleId) === trackedExecution) {
+      internals.scheduleStateOperationChains.delete(scheduleId);
+    }
+  }
+}
+
 /** Load and decode persisted workflow state by workflow ID. */
 export async function loadWorkflowState(
   internals: EngineInternals,
@@ -167,28 +200,63 @@ export async function requireScheduleState(
   return state;
 }
 
+function buildPreviousScheduleTimerDeleteOperations(
+  previousState: ScheduleState | undefined,
+): BatchOperation[] {
+  if (previousState?.status !== 'active' || previousState.nextFireAt === null) return [];
+  return [
+    {
+      type: 'delete',
+      key: KEYS.scheduleTick(
+        resolveEffectiveScheduleFireAt(previousState, previousState.nextFireAt),
+        previousState.id,
+      ),
+    },
+  ];
+}
+
+function buildNextScheduleTimerOperations(
+  state: ScheduleState,
+  includeTimer: boolean,
+): BatchOperation[] {
+  if (!includeTimer || state.status !== 'active' || state.nextFireAt === null) return [];
+  return buildTimerBatchOperations({
+    id: createScheduleTimerId(state.id),
+    workflowId: state.id,
+    fireAt: resolveEffectiveScheduleFireAt(state, state.nextFireAt),
+    kind: 'schedule',
+  });
+}
+
+function buildScheduleTimerReplacementOperations(
+  state: ScheduleState,
+  includeTimer: boolean,
+  previousState: ScheduleState | undefined,
+): BatchOperation[] {
+  const deleteOperations = buildPreviousScheduleTimerDeleteOperations(previousState);
+  const nextTimerOperations = buildNextScheduleTimerOperations(state, includeTimer);
+  if (nextTimerOperations.length > 0) return [...deleteOperations, ...nextTimerOperations];
+  if (previousState === undefined) return deleteOperations;
+  return [
+    ...deleteOperations,
+    { type: 'delete', key: `timer-idx:${createScheduleTimerId(state.id)}` },
+  ];
+}
+
 /** Persist schedule state and optionally write the next schedule timer. */
 export async function writeScheduleState(
   internals: EngineInternals,
   state: ScheduleState,
-  options?: { includeTimer?: boolean },
+  options?: { includeTimer?: boolean; replaceTimerFrom?: ScheduleState },
 ): Promise<void> {
   const operations: BatchOperation[] = [
     { type: 'put', key: KEYS.schedule(state.id), value: encode(state) },
   ];
 
   const includeTimer = options?.includeTimer ?? state.status === 'active';
-  if (includeTimer && state.status === 'active' && state.nextFireAt !== null) {
-    const effectiveFireAt = resolveEffectiveScheduleFireAt(state, state.nextFireAt);
-    operations.push(
-      ...buildTimerBatchOperations({
-        id: createScheduleTimerId(state.id),
-        workflowId: state.id,
-        fireAt: effectiveFireAt,
-        kind: 'schedule',
-      }),
-    );
-  }
+  operations.push(
+    ...buildScheduleTimerReplacementOperations(state, includeTimer, options?.replaceTimerFrom),
+  );
 
   await commitFencedEngineWrite(
     internals,
