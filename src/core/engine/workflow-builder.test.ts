@@ -18,6 +18,7 @@ import {
   CURRENT_PERSISTED_DATA_SCHEMA_VERSION,
   PERSISTED_DATA_SCHEMA_VERSION_KEY,
 } from '../persisted-data-incompatible-error.ts';
+import { query, signal, update } from '../types/message-handles.ts';
 import { workflow } from '../types/workflow-function.ts';
 import { ActivityResolutionError, Engine, PersistedDataIncompatibleError } from './index.ts';
 import { getInternals } from './internals.ts';
@@ -190,6 +191,33 @@ describe('engine + workflow-builder integration', () => {
 
     const handle = await engine.start('tracked', { customerId: 'cust_42' });
     expect(await handle.result()).toBe('cust_42');
+  });
+
+  it('message definitions from the builder are wired onto workflow introspection', () => {
+    const interactive = workflow({ name: 'interactive' })
+      .signals({ approveAlias: signal('approve') })
+      .updates({ renameAlias: update('rename') })
+      .queries({ statusAlias: query('status') })
+      .execute(async function* () {});
+
+    const engine = track(new Engine());
+    engine.register(interactive);
+
+    const definition = engine.getWorkflowDefinition('interactive');
+    expect(Object.keys(definition?.signals ?? {})).toEqual(['approve']);
+    expect(Object.keys(definition?.updates ?? {})).toEqual(['rename']);
+    expect(Object.keys(definition?.queries ?? {})).toEqual(['status']);
+  });
+
+  it('rejects duplicate runtime message names hidden behind builder aliases', () => {
+    const duplicateSignals = workflow({ name: 'duplicate-signals' })
+      .signals({ first: signal('approve'), second: signal('approve') })
+      .execute(async function* () {});
+
+    const engine = track(new Engine());
+    expect(() => engine.register(duplicateSignals)).toThrow(
+      'Duplicate signal runtime name "approve" in workflow "duplicate-signals"',
+    );
   });
 
   it('hot-add after start: registerWorkflows is callable post-construction', async () => {

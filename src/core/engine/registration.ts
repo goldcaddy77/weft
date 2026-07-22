@@ -4,6 +4,9 @@ import {
   activity,
   validateDefinitionSchemaMetadata,
   type ActivityDefinition,
+  type QueryDefinition,
+  type SignalDefinition,
+  type UpdateDefinition,
   type WorkflowConcurrencyOptions,
   type WorkflowDefinition,
 } from '../types.ts';
@@ -134,7 +137,36 @@ function applyOptionalRegistrationFields(
 function buildRegistrationEntry(name: string, registration: WorkflowDefinition): RegistrationEntry {
   const entry = buildBaseRegistrationEntry(name, registration);
   applyOptionalRegistrationFields(entry, registration);
+  if (isBuilderWorkflowDefinition(registration)) {
+    entry.signals = normalizeMessageDefinitions(name, 'signal', registration.signals);
+    entry.updates = normalizeMessageDefinitions(name, 'update', registration.updates);
+    entry.queries = normalizeMessageDefinitions(name, 'query', registration.queries);
+  }
   return entry;
+}
+
+type RuntimeNamedMessageDefinition = {
+  readonly name: string;
+};
+
+function normalizeMessageDefinitions<TDefinition extends RuntimeNamedMessageDefinition>(
+  workflowType: string,
+  messageKind: 'signal' | 'update' | 'query',
+  definitions: Readonly<Record<string, TDefinition>>,
+): Readonly<Record<string, TDefinition>> {
+  const normalized = Object.create(null) as Record<string, TDefinition>;
+  const sortedDefinitions = Object.values(definitions).toSorted((left, right) =>
+    left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
+  );
+  for (const definition of sortedDefinitions) {
+    if (Object.hasOwn(normalized, definition.name)) {
+      throw new Error(
+        `Duplicate ${messageKind} runtime name "${definition.name}" in workflow "${workflowType}"`,
+      );
+    }
+    normalized[definition.name] = definition;
+  }
+  return normalized;
 }
 
 function commitWorkflowDefinition(
@@ -169,9 +201,9 @@ function hasNonNullObjectField(value: object, key: string): boolean {
 
 function isBuilderWorkflowDefinition(value: unknown): value is WorkflowDefinition & {
   readonly activities: Readonly<Record<string, Readonly<ActivityDefinition>>>;
-  readonly signals: Readonly<Record<string, unknown>>;
-  readonly updates: Readonly<Record<string, unknown>>;
-  readonly queries: Readonly<Record<string, unknown>>;
+  readonly signals: Readonly<Record<string, Readonly<SignalDefinition<unknown>>>>;
+  readonly updates: Readonly<Record<string, Readonly<UpdateDefinition<unknown>>>>;
+  readonly queries: Readonly<Record<string, Readonly<QueryDefinition<unknown>>>>;
   readonly searchAttributes: Readonly<Record<string, unknown>>;
 } {
   if (!isWorkflowDefinition(value)) return false;
