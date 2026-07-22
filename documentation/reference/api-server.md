@@ -146,17 +146,19 @@ The handler exposes the following routes under the `/v1` prefix:
 
 ### Workflows
 
-| Method   | Path                                | Description                                                                          |
-| -------- | ----------------------------------- | ------------------------------------------------------------------------------------ |
-| `POST`   | `/api/v1/workflows`                 | Start a new workflow                                                                 |
-| `GET`    | `/api/v1/workflows`                 | List workflows — see [Visibility filters](#list-workflows----query-parameters) below |
-| `GET`    | `/api/v1/workflows/aggregate`       | Group-by counts over the same filter shape                                           |
-| `POST`   | `/api/v1/workflows/start-or-signal` | Start a workflow or signal an existing non-terminal run atomically                   |
-| `GET`    | `/api/v1/workflows/:id`             | Get workflow state                                                                   |
-| `DELETE` | `/api/v1/workflows/:id`             | Cancel a workflow                                                                    |
-| `GET`    | `/api/v1/workflows/:id/result`      | Await workflow result (30s default long-poll timeout, configurable up to 60s)        |
-| `POST`   | `/api/v1/workflows/:id/suspend`     | Suspend an inline workflow without settling `result()`                               |
-| `POST`   | `/api/v1/workflows/:id/resume`      | Resume a suspended workflow or a persisted running workflow                          |
+| Method   | Path                                        | Description                                                                          |
+| -------- | ------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `POST`   | `/api/v1/workflows`                         | Start a new workflow                                                                 |
+| `GET`    | `/api/v1/workflows`                         | List workflows — see [Visibility filters](#list-workflows----query-parameters) below |
+| `GET`    | `/api/v1/workflows/aggregate`               | Group-by counts over the same filter shape                                           |
+| `POST`   | `/api/v1/workflows/start-or-signal`         | Start a workflow or signal an existing non-terminal run atomically                   |
+| `GET`    | `/api/v1/workflows/:id`                     | Get workflow state                                                                   |
+| `GET`    | `/api/v1/workflows/:id/schedule-provenance` | Get the schedule occurrence that launched the workflow                               |
+| `GET`    | `/api/v1/workflows/:id/finalizer`           | Get durable finalizer progress or outcome                                            |
+| `DELETE` | `/api/v1/workflows/:id`                     | Cancel a workflow                                                                    |
+| `GET`    | `/api/v1/workflows/:id/result`              | Await workflow result (30s default long-poll timeout, configurable up to 60s)        |
+| `POST`   | `/api/v1/workflows/:id/suspend`             | Suspend an inline workflow without settling `result()`                               |
+| `POST`   | `/api/v1/workflows/:id/resume`              | Resume a suspended workflow or a persisted running workflow                          |
 
 #### Start Workflow -- Request Body
 
@@ -191,6 +193,9 @@ Returns `201` with `{ "id": "<workflow-id>", "outcome": "started" | "signalled" 
 | ------------------------------------------------------ | -------- | ------------------------------------------------------------------------------------ |
 | `status`                                               | `string` | Filter by status. Repeat for an OR filter (e.g. `?status=running&status=pending`).   |
 | `type`                                                 | `string` | Filter by workflow type.                                                             |
+| `schedule_id`                                          | `string` | Filter by the schedule that launched the workflow.                                   |
+| `parent_workflow_id`                                   | `string` | Filter to direct children of this stable parent workflow ID.                         |
+| `parent_workflow_execution_token`                      | `string` | Isolate one parent run; requires `parent_workflow_id`.                               |
 | `tag`                                                  | `string` | Filter by tag. Repeat to AND multiple tags.                                          |
 | `id_prefix`                                            | `string` | Match workflow ids starting with this prefix. Restricted to `[A-Za-z0-9_-]+`.        |
 | `failure_category`                                     | `string` | One of `application`, `timeout`, `cancellation`, `resource`, `system`. Repeats OR.   |
@@ -393,14 +398,17 @@ When server authentication is enabled, `GET /api/v1/reviews` requires the `revie
 
 ### Async Activities
 
-| Method | Path                          | Description                                |
-| ------ | ----------------------------- | ------------------------------------------ |
-| `POST` | `/api/v1/activities/complete` | Complete a deferred activity by task token |
-| `POST` | `/api/v1/activities/fail`     | Fail a deferred activity by task token     |
+| Method | Path                                             | Description                                      |
+| ------ | ------------------------------------------------ | ------------------------------------------------ |
+| `GET`  | `/api/v1/workflows/:id/pending-async-activities` | List durable pending tokens with bounded cursors |
+| `POST` | `/api/v1/activities/complete`                    | Complete a deferred activity by task token       |
+| `POST` | `/api/v1/activities/fail`                        | Fail a deferred activity by task token           |
 
 Activities that call `ActivityContext.completeAsync()` park their workflow until an external process resolves the durable task token announced by the `activity:async-pending` event. `complete` accepts `{ "token": string, "result"?: unknown }`; `fail` accepts `{ "token": string, "error": { "message": string, "name"?: string } }`. Both return `{ "ok": true }` on success.
 
-The matching operation names are `weft.activities.complete` and `weft.activities.fail`, and both are exposed over REST and JSON-RPC. Their operation access policy is `public`, so no operation-specific scope is required by `evaluateAccess`. Lock the server surface down with `serve({ auth })` and your surrounding deployment controls whenever completions come from outside a trusted boundary.
+`weft.workflows.activities.pending.list` exposes the query over every JSON-RPC transport. It accepts `workflowId`, optional `limit` (default 50, maximum 200), and an opaque optional `cursor`, and returns `{ "items": [...], "nextCursor"?: string }`. Each item contains `token`, `operationId`, `activityName`, `step`, `attempt`, and `createdAt`. Pages follow deterministic durable-key order. Malformed records and acknowledged resolution records are omitted; the cursor still advances over them so they cannot stall pagination. The query requires `workflows:read`.
+
+The mutation operation names are `weft.activities.complete` and `weft.activities.fail`, and both require `workflows:write` over REST and JSON-RPC. Configure server authentication before exposing these routes; anonymous callers receive `Unauthorized`, while authenticated callers without the required scope receive `Forbidden`.
 
 The token travels in the JSON body, never the URL path. Tokens are deterministic identifiers, not secrets, and they are single-use: an unknown or already-consumed token returns `404` / `NotFound`; malformed JSON or oversized completion payloads return `400` / `InvalidParams` before consuming the token. Unexpected engine failures keep the normal REST/JSON-RPC fault split: REST masks internal failures, while JSON-RPC receives the operation fault object.
 

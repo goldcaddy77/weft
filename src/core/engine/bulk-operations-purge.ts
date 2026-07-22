@@ -31,13 +31,11 @@ import {
 import { buildWorkflowVisibilityIndexTransition } from './workflow-indexes.ts';
 
 export const TERMINAL_CLEANUP_DELAY_MS = 60_000;
-
 export type PurgeParameters = {
   expiredOnly: boolean;
   now: number;
   limit?: number;
 };
-
 export type CleanupWaiters = (workflowId: string) => void;
 
 export async function purgeInternal(
@@ -347,7 +345,7 @@ async function addScheduleRunHistoryDeleteKeys(
 }
 
 function buildBaseWorkflowDeleteKeys(state: WorkflowState): Set<string> {
-  return new Set([
+  const keys = new Set([
     KEYS.workflow(state.id),
     KEYS.checkpoint(state.id),
     KEYS.workflowHeaders(state.id),
@@ -369,9 +367,22 @@ function buildBaseWorkflowDeleteKeys(state: WorkflowState): Set<string> {
     // operator trail for a leaked resource and must outlive purge.
     KEYS.finalizerState(state.id),
     KEYS.teardownOwed(state.id),
+    // Successful finalizer outcomes belong to the purged run. Dead-letter records
+    // intentionally remain as leak evidence and are run-token qualified on read.
+    KEYS.teardownSucceeded(state.id),
     KEYS.attribute(state.id),
     KEYS.terminalWorkflow(state.updatedAt, state.id),
   ]);
+  if (state.parentWorkflowId !== undefined) {
+    keys.add(
+      KEYS.childWorkflowByParent(
+        state.parentWorkflowId,
+        state.parentWorkflowExecutionToken,
+        state.id,
+      ),
+    );
+  }
+  return keys;
 }
 
 function addExecutionDeadlineDeleteKeys(deleteKeys: Set<string>, state: WorkflowState): void {

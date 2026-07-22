@@ -25,6 +25,7 @@ export const WEFT_RESERVED_KEY_PREFIXES = [
   'blob:',
   'budget:',
   'budget-charged:',
+  'child-by-parent:',
   'ev:',
   'fleet-event-by-workflow:',
   'fleet-event:',
@@ -64,5 +65,6 @@ export const WEFT_RESERVED_KEY_PREFIXES = [
   'wf-teardown:',
   'wf-teardown-deadletter:',
   'wf-teardown-needed:',
+  'wf-teardown-succeeded:',
   'wf-terminal:',
 ] as const;

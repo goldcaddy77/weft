@@ -36,6 +36,7 @@ export const CATALOG_OPERATION_NAMES = [
   'weft.workers.drain',
   'weft.workers.list',
   'weft.workers.resume',
+  'weft.workflows.activities.pending.list',
   'weft.workflows.aggregate',
   'weft.workflows.attributes.get',
   'weft.workflows.attributes.set',
@@ -48,6 +49,7 @@ export const CATALOG_OPERATION_NAMES = [
   'weft.workflows.checkpoints.get',
   'weft.workflows.checkpoints.list',
   'weft.workflows.events.list',
+  'weft.workflows.finalizer.get',
   'weft.workflows.fork',
   'weft.workflows.get',
   'weft.workflows.list',
@@ -56,6 +58,7 @@ export const CATALOG_OPERATION_NAMES = [
   'weft.workflows.replay',
   'weft.workflows.result.get',
   'weft.workflows.resume',
+  'weft.workflows.scheduleprovenance.get',
   'weft.workflows.signal',
   'weft.workflows.start',
   'weft.workflows.startorsignal',
@@ -98,6 +101,7 @@ export const CLIENT_OPERATION_NAMES = [
   'weft.workers.drain',
   'weft.workers.list',
   'weft.workers.resume',
+  'weft.workflows.activities.pending.list',
   'weft.workflows.aggregate',
   'weft.workflows.attributes.get',
   'weft.workflows.attributes.set',
@@ -110,6 +114,7 @@ export const CLIENT_OPERATION_NAMES = [
   'weft.workflows.checkpoints.get',
   'weft.workflows.checkpoints.list',
   'weft.workflows.events.list',
+  'weft.workflows.finalizer.get',
   'weft.workflows.fork',
   'weft.workflows.get',
   'weft.workflows.list',
@@ -118,6 +123,7 @@ export const CLIENT_OPERATION_NAMES = [
   'weft.workflows.replay',
   'weft.workflows.result.get',
   'weft.workflows.resume',
+  'weft.workflows.scheduleprovenance.get',
   'weft.workflows.signal',
   'weft.workflows.start',
   'weft.workflows.startorsignal',
@@ -141,7 +147,7 @@ export const CLIENT_REST_OPERATION_BINDINGS = {
   },
 } as const satisfies Readonly<Record<string, ClientRestOperationBinding>>;
 
-type SharedAttributesBulkConcurrenc_1d8d91a7 = {
+type SharedAttributesBulkConcurrenc_f62debcf = {
   readonly attributes?: ReadonlyArray<SharedGtGteKey_896a0c41>;
   readonly bulkConcurrency?: number;
   readonly confirmationToken?: string;
@@ -152,6 +158,8 @@ type SharedAttributesBulkConcurrenc_1d8d91a7 = {
   readonly idPrefix?: string;
   readonly limit?: number;
   readonly offset?: number;
+  readonly parentWorkflowExecutionToken?: string;
+  readonly parentWorkflowId?: string;
   readonly requestId?: string;
   readonly scheduleId?: string;
   readonly status?: unknown;
@@ -159,7 +167,7 @@ type SharedAttributesBulkConcurrenc_1d8d91a7 = {
   readonly type?: string;
   readonly updatedAt?: SharedGtGteLt_d9a61361;
 };
-type SharedAttributesCreatedAtExecu_43cee107 = {
+type SharedAttributesCreatedAtExecu_2af7f9ff = {
   readonly attributes?: ReadonlyArray<SharedGtGteKey_896a0c41>;
   readonly createdAt?: SharedGtGteLt_d9a61361;
   readonly executionDeadline?: SharedGtGteLt_d9a61361;
@@ -167,6 +175,8 @@ type SharedAttributesCreatedAtExecu_43cee107 = {
   readonly idPrefix?: string;
   readonly limit?: number;
   readonly offset?: number;
+  readonly parentWorkflowExecutionToken?: string;
+  readonly parentWorkflowId?: string;
   readonly scheduleId?: string;
   readonly status?: unknown;
   readonly tags?: ReadonlyArray<string>;
@@ -469,6 +479,25 @@ export type ClientOperationTypes = {
     readonly output: unknown;
     readonly faults: 'NotFound';
   };
+  'weft.workflows.activities.pending.list': {
+    readonly input: {
+      readonly cursor?: string;
+      readonly limit: number;
+      readonly workflowId: string;
+    };
+    readonly output: {
+      readonly items: ReadonlyArray<{
+        readonly activityName: string;
+        readonly attempt: number;
+        readonly createdAt: number;
+        readonly operationId: string;
+        readonly step: number;
+        readonly token: string;
+      }>;
+      readonly nextCursor?: string;
+    };
+    readonly faults: 'InvalidParams' | 'NotFound';
+  };
   'weft.workflows.aggregate': {
     readonly input: {
       readonly attributes?: ReadonlyArray<{
@@ -485,6 +514,8 @@ export type ClientOperationTypes = {
       readonly groupBy: unknown;
       readonly idPrefix?: string;
       readonly limit?: number;
+      readonly parentWorkflowExecutionToken?: string;
+      readonly parentWorkflowId?: string;
       readonly scheduleId?: string;
       readonly status?: unknown;
       readonly tags?: ReadonlyArray<string>;
@@ -509,17 +540,17 @@ export type ClientOperationTypes = {
     readonly faults: never;
   };
   'weft.workflows.bulk.cancel': {
-    readonly input: SharedAttributesBulkConcurrenc_1d8d91a7;
+    readonly input: SharedAttributesBulkConcurrenc_f62debcf;
     readonly output: unknown;
     readonly faults: never;
   };
   'weft.workflows.bulk.delete': {
-    readonly input: SharedAttributesBulkConcurrenc_1d8d91a7;
+    readonly input: SharedAttributesBulkConcurrenc_f62debcf;
     readonly output: unknown;
     readonly faults: 'Unprocessable';
   };
   'weft.workflows.bulk.retryfailed': {
-    readonly input: SharedAttributesBulkConcurrenc_1d8d91a7;
+    readonly input: SharedAttributesBulkConcurrenc_f62debcf;
     readonly output: unknown;
     readonly faults: never;
   };
@@ -536,6 +567,8 @@ export type ClientOperationTypes = {
       readonly limit?: number;
       readonly name: string;
       readonly offset?: number;
+      readonly parentWorkflowExecutionToken?: string;
+      readonly parentWorkflowId?: string;
       readonly payload?: unknown;
       readonly requestId?: string;
       readonly scheduleId?: string;
@@ -552,7 +585,7 @@ export type ClientOperationTypes = {
       readonly bulkConcurrency?: number;
       readonly confirmationToken?: string;
       readonly dryRun?: boolean;
-      readonly filter?: SharedAttributesCreatedAtExecu_43cee107;
+      readonly filter?: SharedAttributesCreatedAtExecu_2af7f9ff;
       readonly operation: 'add' | 'remove';
       readonly requestId?: string;
       readonly tags: ReadonlyArray<string>;
@@ -580,6 +613,11 @@ export type ClientOperationTypes = {
     readonly output: unknown;
     readonly faults: 'NotFound';
   };
+  'weft.workflows.finalizer.get': {
+    readonly input: { readonly workflowId: string };
+    readonly output: unknown;
+    readonly faults: never;
+  };
   'weft.workflows.fork': {
     readonly input: { readonly fromStep?: unknown; readonly workflowId: string };
     readonly output: { readonly id: string };
@@ -600,6 +638,8 @@ export type ClientOperationTypes = {
       readonly include?: unknown;
       readonly limit?: number;
       readonly offset?: number;
+      readonly parentWorkflowExecutionToken?: string;
+      readonly parentWorkflowId?: string;
       readonly scheduleId?: string;
       readonly status?: unknown;
       readonly tags?: ReadonlyArray<string>;
@@ -610,7 +650,7 @@ export type ClientOperationTypes = {
     readonly faults: 'Unprocessable';
   };
   'weft.workflows.purge': {
-    readonly input: SharedAttributesCreatedAtExecu_43cee107;
+    readonly input: SharedAttributesCreatedAtExecu_2af7f9ff;
     readonly output: unknown;
     readonly faults: never;
   };
@@ -637,6 +677,11 @@ export type ClientOperationTypes = {
     readonly input: { readonly workflowId: string };
     readonly output: { readonly id: string };
     readonly faults: 'Conflict' | 'NotFound';
+  };
+  'weft.workflows.scheduleprovenance.get': {
+    readonly input: { readonly workflowId: string };
+    readonly output: unknown;
+    readonly faults: never;
   };
   'weft.workflows.signal': {
     readonly input: {

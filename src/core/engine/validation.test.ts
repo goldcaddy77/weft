@@ -94,6 +94,49 @@ describe('engine validation helpers', () => {
         versionTuple: { workflowVersion: '1', toolVersions: ['tool-a'] },
       }),
     ).toBe(true);
+    expect(
+      isWorkflowTimelineEntry({
+        step: 1,
+        operationType: 'race',
+        operationLabel: 'race',
+        inputSummary: '{"operationCount":2}',
+        timestamp: 1,
+        status: 'completed',
+        branches: [
+          {
+            index: 0,
+            operationId: 'race:0:0',
+            operationType: 'activity',
+            operationLabel: 'winner',
+            outcome: 'won',
+          },
+          {
+            index: 1,
+            operationId: 'race:0:1',
+            operationType: 'sleep',
+            operationLabel: 'sleep',
+            outcome: 'lost',
+          },
+        ],
+      }),
+    ).toBe(true);
+    expect(
+      isWorkflowTimelineEntry({
+        step: 1,
+        operationType: 'race',
+        operationLabel: 'race',
+        inputSummary: '{}',
+        timestamp: 1,
+        status: 'completed',
+        branches: Array.from({ length: 101 }, (_, index) => ({
+          index,
+          operationId: `race:${String(index)}`,
+          operationType: 'activity',
+          operationLabel: 'branch',
+          outcome: 'lost',
+        })),
+      }),
+    ).toBe(false);
   });
 
   it('drops previous workflow failure category names while decoding persisted state', () => {
@@ -210,6 +253,56 @@ describe('engine validation helpers', () => {
     const decoded = decodeWorkflowState(encode(stateWithUnknownField));
     expect('extraPersistedField' in decoded).toBe(false);
     expect(decoded.id).toBe('wf-extra-field');
+  });
+
+  it('preserves valid lineage fields and accepts older records without them', () => {
+    const historical = decodeWorkflowState(encode(createWorkflowState()));
+    expect(historical.parentWorkflowId).toBeUndefined();
+    expect(historical.parentWorkflowExecutionToken).toBeUndefined();
+    expect(historical.restartedFrom).toBeUndefined();
+
+    const decoded = decodeWorkflowState(
+      encode(
+        createWorkflowState({
+          parentWorkflowId: 'parent-workflow',
+          parentWorkflowExecutionToken: 'parent-token',
+          restartedFrom: {
+            workflowId: 'workflow-id',
+            workflowExecutionToken: 'previous-token',
+            replacedAt: 2,
+          },
+        }),
+      ),
+    );
+    expect(decoded.parentWorkflowId).toBe('parent-workflow');
+    expect(decoded.parentWorkflowExecutionToken).toBe('parent-token');
+    expect(decoded.restartedFrom).toEqual({
+      workflowId: 'workflow-id',
+      workflowExecutionToken: 'previous-token',
+      replacedAt: 2,
+    });
+  });
+
+  it('drops malformed lineage fields while decoding persisted records', () => {
+    const decoded = decodeWorkflowState(
+      encode({
+        ...createWorkflowState(),
+        parentWorkflowId: '',
+        parentWorkflowExecutionToken: 'orphan-token',
+        restartedFrom: { workflowId: 'workflow-id', replacedAt: -1 },
+      }),
+    );
+    expect(decoded.parentWorkflowId).toBeUndefined();
+    expect(decoded.parentWorkflowExecutionToken).toBeUndefined();
+    expect(decoded.restartedFrom).toBeUndefined();
+
+    const invalidRestartId = decodeWorkflowState(
+      encode({
+        ...createWorkflowState(),
+        restartedFrom: { workflowId: '', replacedAt: 2 },
+      }),
+    );
+    expect(invalidRestartId.restartedFrom).toBeUndefined();
   });
 
   it('lifts a pre-unification flat version tuple into versionTuple on decode', () => {

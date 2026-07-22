@@ -17,6 +17,10 @@ import type {
 import { DEFAULT_WORKFLOW_VERSION } from '../versioning.ts';
 import { isWorkflowTagArray } from '../workflow-tags.ts';
 import type { WorkflowVersionTuple } from '../workflow-version-tuple.ts';
+import {
+  MAX_TIMELINE_COORDINATOR_DETAILS,
+  MAX_TIMELINE_DETAIL_STRING_LENGTH,
+} from './timeline-coordinator-constants.ts';
 
 const WORKFLOW_TIMELINE_STATUSES = new Set<WorkflowTimelineStatus>([
   'running',
@@ -54,12 +58,15 @@ const WORKFLOW_STATE_FIELD_NAMES = new Set<string>(
     'versionTuple',
     'workflowExecutionToken',
     'executionStateOwnerId',
+    'parentWorkflowId',
+    'parentWorkflowExecutionToken',
     'createdAt',
     'startedAt',
     'updatedAt',
     'terminalCleanupToken',
     'executionDeadline',
     'forkedFrom',
+    'restartedFrom',
   ]),
 );
 
@@ -99,6 +106,46 @@ export function isTimelineStep(value: unknown): value is number {
 
 type TimelineEntryFieldCheck = (entry: Record<string, unknown>) => boolean;
 
+const WORKFLOW_TIMELINE_DETAIL_OUTCOMES = new Set(['fulfilled', 'rejected', 'won', 'lost']);
+
+function isBoundedTimelineDetailString(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= MAX_TIMELINE_DETAIL_STRING_LENGTH;
+}
+
+const TIMELINE_DETAIL_FIELD_CHECKS: readonly TimelineEntryFieldCheck[] = [
+  (detail) =>
+    typeof detail['index'] === 'number' &&
+    Number.isSafeInteger(detail['index']) &&
+    detail['index'] >= 0,
+  (detail) => detail['key'] === undefined || isBoundedTimelineDetailString(detail['key']),
+  (detail) => isBoundedTimelineDetailString(detail['operationId']),
+  (detail) => isBoundedTimelineDetailString(detail['operationType']),
+  (detail) => isBoundedTimelineDetailString(detail['operationLabel']),
+  (detail) => WORKFLOW_TIMELINE_DETAIL_OUTCOMES.has(detail['outcome'] as string),
+  (detail) =>
+    detail['errorSummary'] === undefined || isBoundedTimelineDetailString(detail['errorSummary']),
+];
+
+function isWorkflowTimelineOperationDetail(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return TIMELINE_DETAIL_FIELD_CHECKS.every((check) => check(value));
+}
+
+function isWorkflowTimelineOperationDetails(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.length <= MAX_TIMELINE_COORDINATOR_DETAILS &&
+      value.every(isWorkflowTimelineOperationDetail))
+  );
+}
+
+function isOmittedTimelineDetailCount(value: unknown): boolean {
+  return (
+    value === undefined || (typeof value === 'number' && Number.isSafeInteger(value) && value > 0)
+  );
+}
+
 const TIMELINE_ENTRY_FIELD_CHECKS: readonly TimelineEntryFieldCheck[] = [
   (entry) => isTimelineStep(entry['step']),
   (entry) => typeof entry['operationType'] === 'string',
@@ -109,6 +156,14 @@ const TIMELINE_ENTRY_FIELD_CHECKS: readonly TimelineEntryFieldCheck[] = [
   (entry) => entry['outputSummary'] === undefined || typeof entry['outputSummary'] === 'string',
   (entry) => entry['duration'] === undefined || isFiniteNumber(entry['duration']),
   (entry) => entry['versionTuple'] === undefined || isWorkflowVersionTuple(entry['versionTuple']),
+  (entry) => isWorkflowTimelineOperationDetails(entry['branches']),
+  (entry) => isOmittedTimelineDetailCount(entry['branchesOmitted']),
+  (entry) => isWorkflowTimelineOperationDetails(entry['children']),
+  (entry) => isOmittedTimelineDetailCount(entry['childrenOmitted']),
+  (entry) =>
+    entry['speculationOutcome'] === undefined ||
+    entry['speculationOutcome'] === 'committed' ||
+    entry['speculationOutcome'] === 'rolled-back',
 ];
 
 export function isWorkflowTimelineEntry(value: unknown): value is WorkflowTimelineEntry {
@@ -178,9 +233,53 @@ export function decodeWorkflowState(bytes: Uint8Array): WorkflowState {
       delete state.executionStateOwnerId;
     }
   }
+  sanitizeDecodedParentLineage(state);
+  sanitizeDecodedRestartLineage(state);
   return decodedRecord === undefined
     ? state
     : stripUnknownWorkflowStateFields(state, decodedRecord);
+}
+
+function sanitizeDecodedParentLineage(state: WorkflowState): void {
+  if (state.parentWorkflowId !== undefined) {
+    try {
+      coerceStartWorkflowId(state.parentWorkflowId, 'parentWorkflowId');
+    } catch {
+      delete state.parentWorkflowId;
+    }
+  }
+  if (
+    typeof state.parentWorkflowExecutionToken !== 'string' ||
+    state.parentWorkflowExecutionToken.length === 0 ||
+    state.parentWorkflowId === undefined
+  ) {
+    delete state.parentWorkflowExecutionToken;
+  }
+}
+
+function sanitizeDecodedRestartLineage(state: WorkflowState): void {
+  const restartedFrom = state.restartedFrom;
+  if (!isRecord(restartedFrom)) {
+    delete state.restartedFrom;
+    return;
+  }
+  try {
+    coerceStartWorkflowId(restartedFrom['workflowId'], 'restartedFrom.workflowId');
+  } catch {
+    delete state.restartedFrom;
+    return;
+  }
+  const workflowExecutionToken = restartedFrom['workflowExecutionToken'];
+  const replacedAt = restartedFrom['replacedAt'];
+  if (
+    (workflowExecutionToken !== undefined &&
+      (typeof workflowExecutionToken !== 'string' || workflowExecutionToken.length === 0)) ||
+    typeof replacedAt !== 'number' ||
+    !Number.isSafeInteger(replacedAt) ||
+    replacedAt < 0
+  ) {
+    delete state.restartedFrom;
+  }
 }
 
 function stripUnknownWorkflowStateFields(

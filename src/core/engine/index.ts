@@ -48,6 +48,8 @@ import {
   type ListOptions,
   type MessageName,
   type PaginatedResult,
+  type PendingAsyncActivityListOptions,
+  type PendingAsyncActivityPage,
   type PurgeResult,
   type QueryDefinition,
   type RegisteredWorkflowDefinition,
@@ -71,9 +73,11 @@ import {
   type UpdateDefinition,
   type WorkerOutboundMessage,
   type WorkflowEvent,
+  type WorkflowFinalizerStatus,
   type WorkflowInput,
   type WorkflowOutput,
   type WorkflowReplay,
+  type WorkflowScheduleProvenance,
   type WorkflowServices,
   type WorkflowServicesUnion,
   type WorkflowState,
@@ -92,7 +96,10 @@ import {
   completeAsyncActivity as completeAsyncActivityFromInternals,
   failAsyncActivity as failAsyncActivityFromInternals,
 } from './async-activity-completion.ts';
-import { recoverPendingAsyncActivities } from './async-activity-records.ts';
+import {
+  listPendingAsyncActivities as listPendingAsyncActivitiesFromInternals,
+  recoverPendingAsyncActivities,
+} from './async-activity-records.ts';
 import { broadcast as broadcastFromInternals, type BroadcastCallbacks } from './broadcast.ts';
 import {
   cancelAll as cancelAllWorkflows,
@@ -165,6 +172,7 @@ import {
 } from './errors.ts';
 import { assertLeaseHeldForEngineWork, commitFencedEngineWrite } from './fenced-write.ts';
 import { recordFinalizerState } from './finalizer-state.ts';
+import { getFinalizerStatus as getFinalizerStatusFromInternals } from './finalizer-status.ts';
 import {
   createWorkflowHandleWithResultPromise as createWorkflowHandleWithResultPromiseFromInternals,
   getWorkflowResultPromise as getWorkflowResultPromiseFromInternals,
@@ -226,6 +234,7 @@ import {
   submitReview as submitReviewFromInternals,
 } from './reviews.ts';
 import { ScheduleHandle } from './schedule-handle.ts';
+import { decodeScheduleRunMetadata } from './schedule-run-metadata.ts';
 import {
   cancelSchedule as cancelScheduleFromInternals,
   listSchedules as listSchedulesFromInternals,
@@ -602,6 +611,8 @@ export class Engine<
     getInternals(this).pendingNestingDepth = undefined;
     getInternals(this).pendingParentHeaders = undefined;
     getInternals(this).pendingExecutionStateOwnerId = undefined;
+    getInternals(this).pendingParentWorkflowId = undefined;
+    getInternals(this).pendingParentWorkflowExecutionToken = undefined;
     getInternals(this).workflowNestingDepths = new Map();
     getInternals(this).workflowHeaders = new Map();
     getInternals(this).workflowStateWriteChains = new Map();
@@ -1745,6 +1756,19 @@ export class Engine<
   }
 
   /**
+   * List a bounded page of durable async activities awaiting out-of-band
+   * completion for one workflow. This reads storage directly, so callers can
+   * recover tokens after a process restart before `recoverAll()` repopulates
+   * the in-memory completion map.
+   */
+  async listPendingAsyncActivities(
+    workflowId: string,
+    options?: PendingAsyncActivityListOptions,
+  ): Promise<PendingAsyncActivityPage> {
+    return listPendingAsyncActivitiesFromInternals(getInternals(this), workflowId, options);
+  }
+
+  /**
    * Fail a deferred activity out-of-band with `error`. The error is thrown into
    * the workflow generator at the parked step — identical to an inline activity
    * that threw — so the workflow's own try/catch and any configured retry
@@ -1808,6 +1832,23 @@ export class Engine<
       return { ...state, status: 'pending' };
     }
     return state;
+  }
+  /** Return the schedule occurrence that launched a workflow, when applicable. */
+  async getScheduleProvenance(workflowId: string): Promise<WorkflowScheduleProvenance | null> {
+    const bytes = await getInternals(this).storage.get(KEYS.scheduleRunLink(workflowId));
+    if (bytes === null) return null;
+    const metadata = decodeScheduleRunMetadata(bytes);
+    if (metadata === null) return null;
+    return {
+      scheduleId: metadata.id,
+      ...(metadata.occurrence === undefined ? {} : { occurrence: metadata.occurrence }),
+    };
+  }
+  /** Return durable post-terminal finalizer progress or outcome, when applicable. */
+  async getFinalizerStatus(workflowId: string): Promise<WorkflowFinalizerStatus | null> {
+    const internals = getInternals(this);
+    const state = await loadWorkflowState(internals, workflowId);
+    return getFinalizerStatusFromInternals(internals, workflowId, state);
   }
   /**
    * Return this process's last-known ownership-lease health.

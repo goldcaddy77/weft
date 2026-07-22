@@ -162,6 +162,7 @@ describe('WEFT_RESERVED_KEY_PREFIXES', () => {
       KEYS.scheduleRun('workflow-id'),
       KEYS.scheduleRunLink('workflow-id'),
       KEYS.scheduleRunBySchedule('schedule-id', 'workflow-id'),
+      KEYS.teardownSucceeded('workflow-id'),
       KEYS.operation('default', 1, 'operation-id'),
       KEYS.operationInflight('operation-id'),
       KEYS.operationQueued('operation-id'),
@@ -864,6 +865,20 @@ describe('KEYS', () => {
     );
     expect(KEYS.scheduleRunBySchedule('schedule:id', 'workflow:id')).toBe(
       'schedule-run-by-schedule:schedule%3Aid:workflow%3Aid',
+    );
+  });
+
+  it('encodes successful teardown outcomes by workflow id', () => {
+    expect(KEYS.teardownSucceeded('workflow:id')).toBe('wf-teardown-succeeded:workflow%3Aid');
+  });
+
+  it('encodes parent run lineage reverse-index dimensions independently', () => {
+    expect(KEYS.childWorkflowByParentPrefix('parent:id')).toBe('child-by-parent:parent%3Aid:');
+    expect(KEYS.childWorkflowByParentPrefix('parent:id', 'token:value')).toBe(
+      'child-by-parent:parent%3Aid:token%3Avalue:',
+    );
+    expect(KEYS.childWorkflowByParent('parent:id', 'token:value', 'child:id')).toBe(
+      'child-by-parent:parent%3Aid:token%3Avalue:child%3Aid',
     );
   });
 });
