@@ -471,21 +471,35 @@ Direct access to the underlying scheduler. Primarily useful for `TestEngine` and
 
 ```ts
 declare class Engine {
-  shutdown(): Promise<void>;
+  shutdown(): Promise<boolean>;
 }
 ```
 
-Awaited engine shutdown. This is equivalent to `await engine[Symbol.asyncDispose]()` and is useful in process signal handlers where `await using` cannot own the whole process lifetime directly. With `ownership: 'lease'`, `shutdown()` drains queued inline starts, tears down in-memory write paths, and awaits lease release before resolving.
+Awaited engine shutdown. This is equivalent to `await engine[Symbol.asyncDispose]()` and is useful in process signal handlers where `await using` cannot own the whole process lifetime directly. With `ownership: 'lease'`, `shutdown()` drains queued inline starts, tears down in-memory write paths, and awaits lease release before resolving. The returned boolean is `true` when no lease needed release or the holder delete committed, and `false` when the delete did not commit.
 
 ```ts
-import { Engine } from '@lostgradient/weft';
+import { Engine, workflow } from '@lostgradient/weft';
 
-const engine = new Engine();
+const engine = await Engine.create({
+  ownership: 'lease',
+  workflows: {
+    orders: workflow({ name: 'orders' }).execute(async function* () {
+      return 'ready';
+    }),
+  },
+});
 process.on('SIGTERM', () => {
-  void engine.shutdown().then(
-    () => process.exit(0),
-    () => process.exit(1),
-  );
+  void (async () => {
+    try {
+      if (!(await engine.shutdown())) {
+        process.exitCode = 1;
+        // Handoff was not confirmed. Alert, but let replacement lease
+        // acquisition determine whether another engine already owns the lease.
+      }
+    } catch {
+      process.exitCode = 1;
+    }
+  })();
 });
 ```
 
@@ -499,6 +513,15 @@ process.on('SIGTERM', () => {
 Clean up all engine resources — aborts the scheduler, clears active generators, handles, resolvers, signal waiters, sleep resolvers, and closes the `BroadcastChannel` if active. Supports both `using` and `await using` syntax.
 
 `[Symbol.dispose]()` is synchronous and immediate. With `ownership: 'lease'`, it can only start lease release in the background; if the process exits before that release completes, the next instance waits until the lease expires, bounded by `leaseWaitTimeout`. Use `await using`, `await engine.shutdown()`, or `await engine[Symbol.asyncDispose]()` for prompt lease handoff.
+
+`shutdown()` returns `true` when no lease needed release or the holder delete committed, and `false` when a fenced release lost its compare-and-swap race or the storage delete failed. The standard `[Symbol.asyncDispose]()` protocol remains `Promise<void>`; both paths await the same release operation, and release failures remain non-throwing.
+
+Treat a `false` result as an unconfirmed handoff, not proof that the old holder
+still owns the lease. A fenced release can lose because a successor already
+owns it; a storage failure can instead leave the old holder valid until its
+configured `leaseTtl` expires. Alert on the result and let replacement lease
+acquisition distinguish those cases. Size `leaseWaitTimeout` to cover
+`leaseTtl` so replacement startup can wait out the storage-failure case.
 
 ```ts partial
 {

@@ -9,6 +9,27 @@ export type InlineLaunchQueueCallbacks = {
   swallowPromiseRejection: (promise: Promise<unknown> | undefined) => Promise<void>;
 };
 
+async function yieldQueuedShutdownAdvanceOpportunity(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
+async function settleQueuedShutdownWork(
+  pendingWork: Array<{ workflowId: string; promise: Promise<unknown> | undefined }>,
+): Promise<string[]> {
+  if (pendingWork.length === 0) return [];
+  const opportunityElapsed = yieldQueuedShutdownAdvanceOpportunity().then(() => false);
+  const results = await Promise.all(
+    pendingWork.map(async ({ workflowId, promise }) => {
+      if (promise === undefined) return workflowId;
+      const settled = await Promise.race([promise.then(() => true), opportunityElapsed]);
+      return settled ? workflowId : null;
+    }),
+  );
+  return results.filter((workflowId): workflowId is string => workflowId !== null);
+}
+
 /** Queue a new inline workflow start and schedule a flush if one is not already scheduled. */
 export function queueInlineWorkflowExecutionStart(
   internals: EngineInternals,
@@ -56,6 +77,7 @@ function settleDiscardedInlineStarts(
 export async function flushQueuedInlineWorkflowStarts(
   internals: EngineInternals,
   callbacks: InlineLaunchQueueCallbacks,
+  options?: { abortStartedWorkflows?: boolean },
 ): Promise<void> {
   if (internals.abortController.signal.aborted) {
     // The engine is tearing down. Discard the queue, but settle each start's
@@ -81,7 +103,7 @@ export async function flushQueuedInlineWorkflowStarts(
     // hanging their defer:false awaiters. swallowPromiseRejection contains the
     // failure; the per-start finally still fires onStarted.
     await callbacks.swallowPromiseRejection(
-      startQueuedInlineWorkflowExecution(internals, start, callbacks),
+      startQueuedInlineWorkflowExecution(internals, start, callbacks, options),
     );
   }
 }
@@ -111,6 +133,7 @@ export async function flushQueuedInlineWorkflowStartsDirectly(
 export async function drainQueuedInlineWorkflowStarts(
   internals: EngineInternals,
   callbacks: InlineLaunchQueueCallbacks,
+  options?: { abortStartedWorkflows?: boolean },
 ): Promise<void> {
   internals.queuedInlineWorkflowStartFlushScheduled = false;
   // Drain repeatedly: a started workflow can synchronously enqueue a child
@@ -125,11 +148,42 @@ export async function drainQueuedInlineWorkflowStarts(
     passes < maxPasses
   ) {
     passes += 1;
+    const workflowIds = internals.queuedInlineWorkflowStarts.map((start) => start.workflowId);
     // Swallow per-pass rejection so a single failing start cannot reject the
     // whole drain — which, called from asyncDispose, would otherwise skip the
     // synchronous teardown and leave the engine half-disposed. Mirrors the
     // scheduled-flush path's swallowPromiseRejection wrapping.
-    await callbacks.swallowPromiseRejection(flushQueuedInlineWorkflowStarts(internals, callbacks));
+    await callbacks.swallowPromiseRejection(
+      flushQueuedInlineWorkflowStarts(internals, callbacks, options),
+    );
+
+    // Give cooperatively-aborted first advances one scheduler opportunity to
+    // settle, but never let arbitrary user code that ignores ctx.signal hold
+    // disposal indefinitely. The inline strategy suppresses a new operation
+    // yielded after this shutdown abort, leaving it for successor recovery. A
+    // cooperative terminal return still emits a finite durable turn, which must
+    // commit before lease handoff.
+    const pendingAdvances = workflowIds.map((workflowId) => {
+      const pendingAdvance = internals.inlineStrategy?.waitForWorkflowAdvance(workflowId);
+      return {
+        workflowId,
+        promise:
+          pendingAdvance === undefined
+            ? undefined
+            : callbacks.swallowPromiseRejection(pendingAdvance),
+      };
+    });
+    const settledWorkflowIds = await settleQueuedShutdownWork(pendingAdvances);
+    if (settledWorkflowIds.length > 0) {
+      const terminalTurns = settledWorkflowIds.flatMap((workflowId) => {
+        if (internals.inlineStrategy?.hasGenerator(workflowId)) {
+          return [];
+        }
+        const pendingTurn = internals.inlineStrategy?.waitForWorkflowTurn(workflowId);
+        return pendingTurn === undefined ? [] : [callbacks.swallowPromiseRejection(pendingTurn)];
+      });
+      await Promise.all(terminalTurns);
+    }
   }
   // The `passes < maxPasses` bound above is a backstop against a pathological
   // self-enqueueing run spinning teardown forever; in normal operation the abort
@@ -141,6 +195,7 @@ async function startQueuedInlineWorkflowExecution(
   internals: EngineInternals,
   start: QueuedInlineWorkflowExecutionStart,
   callbacks: Pick<InlineLaunchQueueCallbacks, 'processPendingUpdatesAfterInlineAdvance'>,
+  options?: { abortStartedWorkflows?: boolean },
 ): Promise<void> {
   try {
     const state = await loadWorkflowState(internals, start.workflowId);
@@ -164,7 +219,17 @@ async function startQueuedInlineWorkflowExecution(
       start.executionStateOwnerId,
     );
 
-    await callbacks.processPendingUpdatesAfterInlineAdvance(start.workflowId);
+    // Async disposal starts queued workflows so their first turns cannot fire
+    // later against torn-down state. Abort cooperatively after generator.next()
+    // has been scheduled, before awaiting either the advance or pending-update
+    // processing, so a first turn parked on ctx.signal can settle. If the
+    // aborted advance yields another operation, the inline strategy suppresses
+    // it so nested work cannot begin during lease handoff.
+    if (options?.abortStartedWorkflows === true) {
+      internals.inlineStrategy?.abortWorkflowAdvanceForShutdown(start.workflowId);
+    } else {
+      await callbacks.processPendingUpdatesAfterInlineAdvance(start.workflowId);
+    }
   } finally {
     internals.queuedInlineWorkflowStartIds.delete(start.workflowId);
     internals.queuedOrLaunchingInlineWorkflowStartIds.delete(start.workflowId);

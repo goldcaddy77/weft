@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — awaited lease shutdown result
+
+`Engine.shutdown()` now returns `Promise<boolean>` so process hosts can confirm
+whether an ownership-lease holder delete committed. Update callback and stored
+promise types that require `Promise<void>`. When it returns `false`, renewals
+have stopped but handoff was not confirmed: a successor may already own the
+lease, or a storage failure may have left the old holder valid until its
+configured `leaseTtl` expires. Alert on the result and let replacement lease
+acquisition distinguish those cases.
+
 ## [0.8.0] - 2026-06-24
 
 ### Added — Service Worker recovery and release automation

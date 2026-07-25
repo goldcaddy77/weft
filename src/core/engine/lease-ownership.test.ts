@@ -23,6 +23,7 @@ import {
 } from './index.ts';
 import { getInternals } from './internals.ts';
 import { createLeaseHolderReadProbeStorage } from './lease.test-support.ts';
+import { decodeWorkflowState } from './validation.ts';
 
 const pingWorkflow = workflow({ name: 'ping' }).execute(async function* () {
   return 'pong';
@@ -47,6 +48,28 @@ async function readEpoch(storage: Storage): Promise<number | null> {
   const raw = await storage.get(KEYS.leaseEpoch());
   if (raw === null) return null;
   return Number(new DataView(raw.buffer, raw.byteOffset, raw.byteLength).getBigUint64(0, false));
+}
+
+function failNextQueuedStartDrain<TWorkflows extends object, TActivities extends object>(
+  engine: Engine<TWorkflows, TActivities>,
+  drainError: Error,
+): void {
+  const internals = getInternals(engine);
+  let firstRead = true;
+  let queuedStarts = internals.queuedInlineWorkflowStarts;
+  Object.defineProperty(internals, 'queuedInlineWorkflowStarts', {
+    configurable: true,
+    get: () => {
+      if (firstRead) {
+        firstRead = false;
+        throw drainError;
+      }
+      return queuedStarts;
+    },
+    set: (value: typeof queuedStarts) => {
+      queuedStarts = value;
+    },
+  });
 }
 
 type CapturedWarning = { name: string; message: string };
@@ -596,6 +619,72 @@ describe("Engine.create({ ownership: 'lease' })", () => {
     storage[Symbol.dispose]?.();
   });
 
+  it('reports a failed lease release from shutdown without rejecting', async () => {
+    const storage = new MemoryStorage();
+    const engine = await Engine.create({
+      storage,
+      workflows: { ping: pingWorkflow },
+      ownership: 'lease',
+    });
+
+    const originalConditionalBatch = storage.conditionalBatch.bind(storage);
+    storage.conditionalBatch = async () => {
+      throw new Error('storage offline');
+    };
+    try {
+      await expect(engine.shutdown()).resolves.toBe(false);
+    } finally {
+      storage.conditionalBatch = originalConditionalBatch;
+      storage[Symbol.dispose]?.();
+    }
+  });
+
+  it('reports lease release outcome when shutdown drain fails', async () => {
+    const storage = new MemoryStorage();
+    const engine = await Engine.create({
+      storage,
+      workflows: { ping: pingWorkflow },
+      ownership: 'lease',
+    });
+    const internals = getInternals(engine);
+    const drainError = new Error('drain failed');
+    failNextQueuedStartDrain(engine, drainError);
+
+    await expect(engine.shutdown()).rejects.toMatchObject({
+      name: 'EngineDisposalError',
+      cause: drainError,
+      leaseReleased: true,
+    });
+    expect(internals.disposed).toBe(true);
+    storage[Symbol.dispose]?.();
+  });
+
+  it('reports a failed lease release when shutdown drain fails', async () => {
+    const storage = new MemoryStorage();
+    const engine = await Engine.create({
+      storage,
+      workflows: { ping: pingWorkflow },
+      ownership: 'lease',
+    });
+    const originalConditionalBatch = storage.conditionalBatch.bind(storage);
+    storage.conditionalBatch = async () => {
+      throw new Error('storage offline');
+    };
+    const drainError = new Error('drain failed');
+    failNextQueuedStartDrain(engine, drainError);
+
+    try {
+      await expect(engine.shutdown()).rejects.toMatchObject({
+        name: 'EngineDisposalError',
+        cause: drainError,
+        leaseReleased: false,
+      });
+    } finally {
+      storage.conditionalBatch = originalConditionalBatch;
+      storage[Symbol.dispose]?.();
+    }
+  });
+
   it('shutdown durably releases the holder key', async () => {
     const storage = new BunSQLiteStorage(':memory:');
     const engine = await Engine.create({
@@ -604,9 +693,460 @@ describe("Engine.create({ ownership: 'lease' })", () => {
       ownership: 'lease',
     });
 
-    await engine.shutdown();
+    await expect(engine.shutdown()).resolves.toBe(true);
     expect(await readHolder(storage)).toBeNull();
     expect(await readEpoch(storage)).toBe(1);
     storage[Symbol.dispose]?.();
+  });
+
+  it('shares one shutdown release result across concurrent callers', async () => {
+    const storage = new MemoryStorage();
+    const engine = await Engine.create({
+      storage,
+      workflows: { ping: pingWorkflow },
+      ownership: 'lease',
+    });
+    const originalConditionalBatch = storage.conditionalBatch.bind(storage);
+    let releaseCalls = 0;
+    storage.conditionalBatch = async (conditions, operations) => {
+      if (operations.some((operation) => operation.type === 'delete')) releaseCalls += 1;
+      return originalConditionalBatch(conditions, operations);
+    };
+
+    const results = await Promise.all([engine.shutdown(), engine.shutdown()]);
+
+    expect(results).toEqual([true, true]);
+    expect(releaseCalls).toBe(1);
+    storage[Symbol.dispose]?.();
+  });
+
+  it('shares an in-flight synchronous release result with shutdown', async () => {
+    const storage = new MemoryStorage();
+    const engine = await Engine.create({
+      storage,
+      workflows: { ping: pingWorkflow },
+      ownership: 'lease',
+    });
+    const releaseStarted = Promise.withResolvers<void>();
+    const releaseStorage = Promise.withResolvers<void>();
+    const originalConditionalBatch = storage.conditionalBatch.bind(storage);
+    storage.conditionalBatch = async (conditions, operations) => {
+      if (operations.some((operation) => operation.type === 'delete')) {
+        releaseStarted.resolve();
+        await releaseStorage.promise;
+      }
+      if (operations.some((operation) => operation.type === 'delete')) return false;
+      return originalConditionalBatch(conditions, operations);
+    };
+
+    engine[Symbol.dispose]();
+    await releaseStarted.promise;
+    const shutdown = engine.shutdown();
+    releaseStorage.resolve();
+
+    await expect(shutdown).resolves.toBe(false);
+    expect(await readHolder(storage)).not.toBeNull();
+    storage[Symbol.dispose]?.();
+  });
+
+  it('awaits acquisition cleanup after synchronous disposal before reporting shutdown', async () => {
+    const storage = new MemoryStorage();
+    const acquisitionCommitted = Promise.withResolvers<void>();
+    const finishAcquisition = Promise.withResolvers<void>();
+    const originalConditionalBatch = storage.conditionalBatch.bind(storage);
+    storage.conditionalBatch = async (conditions, operations) => {
+      const writesHolder = operations.some(
+        (operation) => operation.type === 'put' && operation.key === KEYS.leaseHolder(),
+      );
+      if (writesHolder) {
+        const committed = await originalConditionalBatch(conditions, operations);
+        acquisitionCommitted.resolve();
+        await finishAcquisition.promise;
+        return committed;
+      }
+      if (operations.some((operation) => operation.type === 'delete')) return false;
+      return originalConditionalBatch(conditions, operations);
+    };
+
+    const engine = new Engine({ storage, ownership: 'lease' });
+    engine.register(pingWorkflow);
+    const recovery = engine.recoverAll();
+    await acquisitionCommitted.promise;
+
+    engine[Symbol.dispose]();
+    const shutdown = engine.shutdown();
+    let shutdownSettled = false;
+    void shutdown.finally(() => {
+      shutdownSettled = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(shutdownSettled).toBe(false);
+
+    finishAcquisition.resolve();
+    await expect(recovery).rejects.toThrow('disposed');
+    await expect(shutdown).resolves.toBe(false);
+    expect(await readHolder(storage)).not.toBeNull();
+    storage[Symbol.dispose]?.();
+  });
+
+  it('defers synchronous disposal release while shutdown drains queued work', async () => {
+    const storage = new MemoryStorage();
+    const drainStarted = Promise.withResolvers<void>();
+    let signalObserved = false;
+    const drainingWorkflow = workflow({ name: 'draining' }).execute(async function* (ctx) {
+      drainStarted.resolve();
+      await new Promise<void>((resolve) => {
+        if (ctx.signal.aborted) {
+          resolve();
+          return;
+        }
+        ctx.signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      signalObserved = true;
+      return 'done';
+    });
+    const engine = await Engine.create({
+      storage,
+      workflows: { draining: drainingWorkflow },
+      ownership: 'lease',
+    });
+    const originalConditionalBatch = storage.conditionalBatch.bind(storage);
+    let releaseCalls = 0;
+    let signalObservedBeforeRelease = false;
+    storage.conditionalBatch = async (conditions, operations) => {
+      if (
+        operations.some(
+          (operation) => operation.type === 'delete' && operation.key === KEYS.leaseHolder(),
+        )
+      ) {
+        releaseCalls += 1;
+        signalObservedBeforeRelease = signalObserved;
+      }
+      return originalConditionalBatch(conditions, operations);
+    };
+
+    await engine.start('draining', null, { id: 'queued-for-shutdown' });
+    const shutdown = engine.shutdown();
+    await drainStarted.promise;
+    engine[Symbol.dispose]();
+
+    await expect(shutdown).resolves.toBe(true);
+    expect(signalObserved).toBe(true);
+    expect(signalObservedBeforeRelease).toBe(true);
+    expect(releaseCalls).toBe(1);
+    expect(await readHolder(storage)).toBeNull();
+    storage[Symbol.dispose]?.();
+  });
+
+  it('bounds shutdown when a queued first turn ignores its abort signal', async () => {
+    const storage = new MemoryStorage();
+    const bodyEntered = Promise.withResolvers<void>();
+    const releaseBody = Promise.withResolvers<void>();
+    const nonCooperativeWorkflow = workflow({ name: 'non-cooperative' }).execute(
+      async function* () {
+        bodyEntered.resolve();
+        await releaseBody.promise;
+        return 'stopped';
+      },
+    );
+    const engine = await Engine.create({
+      storage,
+      workflows: { 'non-cooperative': nonCooperativeWorkflow },
+      ownership: 'lease',
+    });
+
+    await engine.start('non-cooperative', null, { id: 'queued-non-cooperative-shutdown' });
+    const shutdown = engine.shutdown();
+
+    await bodyEntered.promise;
+    await expect(shutdown).resolves.toBe(true);
+    expect(await readHolder(storage)).toBeNull();
+
+    // Settle the deliberately non-cooperative body after disposal so the test
+    // leaves no retained pending generator promise.
+    releaseBody.resolve();
+    await new Promise((resolve) => setImmediate(resolve));
+    storage[Symbol.dispose]?.();
+  });
+
+  it('aborts a cooperative queued first turn before releasing the lease', async () => {
+    const storage = new MemoryStorage();
+    let signalObserved = false;
+    const cooperativeWorkflow = workflow({ name: 'cooperative' }).execute(async function* (ctx) {
+      await new Promise<void>((resolve) => {
+        if (ctx.signal.aborted) {
+          resolve();
+          return;
+        }
+        ctx.signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      signalObserved = true;
+      return 'stopped';
+    });
+    const engine = await Engine.create({
+      storage,
+      workflows: { cooperative: cooperativeWorkflow },
+      ownership: 'lease',
+    });
+
+    await engine.start('cooperative', null, { id: 'queued-cooperative-shutdown' });
+    await expect(engine.shutdown()).resolves.toBe(true);
+    expect(signalObserved).toBe(true);
+    expect(await readHolder(storage)).toBeNull();
+    storage[Symbol.dispose]?.();
+  });
+
+  it('awaits a cooperative queued durable turn before releasing the lease', async () => {
+    const storage = new MemoryStorage();
+    const terminalWriteEntered = Promise.withResolvers<void>();
+    const releaseTerminalWrite = Promise.withResolvers<void>();
+    const cooperativeWorkflow = workflow({ name: 'slow-terminal-write' }).execute(
+      async function* (ctx) {
+        await new Promise<void>((resolve) => {
+          if (ctx.signal.aborted) {
+            resolve();
+            return;
+          }
+          ctx.signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+        return 'stopped';
+      },
+    );
+    const engine = await Engine.create({
+      storage,
+      workflows: { 'slow-terminal-write': cooperativeWorkflow },
+      ownership: 'lease',
+    });
+    const originalConditionalBatch = storage.conditionalBatch.bind(storage);
+    storage.conditionalBatch = async (conditions, operations) => {
+      const terminalWrite = operations.find(
+        (operation) =>
+          operation.type === 'put' && operation.key === KEYS.workflow('slow-terminal-write-run'),
+      );
+      if (
+        terminalWrite?.type === 'put' &&
+        decodeWorkflowState(terminalWrite.value).status === 'completed'
+      ) {
+        terminalWriteEntered.resolve();
+        await releaseTerminalWrite.promise;
+      }
+      return originalConditionalBatch(conditions, operations);
+    };
+
+    await engine.start('slow-terminal-write', null, { id: 'slow-terminal-write-run' });
+    const shutdown = engine.shutdown();
+    await terminalWriteEntered.promise;
+
+    expect(await readHolder(storage)).not.toBeNull();
+    releaseTerminalWrite.resolve();
+    await expect(shutdown).resolves.toBe(true);
+    expect(await readHolder(storage)).toBeNull();
+    storage[Symbol.dispose]?.();
+  });
+
+  it('waits for each cooperative queued turn when a sibling ignores abort', async () => {
+    const storage = new MemoryStorage();
+    const releaseNonCooperativeBody = Promise.withResolvers<void>();
+    const nonCooperativeWorkflow = workflow({ name: 'non-cooperative-sibling' }).execute(
+      async function* () {
+        await releaseNonCooperativeBody.promise;
+        return 'stopped';
+      },
+    );
+    const cooperativeWorkflow = workflow({ name: 'cooperative-sibling' }).execute(
+      async function* (ctx) {
+        await new Promise<void>((resolve) => {
+          if (ctx.signal.aborted) {
+            resolve();
+            return;
+          }
+          ctx.signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+        return 'stopped';
+      },
+    );
+    const engine = await Engine.create({
+      storage,
+      workflows: {
+        'non-cooperative-sibling': nonCooperativeWorkflow,
+        'cooperative-sibling': cooperativeWorkflow,
+      },
+      ownership: 'lease',
+    });
+    const originalConditionalBatch = storage.conditionalBatch.bind(storage);
+    let cooperativeStatusBeforeRelease: string | undefined;
+    storage.conditionalBatch = async (conditions, operations) => {
+      if (
+        operations.some(
+          (operation) => operation.type === 'delete' && operation.key === KEYS.leaseHolder(),
+        )
+      ) {
+        const stateBytes = await storage.get(KEYS.workflow('queued-cooperative-sibling'));
+        cooperativeStatusBeforeRelease =
+          stateBytes === null ? undefined : decodeWorkflowState(stateBytes).status;
+      }
+      return originalConditionalBatch(conditions, operations);
+    };
+
+    await engine.start('non-cooperative-sibling', null, {
+      id: 'queued-non-cooperative-sibling',
+    });
+    await engine.start('cooperative-sibling', null, { id: 'queued-cooperative-sibling' });
+
+    await expect(engine.shutdown()).resolves.toBe(true);
+    expect(cooperativeStatusBeforeRelease).toBe('completed');
+    expect(await readHolder(storage)).toBeNull();
+
+    releaseNonCooperativeBody.resolve();
+    await new Promise((resolve) => setImmediate(resolve));
+    storage[Symbol.dispose]?.();
+  });
+
+  it('suppresses nested starts yielded after a queued shutdown abort', async () => {
+    const storage = new MemoryStorage();
+    let parentSignalObserved = false;
+    let childSignalObserved = false;
+    const childWorkflow = workflow({ name: 'shutdown-child' }).execute(async function* (ctx) {
+      await new Promise<void>((resolve) => {
+        if (ctx.signal.aborted) {
+          resolve();
+          return;
+        }
+        ctx.signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      childSignalObserved = true;
+      return 'stopped';
+    });
+    const parentWorkflow = workflow({ name: 'shutdown-parent' }).execute(async function* (ctx) {
+      await new Promise<void>((resolve) => {
+        if (ctx.signal.aborted) {
+          resolve();
+          return;
+        }
+        ctx.signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      parentSignalObserved = true;
+      yield* ctx.startChild('shutdown-child', null, {
+        id: 'nested-shutdown-child',
+        parentClosePolicy: 'abandon',
+      });
+      return 'stopped';
+    });
+    const engine = await Engine.create({
+      storage,
+      workflows: {
+        'shutdown-child': childWorkflow,
+        'shutdown-parent': parentWorkflow,
+      },
+      ownership: 'lease',
+    });
+
+    await engine.start('shutdown-parent', null, { id: 'queued-shutdown-parent' });
+    await expect(engine.shutdown()).resolves.toBe(true);
+
+    expect(parentSignalObserved).toBe(true);
+    expect(childSignalObserved).toBe(false);
+    expect(await storage.get(KEYS.workflow('nested-shutdown-child'))).toBeNull();
+    expect(await readHolder(storage)).toBeNull();
+    storage[Symbol.dispose]?.();
+  });
+
+  it('retains a deposition release result for later shutdown', async () => {
+    const storage = new MemoryStorage();
+    const engine = await Engine.create({
+      storage,
+      workflows: { ping: pingWorkflow },
+      ownership: 'lease',
+    });
+    const originalConditionalBatch = storage.conditionalBatch.bind(storage);
+    let releaseCalls = 0;
+    storage.conditionalBatch = async (conditions, operations) => {
+      if (operations.some((operation) => operation.type === 'delete')) {
+        releaseCalls += 1;
+        return false;
+      }
+      return originalConditionalBatch(conditions, operations);
+    };
+
+    getInternals(engine).tearDownAfterDeposition?.();
+
+    await expect(engine.shutdown()).resolves.toBe(false);
+    expect(releaseCalls).toBe(1);
+    expect(await readHolder(storage)).not.toBeNull();
+    storage[Symbol.dispose]?.();
+  });
+
+  it('preserves an asyncDispose override when shutdown is called concurrently', async () => {
+    let overrideCalls = 0;
+    class OverrideEngine extends Engine {
+      override async [Symbol.asyncDispose](): Promise<void> {
+        overrideCalls += 1;
+        await super[Symbol.asyncDispose]();
+      }
+    }
+
+    const engine = new OverrideEngine();
+    const results = await Promise.all([engine.shutdown(), engine.shutdown()]);
+
+    expect(results).toEqual([true, true]);
+    expect(overrideCalls).toBe(1);
+  });
+
+  it('retains a synchronous release result started by an asyncDispose override', async () => {
+    class SynchronousDelegatingOverrideEngine extends Engine {
+      override async [Symbol.asyncDispose](): Promise<void> {
+        super[Symbol.dispose]();
+      }
+    }
+
+    const storage = new MemoryStorage();
+    const engine = new SynchronousDelegatingOverrideEngine({ storage, ownership: 'lease' });
+    engine.register(pingWorkflow);
+    await engine.recoverAll();
+    const releaseStarted = Promise.withResolvers<void>();
+    const finishRelease = Promise.withResolvers<void>();
+    const originalConditionalBatch = storage.conditionalBatch.bind(storage);
+    storage.conditionalBatch = async (conditions, operations) => {
+      if (operations.some((operation) => operation.type === 'delete')) {
+        releaseStarted.resolve();
+        await finishRelease.promise;
+        return false;
+      }
+      return originalConditionalBatch(conditions, operations);
+    };
+
+    const shutdown = engine.shutdown();
+    await releaseStarted.promise;
+    let shutdownSettled = false;
+    void shutdown.finally(() => {
+      shutdownSettled = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(shutdownSettled).toBe(false);
+
+    finishRelease.resolve();
+    await expect(shutdown).resolves.toBe(false);
+    expect(await readHolder(storage)).not.toBeNull();
+    storage[Symbol.dispose]?.();
+  });
+
+  it('respects an asyncDispose override that handles a base disposal failure', async () => {
+    let overrideCalls = 0;
+    class HandlingOverrideEngine extends Engine {
+      override async [Symbol.asyncDispose](): Promise<void> {
+        overrideCalls += 1;
+        try {
+          await super[Symbol.asyncDispose]();
+        } catch {
+          // This override deliberately owns and handles base disposal failures.
+        }
+      }
+    }
+
+    const engine = new HandlingOverrideEngine();
+    failNextQueuedStartDrain(engine, new Error('handled drain failure'));
+
+    await expect(engine.shutdown()).resolves.toBe(true);
+    expect(overrideCalls).toBe(1);
   });
 });
