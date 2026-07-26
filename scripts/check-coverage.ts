@@ -2526,6 +2526,31 @@ type CoverageShard = {
   parallelism?: number;
 };
 
+type CoverageProcess = {
+  exited: Promise<number>;
+  stderr: ReadableStream<Uint8Array> | null;
+  stdout: ReadableStream<Uint8Array> | null;
+};
+
+type SpawnCoverageProcess = (
+  args: string[],
+  options: {
+    cwd: string;
+    env: Record<string, string | undefined>;
+    stderr: 'pipe';
+    stdout: 'pipe';
+  },
+) => CoverageProcess;
+
+type RunCoverageShardDependencies = {
+  spawnCoverageProcess?: SpawnCoverageProcess;
+};
+
+type CheckCoverageDependencies = {
+  listCoverageTestFiles?: () => Promise<string[]>;
+  runCoverageShard?: (shard: CoverageShard) => Promise<{ exitCode: number; lcovPath: string }>;
+};
+
 type CapturedOutputTail = {
   bytes: Uint8Array;
   truncatedBytes: number;
@@ -2591,8 +2616,9 @@ function writeFailureOutput(label: string, output: CapturedOutputTail): void {
   process.stderr.write(output.bytes);
 }
 
-async function runCoverageShard(
+export async function runCoverageShard(
   shard: CoverageShard,
+  dependencies: RunCoverageShardDependencies = {},
 ): Promise<{ exitCode: number; lcovPath: string }> {
   await $`rm -rf ${shard.coverageDirectory}`.quiet().nothrow();
 
@@ -2613,7 +2639,9 @@ async function runCoverageShard(
 
   args.push(...shard.testFiles);
 
-  const coverageProcess = Bun.spawn(args, {
+  const spawnCoverageProcess =
+    dependencies.spawnCoverageProcess ?? ((spawnArgs, options) => Bun.spawn(spawnArgs, options));
+  const coverageProcess = spawnCoverageProcess(args, {
     cwd: globalThis.process.cwd(),
     env: { ...process.env, ...Bun.env, WEFT_COVERAGE_MODE: '1' },
     stderr: 'pipe',
@@ -2638,12 +2666,14 @@ async function runCoverageShard(
  * Run the test suite with coverage, parse the lcov report, and return whether
  * every line and function is covered.
  */
-export async function checkCoverage(): Promise<boolean> {
+export async function checkCoverage(
+  dependencies: CheckCoverageDependencies = {},
+): Promise<boolean> {
   // Remove the entire coverage directory so we never read a previous run's report.
   await $`rm -rf coverage`.quiet().nothrow();
-  const allTestFiles = await listCoverageTestFiles();
+  const allTestFiles = await (dependencies.listCoverageTestFiles ?? listCoverageTestFiles)();
 
-  const shard = await runCoverageShard({
+  const shard = await (dependencies.runCoverageShard ?? runCoverageShard)({
     name: 'coverage',
     coverageDirectory: 'coverage',
     // Let Bun use its default coverage workers. Forcing this repository into one

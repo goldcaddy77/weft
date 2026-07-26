@@ -1,12 +1,13 @@
 import { describe, expect, it, mock, spyOn } from 'bun:test';
-import { randomUUID } from 'node:crypto';
 
 import {
   assembleAllowanceLayers,
   assertNoAllowanceKeyIsCoverageIgnored,
   buildAllowanceLayer,
+  checkCoverage,
   parseLcov,
   readCoveragePathIgnorePatterns,
+  runCoverageShard,
 } from './check-coverage.ts';
 
 describe('parseLcov', () => {
@@ -173,50 +174,62 @@ describe('parseLcov', () => {
   });
 
   it('returns false immediately when a coverage shard exits non-zero', async () => {
-    mock.module('bun', () => ({
-      $: () => ({
-        quiet: () => ({
-          nothrow: async () => undefined,
-        }),
-      }),
+    const listCoverageTestFiles = mock(async () => ['src/example.test.ts']);
+    const runCoverageShardStub = mock(async () => ({
+      exitCode: 1,
+      lcovPath: 'coverage/lcov.info',
     }));
-    mock.module('node:child_process', () => ({
-      execFileSync(command: string) {
-        if (command === 'rg') {
-          return 'src/example.test.ts\n';
-        }
-        throw new Error(`Unexpected command: ${command}`);
-      },
-    }));
-
     const errorSpy = mock((_message?: unknown, ..._args: unknown[]) => {});
 
-    try {
-      using consoleErrorSpy = spyOn(console, 'error').mockImplementation(errorSpy);
-      using spawnSpy = spyOn(Bun, 'spawn').mockImplementation(
-        () =>
-          ({
-            exited: Promise.resolve(1),
-            stderr: new ReadableStream<Uint8Array>({
-              start(controller) {
-                controller.close();
-              },
-            }),
-            stdout: new ReadableStream<Uint8Array>({
-              start(controller) {
-                controller.close();
-              },
-            }),
-          }) as ReturnType<typeof Bun.spawn>,
-      );
-      const { checkCoverage } = await import(`./check-coverage.ts?failure=${randomUUID()}`);
+    using consoleErrorSpy = spyOn(console, 'error').mockImplementation(errorSpy);
 
-      await expect(checkCoverage()).resolves.toBe(false);
-      expect(spawnSpy).toHaveBeenCalled();
-      expect(consoleErrorSpy).toHaveBeenCalledWith('Coverage execution failed.');
-    } finally {
-      mock.restore();
-    }
+    await expect(
+      checkCoverage({
+        listCoverageTestFiles,
+        runCoverageShard: runCoverageShardStub,
+      }),
+    ).resolves.toBe(false);
+    expect(listCoverageTestFiles).toHaveBeenCalledTimes(1);
+    expect(runCoverageShardStub).toHaveBeenCalledTimes(1);
+    expect(runCoverageShardStub).toHaveBeenCalledWith({
+      name: 'coverage',
+      coverageDirectory: 'coverage',
+      testFiles: ['src/example.test.ts'],
+    });
+    expect(consoleErrorSpy).toHaveBeenCalledWith('Coverage execution failed.');
+  });
+
+  it('propagates a non-zero child exit through the real coverage shard runner', async () => {
+    const spawnCoverageProcess = mock(() => ({
+      exited: Promise.resolve(7),
+      stderr: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.close();
+        },
+      }),
+      stdout: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.close();
+        },
+      }),
+    }));
+    using consoleErrorSpy = spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(
+      runCoverageShard(
+        {
+          name: 'synthetic',
+          coverageDirectory: 'coverage/synthetic',
+          testFiles: ['src/example.test.ts'],
+        },
+        { spawnCoverageProcess },
+      ),
+    ).resolves.toEqual({
+      exitCode: 7,
+      lcovPath: 'coverage/synthetic/lcov.info',
+    });
+    expect(spawnCoverageProcess).toHaveBeenCalledTimes(1);
+    expect(consoleErrorSpy).toHaveBeenCalledWith('synthetic coverage shard exited with code 7.');
   });
 });
 
