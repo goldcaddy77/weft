@@ -237,7 +237,8 @@ const BASE_COVERAGE_ALLOWANCES = buildAllowanceLayer('BASE_COVERAGE_ALLOWANCES',
       // in-process, and the standalone entrypoint is exercised by subprocess
       // tests. The remaining miss is only the `import.meta.main` wrapper.
       functions: 1,
-      lines: new Set([389, 390]),
+      lines: new Set([383, 384]),
+      requireUncoveredLines: true,
     },
   ],
   [
@@ -965,8 +966,12 @@ const COVERAGE_ALLOWANCE_OVERRIDES = buildAllowanceLayer('COVERAGE_ALLOWANCE_OVE
   [
     'src/server/json-rpc-websocket.ts',
     {
-      functions: 5,
-      lines: new Set([118, 156]),
+      // The emitter-failure regression drives cleanup through this closure-heavy
+      // adapter. Bun still reports four unnamed function misses plus the exercised
+      // `emitter.send` catch line.
+      functions: 4,
+      lines: new Set([107]),
+      requireUncoveredLines: true,
     },
   ],
   [
@@ -1264,13 +1269,6 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_OVERRIDES = buildAllowanceLayer(
       },
     ],
     [
-      'src/mcp/tools.ts',
-      {
-        functions: 1,
-        lines: new Set([67, 124, 125, 158, 178, 179, 292, 293, 294, 295, 296, 352, 353, 379]),
-      },
-    ],
-    [
       'src/server/api-catalog.ts',
       { lines: new Set([161, 162, 166, 167, 169, 170, 171, 172, 174, 176]) },
     ],
@@ -1535,16 +1533,6 @@ const CURRENT_MAIN_COVERAGE_ALLOWANCE_REFRESH = buildAllowanceLayer(
       },
     ],
     ['src/mcp/protocol.ts', { functions: 4, lines: new Set([89, 94, 95, 96, 101, 106]) }],
-    [
-      'src/mcp/tools.ts',
-      {
-        functions: 2,
-        lines: new Set([
-          67, 124, 125, 160, 180, 181, 294, 295, 296, 297, 298, 314, 315, 316, 317, 318, 354, 355,
-          381,
-        ]),
-      },
-    ],
     ['src/core/worker-execution-ownership.ts', { functions: 1 }],
     ['src/core/worker-listener-registry.ts', { functions: 1 }],
     [
@@ -1760,6 +1748,14 @@ const CURRENT_BRANCH_COVERAGE_ALLOWANCE_REFRESH = buildAllowanceLayer(
         lines: new Set([94, 95, 184, 185, 234, 279, 280, 410, 441, 442, 443, 445, 446, 447, 448]),
       },
     ],
+    [
+      'src/cli/json-input.ts',
+      {
+        // CLI subprocess tests exercise the default Bun.stdin reader. Parent-process
+        // LCOV cannot attribute that child execution to the default callback closure.
+        functions: 1,
+      },
+    ],
     ['src/cli/noun-verb-arguments.ts', { lines: new Set([172]) }],
     [
       'src/cli/operation-catalog-snapshot.ts',
@@ -1933,6 +1929,15 @@ const CURRENT_BRANCH_COVERAGE_ALLOWANCE_REFRESH = buildAllowanceLayer(
       'src/server/authentication/rotating-api-key-store.ts',
       { lines: new Set([144, 146, 147, 148]) },
     ],
+    [
+      'src/server/dashboard-assets.ts',
+      {
+        // Segment validation rejects empty, parent, and absolute-path forms before
+        // resolution, so the final containment guard is defensive and unreachable.
+        lines: new Set([188]),
+        requireUncoveredLines: true,
+      },
+    ],
     ['src/server/openapi.ts', { lines: new Set([361]) }],
     ['src/server/openrpc.ts', { lines: new Set([179, 180, 181, 200, 201, 202]) }],
     [
@@ -1941,12 +1946,16 @@ const CURRENT_BRANCH_COVERAGE_ALLOWANCE_REFRESH = buildAllowanceLayer(
     ],
     [
       'src/server/operations/aggregate-workflows.ts',
-      { functions: 2, lines: new Set([85, 107, 108, 117, 118, 119, 136, 137, 138, 139, 149]) },
+      {
+        functions: 2,
+        lines: new Set([107, 108, 117, 118, 119]),
+        requireUncoveredLines: true,
+      },
     ],
-    [
-      'src/server/operations/get-task-diagnostics.ts',
-      { lines: new Set([229, 230, 231, 232, 233]) },
-    ],
+    // Intentionally shadows the stale [228..232] main-override entry. Removing
+    // this empty refresh would silently reactivate those unrelated line allowances;
+    // the strict audit-backlog top-off below owns the current [304..308] misses.
+    ['src/server/operations/get-task-diagnostics.ts', { lines: new Set() }],
     ['src/server/operations/schedule-faults.ts', { lines: new Set([65, 70, 71, 72]) }],
     [
       'src/server/operations/start-workflow.ts',
@@ -1962,12 +1971,14 @@ const CURRENT_BRANCH_COVERAGE_ALLOWANCE_REFRESH = buildAllowanceLayer(
     ['src/server/operations/update-workflow.ts', { lines: new Set([92, 93, 94, 95, 96, 97]) }],
     [
       'src/server/operations/worker-drain.ts',
-      { functions: 2, lines: new Set([260, 267, 268, 269, 273, 274, 275, 276, 277]) },
+      {
+        functions: 2,
+        lines: new Set([256, 263, 264, 265, 269, 270, 271, 272, 273]),
+        requireUncoveredLines: true,
+      },
     ],
     ['src/server/runtime/cors.ts', { lines: new Set([304]) }],
     ['src/server/runtime/request-gate.ts', { lines: new Set([118, 119]) }],
-    ['src/server/runtime/websocket-worker.ts', { lines: new Set([405, 406, 409, 410]) }],
-    ['src/server/serve-internals.ts', { lines: new Set([236, 279, 334]) }],
   ],
 );
 
@@ -2208,19 +2219,6 @@ const AUDIT_BACKLOG_COVERAGE_ALLOWANCE_TOP_OFFS = buildAllowanceLayer(
       'src/mcp/protocol.ts',
       { lines: createMergedLineSet(new Set([92, 104, 109]), createLineSet(97, 99)) },
     ],
-    [
-      'src/mcp/tools.ts',
-      {
-        lines: createMergedLineSet(
-          new Set([83, 94, 176, 202, 203, 233, 234, 262, 508]),
-          createLineSet(140, 141),
-          createLineSet(251, 254),
-          createLineSet(421, 425),
-          createLineSet(441, 445),
-          createLineSet(481, 482),
-        ),
-      },
-    ],
     ['src/server/authentication/index.ts', { lines: new Set([158]) }],
     [
       'src/server/authentication/rotating-api-key-store.ts',
@@ -2236,9 +2234,15 @@ const AUDIT_BACKLOG_COVERAGE_ALLOWANCE_TOP_OFFS = buildAllowanceLayer(
         ]),
       },
     ],
-    ['src/server/operations/bulk-retry-failed-workflows.ts', { lines: new Set([84]) }],
+    [
+      'src/server/operations/bulk-retry-failed-workflows.ts',
+      { lines: new Set([81]), requireUncoveredLines: true },
+    ],
     ['src/server/operations/create-schedule.ts', { lines: createLineSet(104, 106) }],
-    ['src/server/operations/get-task-diagnostics.ts', { lines: createLineSet(305, 309) }],
+    [
+      'src/server/operations/get-task-diagnostics.ts',
+      { lines: createLineSet(304, 308), requireUncoveredLines: true },
+    ],
     [
       'src/server/operations/storage.ts',
       {
@@ -2250,10 +2254,6 @@ const AUDIT_BACKLOG_COVERAGE_ALLOWANCE_TOP_OFFS = buildAllowanceLayer(
       },
     ],
     ['src/server/operations/update-workflow.ts', { lines: new Set([98]) }],
-    [
-      'src/server/operations/worker-drain.ts',
-      { lines: createMergedLineSet(new Set([265, 272]), createLineSet(278, 282)) },
-    ],
     [
       'src/server/rest-body.ts',
       {
@@ -2277,18 +2277,15 @@ const AUDIT_BACKLOG_COVERAGE_ALLOWANCE_TOP_OFFS = buildAllowanceLayer(
         ),
       },
     ],
-    ['src/server/runtime/task-reconciliation.ts', { lines: new Set([183]) }],
     ['src/server/runtime/task-result-resolution.ts', { functions: 1, lines: new Set([42]) }],
     ['src/server/runtime/websocket-stream.ts', { lines: new Set([48, 78]) }],
     [
       'src/server/runtime/websocket-worker.ts',
       {
-        functions: 1,
-        lines: createMergedLineSet(
-          createLineSet(263, 266),
-          createLineSet(268, 271),
-          new Set([408, 412, 413, 414, 417, 418, 439, 440, 443, 444]),
-        ),
+        // The closed WorkerToServerMessage union makes this default branch
+        // unreachable at runtime; it exists solely as a compile-time exhaustiveness guard.
+        lines: new Set([430, 431, 434, 435]),
+        requireUncoveredLines: true,
       },
     ],
     ['src/storage/turso.ts', { lines: new Set([51, 52]) }],
@@ -2319,10 +2316,13 @@ function withCoverageAllowanceTopOffs(
       current?.lines === undefined && topOff.lines === undefined
         ? undefined
         : createMergedLineSet(current?.lines ?? new Set(), topOff.lines ?? new Set());
+    const requireUncoveredLines =
+      current?.requireUncoveredLines === true || topOff.requireUncoveredLines === true;
 
     merged.set(filePath, {
       ...(functions > 0 ? { functions } : {}),
       ...(lines === undefined ? {} : { lines }),
+      ...(requireUncoveredLines ? { requireUncoveredLines: true } : {}),
     });
   }
 

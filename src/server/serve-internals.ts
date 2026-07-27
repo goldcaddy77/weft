@@ -37,13 +37,16 @@ import {
   type EventBroadcastingHandle,
 } from './runtime/event-broadcasting.ts';
 import { shutdownAllWorkers } from './runtime/shutdown.ts';
-import { reconcileOrphanedRecords, scanExpiredTasks } from './runtime/task-reconciliation.ts';
+import {
+  consumeManualTaskReconciliationForTesting as consumeManual,
+  reconcileOrphanedRecords,
+  scanExpiredTasks,
+} from './runtime/task-reconciliation.ts';
 import { DEFAULT_MAX_STREAM_CONNECTIONS_PER_WORKFLOW } from './runtime/websocket-stream.ts';
 import { isInflightRecord, withRetry } from './runtime/websocket-worker.ts';
 import { TaskQueue } from './task-queue.ts';
 import { createWorkflowEventFeed } from './workflow-event-feed.ts';
 
-// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -383,23 +386,28 @@ export function registerStackDisposers(
     ),
   );
 
-  const visibilityPollHandle = setInterval(() => {
-    void scanExpiredTasks(context, options, onOperationCleanup);
-  }, context.visibilityPollMs);
+  const schedulesTaskReconciliation = !consumeManual(options, context, onOperationCleanup);
+  const visibilityPollHandle = schedulesTaskReconciliation
+    ? setInterval(() => {
+        void scanExpiredTasks(context, options, onOperationCleanup);
+      }, context.visibilityPollMs)
+    : undefined;
 
   // Periodic full-storage reconciliation to catch orphaned inflight records
   // that were never tracked in the heap (e.g., written by another process or
   // left over from a crash). Runs at 12x the visibility poll interval to keep
   // cost low while still providing a safety net.
   const reconciliationIntervalMs = context.visibilityPollMs * RECONCILIATION_MULTIPLIER;
-  const reconciliationHandle = setInterval(() => {
-    void reconcileOrphanedRecords(context, options, onOperationCleanup);
-  }, reconciliationIntervalMs);
+  const reconciliationHandle = schedulesTaskReconciliation
+    ? setInterval(() => {
+        void reconcileOrphanedRecords(context, options, onOperationCleanup);
+      }, reconciliationIntervalMs)
+    : undefined;
 
   // Registered last — disposed first: clear all intervals and pending timers.
   stack.defer(() => {
-    clearInterval(visibilityPollHandle);
-    clearInterval(reconciliationHandle);
+    if (visibilityPollHandle !== undefined) clearInterval(visibilityPollHandle);
+    if (reconciliationHandle !== undefined) clearInterval(reconciliationHandle);
     context.deadlineTracker.clear();
     // Clear all pending backoff-delay timers to prevent callbacks firing
     // against a stopped server.

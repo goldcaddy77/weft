@@ -21,6 +21,54 @@ import {
 } from './task-metrics.ts';
 import { isInflightRecord } from './websocket-worker.ts';
 
+interface ManualTaskReconciliationRegistration {
+  scanAt?: (operationId: string, trackedDeadline: number, now: number) => Promise<void>;
+}
+
+interface ManualTaskReconciliationForTesting {
+  readonly options: ServeOptions;
+  scanAt(operationId: string, trackedDeadline: number, now: number): Promise<void>;
+}
+
+const manualTaskReconciliationRegistrations = new WeakMap<
+  ServeOptions,
+  ManualTaskReconciliationRegistration
+>();
+
+/** @internal Restricts manual reconciliation to explicitly marked test options. */
+export function useManualTaskReconciliationForTesting(
+  options: ServeOptions,
+): ManualTaskReconciliationForTesting {
+  const registration: ManualTaskReconciliationRegistration = {};
+  manualTaskReconciliationRegistrations.set(options, registration);
+  return {
+    options,
+    scanAt(operationId, trackedDeadline, now) {
+      if (registration.scanAt === undefined) {
+        throw new Error('Manual task reconciliation requires a running test server');
+      }
+      return registration.scanAt(operationId, trackedDeadline, now);
+    },
+  };
+}
+
+/** @internal Installs the narrow one-shot test controller before a server starts. */
+export function consumeManualTaskReconciliationForTesting(
+  options: ServeOptions,
+  context: ServerContext,
+  cleanupWorkflowIndex: (operationId: string) => void,
+): boolean {
+  const registration = manualTaskReconciliationRegistrations.get(options);
+  manualTaskReconciliationRegistrations.delete(options);
+  if (registration === undefined) return false;
+
+  registration.scanAt = async (operationId, trackedDeadline, now) => {
+    context.deadlineTracker.add({ operationId, deadline: trackedDeadline });
+    await scanExpiredTasks(context, options, cleanupWorkflowIndex, now);
+  };
+  return true;
+}
+
 /**
  * Given a persisted inflight record, either permanently fail the task (if
  * retry attempts are exhausted) or transition it back to queued and
@@ -151,11 +199,11 @@ export async function scanExpiredTasks(
   context: ServerContext,
   options: ServeOptions,
   cleanupWorkflowIndex: (operationId: string) => void,
+  now = Date.now(),
 ): Promise<void> {
   if (context.scanRunning) return;
   context.scanRunning = true;
   try {
-    const now = Date.now();
     const expired = context.deadlineTracker.drainExpired(now);
 
     for (const { operationId, deadline } of expired) {

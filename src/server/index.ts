@@ -553,7 +553,7 @@ export function serve(options: ServeOptions): WeftServer {
   const resolvedHostname = server.hostname ?? hostname;
   const scheme = tlsOptions ? 'https' : 'http';
 
-  return {
+  const weftServer: WeftServer = {
     port: resolvedPort,
     hostname: resolvedHostname,
     url: `${scheme}://${resolvedHostname}:${resolvedPort}`,
@@ -571,4 +571,5 @@ export function serve(options: ServeOptions): WeftServer {
       return stack[Symbol.asyncDispose]();
     },
   };
+  return weftServer;
 }

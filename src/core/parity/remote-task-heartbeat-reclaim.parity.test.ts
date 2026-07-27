@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 
-import { serve, type WeftServer } from '../../server/index.ts';
+import { serve, type ServeOptions, type WeftServer } from '../../server/index.ts';
+import { useManualTaskReconciliationForTesting } from '../../server/runtime/task-reconciliation.ts';
 import { KEYS } from '../../storage/interface.ts';
-import { waitForRealTimersForTesting } from '../../testing/fake-timers.test-support.ts';
 import { decode } from '../codec.ts';
 import { Engine } from '../engine.ts';
 import { waitForParityCondition } from './real-timer-wait.test-support.ts';
@@ -10,22 +10,29 @@ import { waitForParityCondition } from './real-timer-wait.test-support.ts';
 /**
  * This case is intentionally separated from the rest of the failure-handling
  * parity suite. It drives a real {@link serve} instance, a real WebSocket
- * worker connection, and the real 20ms visibility poll racing a real task
- * deadline — none of which can be put on controllable time without rebuilding
- * the transport. Under the parallel pre-commit run, CPU contention can delay the
- * heartbeat round-trip past the original deadline so the poll reclaims the task
- * before the extension lands, flaking the `[1]`-then-`[1, 2]` attempt sequence.
- * The arithmetic invariant (the deadline extended) is deterministic; the
- * attempt-sequence invariant is real-time by construction.
- *
- * It therefore lives in its own file and is registered in
- * `LOAD_SENSITIVE_TEST_PATHS` (scripts/husky/run-tests.ts) so the pre-commit
- * parallel full-suite step skips it; CI runs it in the full suite (CI's runner
- * does not reproduce the local parallel-load contention). See the codegen-tsc
- * and worker-execution-suspension entries for the same rationale.
+ * worker connection, and the real heartbeat persistence path. Periodic task
+ * reconciliation is disabled through an internal test-only option marker so the test
+ * can drive stale-deadline and expired-deadline scans explicitly. This keeps
+ * the production transport boundary without making correctness depend on CPU
+ * scheduling or wall-clock polling.
  */
 
 describe('Temporal failure-handling parity (remote-task heartbeat reclaim)', () => {
+  it('rejects manual scans before the test server registers its options', () => {
+    const engine = new Engine();
+    const manualReconciliation = useManualTaskReconciliationForTesting({
+      engine,
+      port: 0,
+      unauthenticatedAccess: 'allow',
+    } satisfies ServeOptions);
+
+    expect(() => manualReconciliation.scanAt('unregistered-task', 1, 2)).toThrow(
+      'Manual task reconciliation requires a running test server',
+    );
+
+    engine[Symbol.dispose]();
+  });
+
   it('keeps a heartbeating remote task assigned while reclaiming one that stops heartbeating', async () => {
     const engine = new Engine();
     let server: WeftServer | undefined;
@@ -33,12 +40,12 @@ describe('Temporal failure-handling parity (remote-task heartbeat reclaim)', () 
     const taskAttempts: number[] = [];
 
     try {
-      server = serve({
+      const manualReconciliation = useManualTaskReconciliationForTesting({
         engine,
         port: 0,
         unauthenticatedAccess: 'allow',
-        visibilityPollIntervalMs: 20,
-      });
+      } satisfies ServeOptions);
+      server = serve(manualReconciliation.options);
 
       socket = new WebSocket(`ws://localhost:${server.port}/v1/tasks/default/stream`);
       socket.addEventListener('open', () => {
@@ -80,7 +87,10 @@ describe('Temporal failure-handling parity (remote-task heartbeat reclaim)', () 
         (await engine.storage.get(KEYS.operationInflight('parity-heartbeating-task')))!,
       ) as { deadline: number };
 
-      await waitForRealTimersForTesting(60);
+      const dispatchTime = beforeHeartbeat.deadline - 120;
+      await waitForParityCondition(() => Date.now() >= dispatchTime + 10, {
+        label: 'clock advanced before heartbeat',
+      });
       if (socket === undefined) {
         throw new Error('Remote worker socket was not initialized');
       }
@@ -98,25 +108,30 @@ describe('Temporal failure-handling parity (remote-task heartbeat reclaim)', () 
         (await engine.storage.get(KEYS.operationInflight('parity-heartbeating-task')))!,
       ) as { deadline: number };
 
-      // The heartbeat extended the deadline past the original expiry. This is
-      // the invariant under test and it is proven deterministically by
-      // arithmetic — no wall-clock wait. (A previous sleep-until-original-
-      // deadline then `expect(taskAttempts).toEqual([1])` re-proved the same
-      // property over real time, but under parallel CPU load the sleep
-      // overshot the original deadline and the 20ms visibility poll reclaimed
-      // the task early, flaking the assertion. Do not reintroduce it.)
-      const originalDeadlineDelay = Math.max(0, beforeHeartbeat.deadline - Date.now()) + 20;
-      expect(Date.now() + originalDeadlineDelay).toBeLessThan(afterHeartbeat.deadline);
+      await manualReconciliation.scanAt(
+        'parity-heartbeating-task',
+        beforeHeartbeat.deadline,
+        beforeHeartbeat.deadline + 1,
+      );
+
+      expect(afterHeartbeat.deadline).toBeGreaterThan(beforeHeartbeat.deadline + 1);
       expect(taskAttempts).toEqual([1]);
       expect(server.registry.isAssigned('parity-heartbeating-task')).toBe(true);
 
-      await waitForParityCondition(
-        () => {
-          return taskAttempts.length >= 2;
-        },
-        { timeoutMs: 500, label: 'remote task reclaimed after heartbeats stop' },
+      await manualReconciliation.scanAt(
+        'parity-heartbeating-task',
+        afterHeartbeat.deadline,
+        afterHeartbeat.deadline + 1,
       );
+      await waitForParityCondition(() => taskAttempts.includes(2), {
+        label: 'reclaimed attempt delivery',
+      });
+      const reassigned = decode(
+        (await engine.storage.get(KEYS.operationInflight('parity-heartbeating-task')))!,
+      ) as { attempt?: number };
+      expect(reassigned.attempt).toBe(2);
       expect(taskAttempts).toEqual([1, 2]);
+      expect(server.registry.isAssigned('parity-heartbeating-task')).toBe(true);
     } finally {
       socket?.close();
       await server?.stop();
