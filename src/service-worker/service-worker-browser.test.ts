@@ -418,14 +418,36 @@ function createSmokeServer(serviceWorkerSource: string): { origin: string } {
  * The explicit `timeout` is deliberately below this file's 30 s per-test
  * timeout. Playwright's own default launch timeout is 30 s — the same value —
  * so a launch slow enough to matter expires no earlier than the test deadline
- * and Bun reports only "this test timed out", naming nothing. Failing the
- * launch first produces an error that says which step ran out of time.
+ * and Bun reports only "this test timed out", naming nothing.
+ *
+ * That 20 s is a *backstop*, not the guarantee: it is independent of the test
+ * budget, so a slow bundle build followed by a hung launch still overruns the
+ * 30 s deadline (an 11 s build plus a 20 s launch is 31 s). Only the phase
+ * budget accounts for time already spent, so the launch is wrapped too. The
+ * catch is kept because the failure it explains — Chromium not installed —
+ * needs an actionable message either way; the phase error arrives as its
+ * `cause`.
  */
-async function createIsolatedContext(): Promise<BrowserContext> {
+async function createIsolatedContext(withinPhase: PhaseRunner): Promise<BrowserContext> {
   if (sharedBrowser === null) {
+    const launch = chromium.launch({ timeout: 20_000 });
+    let launchAbandoned = false;
+    // A launch that lands between the phase ceiling and its own 20 s timeout
+    // resolves after the wrapper already rejected, so it is never assigned to
+    // `sharedBrowser` and `afterAll` cannot close it — stranding a Chromium
+    // process for the rest of the run. Close it on arrival instead.
+    void launch.then(
+      (browser) => {
+        if (launchAbandoned) void browser.close();
+      },
+      // A rejected launch has no process to close; the failure surfaces below.
+      () => {},
+    );
+
     try {
-      sharedBrowser = await chromium.launch({ timeout: 20_000 });
+      sharedBrowser = await withinPhase('chromium launch', launch);
     } catch (error) {
+      launchAbandoned = true;
       throw new Error(
         'Chromium failed to launch for Playwright. If it is not installed, run `bunx playwright install chromium` and retry with WEFT_BROWSER_SMOKE=1.',
         { cause: error },
@@ -433,68 +455,164 @@ async function createIsolatedContext(): Promise<BrowserContext> {
     }
   }
 
-  const context = await sharedBrowser.newContext();
+  const creation = sharedBrowser.newContext();
+  let creationAbandoned = false;
+  // Same hazard as the launch, and worse than bookkeeping here: a context that
+  // arrives after its phase expired never reaches `contexts`, so `afterEach`
+  // cannot close it and it keeps its storage partition and Service Worker
+  // registration alive until `afterAll`. These tests rely on per-context
+  // isolation, so a stray one can reach the tests that follow.
+  void creation.then(
+    (late) => {
+      if (creationAbandoned) void late.close();
+    },
+    () => {},
+  );
+
+  let context: BrowserContext;
+  try {
+    context = await withinPhase('browser context creation', creation);
+  } catch (error) {
+    creationAbandoned = true;
+    throw error;
+  }
+
   contexts.push(context);
   return context;
 }
 
+/** Per-test deadline. Every test in this file declares exactly this budget. */
+const SMOKE_TEST_TIMEOUT_MS = 30_000;
+
 /**
- * Bound one step of a smoke test and name it on expiry.
+ * Slice of the test budget held back so a phase rejection has time to unwind
+ * and print before Bun's own per-test deadline fires and replaces it with an
+ * anonymous "this test timed out".
+ */
+const PHASE_REPORTING_RESERVE_MS = 2_000;
+
+/** Ceiling for any single phase, so one wedged step cannot eat the whole budget. */
+const MAXIMUM_PHASE_MS = 15_000;
+
+/** Bounds one step of a smoke test and names it on expiry. */
+type PhaseRunner = <T>(phase: string, operation: Promise<T>) => Promise<T>;
+
+/**
+ * Opens a phase budget for one test and returns the runner that spends it.
  *
  * Chromium control, Service Worker registration, and page `fetch` round trips
  * are all unbounded awaits. When one of them stalls on a loaded two-core CI
  * runner, the suite reports nothing but "this test timed out after 30000ms" —
- * no phase, no stack, nothing to triage from a log. Bounding each step below
- * the per-test deadline turns that into a failure that says which step stalled.
- * These bounds only ever *shorten* how long a wedged step is tolerated; the
- * per-test timeout itself is unchanged.
+ * no phase, no stack, nothing to triage from a log (this is the open half of
+ * #883). Bounding each step turns that into a failure that names the step.
+ *
+ * The bound is the *remaining* test budget, not a fixed per-phase constant. A
+ * fixed constant does not actually guarantee a named failure: two phases each
+ * stalling just under a 15 s bound sum past the 30 s test deadline, and Bun's
+ * anonymous timeout wins anyway. Deriving each bound from what is left of the
+ * budget makes the phase error win the race no matter how many phases ran
+ * before it. These bounds only ever *shorten* how long a wedged step is
+ * tolerated; the per-test timeout itself is unchanged.
  */
-async function withinPhase<T>(phase: string, operation: Promise<T>): Promise<T> {
-  let expire: ReturnType<typeof setTimeout> | undefined;
-  const expiry = new Promise<never>((_resolve, reject) => {
-    expire = setTimeout(() => reject(new Error(`Browser smoke phase timed out: ${phase}`)), 15_000);
-  });
+function beginPhaseBudget(diagnostics: string[]): PhaseRunner {
+  const budgetExpiresAt = Date.now() + SMOKE_TEST_TIMEOUT_MS - PHASE_REPORTING_RESERVE_MS;
 
-  try {
-    return await Promise.race([operation, expiry]);
-  } finally {
-    clearTimeout(expire);
-  }
+  // The `serviceworker` / `serviceworker-close` entries are the evidence that
+  // says whether Chromium evicted the worker out from under a failing step,
+  // which is the leading hypothesis for #883. Read at throw time so entries
+  // logged during the phase are included.
+  const describeDiagnostics = (): string =>
+    `\nBrowser diagnostics:\n${diagnostics.length === 0 ? '<none captured>' : diagnostics.join('\n')}`;
+
+  return async function withinPhase<T>(phase: string, operation: Promise<T>): Promise<T> {
+    const remainingBudgetMs = Math.max(0, budgetExpiresAt - Date.now());
+    // A zero bound still rejects (on the next tick) naming the phase, which is
+    // strictly better than yielding the remainder to an anonymous timeout.
+    const boundMs = Math.min(MAXIMUM_PHASE_MS, remainingBudgetMs);
+    // Several steps nest a tighter, more specific bound inside their phase: the
+    // 5 s `sendWorkerMessage` transport timeout, and inside the periodic-sync
+    // message, the 3 s sleep-resolver readiness bound that names the workflow
+    // (SLEEP_RESOLVER_READY_WAIT_TIMEOUT_MS_FOR_TESTING). Those produce better
+    // messages than a phase name, and they normally win. When the budget is
+    // nearly spent the outer bound necessarily preempts them — there is no way
+    // to hold a 3 s inner window open inside 1 s of remaining budget. Say so,
+    // so the failure reads as "the budget was gone before this step" rather
+    // than "this step hung".
+    const budgetLimited = boundMs < MAXIMUM_PHASE_MS;
+    let expire: ReturnType<typeof setTimeout> | undefined;
+    const expiry = new Promise<never>((_resolve, reject) => {
+      expire = setTimeout(
+        () =>
+          reject(
+            new Error(
+              `Browser smoke phase timed out: ${phase} (bound ${boundMs} ms; ${remainingBudgetMs} ms of the test budget remained)` +
+                (budgetLimited
+                  ? '\nThe bound was shortened by the remaining test budget, not by this step — earlier phases consumed it, and any tighter timeout nested inside this phase may have been preempted. Look at what ran before this.'
+                  : '') +
+                describeDiagnostics(),
+            ),
+          ),
+        boundMs,
+      );
+    });
+
+    try {
+      return await Promise.race([operation, expiry]);
+    } catch (error) {
+      // Diagnostics matter just as much when a phase fails *promptly* — a
+      // rejected Service Worker script reports the real cause through the page
+      // console, not through the Playwright error. Attaching them here covers
+      // every phase, which is why `registerServiceWorker` no longer needs its
+      // own catch.
+      // Phases nest (`waitForTimerArmed` wraps `sendWorkerMessage`), so skip
+      // anything this runner already annotated — otherwise the inner failure
+      // gets a second wrapper and the diagnostics block prints twice.
+      if (error instanceof Error && error.message.startsWith('Browser smoke phase ')) {
+        throw error;
+      }
+      throw new Error(`Browser smoke phase failed: ${phase}${describeDiagnostics()}`, {
+        cause: error,
+      });
+    } finally {
+      clearTimeout(expire);
+    }
+  };
 }
 
 async function registerServiceWorker(
   page: Page,
   origin: string,
-  diagnostics: string[],
+  withinPhase: PhaseRunner,
 ): Promise<void> {
   await withinPhase('page.goto', page.goto(origin));
-  try {
-    await withinPhase(
-      'service worker registration',
-      page.evaluate(async () => {
-        const registration = await navigator.serviceWorker.register('/service-worker.js', {
-          type: 'module',
+  await withinPhase(
+    'service worker registration',
+    page.evaluate(async () => {
+      const registration = await navigator.serviceWorker.register('/service-worker.js', {
+        type: 'module',
+      });
+      await navigator.serviceWorker.ready;
+      if (navigator.serviceWorker.controller !== null) return;
+      await new Promise<void>((resolve) => {
+        navigator.serviceWorker.addEventListener('controllerchange', () => resolve(), {
+          once: true,
         });
-        await navigator.serviceWorker.ready;
-        if (navigator.serviceWorker.controller !== null) return;
-        await new Promise<void>((resolve) => {
-          navigator.serviceWorker.addEventListener('controllerchange', () => resolve(), {
-            once: true,
-          });
-          void registration.update();
-        });
-      }),
-    );
-  } catch (error) {
-    throw new Error(
-      `Service Worker registration failed. Browser diagnostics:\n${diagnostics.join('\n')}`,
-      { cause: error },
-    );
-  }
+        void registration.update();
+      });
+    }),
+  );
 }
 
-async function sendWorkerMessage<T>(page: Page, message: Record<string, unknown>): Promise<T> {
-  return page.evaluate(
+// The internal 5 s transport bound is fixed, so it does not account for time
+// already spent: with less than 5 s of the test budget left, a stalled message
+// reaches Bun's deadline before its own timeout fires. Routing every message
+// through the phase runner caps it by whatever budget remains.
+async function sendWorkerMessage<T>(
+  page: Page,
+  message: Record<string, unknown>,
+  withinPhase: PhaseRunner,
+): Promise<T> {
+  const roundTrip = page.evaluate(
     (workerMessage) =>
       new Promise<T>((resolve, reject) => {
         const controller = navigator.serviceWorker.controller;
@@ -522,6 +640,7 @@ async function sendWorkerMessage<T>(page: Page, message: Record<string, unknown>
       }),
     message,
   );
+  return withinPhase(`worker message: ${String(message['type'])}`, roundTrip);
 }
 
 // Poll the worker until a durable timer deadline has been checkpointed. The
@@ -531,29 +650,53 @@ async function sendWorkerMessage<T>(page: Page, message: Record<string, unknown>
 // kill cannot race the sleep checkpoint write — recovery always has a real timer
 // to re-arm. Uses an iteration counter rather than a Date.now() deadline so
 // Chromium timer throttling can't starve the loop.
-async function waitForTimerArmed(page: Page): Promise<void> {
-  let remainingAttempts = 200;
-  while (remainingAttempts-- > 0) {
-    const { armed } = await sendWorkerMessage<{ armed: boolean }>(page, {
-      type: 'weft:test:timer-armed',
-    });
-    if (armed) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error('Timed out waiting for the durable sleep timer to be armed');
+async function waitForTimerArmed(page: Page, withinPhase: PhaseRunner): Promise<void> {
+  // The iteration counter caps *attempts*, not elapsed time — each attempt is a
+  // full MessageChannel round trip plus an IndexedDB scan, so 200 slow-but-
+  // successful attempts can outlast the test deadline on their own. The phase
+  // wrapper supplies the wall-clock ceiling the counter cannot.
+  await withinPhase(
+    'wait for durable sleep timer to be armed',
+    (async () => {
+      let attempts = 0;
+      while (attempts++ < 200) {
+        const { armed } = await sendWorkerMessage<{ armed: boolean }>(
+          page,
+          { type: 'weft:test:timer-armed' },
+          withinPhase,
+        );
+        if (armed) return;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error(
+        `Timed out waiting for the durable sleep timer to be armed after ${attempts} attempts; no 'wf-deadline:' key ever appeared`,
+      );
+    })(),
+  );
 }
 
-async function waitForActivityCount(origin: string, expectedCount: number): Promise<void> {
-  const deadline = Date.now() + 5_000;
-  let actualCount = 0;
-  while (Date.now() < deadline) {
-    const response = await fetch(`${origin}/activity-count`);
-    const body = (await response.json()) as { count: number };
-    actualCount = body.count;
-    if (actualCount === expectedCount) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error(`Timed out waiting for activity count ${expectedCount}; got ${actualCount}`);
+async function waitForActivityCount(
+  origin: string,
+  expectedCount: number,
+  withinPhase: PhaseRunner,
+): Promise<void> {
+  // The 5 s deadline is only checked *between* fetches, so a single wedged
+  // request still hangs forever. The phase wrapper bounds the whole loop.
+  await withinPhase(
+    `wait for activity count ${expectedCount}`,
+    (async () => {
+      const deadline = Date.now() + 5_000;
+      let actualCount = 0;
+      while (Date.now() < deadline) {
+        const response = await fetch(`${origin}/activity-count`);
+        const body = (await response.json()) as { count: number };
+        actualCount = body.count;
+        if (actualCount === expectedCount) return;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error(`Timed out waiting for activity count ${expectedCount}; got ${actualCount}`);
+    })(),
+  );
 }
 
 // Direct, single-shot read of the host's activity counter. `waitForActivityCount`
@@ -561,18 +704,28 @@ async function waitForActivityCount(origin: string, expectedCount: number): Prom
 // duplicate activity that lands *later* (e.g. a recovery re-execution arriving
 // after the workflow result is observed). Use this after a quiescence point to
 // assert the count is *exactly* N and has not crept past it.
-async function getActivityCount(origin: string): Promise<number> {
-  const response = await fetch(`${origin}/activity-count`);
-  const body = (await response.json()) as { count: number };
-  return body.count;
+async function getActivityCount(origin: string, withinPhase: PhaseRunner): Promise<number> {
+  return withinPhase(
+    'read activity count',
+    (async () => {
+      const response = await fetch(`${origin}/activity-count`);
+      const body = (await response.json()) as { count: number };
+      return body.count;
+    })(),
+  );
 }
 
 async function waitForPageWorkflowStatus(
   page: Page,
   workflowId: string,
   status: string,
+  withinPhase: PhaseRunner,
 ): Promise<void> {
-  await page.evaluate(
+  // Each iteration's in-page `fetch` is itself unbounded — it is served by the
+  // Service Worker, so an evicted or wedged worker stalls one iteration
+  // forever and the attempt counter never advances. That is the shape that
+  // produces a bare "this test timed out" with nothing named.
+  const polling = page.evaluate(
     async ({ expectedStatus, id }) => {
       // Use an iteration counter instead of Date.now() so Chromium timer
       // throttling under background-tab / CDP conditions cannot stall the loop.
@@ -596,9 +749,14 @@ async function waitForPageWorkflowStatus(
     },
     { expectedStatus: status, id: workflowId },
   );
+  await withinPhase(`wait for workflow ${workflowId} to reach ${status}`, polling);
 }
 
-async function stopServiceWorkers(context: BrowserContext, page: Page): Promise<void> {
+async function stopServiceWorkers(
+  context: BrowserContext,
+  page: Page,
+  withinPhase: PhaseRunner,
+): Promise<void> {
   const session = await withinPhase('CDP session', context.newCDPSession(page));
   await withinPhase('ServiceWorker.enable', session.send('ServiceWorker.enable'));
   await withinPhase('ServiceWorker.stopAllWorkers', session.send('ServiceWorker.stopAllWorkers'));
@@ -609,13 +767,17 @@ describe('Service Worker browser smoke', () => {
   browserSmokeTest(
     'runs lifecycle, fetch, periodic-sync, and restart recovery in Chromium',
     async () => {
-      const serviceWorkerSource = await buildServiceWorkerBundle(
-        `weft-browser-smoke-${crypto.randomUUID()}`,
+      // Declared before the budget so a phase timeout can report whatever the
+      // page and worker had logged by then; the listeners below append to it.
+      const browserDiagnostics: string[] = [];
+      const withinPhase = beginPhaseBudget(browserDiagnostics);
+      const serviceWorkerSource = await withinPhase(
+        'bundle build',
+        buildServiceWorkerBundle(`weft-browser-smoke-${crypto.randomUUID()}`),
       );
       const { origin } = createSmokeServer(serviceWorkerSource);
-      const context = await createIsolatedContext();
-      const page = await context.newPage();
-      const browserDiagnostics: string[] = [];
+      const context = await createIsolatedContext(withinPhase);
+      const page = await withinPhase('page creation', context.newPage());
       page.on('console', (message) => browserDiagnostics.push(`console:${message.text()}`));
       page.on('pageerror', (error) => browserDiagnostics.push(`pageerror:${error.message}`));
       context.on('serviceworker', (worker) => {
@@ -623,78 +785,96 @@ describe('Service Worker browser smoke', () => {
         worker.on('close', () => browserDiagnostics.push(`serviceworker-close:${worker.url()}`));
       });
 
-      await registerServiceWorker(page, origin, browserDiagnostics);
+      await registerServiceWorker(page, origin, withinPhase);
 
-      const lifecycle = await sendWorkerMessage<{ lifecycleEvents: string[] }>(page, {
-        type: 'weft:test:lifecycle',
-      });
+      const lifecycle = await sendWorkerMessage<{ lifecycleEvents: string[] }>(
+        page,
+        { type: 'weft:test:lifecycle' },
+        withinPhase,
+      );
       expect(lifecycle.lifecycleEvents).toContain('install');
       expect(lifecycle.lifecycleEvents).toContain('activate');
 
-      const delegatedHealth = await page.evaluate(async () => {
-        const response = await fetch('/weft/v1/health');
-        return {
-          status: response.status,
-          body: await response.text(),
-        };
-      });
-      const directHealth = await sendWorkerMessage<{ status: number; body: string }>(page, {
-        type: 'weft:test:direct-health',
-      });
+      const delegatedHealth = await withinPhase(
+        'delegated health fetch',
+        page.evaluate(async () => {
+          const response = await fetch('/weft/v1/health');
+          return {
+            status: response.status,
+            body: await response.text(),
+          };
+        }),
+      );
+      const directHealth = await sendWorkerMessage<{ status: number; body: string }>(
+        page,
+        { type: 'weft:test:direct-health' },
+        withinPhase,
+      );
       expect(delegatedHealth).toEqual(directHealth);
 
-      const timerWorkflow = await page.evaluate(async () => {
-        const response = await fetch('/weft/v1/workflows', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'timer-workflow',
-            input: null,
-            id: 'timer-workflow',
-          }),
-        });
-        if (!response.ok) {
-          throw new Error(
-            `timer workflow start failed: ${response.status} ${await response.text()}`,
-          );
-        }
-        return (await response.json()) as { id: string };
-      });
-      expect(timerWorkflow.id).toBe('timer-workflow');
-      await waitForPageWorkflowStatus(page, timerWorkflow.id, 'running');
-      await sendWorkerMessage(page, { type: 'weft:test:periodic-sync' });
-      await expect(
+      const timerWorkflow = await withinPhase(
+        'start timer workflow',
         page.evaluate(async () => {
-          const response = await fetch('/weft/v1/workflows/timer-workflow/result');
-          return response.json();
+          const response = await fetch('/weft/v1/workflows', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              type: 'timer-workflow',
+              input: null,
+              id: 'timer-workflow',
+            }),
+          });
+          if (!response.ok) {
+            throw new Error(
+              `timer workflow start failed: ${response.status} ${await response.text()}`,
+            );
+          }
+          return (await response.json()) as { id: string };
         }),
+      );
+      expect(timerWorkflow.id).toBe('timer-workflow');
+      await waitForPageWorkflowStatus(page, timerWorkflow.id, 'running', withinPhase);
+      await sendWorkerMessage(page, { type: 'weft:test:periodic-sync' }, withinPhase);
+      await expect(
+        withinPhase(
+          'read timer workflow result',
+          page.evaluate(async () => {
+            const response = await fetch('/weft/v1/workflows/timer-workflow/result');
+            return response.json();
+          }),
+        ),
       ).resolves.toEqual({ result: 'timer-fired' });
 
-      const parkedWorkflow = await page.evaluate(async () => {
-        const response = await fetch('/weft/v1/workflows', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'activity-then-signal',
-            input: null,
-            id: 'parked-workflow',
-          }),
-        });
-        if (!response.ok) {
-          throw new Error(
-            `parked workflow start failed: ${response.status} ${await response.text()}`,
-          );
-        }
-        return (await response.json()) as { id: string };
-      });
+      const parkedWorkflow = await withinPhase(
+        'start parked workflow',
+        page.evaluate(async () => {
+          const response = await fetch('/weft/v1/workflows', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              type: 'activity-then-signal',
+              input: null,
+              id: 'parked-workflow',
+            }),
+          });
+          if (!response.ok) {
+            throw new Error(
+              `parked workflow start failed: ${response.status} ${await response.text()}`,
+            );
+          }
+          return (await response.json()) as { id: string };
+        }),
+      );
       expect(parkedWorkflow.id).toBe('parked-workflow');
-      await waitForPageWorkflowStatus(page, parkedWorkflow.id, 'running');
-      await waitForActivityCount(origin, 1);
+      await waitForPageWorkflowStatus(page, parkedWorkflow.id, 'running', withinPhase);
+      await waitForActivityCount(origin, 1, withinPhase);
 
-      const instanceBeforeStop = await sendWorkerMessage<{ instanceId: string }>(page, {
-        type: 'weft:test:instance',
-      });
-      await stopServiceWorkers(context, page);
+      const instanceBeforeStop = await sendWorkerMessage<{ instanceId: string }>(
+        page,
+        { type: 'weft:test:instance' },
+        withinPhase,
+      );
+      await stopServiceWorkers(context, page, withinPhase);
 
       // Confirm a new worker identity (and therefore completed recovery) BEFORE
       // sending the signal. The message handler in the bundle gates on
@@ -702,25 +882,33 @@ describe('Service Worker browser smoke', () => {
       // new worker has finished `engine.recoverAll()` and the resumed generator
       // is live. Sending the signal before this barrier risked delivering it
       // before the parked workflow was re-activated in the new worker.
-      const instanceAfterStop = await sendWorkerMessage<{ instanceId: string }>(page, {
-        type: 'weft:test:instance',
-      });
+      const instanceAfterStop = await sendWorkerMessage<{ instanceId: string }>(
+        page,
+        { type: 'weft:test:instance' },
+        withinPhase,
+      );
       expect(instanceAfterStop.instanceId).not.toBe(instanceBeforeStop.instanceId);
 
-      await page.evaluate(async () => {
-        const response = await fetch('/weft/v1/workflows/parked-workflow/signal/finish', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ payload: 'done' }),
-        });
-        if (!response.ok) throw new Error(`signal failed: ${response.status}`);
-      });
+      await withinPhase(
+        'signal parked workflow',
+        page.evaluate(async () => {
+          const response = await fetch('/weft/v1/workflows/parked-workflow/signal/finish', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ payload: 'done' }),
+          });
+          if (!response.ok) throw new Error(`signal failed: ${response.status}`);
+        }),
+      );
 
       await expect(
-        page.evaluate(async () => {
-          const response = await fetch('/weft/v1/workflows/parked-workflow/result');
-          return response.json();
-        }),
+        withinPhase(
+          'read parked workflow result',
+          page.evaluate(async () => {
+            const response = await fetch('/weft/v1/workflows/parked-workflow/result');
+            return response.json();
+          }),
+        ),
       ).resolves.toEqual({
         result: {
           count: 1,
@@ -732,21 +920,25 @@ describe('Service Worker browser smoke', () => {
       // directly rather than polling: a direct equality read catches a late
       // duplicate from a recovery re-execution that `waitForActivityCount` would
       // silently pass the instant the count first reached 1.
-      expect(await getActivityCount(origin)).toBe(1);
+      expect(await getActivityCount(origin, withinPhase)).toBe(1);
     },
-    { timeout: 30_000 },
+    { timeout: SMOKE_TEST_TIMEOUT_MS },
   );
 
   browserSmokeTest(
     'setupServiceWorker({ recover: true }) auto-recovers a parked workflow after SW restart',
     async () => {
-      const serviceWorkerSource = await buildSetupServiceWorkerBundle(
-        `weft-setup-smoke-${crypto.randomUUID()}`,
+      // Declared before the budget so a phase timeout can report whatever the
+      // page and worker had logged by then; the listeners below append to it.
+      const browserDiagnostics: string[] = [];
+      const withinPhase = beginPhaseBudget(browserDiagnostics);
+      const serviceWorkerSource = await withinPhase(
+        'bundle build',
+        buildSetupServiceWorkerBundle(`weft-setup-smoke-${crypto.randomUUID()}`),
       );
       const { origin } = createSmokeServer(serviceWorkerSource);
-      const context = await createIsolatedContext();
-      const page = await context.newPage();
-      const browserDiagnostics: string[] = [];
+      const context = await createIsolatedContext(withinPhase);
+      const page = await withinPhase('page creation', context.newPage());
       page.on('console', (message) => browserDiagnostics.push(`console:${message.text()}`));
       page.on('pageerror', (error) => browserDiagnostics.push(`pageerror:${error.message}`));
       context.on('serviceworker', (worker) => {
@@ -754,65 +946,78 @@ describe('Service Worker browser smoke', () => {
         worker.on('close', () => browserDiagnostics.push(`serviceworker-close:${worker.url()}`));
       });
 
-      await registerServiceWorker(page, origin, browserDiagnostics);
+      await registerServiceWorker(page, origin, withinPhase);
 
       // Start a workflow that parks on a signal (after running one activity).
-      const parkedWorkflow = await page.evaluate(async () => {
-        const response = await fetch('/weft/v1/workflows', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'wait-for-signal',
-            input: null,
-            id: 'setup-parked-workflow',
-          }),
-        });
-        if (!response.ok) {
-          throw new Error(
-            `parked workflow start failed: ${response.status} ${await response.text()}`,
-          );
-        }
-        return (await response.json()) as { id: string };
-      });
+      const parkedWorkflow = await withinPhase(
+        'start parked workflow',
+        page.evaluate(async () => {
+          const response = await fetch('/weft/v1/workflows', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              type: 'wait-for-signal',
+              input: null,
+              id: 'setup-parked-workflow',
+            }),
+          });
+          if (!response.ok) {
+            throw new Error(
+              `parked workflow start failed: ${response.status} ${await response.text()}`,
+            );
+          }
+          return (await response.json()) as { id: string };
+        }),
+      );
       expect(parkedWorkflow.id).toBe('setup-parked-workflow');
-      await waitForPageWorkflowStatus(page, parkedWorkflow.id, 'running');
+      await waitForPageWorkflowStatus(page, parkedWorkflow.id, 'running', withinPhase);
       // Wait for the activity to complete so the workflow is parked on the signal.
-      await waitForActivityCount(origin, 1);
+      await waitForActivityCount(origin, 1, withinPhase);
 
       // Record the current worker identity before stopping.
-      const instanceBeforeStop = await sendWorkerMessage<{ instanceId: string }>(page, {
-        type: 'weft:test:instance',
-      });
+      const instanceBeforeStop = await sendWorkerMessage<{ instanceId: string }>(
+        page,
+        { type: 'weft:test:instance' },
+        withinPhase,
+      );
 
       // Kill the Service Worker via CDP — simulates the browser evicting the worker.
-      await stopServiceWorkers(context, page);
+      await stopServiceWorkers(context, page, withinPhase);
 
       // Confirm a new worker identity BEFORE sending the signal. Because the
       // message handler in the bundle awaits the `setup` promise (which includes
       // `engine.recoverAll()` via `recover: true`), a successful
       // `weft:test:instance` reply is proof that recovery completed and the
       // parked workflow's generator is live in the new worker.
-      const instanceAfterStop = await sendWorkerMessage<{ instanceId: string }>(page, {
-        type: 'weft:test:instance',
-      });
+      const instanceAfterStop = await sendWorkerMessage<{ instanceId: string }>(
+        page,
+        { type: 'weft:test:instance' },
+        withinPhase,
+      );
       expect(instanceAfterStop.instanceId).not.toBe(instanceBeforeStop.instanceId);
 
       // Send the signal — the recovered worker must be ready to resume.
-      await page.evaluate(async () => {
-        const response = await fetch('/weft/v1/workflows/setup-parked-workflow/signal/finish', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ payload: 'recovered' }),
-        });
-        if (!response.ok) throw new Error(`signal failed: ${response.status}`);
-      });
+      await withinPhase(
+        'signal parked workflow',
+        page.evaluate(async () => {
+          const response = await fetch('/weft/v1/workflows/setup-parked-workflow/signal/finish', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ payload: 'recovered' }),
+          });
+          if (!response.ok) throw new Error(`signal failed: ${response.status}`);
+        }),
+      );
 
       // Confirm the workflow completed with the expected result.
       await expect(
-        page.evaluate(async () => {
-          const response = await fetch('/weft/v1/workflows/setup-parked-workflow/result');
-          return response.json();
-        }),
+        withinPhase(
+          'read parked workflow result',
+          page.evaluate(async () => {
+            const response = await fetch('/weft/v1/workflows/setup-parked-workflow/result');
+            return response.json();
+          }),
+        ),
       ).resolves.toEqual({
         result: {
           count: 1,
@@ -824,21 +1029,25 @@ describe('Service Worker browser smoke', () => {
       // counter directly *after* the result resolves (a quiescence point) and
       // assert strict equality — a polling wait would pass the instant the count
       // reached 1 and miss a late duplicate from a recovery re-execution.
-      expect(await getActivityCount(origin)).toBe(1);
+      expect(await getActivityCount(origin, withinPhase)).toBe(1);
     },
-    { timeout: 30_000 },
+    { timeout: SMOKE_TEST_TIMEOUT_MS },
   );
 
   browserSmokeTest(
     'setupServiceWorker({ recover: true }) resumes a sleeping timer workflow via periodic sync after SW restart',
     async () => {
-      const serviceWorkerSource = await buildSetupServiceWorkerBundle(
-        `weft-setup-timer-smoke-${crypto.randomUUID()}`,
+      // Declared before the budget so a phase timeout can report whatever the
+      // page and worker had logged by then; the listeners below append to it.
+      const browserDiagnostics: string[] = [];
+      const withinPhase = beginPhaseBudget(browserDiagnostics);
+      const serviceWorkerSource = await withinPhase(
+        'bundle build',
+        buildSetupServiceWorkerBundle(`weft-setup-timer-smoke-${crypto.randomUUID()}`),
       );
       const { origin } = createSmokeServer(serviceWorkerSource);
-      const context = await createIsolatedContext();
-      const page = await context.newPage();
-      const browserDiagnostics: string[] = [];
+      const context = await createIsolatedContext(withinPhase);
+      const page = await withinPhase('page creation', context.newPage());
       page.on('console', (message) => browserDiagnostics.push(`console:${message.text()}`));
       page.on('pageerror', (error) => browserDiagnostics.push(`pageerror:${error.message}`));
       context.on('serviceworker', (worker) => {
@@ -846,7 +1055,7 @@ describe('Service Worker browser smoke', () => {
         worker.on('close', () => browserDiagnostics.push(`serviceworker-close:${worker.url()}`));
       });
 
-      await registerServiceWorker(page, origin, browserDiagnostics);
+      await registerServiceWorker(page, origin, withinPhase);
 
       // Start a workflow that parks on ctx.sleep(). This is a DISTINCT recovery
       // path from the signal-parked case: a sleeping workflow only advances when
@@ -873,27 +1082,31 @@ describe('Service Worker browser smoke', () => {
         }),
       );
       expect(timerWorkflow.id).toBe('setup-timer-workflow');
-      await waitForPageWorkflowStatus(page, timerWorkflow.id, 'running');
+      await waitForPageWorkflowStatus(page, timerWorkflow.id, 'running', withinPhase);
       // 'running' alone does not prove the ctx.sleep timer is durable. Wait for
       // the deadline to be checkpointed so the kill below always lands AFTER the
       // timer is persisted — recovery then has a real timer to re-arm, and the
       // test exercises the recovery path it claims rather than racing the
       // checkpoint write.
-      await waitForTimerArmed(page);
+      await waitForTimerArmed(page, withinPhase);
 
       // Record the current worker identity before stopping.
-      const instanceBeforeStop = await sendWorkerMessage<{ instanceId: string }>(page, {
-        type: 'weft:test:instance',
-      });
+      const instanceBeforeStop = await sendWorkerMessage<{ instanceId: string }>(
+        page,
+        { type: 'weft:test:instance' },
+        withinPhase,
+      );
 
       // Kill the Service Worker via CDP while the workflow is still sleeping.
-      await stopServiceWorkers(context, page);
+      await stopServiceWorkers(context, page, withinPhase);
 
       // A new worker identity proves recovery (via recover: true) completed and
       // the sleeping workflow's durable timer was re-armed in the fresh worker.
-      const instanceAfterStop = await sendWorkerMessage<{ instanceId: string }>(page, {
-        type: 'weft:test:instance',
-      });
+      const instanceAfterStop = await sendWorkerMessage<{ instanceId: string }>(
+        page,
+        { type: 'weft:test:instance' },
+        withinPhase,
+      );
       expect(instanceAfterStop.instanceId).not.toBe(instanceBeforeStop.instanceId);
 
       // Drive a periodic-sync tick with the scheduler clock advanced past the
@@ -904,9 +1117,7 @@ describe('Service Worker browser smoke', () => {
         instanceId: string;
         sleepResolverCount: number;
         ticked: boolean;
-      }>(page, {
-        type: 'weft:test:periodic-sync',
-      });
+      }>(page, { type: 'weft:test:periodic-sync' }, withinPhase);
       expect(tickResult).toEqual({
         instanceId: instanceAfterStop.instanceId,
         sleepResolverCount: 1,
@@ -920,7 +1131,7 @@ describe('Service Worker browser smoke', () => {
       const timerState = await sendWorkerMessage<{
         remainingTimerCount: number;
         workflowStatus: string | null;
-      }>(page, { type: 'weft:test:timer-state' });
+      }>(page, { type: 'weft:test:timer-state' }, withinPhase);
       expect(timerState).toEqual({
         remainingTimerCount: 0,
         workflowStatus: 'completed',
@@ -938,8 +1149,8 @@ describe('Service Worker browser smoke', () => {
 
       // This workflow runs no activity, so the counter must still be exactly 0 —
       // recovery must not synthesize spurious activity executions.
-      expect(await getActivityCount(origin)).toBe(0);
+      expect(await getActivityCount(origin, withinPhase)).toBe(0);
     },
-    { timeout: 30_000 },
+    { timeout: SMOKE_TEST_TIMEOUT_MS },
   );
 });
