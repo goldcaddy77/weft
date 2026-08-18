@@ -9,9 +9,31 @@ The backfill script builds the same visibility-index rows the runtime writes for
 
 ## When to run it
 
-Run the backfill after deploying the workflow visibility indexes to a Bun SQLite deployment that already has persisted workflow state.
+Run the backfill after deploying the workflow visibility indexes to a deployment that already has persisted workflow state.
 
-You do not need this script for an empty database. You also do not need it for browser storage, because this production script instantiates `BunSQLiteStorage` directly and expects a SQLite database file.
+You do not need it for an empty database. A store that has never held a workflow has provably complete coverage — every workflow written from that point on maintains its own index rows — so `Engine.create()` (and any explicit `recoverAll()`) establishes the watermark itself on a store with no `wf:` rows. That is what keeps a brand-new deployment off the full-scan path without any operator action. A store that already holds workflows is never treated this way: the watermark stays stale until a backfill proves coverage.
+
+## Three ways to run it
+
+| Surface | Use it when |
+| ------- | ----------- |
+| `weft visibility backfill\|verify\|drop` | You have the CLI. Works against any persistent backend the CLI can open (`--storage sqlite\|lmdb`). |
+| `engine.backfillWorkflowVisibilityIndex()` / `.verifyWorkflowVisibilityIndex()` / `.dropWorkflowVisibilityIndex()` | You are embedding Weft and already hold an `Engine`. These also invalidate that engine's cached watermark, which an out-of-process run cannot do. |
+| `bun scripts/rebuild-workflow-visibility-indexes.ts` | You are working inside this repository against a Bun SQLite file. |
+
+All three drive the same module; the library functions (`runWorkflowVisibilityBackfill`, `verifyWorkflowVisibilityIndex`, `runWorkflowVisibilityDrop`) are exported from the package root and take any `Storage` that exposes `conditionalBatch`.
+
+## Check coverage without changing anything
+
+`weft visibility verify` reports coverage and writes nothing — not the watermark, not the cursor, not a single index row. Add `--deep` to also read back every index row a manifest claims, at up to five extra reads per workflow.
+
+The field to watch is `watermarkOverstated`. A `current` watermark over an incomplete index is the one genuinely dangerous state: filtered listings then **omit** workflows instead of falling back to a scan, which is silent under-reporting rather than slowness. If verify reports it, pause writers, run `drop`, and back fill again.
+
+```bash
+weft visibility verify --database /var/lib/weft/weft.db --deep
+weft visibility backfill --database /var/lib/weft/weft.db
+weft visibility drop --database /var/lib/weft/weft.db
+```
 
 ## Before running
 
@@ -57,11 +79,14 @@ Only resume a paused foreign write path if it now uses the engine write path or 
 
 ## Exit codes
 
+These codes are the same for `weft visibility` and for the repository script.
+
 | Exit code | Meaning                          | Operator action                                                                                                                                                            |
 | --------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`       | The index is current             | Nothing. Filtered listings are using the index.                                                                                                                            |
 | `1`       | Fatal usage or runtime error     | Fix the reported problem, such as a missing `--storage` value or an unexpected exception, then run the command again.                                                      |
-| `2`       | Backend lacks `conditionalBatch` | Use the Bun SQLite storage file targeted by this script. The backfill refuses unsafe backends because racing writes could leave workflows un-indexed.                      |
-| `3`       | Conditional conflicts occurred   | Keep writers paused, run `--drop`, then run the backfill again from the beginning. A conflict means the script skipped at least one workflow that changed during the scan. |
+| `2`       | Backend lacks `conditionalBatch` | Use a backend that supports it. The backfill refuses unsafe backends because racing writes could leave workflows un-indexed.                                               |
+| `3`       | The index is not current         | For `backfill`, at least one workflow was skipped (a racing write, or a manifest too large to repair in one batch). For `verify`, coverage or the watermark is incomplete. Keep writers paused, run `drop`, then back fill again. |
 
 Exit code `3` is retryable, but do not retry against the saved cursor. A conflicted workflow may be below that cursor, so reset the visibility-index state first:
 

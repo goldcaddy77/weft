@@ -19,6 +19,7 @@ import {
   executeValidate,
   executeVersion,
   executeVersionCheck,
+  executeVisibility,
   executeWorkflow,
   findCliSubcommandName,
   HELP_TEXT,
@@ -31,6 +32,7 @@ import {
   TIMELINE_HELP_TEXT,
   VALIDATE_HELP_TEXT,
   VERSION_CHECK_HELP_TEXT,
+  VISIBILITY_HELP_TEXT,
   WORKFLOW_HELP_TEXT,
   writeRunLockfile,
 } from './cli/index.ts';
@@ -105,6 +107,16 @@ if (parsedArguments.command === 'version') {
 
   const result = await executeDoctor(parsedArguments);
   console.log(result.stdout);
+  process.exit(result.exitCode);
+} else if (parsedArguments.command === 'visibility') {
+  if (parsedArguments.help) {
+    console.log(VISIBILITY_HELP_TEXT);
+    process.exit(0);
+  }
+
+  const result = await executeVisibility(parsedArguments);
+  if (result.stderr) console.error(result.stderr);
+  if (result.stdout) console.log(result.stdout);
   process.exit(result.exitCode);
 } else if (parsedArguments.command === 'version:check') {
   if (parsedArguments.help) {

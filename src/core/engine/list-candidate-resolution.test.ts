@@ -3,7 +3,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   runWorkflowVisibilityBackfill,
   runWorkflowVisibilityDrop,
-} from '../../../scripts/lib/workflow-visibility-backfill.ts';
+} from './workflow-visibility-backfill.ts';
 import { KEYS, type ScanOptions } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { decode, encode } from '../codec.ts';
@@ -115,11 +115,9 @@ describe('resolveListCandidateIds', () => {
       expect(storage.countGets(KEYS.workflowVisibilityMetaVersion())).toBe(1);
       expect(storage.countScans('wf:')).toBe(2);
 
-      const report = await runWorkflowVisibilityBackfill(storage, {
-        onWatermarkWritten: () => {
-          getInternals(engine).workflowVisibilityWatermark = undefined;
-        },
-      });
+      // The engine method invalidates its own cached watermark, which is the
+      // reason it exists: an out-of-process backfill cannot reach this cache.
+      const report = await engine.backfillWorkflowVisibilityIndex();
       expect(report.watermarkWritten).toBe(true);
 
       const workflowScansAfterBackfill = storage.countScans('wf:');

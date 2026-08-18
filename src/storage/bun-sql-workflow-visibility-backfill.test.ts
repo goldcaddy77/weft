@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import {
   runWorkflowVisibilityBackfill,
   runWorkflowVisibilityDrop,
-} from '../../scripts/lib/workflow-visibility-backfill.ts';
+} from '../core/engine/workflow-visibility-backfill.ts';
 import { decode, encode } from '../core/codec.ts';
 import {
   WORKFLOW_VISIBILITY_INDEX_VERSION,
@@ -82,7 +82,7 @@ describe('BunSQLite workflow visibility backfill', () => {
 
     const report = await runWorkflowVisibilityBackfill(storage);
 
-    expect(report).toEqual({ processed: 2, conflicts: 0, watermarkWritten: true });
+    expect(report).toEqual({ processed: 2, conflicts: 0, oversized: 0, watermarkWritten: true });
     expect(await getWorkflowVisibilityWatermark(storage)).toBe('current');
     expect(await storage.get(KEYS.workflowVisibilityMetaCursor())).toBeNull();
     const builtAtBytes = await storage.get(KEYS.workflowVisibilityMetaBuiltAt());
@@ -139,7 +139,7 @@ describe('BunSQLite workflow visibility backfill', () => {
     const indexedKeysAfterFirstBackfill = await collectKeys(storage, 'wf-idx-');
     const secondReport = await runWorkflowVisibilityBackfill(storage);
 
-    expect(secondReport).toEqual({ processed: 2, conflicts: 0, watermarkWritten: true });
+    expect(secondReport).toEqual({ processed: 2, conflicts: 0, oversized: 0, watermarkWritten: true });
     expect(await collectKeys(storage, 'wf-idx-')).toEqual(indexedKeysAfterFirstBackfill);
     expect(
       decodeWorkflowVisibilityManifest(

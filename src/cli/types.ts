@@ -20,6 +20,17 @@ export type CliCommand =
   | { command: 'version' }
   | { command: 'doctor'; database: string; help: boolean; json: boolean }
   | {
+      command: 'visibility';
+      action: 'backfill' | 'verify' | 'drop';
+      database: string;
+      storage: PersistentStorageBackend;
+      batchSize: number;
+      deep: boolean;
+      help: boolean;
+      json: boolean;
+      verbose: boolean;
+    }
+  | {
       command: 'version:check';
       database: string;
       workflows: string;

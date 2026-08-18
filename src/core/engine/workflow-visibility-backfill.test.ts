@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'bun:test';
 
-import { encode } from '../../src/core/codec.ts';
+import { encode } from '../codec.ts';
 import {
   WORKFLOW_VISIBILITY_INDEX_VERSION,
   decodeWorkflowVisibilityManifest,
   getWorkflowVisibilityWatermark,
-} from '../../src/core/engine/workflow-indexes.ts';
+} from './workflow-indexes.ts';
 import {
   KEYS,
   type BatchOperation,
   type ConditionalBatchCondition,
   type ScanOptions,
   type Storage,
-} from '../../src/storage/interface.ts';
-import { MemoryStorage } from '../../src/storage/memory.ts';
+} from '../../storage/interface.ts';
+import { MemoryStorage } from '../../storage/memory.ts';
 
 import {
   runWorkflowVisibilityBackfill,

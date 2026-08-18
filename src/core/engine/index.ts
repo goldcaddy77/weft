@@ -286,6 +286,18 @@ import {
   type WorkflowFeedRecord,
   type WorkflowFeedSelector,
 } from './workflow-feed.ts';
+import {
+  establishWorkflowVisibilityWatermarkIfEmpty,
+  runWorkflowVisibilityBackfill,
+  runWorkflowVisibilityDrop,
+  verifyWorkflowVisibilityIndex,
+  type WorkflowVisibilityBackfillOptions,
+  type WorkflowVisibilityBackfillReport,
+  type WorkflowVisibilityCoverageReport,
+  type WorkflowVisibilityDropOptions,
+  type WorkflowVisibilityDropReport,
+  type WorkflowVisibilityVerifyOptions,
+} from './workflow-visibility-backfill.ts';
 
 export {
   ActivityReconciliationCapabilityError,
@@ -333,6 +345,28 @@ export type {
   WorkflowFeedRecord,
   WorkflowFeedSelector,
 } from './workflow-feed.ts';
+export {
+  MAX_LIST_SCAN_ROWS,
+  WORKFLOW_VISIBILITY_INDEX_VERSION,
+  WorkflowListScanCapExceededError,
+} from './workflow-indexes.ts';
+export {
+  establishWorkflowVisibilityWatermarkIfEmpty,
+  runWorkflowVisibilityBackfill,
+  runWorkflowVisibilityDrop,
+  verifyWorkflowVisibilityIndex,
+} from './workflow-visibility-backfill.ts';
+export type {
+  WorkflowVisibilityBackfillLogger,
+  WorkflowVisibilityBackfillOptions,
+  WorkflowVisibilityBackfillReport,
+  WorkflowVisibilityCoverageReport,
+  WorkflowVisibilityDropOptions,
+  WorkflowVisibilityDropReport,
+  WorkflowVisibilityGap,
+  WorkflowVisibilityGapReason,
+  WorkflowVisibilityVerifyOptions,
+} from './workflow-visibility-backfill.ts';
 
 // Public type definitions and runtime helpers used by the Engine class were
 // extracted to sibling modules to keep this file under the lint threshold.
@@ -1342,6 +1376,67 @@ export class Engine<
   ): Promise<AggregateResult> {
     return aggregateWorkflows(getInternals(this), filter, options);
   }
+  /**
+   * Build the workflow visibility indexes `list()` and `aggregate()` read,
+   * and advance the watermark when — and only when — the pass proves full
+   * coverage.
+   *
+   * Run this once against a store that already held workflows before the
+   * visibility indexes existed. Until it succeeds, every filtered listing
+   * falls back to a full `wf:` keyspace scan, which is the condition
+   * {@link WorkflowListScanCapExceededError} is telling operators to fix.
+   *
+   * Racing writers are the hazard, not the cost: a workflow the engine
+   * mutates mid-pass is skipped as a conflict and leaves the watermark
+   * stale, so run it during a maintenance window and re-run until
+   * `watermarkWritten` is `true`. Requires a `conditionalBatch`-capable
+   * adapter and throws when the backend lacks one.
+   */
+  async backfillWorkflowVisibilityIndex(
+    options?: WorkflowVisibilityBackfillOptions,
+  ): Promise<WorkflowVisibilityBackfillReport> {
+    const report = await runWorkflowVisibilityBackfill(getInternals(this).storage, options);
+    this.#invalidateWorkflowVisibilityWatermarkCache();
+    return report;
+  }
+
+  /**
+   * Report visibility-index coverage without writing anything.
+   *
+   * `watermarkOverstated` is the field that matters: a `current` watermark
+   * over an incomplete index makes filtered listings omit workflows instead
+   * of falling back to a scan, which is silent under-reporting rather than
+   * slowness. Treat it as a reason to
+   * {@link Engine.dropWorkflowVisibilityIndex} and back fill again.
+   */
+  async verifyWorkflowVisibilityIndex(
+    options?: WorkflowVisibilityVerifyOptions,
+  ): Promise<WorkflowVisibilityCoverageReport> {
+    return verifyWorkflowVisibilityIndex(getInternals(this).storage, options);
+  }
+
+  /**
+   * Remove every visibility-index row and the watermark, returning the
+   * engine to the full-scan path. The watermark is deleted before the rows
+   * it vouches for, and this engine's cached watermark is invalidated in the
+   * same call — an external script cannot do the second part, so a drop run
+   * outside the engine leaves up to one cache TTL where `list()` trusts an
+   * index that no longer exists.
+   */
+  async dropWorkflowVisibilityIndex(
+    options?: WorkflowVisibilityDropOptions,
+  ): Promise<WorkflowVisibilityDropReport> {
+    this.#invalidateWorkflowVisibilityWatermarkCache();
+    const report = await runWorkflowVisibilityDrop(getInternals(this).storage, options);
+    this.#invalidateWorkflowVisibilityWatermarkCache();
+    return report;
+  }
+
+  #invalidateWorkflowVisibilityWatermarkCache(): void {
+    getInternals(this).workflowVisibilityWatermark = undefined;
+    getInternals(this).workflowVisibilityWatermarkExpiresAt = undefined;
+  }
+
   getRetentionOverview(): RetentionOverview {
     return getRetentionOverviewSnapshot(getInternals(this), (type) =>
       resolveWorkflowTypeRetention(getInternals(this), type),
@@ -1819,6 +1914,14 @@ export class Engine<
     // correctness backstop — but running recovery against disposed engine machinery
     // is a real defect regardless of the lease, so it is gated here at the entry.)
     if (getInternals(this).disposed) throw new EngineDisposedError();
+    // A store that has never held a workflow has provably complete
+    // visibility-index coverage, because every workflow written from here on
+    // maintains its own index rows. Establishing the watermark here is what
+    // keeps a brand-new deployment off the full-scan path forever: it has
+    // nothing to back fill, and nothing else writes the watermark. Costs one
+    // `get` on a store that is already current.
+    await establishWorkflowVisibilityWatermarkIfEmpty(getInternals(this).storage);
+    this.#invalidateWorkflowVisibilityWatermarkCache();
     // Reload durable async-activity tokens first so a callback that arrives
     // before (or during) workflow replay still resolves a parked activity.
     await recoverPendingAsyncActivities(getInternals(this));

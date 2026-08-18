@@ -1089,14 +1089,6 @@ const COVERAGE_ALLOWANCE_OVERRIDES = buildAllowanceLayer('COVERAGE_ALLOWANCE_OVE
 const CURRENT_MAIN_COVERAGE_ALLOWANCE_OVERRIDES = buildAllowanceLayer(
   'CURRENT_MAIN_COVERAGE_ALLOWANCE_OVERRIDES',
   [
-    [
-      'scripts/lib/workflow-visibility-backfill.ts',
-      {
-        lines: new Set([
-          61, 130, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199,
-        ]),
-      },
-    ],
     ['src/cli/codegen-emit.ts', { lines: new Set([303, 313, 357, 358, 425, 427]) }],
     [
       'src/cli/codegen.ts',
@@ -1996,10 +1988,6 @@ const AUDIT_BACKLOG_COVERAGE_ALLOWANCE_TOP_OFFS = buildAllowanceLayer(
     // paths from the same documented categories: subprocess entrypoints,
     // cross-runtime adapters, defensive invariant throws, and Bun line/function
     // mapping drift after focused behavior tests exercise the public paths.
-    [
-      'scripts/lib/workflow-visibility-backfill.ts',
-      { lines: createMergedLineSet(new Set([67, 136]), createLineSet(200, 206)) },
-    ],
     [
       'scripts/verify-documentation.ts',
       { lines: createMergedLineSet(new Set([309]), createLineSet(325, 331)) },

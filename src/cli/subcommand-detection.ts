@@ -18,6 +18,7 @@ export const CLI_FLAG_VALUE_OPTIONS = new Set([
   '--describe',
   '--profile',
   '--shell',
+  '--batch-size',
   '--type',
   '--status',
   '--limit',

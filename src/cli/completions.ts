@@ -34,6 +34,7 @@ const TOP_LEVEL_COMMANDS = [
   'workflow',
   'tail',
   'completions',
+  'visibility',
   'version',
 ] as const;
 
@@ -43,6 +44,7 @@ const SUBCOMMANDS: Readonly<Record<string, ReadonlyArray<string>>> = {
   workflow: ['ls', 'get', 'events', 'start', 'cancel', 'signal'],
   schedule: ['list', 'create', 'pause', 'resume', 'cancel'],
   completions: ['generate', 'install'],
+  visibility: ['backfill', 'verify', 'drop'],
 };
 
 /** Generate the completion script for the requested shell. */

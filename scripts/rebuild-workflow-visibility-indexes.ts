@@ -12,18 +12,22 @@
  * policy: when `conditionalBatch` is unavailable the library refuses
  * to run; stop the engine, re-run the backfill, then restart.
  *
+ * This is the repository-local convenience wrapper. Installed consumers
+ * should use `weft visibility backfill|verify|drop` or the
+ * `engine.backfillWorkflowVisibilityIndex()` API, both of which drive the
+ * same shipped module and work against any storage adapter.
+ *
  * @module scripts/rebuild-workflow-visibility-indexes
  */
 
 import { exit } from 'node:process';
 import { parseArgs } from 'node:util';
 
-import { BunSQLiteStorage } from '../src/storage/bun-sql.ts';
-
 import {
   runWorkflowVisibilityBackfill,
   runWorkflowVisibilityDrop,
-} from './lib/workflow-visibility-backfill.ts';
+} from '../src/core/engine/workflow-visibility-backfill.ts';
+import { BunSQLiteStorage } from '../src/storage/bun-sql.ts';
 
 type CliArgs = {
   storagePath: string;
