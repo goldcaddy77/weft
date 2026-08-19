@@ -22,6 +22,7 @@ export {
   TIMELINE_HELP_TEXT,
   VALIDATE_HELP_TEXT,
   VERSION_CHECK_HELP_TEXT,
+  VISIBILITY_HELP_TEXT,
   WORKFLOW_HELP_TEXT,
 } from './help-text.ts';
 export { parseCliArguments } from './parse-arguments.ts';
@@ -36,4 +37,5 @@ export { collectDiffLines, splitGlobPattern } from './utilities.ts';
 export { executeValidate } from './validate.ts';
 export { executeVersionCheck } from './version-check.ts';
 export { executeVersion } from './version.ts';
+export { executeVisibility } from './visibility.ts';
 export { executeWorkflow } from './workflow-commands.ts';

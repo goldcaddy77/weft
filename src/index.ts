@@ -78,6 +78,26 @@ export type {
   RecoveredWorkflowInfo,
 } from './core/engine';
 export {
+  MAX_LIST_SCAN_ROWS,
+  WORKFLOW_VISIBILITY_INDEX_VERSION,
+  WorkflowListScanCapExceededError,
+  establishWorkflowVisibilityWatermarkIfEmpty,
+  runWorkflowVisibilityBackfill,
+  runWorkflowVisibilityDrop,
+  verifyWorkflowVisibilityIndex,
+} from './core/engine';
+export type {
+  WorkflowVisibilityBackfillLogger,
+  WorkflowVisibilityBackfillOptions,
+  WorkflowVisibilityBackfillReport,
+  WorkflowVisibilityCoverageReport,
+  WorkflowVisibilityDropOptions,
+  WorkflowVisibilityDropReport,
+  WorkflowVisibilityGap,
+  WorkflowVisibilityGapReason,
+  WorkflowVisibilityVerifyOptions,
+} from './core/engine';
+export {
   DEFAULT_CHECKPOINT_SIZE_WARNING_THRESHOLD,
   DEFAULT_MAX_NESTING_DEPTH,
   DEFAULT_POLL_INTERVAL_MS,

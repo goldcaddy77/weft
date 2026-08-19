@@ -17,6 +17,7 @@ Commands:
   workflow        List, inspect, start, signal, and cancel workflows on a server
   tail            Stream a workflow's events as Server-Sent Events
   completions     Generate or install shell completion scripts
+  visibility      Build, verify, or drop the workflow visibility index
   version         Print the installed Weft version
 
 Version (leading token only; a subcommand owns its own option line):
@@ -84,6 +85,41 @@ Options:
   -d, --database <path>   Database file path (default: ./weft.db)
   -j, --json              Output results as JSON
   -h, --help              Show this help message
+`;
+
+export const VISIBILITY_HELP_TEXT = `
+weft visibility - Build, verify, or drop the workflow visibility index
+
+Filtered engine.list() and engine.aggregate() queries only use the wf-idx-*
+rows once a backfill has proven full coverage and advanced the watermark.
+Until then every filtered listing falls back to a full keyspace scan.
+
+Usage: weft visibility <backfill|verify|drop> [options]
+
+Actions:
+  backfill                Index every workflow, then advance the watermark
+                          only if the pass completes with no skipped rows
+  verify                  Report coverage without writing anything
+  drop                    Remove the watermark and every wf-idx-* row
+
+Options:
+  -d, --database <path>   Database file path (default: ./weft.db)
+  -s, --storage <backend> Storage backend: sqlite, lmdb (default: sqlite)
+      --batch-size <n>    Progress-report interval (default: 500)
+      --deep              verify only: also read back every index row
+  -j, --json              Output the report as JSON
+      --verbose           Log every processed workflow
+  -h, --help              Show this help message
+
+Exit codes:
+  0   The index is current
+  1   Fatal usage or runtime error
+  2   Backend lacks conditionalBatch; stop the engine and re-run
+  3   The index is not current — keep writers paused and back fill again
+
+Run backfill from a maintenance window. A workflow the engine mutates
+mid-pass is skipped as a conflict and leaves the watermark stale, which is
+the safe direction: a stale watermark scans, an overstated one omits rows.
 `;
 
 export const VERSION_CHECK_HELP_TEXT = `

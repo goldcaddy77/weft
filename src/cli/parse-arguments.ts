@@ -10,7 +10,7 @@ import {
   parseWorkflowArguments,
 } from './noun-verb-arguments.ts';
 import { parseScheduleArguments } from './parse-schedule-arguments.ts';
-import { parseStorageBackend } from './storage-backend-arguments.ts';
+import { parsePersistentStorageBackend, parseStorageBackend } from './storage-backend-arguments.ts';
 import { CLI_FLAG_VALUE_OPTIONS } from './subcommand-detection.ts';
 import type { CliCommand } from './types.ts';
 
@@ -28,6 +28,7 @@ const KNOWN_SUBCOMMANDS = new Set([
   'workflow',
   'tail',
   'completions',
+  'visibility',
 ]);
 const SUBCOMMAND_PARSERS: Record<string, (args: string[]) => CliCommand> = {
   serve: parseServeArguments,
@@ -43,6 +44,7 @@ const SUBCOMMAND_PARSERS: Record<string, (args: string[]) => CliCommand> = {
   workflow: parseWorkflowArguments,
   tail: parseTailArguments,
   completions: parseCompletionsArguments,
+  visibility: parseVisibilityArguments,
 };
 
 const KNOWN_SUBCOMMAND_LIST = [...KNOWN_SUBCOMMANDS];
@@ -153,6 +155,58 @@ function parseDoctorArguments(args: string[]): CliCommand {
     help: values.help ?? false,
     json: values.json ?? false,
   };
+}
+
+const VISIBILITY_ACTIONS = new Set(['backfill', 'verify', 'drop']);
+
+function isVisibilityAction(value: string): value is 'backfill' | 'verify' | 'drop' {
+  return VISIBILITY_ACTIONS.has(value);
+}
+
+function parseVisibilityArguments(args: string[]): CliCommand {
+  const { values, positionals } = parseArgs({
+    args,
+    options: {
+      database: { type: 'string', short: 'd', default: './weft.db' },
+      storage: { type: 'string', short: 's' },
+      'batch-size': { type: 'string', default: '500' },
+      deep: { type: 'boolean', default: false },
+      help: { type: 'boolean', short: 'h', default: false },
+      json: { type: 'boolean', short: 'j', default: false },
+      verbose: { type: 'boolean', default: false },
+    },
+    strict: true,
+    allowPositionals: true,
+  });
+
+  const help = values.help ?? false;
+  const action = positionals[0] ?? (help ? 'verify' : '');
+  if (!isVisibilityAction(action)) {
+    throw new Error('visibility: expected a subcommand: backfill, verify, or drop');
+  }
+
+  return {
+    command: 'visibility',
+    action,
+    database: values.database ?? './weft.db',
+    // Persistent-only: an in-memory store is empty in a fresh CLI process,
+    // so a "successful" backfill against it would advance a watermark over
+    // nothing while the real database stayed un-indexed.
+    storage: parsePersistentStorageBackend(values.storage),
+    batchSize: parseVisibilityBatchSize(values['batch-size']),
+    deep: values.deep ?? false,
+    help,
+    json: values.json ?? false,
+    verbose: values.verbose ?? false,
+  };
+}
+
+function parseVisibilityBatchSize(value: string | undefined): number {
+  const batchSize = Number(value ?? '500');
+  if (!Number.isSafeInteger(batchSize) || batchSize < 1) {
+    throw new Error('visibility: --batch-size must be a positive integer');
+  }
+  return batchSize;
 }
 
 function parseVersionCheckArguments(args: string[]): CliCommand {
