@@ -377,4 +377,12 @@ export type BulkTagResult = {
  */
 export interface PurgeResult {
   deleted: number;
+  /**
+   * How many workflows were selected for purge but failed to delete. Present
+   * only when at least one run failed. Per-run isolation continues the sweep
+   * past a failure — one oversized or otherwise-failing run no longer aborts the
+   * pass and strands every older run behind it — so a non-zero `failed` beside a
+   * non-zero `deleted` is the normal shape of a partially-successful sweep.
+   */
+  failed?: number;
 }

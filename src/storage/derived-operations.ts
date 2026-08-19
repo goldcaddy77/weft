@@ -1,3 +1,4 @@
+import { MAX_BATCH_OPERATIONS } from './batch-limits.ts';
 import type { NormalizedDeleteRangeOptions } from './delete-range.ts';
 import { type BatchOperation, type ScanOptions, type Storage } from './interface.ts';
 
@@ -54,27 +55,56 @@ export async function storageCountCore(storage: Storage, prefix: string): Promis
 }
 
 /**
- * Core `deletePrefix` derivation: collect the matching keys and remove them in a
- * single batch. Returns the number of keys deleted.
+ * Delete the keys yielded by `keys()` in batches capped at
+ * {@link MAX_BATCH_OPERATIONS}, so a prefix/range holding more keys than one
+ * batch admits still deletes fully instead of throwing
+ * {@link StorageBatchOperationLimitExceededError}. Returns the number of keys
+ * deleted.
+ *
+ * The chunking sacrifices the whole-prefix atomicity a single `batch()` would
+ * give — a crash between chunks leaves a partial delete — but a partial delete
+ * of an owned key range is safe for every caller here: purge deletes the state
+ * row last in its own fenced commit, so a partially-deleted run stays terminal,
+ * listed, and re-purgeable. Callers that need all-or-nothing must not route
+ * through this fallback.
+ */
+async function deleteKeysInCappedBatches(
+  storage: Storage,
+  keys: AsyncIterable<string>,
+): Promise<number> {
+  let deleted = 0;
+  let operations: BatchOperation[] = [];
+
+  for await (const key of keys) {
+    operations.push({ type: 'delete', key });
+    if (operations.length >= MAX_BATCH_OPERATIONS) {
+      await storage.batch(operations);
+      deleted += operations.length;
+      operations = [];
+    }
+  }
+
+  if (operations.length > 0) {
+    await storage.batch(operations);
+    deleted += operations.length;
+  }
+
+  return deleted;
+}
+
+/**
+ * Core `deletePrefix` derivation: remove every key under `prefix` in
+ * cap-sized batches. Returns the number of keys deleted. Chunked (rather than
+ * one batch) so a prefix larger than {@link MAX_BATCH_OPERATIONS} still deletes
+ * — see {@link deleteKeysInCappedBatches} for the atomicity trade-off.
  */
 export async function storageDeletePrefixCore(storage: Storage, prefix: string): Promise<number> {
-  const operations: BatchOperation[] = [];
-
-  for await (const key of storageKeysCore(storage, prefix)) {
-    operations.push({ type: 'delete', key });
-  }
-
-  if (operations.length === 0) {
-    return 0;
-  }
-
-  await storage.batch(operations);
-  return operations.length;
+  return deleteKeysInCappedBatches(storage, storageKeysCore(storage, prefix));
 }
 
 /**
  * Core `deleteRange` derivation: scan the keys under `prefix` that match the
- * (already-normalized) bounds and remove them in a single batch. Returns the
+ * (already-normalized) bounds and remove them in cap-sized batches. Returns the
  * number of keys deleted.
  *
  * The bounds are honored by `scan` via `matchesScanOptions`; `limit` caps the
@@ -90,16 +120,5 @@ export async function storageDeleteRangeCore(
   prefix: string,
   options: NormalizedDeleteRangeOptions,
 ): Promise<number> {
-  const operations: BatchOperation[] = [];
-
-  for await (const key of storageKeysCore(storage, prefix, options)) {
-    operations.push({ type: 'delete', key });
-  }
-
-  if (operations.length === 0) {
-    return 0;
-  }
-
-  await storage.batch(operations);
-  return operations.length;
+  return deleteKeysInCappedBatches(storage, storageKeysCore(storage, prefix, options));
 }
