@@ -1,3 +1,4 @@
+import { assertStorageBatchOperationCount } from './batch-limits.ts';
 import { requireStorageCapability, type StorageCapabilities } from './capabilities.ts';
 import { DEFAULT_SCOPE } from './default-scope.ts';
 import type { DeleteRangeOptions } from './delete-range.ts';
@@ -8,6 +9,12 @@ import {
   storageKeysCore,
 } from './derived-operations.ts';
 
+export {
+  MAX_BATCH_OPERATIONS,
+  StorageBatchOperationLimitExceededError,
+  assertStorageBatchOperationCount,
+} from './batch-limits.ts';
+export type { StorageBatchOperationLimitTarget } from './batch-limits.ts';
 export { assertDurableStorageForRecovery, requireStorageCapability } from './capabilities.ts';
 export type { GatedStorageCapabilityKey, StorageCapabilities } from './capabilities.ts';
 export { DEFAULT_SCOPE } from './default-scope.ts';
@@ -24,18 +31,6 @@ export type BatchOperation =
   | { type: 'delete'; key: string };
 
 /**
- * Maximum number of operations or conditions accepted by one storage batch call.
- *
- * @example
- * ```ts
- * import { MAX_BATCH_OPERATIONS } from '@lostgradient/weft/storage';
- *
- * console.log(MAX_BATCH_OPERATIONS); // 10000
- * ```
- */
-export const MAX_BATCH_OPERATIONS = 10_000;
-
-/**
  * Maximum `limit` accepted by raw storage scan administration routes.
  *
  * @example
@@ -46,66 +41,6 @@ export const MAX_BATCH_OPERATIONS = 10_000;
  * ```
  */
 export const MAX_SCAN_LIMIT = 10_000;
-
-/**
- * Batch input category named by {@link StorageBatchOperationLimitExceededError}.
- *
- * @example
- * ```ts
- * import type { StorageBatchOperationLimitTarget } from '@lostgradient/weft/storage';
- *
- * const target: StorageBatchOperationLimitTarget = 'batch operations';
- * void target;
- * ```
- */
-export type StorageBatchOperationLimitTarget =
-  | 'batch operations'
-  | 'conditionalBatch conditions'
-  | 'conditionalBatch operations';
-
-/**
- * Error thrown before a storage batch exceeds {@link MAX_BATCH_OPERATIONS}.
- *
- * @example
- * ```ts
- * import { StorageBatchOperationLimitExceededError } from '@lostgradient/weft/storage';
- *
- * const error = new StorageBatchOperationLimitExceededError('batch operations', 10001);
- * console.log(error.cap); // 10000
- * ```
- */
-export class StorageBatchOperationLimitExceededError extends Error {
-  readonly code = 'StorageBatchOperationLimitExceededError' as const;
-  readonly cap = MAX_BATCH_OPERATIONS;
-  readonly count: number;
-  readonly target: StorageBatchOperationLimitTarget;
-
-  constructor(target: StorageBatchOperationLimitTarget, count: number) {
-    super(`${target} count ${count} exceeds MAX_BATCH_OPERATIONS (${MAX_BATCH_OPERATIONS}).`);
-    this.name = 'StorageBatchOperationLimitExceededError';
-    this.target = target;
-    this.count = count;
-  }
-}
-
-/**
- * Throw when a storage batch target exceeds {@link MAX_BATCH_OPERATIONS}.
- *
- * @example
- * ```ts
- * import { assertStorageBatchOperationCount } from '@lostgradient/weft/storage';
- *
- * assertStorageBatchOperationCount('batch operations', 1);
- * ```
- */
-export function assertStorageBatchOperationCount(
-  target: StorageBatchOperationLimitTarget,
-  count: number,
-): void {
-  if (count > MAX_BATCH_OPERATIONS) {
-    throw new StorageBatchOperationLimitExceededError(target, count);
-  }
-}
 
 /**
  * A key/value precondition for {@link Storage.conditionalBatch}.

@@ -8,7 +8,13 @@ import {
   storageHasCore,
   storageKeysCore,
 } from './derived-operations.ts';
-import type { ScanOptions, Storage } from './interface.ts';
+import {
+  MAX_BATCH_OPERATIONS,
+  assertStorageBatchOperationCount,
+  type BatchOperation,
+  type ScanOptions,
+  type Storage,
+} from './interface.ts';
 import { MemoryStorage } from './memory.ts';
 
 /**
@@ -178,5 +184,44 @@ describe('derived-operations *Core helpers', () => {
     );
     expect(deleted).toBe(0);
     expect(await storage.get('ev:wf:01')).not.toBeNull();
+  });
+
+  // The derived fallbacks are what non-native adapters (e.g. NodeSQLiteStorage,
+  // which reports boundedRangeDelete: false) use for deletePrefix/deleteRange.
+  // A single production workflow can hold far more keys than one batch admits
+  // (48,215 observed), so the fallback MUST chunk at MAX_BATCH_OPERATIONS rather
+  // than build one oversized batch that throws StorageBatchOperationLimitExceededError.
+  it('storageDeletePrefixCore chunks a prefix larger than MAX_BATCH_OPERATIONS at the cap', async () => {
+    const storage = new MemoryStorage();
+    const batchSizes: number[] = [];
+    const originalBatch = storage.batch.bind(storage);
+    storage.batch = async (operations: BatchOperation[]) => {
+      // The cap is enforced inside the real adapter's batch(); assert it here so
+      // a regression that stops chunking surfaces as this throw, exactly as it
+      // would against Postgres/SQLite.
+      assertStorageBatchOperationCount('batch operations', operations.length);
+      batchSizes.push(operations.length);
+      await originalBatch(operations);
+    };
+
+    const total = MAX_BATCH_OPERATIONS + 1;
+    const seed: BatchOperation[] = [];
+    for (let index = 0; index < total; index += 1) {
+      seed.push({ type: 'put', key: `wf:big:ckpt:${String(index).padStart(10, '0')}`, value: new Uint8Array([1]) });
+    }
+    // Seed via the original (unwrapped) batch in one shot is itself over the cap;
+    // put() them directly instead so the seed does not trip the assertion.
+    for (const operation of seed) {
+      if (operation.type === 'put') await storage.put(operation.key, operation.value);
+    }
+    batchSizes.length = 0;
+
+    const deleted = await storageDeletePrefixCore(storage, 'wf:big:ckpt:');
+
+    expect(deleted).toBe(total);
+    expect(batchSizes.length).toBe(2);
+    expect(batchSizes[0]).toBe(MAX_BATCH_OPERATIONS);
+    expect(batchSizes[1]).toBe(1);
+    expect(await storageCountCore(storage, 'wf:big:ckpt:')).toBe(0);
   });
 });

@@ -79,6 +79,14 @@ export async function runRetentionSweep(
         expiredOnly: true,
         limit: internals.options.retentionSweepBatchSize,
         now: internals.options.getNow(),
+        // Per-run isolation: a single workflow that fails to purge no longer
+        // aborts the sweep (the batch-cap defect had the oldest oversized run
+        // throw and strand every run behind it). Route each per-run failure into
+        // the same cleanup-error path a whole-sweep failure would use, so the
+        // failure is still surfaced rather than swallowed. A deposition still
+        // re-throws from purgeInternal and lands in the catch below.
+        onWorkflowPurgeError: (workflowId, error) =>
+          handleCleanupError(`retentionSweep(${workflowId})`, error),
       },
       cleanupWaiters,
     );
