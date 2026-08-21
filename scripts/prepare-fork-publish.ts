@@ -51,13 +51,18 @@ delete manifest.scripts?.prepack;
 delete manifest.scripts?.prepublishOnly;
 delete manifest.scripts?.prepare;
 
-// Every peer here is a pick-one-if-you-need-it adapter (a storage driver, the
-// OTel API, the console), but the manifest declares no `peerDependenciesMeta`,
-// so a strict installer treats all of them as REQUIRED. That is merely noisy for
-// the ones on npm and fatal for `@lostgradient/weft-console`, which upstream has
-// never published to any registry — pnpm dies with ERR_PNPM_FETCH_404 and the
-// install cannot complete at all. Marking them optional is what the upstream
-// README already tells people they are.
+// `@lostgradient/weft-console` is declared as a peer but has never been
+// published to ANY registry, so the declaration is unsatisfiable for every
+// consumer. It is dropped rather than merely marked optional: pnpm 11's
+// `autoInstallPeers` (on by default) tries to fetch an OPTIONAL peer too, so
+// `optional: true` still ends the install in ERR_PNPM_FETCH_404. The console is
+// a separate dev UI — nothing in the library imports it.
+delete manifest.peerDependencies?.['@lostgradient/weft-console'];
+delete manifest.peerDependenciesMeta?.['@lostgradient/weft-console'];
+
+// The remaining peers are pick-one-if-you-need-it adapters (storage drivers, the
+// OTel API), but the manifest declares no `peerDependenciesMeta` at all, so a
+// strict installer treats every one as required. Mark them what they already are.
 if (manifest.peerDependencies) {
   manifest.peerDependenciesMeta = Object.fromEntries(
     Object.keys(manifest.peerDependencies).map((name) => [name, { optional: true }]),
