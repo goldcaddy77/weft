@@ -172,6 +172,7 @@ The audit scans `src/`, `scripts/`, and `tests/` TypeScript/Svelte implementatio
 | `src/core/engine/signals.ts`                    | Justified exception | Signal buffering, waiter tracking, payload validation, and atomic consumption share one durable signal-delivery contract.                                                                                                                                                    |
 | `src/client/http-client-requests.ts`            | Justified exception | HTTP request helpers are grouped by one client transport and mostly sit just above the threshold; splitting would add routing noise.                                                                                                                                         |
 | `scripts/generate-operation-client.ts`          | Justified exception | The operation-client generator keeps schema normalization, alias selection, rendering, formatting, and drift output together.                                                                                                                                                |
+| `src/core/engine/workflow-visibility-backfill.ts` | Justified exception | Required @example JSDoc blocks for all 13 public exports (types and functions) unavoidably exceed the ceiling; the implementation code itself is under 500 lines.                                                                                                          |
 
 To clean build artifacts, coverage output, and caches:
 
