@@ -224,6 +224,12 @@ export const CLASSIFIED_OVERSIZED_IMPLEMENTATION_FILES = [
     rationale:
       'The operation-client generator keeps schema normalization, alias selection, rendering, formatting, and drift output together.',
   },
+  {
+    path: 'src/core/engine/workflow-visibility-backfill.ts',
+    classification: 'justified-exception',
+    rationale:
+      'Required @example JSDoc blocks for all 13 public exports (types and functions) unavoidably exceed the ceiling; the implementation code itself is under 500 lines.',
+  },
 ] as const satisfies readonly OversizedImplementationFile[];
 
 type CliArguments = {

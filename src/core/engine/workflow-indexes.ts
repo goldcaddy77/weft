@@ -22,6 +22,14 @@ import type { EngineInternals } from './internals.ts';
  * Bumped whenever the index layout or population rules change. The engine
  * compares this to the watermark stored at `wf-idx-meta:version` to decide
  * whether the indexes are trustworthy for query-time use.
+ *
+ * @example
+ * ```ts
+ * import { WORKFLOW_VISIBILITY_INDEX_VERSION } from '@lostgradient/weft';
+ *
+ * // Inspect the current version your build of weft targets.
+ * console.log(WORKFLOW_VISIBILITY_INDEX_VERSION); // 1
+ * ```
  */
 export const WORKFLOW_VISIBILITY_INDEX_VERSION = 1;
 
@@ -31,6 +39,14 @@ export const WORKFLOW_VISIBILITY_INDEX_VERSION = 1;
  * raises a {@link WorkflowListScanCapExceededError} — the operator should
  * narrow the filter or run the visibility-index backfill so a narrower
  * scan applies.
+ *
+ * @example
+ * ```ts
+ * import { MAX_LIST_SCAN_ROWS } from '@lostgradient/weft';
+ *
+ * // Use this constant to display the cap in operator tooling or error messages.
+ * console.log(`Query cap: ${MAX_LIST_SCAN_ROWS.toLocaleString()} workflows`);
+ * ```
  */
 export const MAX_LIST_SCAN_ROWS = 1_000_000;
 
@@ -38,6 +54,20 @@ export const MAX_LIST_SCAN_ROWS = 1_000_000;
  * Thrown when `list`/`aggregate` would materialize more candidates than
  * {@link MAX_LIST_SCAN_ROWS} allows. Transport layers map this to an
  * `Unprocessable` fault.
+ *
+ * @example
+ * ```ts
+ * import { WorkflowListScanCapExceededError } from '@lostgradient/weft';
+ *
+ * try {
+ *   // Simulated engine list call that exceeds the scan cap.
+ *   throw new WorkflowListScanCapExceededError(1_000_000);
+ * } catch (err) {
+ *   if (err instanceof WorkflowListScanCapExceededError) {
+ *     console.error(`Scan cap of ${err.cap} exceeded. Narrow the filter or run the backfill.`);
+ *   }
+ * }
+ * ```
  */
 export class WorkflowListScanCapExceededError extends WeftError<'WorkflowListScanCapExceededError'> {
   readonly cap: number;

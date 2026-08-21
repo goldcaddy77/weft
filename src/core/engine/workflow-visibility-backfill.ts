@@ -65,10 +65,28 @@ const MAX_REPORTED_GAP_IDS = 20;
 /**
  * Receives every progress message the CLI would print. Defaults to a no-op
  * so library callers stay quiet.
+ *
+ * @example
+ * ```ts
+ * import { runWorkflowVisibilityBackfill, MemoryStorage, type WorkflowVisibilityBackfillLogger } from '@lostgradient/weft';
+ * const logger: WorkflowVisibilityBackfillLogger = (msg) => console.log(msg);
+ * const storage = new MemoryStorage();
+ * await runWorkflowVisibilityBackfill(storage, { logger });
+ * ```
  */
 export type WorkflowVisibilityBackfillLogger = (message: string) => void;
 
-/** Why a workflow failed its coverage check. */
+/**
+ * Why a workflow failed its coverage check. Surfaced on each
+ * {@link WorkflowVisibilityGap} in a {@link WorkflowVisibilityCoverageReport}.
+ *
+ * @example
+ * ```ts
+ * import { verifyWorkflowVisibilityIndex, MemoryStorage, type WorkflowVisibilityGapReason } from '@lostgradient/weft';
+ * const report = await verifyWorkflowVisibilityIndex(new MemoryStorage());
+ * const reasons: WorkflowVisibilityGapReason[] = report.gaps.map((g) => g.reason);
+ * ```
+ */
 export type WorkflowVisibilityGapReason =
   | 'missing-manifest'
   | 'stale-manifest-version'
@@ -76,20 +94,51 @@ export type WorkflowVisibilityGapReason =
   | 'missing-index-row'
   | 'oversized-manifest';
 
-/** One workflow that is not correctly represented in the index. */
+/**
+ * One workflow that is not correctly represented in the index.
+ * Returned in `gaps` of a {@link WorkflowVisibilityCoverageReport}.
+ *
+ * @example
+ * ```ts
+ * import { verifyWorkflowVisibilityIndex, MemoryStorage, type WorkflowVisibilityGap } from '@lostgradient/weft';
+ * const report = await verifyWorkflowVisibilityIndex(new MemoryStorage());
+ * const gap: WorkflowVisibilityGap | undefined = report.gaps[0];
+ * if (gap) console.log(gap.workflowId, gap.reason);
+ * ```
+ */
 export type WorkflowVisibilityGap = {
   workflowId: string;
   reason: WorkflowVisibilityGapReason;
 };
 
-/** Tuning knobs for {@link runWorkflowVisibilityBackfill}. */
+/**
+ * Tuning knobs for {@link runWorkflowVisibilityBackfill}. All fields optional.
+ *
+ * @example
+ * ```ts
+ * import { runWorkflowVisibilityBackfill, MemoryStorage, type WorkflowVisibilityBackfillOptions } from '@lostgradient/weft';
+ * const options: WorkflowVisibilityBackfillOptions = { logger: console.log, checkpointEvery: 100 };
+ * const report = await runWorkflowVisibilityBackfill(new MemoryStorage(), options);
+ * console.log(report.processed);
+ * ```
+ */
 export type WorkflowVisibilityBackfillOptions = {
   logger?: WorkflowVisibilityBackfillLogger;
   /** Workflows processed between progress log lines. Default 500. */
   checkpointEvery?: number;
 };
 
-/** Outcome of one {@link runWorkflowVisibilityBackfill} pass. */
+/**
+ * Outcome of one {@link runWorkflowVisibilityBackfill} pass.
+ * `watermarkWritten` is `true` only when the pass was gap-free.
+ *
+ * @example
+ * ```ts
+ * import { runWorkflowVisibilityBackfill, MemoryStorage, type WorkflowVisibilityBackfillReport } from '@lostgradient/weft';
+ * const report: WorkflowVisibilityBackfillReport = await runWorkflowVisibilityBackfill(new MemoryStorage());
+ * console.log(report.watermarkWritten, report.processed, report.conflicts);
+ * ```
+ */
 export type WorkflowVisibilityBackfillReport = {
   /** Workflows whose index rows were committed by this pass. */
   processed: number;
@@ -103,7 +152,17 @@ export type WorkflowVisibilityBackfillReport = {
   resumedFrom?: string;
 };
 
-/** Tuning knobs for {@link verifyWorkflowVisibilityIndex}. */
+/**
+ * Tuning knobs for {@link verifyWorkflowVisibilityIndex}. All fields optional.
+ *
+ * @example
+ * ```ts
+ * import { verifyWorkflowVisibilityIndex, MemoryStorage, type WorkflowVisibilityVerifyOptions } from '@lostgradient/weft';
+ * const options: WorkflowVisibilityVerifyOptions = { logger: console.log, deep: true };
+ * const report = await verifyWorkflowVisibilityIndex(new MemoryStorage(), options);
+ * console.log(report.complete);
+ * ```
+ */
 export type WorkflowVisibilityVerifyOptions = {
   logger?: WorkflowVisibilityBackfillLogger;
   /**
@@ -116,7 +175,18 @@ export type WorkflowVisibilityVerifyOptions = {
   deep?: boolean;
 };
 
-/** Read-only coverage answer produced by {@link verifyWorkflowVisibilityIndex}. */
+/**
+ * Read-only coverage answer produced by {@link verifyWorkflowVisibilityIndex}.
+ * `watermarkOverstated` is the dangerous case — `list()` under-reports instead
+ * of falling back to a scan.
+ *
+ * @example
+ * ```ts
+ * import { verifyWorkflowVisibilityIndex, MemoryStorage, type WorkflowVisibilityCoverageReport } from '@lostgradient/weft';
+ * const report: WorkflowVisibilityCoverageReport = await verifyWorkflowVisibilityIndex(new MemoryStorage());
+ * console.log(report.complete, report.watermarkOverstated);
+ * ```
+ */
 export type WorkflowVisibilityCoverageReport = {
   /** Top-level workflow records examined. */
   scanned: number;
@@ -132,14 +202,33 @@ export type WorkflowVisibilityCoverageReport = {
   watermarkOverstated: boolean;
 };
 
-/** Tuning knobs for {@link runWorkflowVisibilityDrop}. */
+/**
+ * Tuning knobs for {@link runWorkflowVisibilityDrop}. All fields optional.
+ *
+ * @example
+ * ```ts
+ * import { runWorkflowVisibilityDrop, MemoryStorage, type WorkflowVisibilityDropOptions } from '@lostgradient/weft';
+ * const options: WorkflowVisibilityDropOptions = { logger: console.log, fallbackBatchSize: 200 };
+ * const report = await runWorkflowVisibilityDrop(new MemoryStorage(), options);
+ * console.log(report.rowsDeleted);
+ * ```
+ */
 export type WorkflowVisibilityDropOptions = {
   logger?: WorkflowVisibilityBackfillLogger;
   /** Deletes per batch on adapters without `deletePrefix`. Clamped to the batch cap. */
   fallbackBatchSize?: number;
 };
 
-/** Outcome of one {@link runWorkflowVisibilityDrop} sweep. */
+/**
+ * Outcome of one {@link runWorkflowVisibilityDrop} sweep.
+ *
+ * @example
+ * ```ts
+ * import { runWorkflowVisibilityDrop, MemoryStorage, type WorkflowVisibilityDropReport } from '@lostgradient/weft';
+ * const report: WorkflowVisibilityDropReport = await runWorkflowVisibilityDrop(new MemoryStorage());
+ * console.log(report.rowsDeleted);
+ * ```
+ */
 export type WorkflowVisibilityDropReport = {
   rowsDeleted: number;
 };
@@ -235,6 +324,13 @@ function requireConditionalBatch(storage: Storage): void {
  * batch, so it never runs ahead of committed work. An interrupted pass
  * therefore resumes from a position at or behind the last success and, with
  * the watermark untouched, leaves the engine on the correct full-scan path.
+ *
+ * @example
+ * ```ts
+ * import { runWorkflowVisibilityBackfill, MemoryStorage } from '@lostgradient/weft';
+ * const report = await runWorkflowVisibilityBackfill(new MemoryStorage(), { logger: console.log });
+ * console.log(report.watermarkWritten, report.processed, report.conflicts);
+ * ```
  */
 export async function runWorkflowVisibilityBackfill(
   storage: Storage,
@@ -338,6 +434,13 @@ function classifyManifest(
  * watermark's claim match reality? `watermarkOverstated` is the dangerous
  * combination — a `current` watermark over an incomplete index, which makes
  * filtered listings under-report instead of falling back to a scan.
+ *
+ * @example
+ * ```ts
+ * import { verifyWorkflowVisibilityIndex, MemoryStorage } from '@lostgradient/weft';
+ * const report = await verifyWorkflowVisibilityIndex(new MemoryStorage(), { deep: true });
+ * console.log(report.complete, report.scanned, report.covered);
+ * ```
  */
 export async function verifyWorkflowVisibilityIndex(
   storage: Storage,
@@ -426,6 +529,14 @@ async function findMissingIndexRow(
  *
  * Returns `true` when it established the watermark. Cheap enough for a boot
  * path: one `get`, plus a single-row scan only when the watermark is absent.
+ *
+ * @example
+ * ```ts
+ * import { establishWorkflowVisibilityWatermarkIfEmpty, MemoryStorage } from '@lostgradient/weft';
+ * const storage = new MemoryStorage();
+ * console.log(await establishWorkflowVisibilityWatermarkIfEmpty(storage)); // true — empty store
+ * console.log(await establishWorkflowVisibilityWatermarkIfEmpty(storage)); // false — already current
+ * ```
  */
 export async function establishWorkflowVisibilityWatermarkIfEmpty(
   storage: Storage,
@@ -452,6 +563,16 @@ export async function establishWorkflowVisibilityWatermarkIfEmpty(
  * cursor is cleared. Reversing it would leave a window where the engine
  * trusts a watermark for rows that are already gone — the exact
  * under-reporting failure this module exists to prevent.
+ *
+ * Use this before running {@link runWorkflowVisibilityBackfill} when a clean
+ * rebuild is needed — for example after an adapter migration or version downgrade.
+ *
+ * @example
+ * ```ts
+ * import { runWorkflowVisibilityDrop, MemoryStorage } from '@lostgradient/weft';
+ * const report = await runWorkflowVisibilityDrop(new MemoryStorage(), { logger: console.log });
+ * console.log(report.rowsDeleted);
+ * ```
  */
 export async function runWorkflowVisibilityDrop(
   storage: Storage,
