@@ -299,10 +299,8 @@ export class DurableMutex extends DurableSemaphore {
  * void result;
  * ```
  */
-export type AcquireWithSlot<R> =
-  R extends Promise<unknown>
-    ? Promise<AcquireAttempt>
-    : Generator<unknown, AcquireAttempt, unknown>;
+export type AcquireWithSlot<R, V = AcquireAttempt> =
+  R extends Promise<unknown> ? Promise<V> : Generator<unknown, V, unknown>;
 
 /**
  * Result of {@link DurableSemaphore.renew}, mirroring the slot's flavour: a
@@ -345,7 +343,7 @@ function isGenerator(value: unknown): value is Generator<unknown, unknown, unkno
  * slot's flavour so workflow callers can `yield*` and admin callers can
  * `await`.
  */
-function mapSlotResult<R, V>(
+export function mapSlotResult<R, V>(
   result: R,
   derive: () => V,
 ): R extends Promise<unknown> ? Promise<V> : Generator<unknown, V, unknown> {

@@ -57,17 +57,24 @@ export {
   EngineLeaseCorruptedError,
   EngineLeaseNotHeldError,
   IdempotencyKeyPurgedError,
+  MAX_LIST_SCAN_ROWS,
   PersistedDataIncompatibleError,
   ScheduleHandle,
   StartOrSignalConflictError,
+  WORKFLOW_VISIBILITY_INDEX_VERSION,
   WorkflowAlreadyExistsError,
   WorkflowConcurrencyLimitExceededError,
   WorkflowHandle,
+  WorkflowListScanCapExceededError,
   WorkflowNotFoundError,
   WorkflowNotRegisteredError,
   WorkflowSuspendNotSupportedError,
   WorkflowTeardownPendingError,
   WorkflowTypeNotRegisteredForRecoveryError,
+  establishWorkflowVisibilityWatermarkIfEmpty,
+  runWorkflowVisibilityBackfill,
+  runWorkflowVisibilityDrop,
+  verifyWorkflowVisibilityIndex,
 } from './core/engine';
 export type {
   EngineCreateOptions,
@@ -76,17 +83,6 @@ export type {
   LeaseLostReason,
   RecoverAllOptions,
   RecoveredWorkflowInfo,
-} from './core/engine';
-export {
-  MAX_LIST_SCAN_ROWS,
-  WORKFLOW_VISIBILITY_INDEX_VERSION,
-  WorkflowListScanCapExceededError,
-  establishWorkflowVisibilityWatermarkIfEmpty,
-  runWorkflowVisibilityBackfill,
-  runWorkflowVisibilityDrop,
-  verifyWorkflowVisibilityIndex,
-} from './core/engine';
-export type {
   WorkflowVisibilityBackfillLogger,
   WorkflowVisibilityBackfillOptions,
   WorkflowVisibilityBackfillReport,
@@ -502,6 +498,19 @@ export type {
   LockRecord,
   RenewWithSlot,
 } from './core/concurrency';
+
+export {
+  DurableRateLimiter,
+  initialRateLimitRecord,
+  reduceRateAcquire,
+  reduceRateWithdraw,
+} from './core/rate-limiter';
+export type {
+  DurableRateLimiterOptions,
+  RateGrantAttempt,
+  RateLimitRecord,
+  RateWaiter,
+} from './core/rate-limiter';
 
 export { handleRequest } from './server/handler';
 export type { SchedulingPolicy } from './server/task-queue-types';
