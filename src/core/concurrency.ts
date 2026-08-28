@@ -33,11 +33,17 @@ import {
 
 export {
   initialLockRecord,
+  MIN_LOCK_WAITER_TTL_MS,
   reduceAcquire,
   reduceRelease,
   reduceRenew,
 } from './concurrency-lock-record.ts';
-export type { AcquireAttempt, LockHolder, LockRecord } from './concurrency-lock-record.ts';
+export type {
+  AcquireAttempt,
+  LockHolder,
+  LockRecord,
+  LockWaiter,
+} from './concurrency-lock-record.ts';
 
 /**
  * Minimal CAS state-slot surface shared by the durable `ctx.state.*` handles
@@ -112,9 +118,21 @@ export interface DurableSemaphoreOptions {
    * when a holder crashes without releasing. Defaults to `30_000`.
    */
   leaseMs?: number;
+  /**
+   * How long a WAITER entry survives without a retry refreshing it. A
+   * contender that enqueues and then crashes never retries, so its entry ages
+   * out instead of head-of-line-blocking the FIFO queue behind it forever —
+   * the waiter-side twin of the holder lease. Defaults to
+   * `max(30_000, leaseMs)` so waiters and holders share one liveness horizon.
+   * Must comfortably exceed the caller's retry cadence, or an honest slow
+   * poller is evicted and re-enqueues at the back (a fairness loss, never a
+   * double-hold).
+   */
+  waiterTtlMs?: number;
 }
 
 const DEFAULT_LEASE_MS = 30_000;
+const MIN_WAITER_TTL_MS = 30_000;
 
 /**
  * A durable counting semaphore: at most `permits` holders may hold the lock at
@@ -159,14 +177,18 @@ const DEFAULT_LEASE_MS = 30_000;
 export class DurableSemaphore {
   readonly permits: number;
   readonly leaseMs: number;
+  readonly waiterTtlMs: number;
 
   constructor(options: DurableSemaphoreOptions = {}) {
     const permits = options.permits ?? 1;
     const leaseMs = options.leaseMs ?? DEFAULT_LEASE_MS;
     assertValidPermits(permits);
     assertValidLease(leaseMs);
+    const waiterTtlMs = options.waiterTtlMs ?? Math.max(MIN_WAITER_TTL_MS, leaseMs);
+    assertValidLease(waiterTtlMs);
     this.permits = permits;
     this.leaseMs = leaseMs;
+    this.waiterTtlMs = waiterTtlMs;
   }
 
   /**
@@ -180,10 +202,12 @@ export class DurableSemaphore {
    */
   tryAcquire<RUpdate>(
     slot: CasSlot<LockRecord, RUpdate>,
-    options: { holderId: string; now: number; leaseMs?: number },
+    options: { holderId: string; now: number; leaseMs?: number; waiterTtlMs?: number },
   ): AcquireWithSlot<RUpdate> {
     const leaseMs = options.leaseMs ?? this.leaseMs;
     assertValidLease(leaseMs);
+    const waiterTtlMs = options.waiterTtlMs ?? this.waiterTtlMs;
+    assertValidLease(waiterTtlMs);
     let attempt: AcquireAttempt = { acquired: false, position: -1 };
     const update = slot.update((current) => {
       const reduced = reduceAcquire(current, {
@@ -191,6 +215,7 @@ export class DurableSemaphore {
         now: options.now,
         leaseMs,
         permits: this.permits,
+        waiterTtlMs,
       });
       attempt = reduced.attempt;
       return reduced.record;
@@ -206,7 +231,9 @@ export class DurableSemaphore {
     slot: CasSlot<LockRecord, RUpdate>,
     options: { holderId: string; now: number },
   ): RUpdate {
-    return slot.update((current) => reduceRelease(current, options));
+    return slot.update((current) =>
+      reduceRelease(current, { ...options, waiterTtlMs: this.waiterTtlMs }),
+    );
   }
 
   /**
@@ -226,6 +253,7 @@ export class DurableSemaphore {
         holderId: options.holderId,
         now: options.now,
         leaseMs,
+        waiterTtlMs: this.waiterTtlMs,
       });
       renewed = reduced.renewed;
       return reduced.record;

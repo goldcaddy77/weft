@@ -488,7 +488,12 @@ export type {
   SleepFunction,
 } from './core/atomic-state';
 // Durable concurrency primitives — mutex/semaphore built on AtomicState CAS.
-export { DurableMutex, DurableSemaphore, initialLockRecord } from './core/concurrency';
+export {
+  DurableMutex,
+  DurableSemaphore,
+  initialLockRecord,
+  MIN_LOCK_WAITER_TTL_MS,
+} from './core/concurrency';
 export type {
   AcquireAttempt,
   AcquireWithSlot,
@@ -496,6 +501,7 @@ export type {
   DurableSemaphoreOptions,
   LockHolder,
   LockRecord,
+  LockWaiter,
   RenewWithSlot,
 } from './core/concurrency';
 

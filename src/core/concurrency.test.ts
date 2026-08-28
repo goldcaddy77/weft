@@ -44,7 +44,8 @@ describe('lock-record reducers', () => {
       const held: LockRecord = { holders: [{ holderId: 'a', leaseExpiresAt: 6_000 }], waiters: [] };
       const first = reduceAcquire(held, { holderId: 'b', now: 1_000, leaseMs: 5_000, permits: 1 });
       expect(first.attempt).toEqual({ acquired: false, position: 0 });
-      expect(first.record.waiters).toEqual(['b']);
+      // Default waiter TTL is max(30_000, leaseMs) = 30_000, stamped from `now`.
+      expect(first.record.waiters).toEqual([{ holderId: 'b', expiresAt: 31_000 }]);
 
       const second = reduceAcquire(first.record, {
         holderId: 'c',
@@ -53,21 +54,31 @@ describe('lock-record reducers', () => {
         permits: 1,
       });
       expect(second.attempt).toEqual({ acquired: false, position: 1 });
-      expect(second.record.waiters).toEqual(['b', 'c']);
+      expect(second.record.waiters).toEqual([
+        { holderId: 'b', expiresAt: 31_000 },
+        { holderId: 'c', expiresAt: 31_000 },
+      ]);
     });
 
     it('does not double-enqueue a waiter that retries', () => {
       const held: LockRecord = {
         holders: [{ holderId: 'a', leaseExpiresAt: 6_000 }],
-        waiters: ['b'],
+        waiters: [{ holderId: 'b', expiresAt: 31_000 }],
       };
       const retry = reduceAcquire(held, { holderId: 'b', now: 2_000, leaseMs: 5_000, permits: 1 });
       expect(retry.attempt).toEqual({ acquired: false, position: 0 });
-      expect(retry.record.waiters).toEqual(['b']);
+      // The retry REFRESHES b's expiry — this is what keeps a live waiter alive.
+      expect(retry.record.waiters).toEqual([{ holderId: 'b', expiresAt: 32_000 }]);
     });
 
     it('grants the permit to the head of the queue once it is free', () => {
-      const queued: LockRecord = { holders: [], waiters: ['b', 'c'] };
+      const queued: LockRecord = {
+        holders: [],
+        waiters: [
+          { holderId: 'b', expiresAt: 33_000 },
+          { holderId: 'c', expiresAt: 33_000 },
+        ],
+      };
       const granted = reduceAcquire(queued, {
         holderId: 'b',
         now: 3_000,
@@ -76,11 +87,17 @@ describe('lock-record reducers', () => {
       });
       expect(granted.attempt).toEqual({ acquired: true, position: -1 });
       expect(granted.record.holders).toEqual([{ holderId: 'b', leaseExpiresAt: 8_000 }]);
-      expect(granted.record.waiters).toEqual(['c']);
+      expect(granted.record.waiters).toEqual([{ holderId: 'c', expiresAt: 33_000 }]);
     });
 
     it('does not let a non-head waiter jump the queue even when a permit is free', () => {
-      const queued: LockRecord = { holders: [], waiters: ['b', 'c'] };
+      const queued: LockRecord = {
+        holders: [],
+        waiters: [
+          { holderId: 'b', expiresAt: 33_000 },
+          { holderId: 'c', expiresAt: 33_000 },
+        ],
+      };
       const blocked = reduceAcquire(queued, {
         holderId: 'c',
         now: 3_000,
@@ -127,7 +144,7 @@ describe('lock-record reducers', () => {
     it('treats re-acquisition by an existing holder as an idempotent lease renewal', () => {
       const held: LockRecord = {
         holders: [{ holderId: 'a', leaseExpiresAt: 6_000 }],
-        waiters: ['b'],
+        waiters: [{ holderId: 'b', expiresAt: 34_000 }],
       };
       const renewed = reduceAcquire(held, {
         holderId: 'a',
@@ -137,7 +154,7 @@ describe('lock-record reducers', () => {
       });
       expect(renewed.attempt).toEqual({ acquired: true, position: -1 });
       expect(renewed.record.holders).toEqual([{ holderId: 'a', leaseExpiresAt: 9_000 }]);
-      expect(renewed.record.waiters).toEqual(['b']);
+      expect(renewed.record.waiters).toEqual([{ holderId: 'b', expiresAt: 34_000 }]);
     });
 
     it('allows up to `permits` concurrent holders for a counting semaphore', () => {
@@ -155,7 +172,89 @@ describe('lock-record reducers', () => {
       }
       expect(grants).toEqual([true, true, true, false]);
       expect(record.holders).toHaveLength(3);
-      expect(record.waiters).toEqual(['d']);
+      expect(record.waiters).toEqual([{ holderId: 'd', expiresAt: 31_000 }]);
+    });
+
+    it('ages out an expired waiter at the head so a ghost cannot head-of-line-block', () => {
+      // The production shape behind CAD-1614 (Haps): holders empty, a crashed
+      // process's waiter parked at the front. Without waiter expiry nobody can
+      // ever acquire again.
+      const jammed: LockRecord = {
+        holders: [],
+        waiters: [
+          { holderId: 'ghost', expiresAt: 5_000 },
+          { holderId: 'live', expiresAt: 40_000 },
+        ],
+      };
+      const healed = reduceAcquire(jammed, {
+        holderId: 'live',
+        now: 6_000,
+        leaseMs: 5_000,
+        permits: 1,
+      });
+      expect(healed.attempt).toEqual({ acquired: true, position: -1 });
+      expect(healed.record.waiters).toEqual([]);
+    });
+
+    it('keeps an unexpired waiter ahead of the caller (FIFO preserved for the living)', () => {
+      const queued: LockRecord = {
+        holders: [],
+        waiters: [{ holderId: 'other-live', expiresAt: 40_000 }],
+      };
+      const blocked = reduceAcquire(queued, {
+        holderId: 'me',
+        now: 6_000,
+        leaseMs: 5_000,
+        permits: 1,
+      });
+      expect(blocked.attempt).toEqual({ acquired: false, position: 1 });
+    });
+
+    it('honours an explicit waiterTtlMs override', () => {
+      const held: LockRecord = { holders: [{ holderId: 'a', leaseExpiresAt: 60_000 }], waiters: [] };
+      const { record } = reduceAcquire(held, {
+        holderId: 'b',
+        now: 1_000,
+        leaseMs: 5_000,
+        permits: 1,
+        waiterTtlMs: 120_000,
+      });
+      expect(record.waiters).toEqual([{ holderId: 'b', expiresAt: 121_000 }]);
+    });
+
+    it('normalizes legacy bare-string waiters: position preserved, then ghosts age out one TTL later', () => {
+      // Records persisted before waiter expiries were { waiters: string[] }.
+      // On first read every legacy entry is stamped now + TTL — so a live
+      // legacy waiter keeps its place — and an entry never refreshed again (a
+      // ghost) expires one TTL later, unjamming the queue with no sweep.
+      const legacy = {
+        holders: [],
+        waiters: ['ghost-1', 'ghost-2', 'live'],
+      } as unknown as LockRecord;
+
+      const first = reduceAcquire(legacy, {
+        holderId: 'live',
+        now: 10_000,
+        leaseMs: 5_000,
+        permits: 1,
+      });
+      // Ghosts were stamped 10_000 + 30_000 and still look live: FIFO holds.
+      expect(first.attempt).toEqual({ acquired: false, position: 2 });
+      expect(first.record.waiters).toEqual([
+        { holderId: 'ghost-1', expiresAt: 40_000 },
+        { holderId: 'ghost-2', expiresAt: 40_000 },
+        { holderId: 'live', expiresAt: 40_000 },
+      ]);
+
+      // One TTL later the ghosts never refreshed; the live retry heals the lot.
+      const second = reduceAcquire(first.record, {
+        holderId: 'live',
+        now: 41_000,
+        leaseMs: 5_000,
+        permits: 1,
+      });
+      expect(second.attempt).toEqual({ acquired: true, position: -1 });
+      expect(second.record.waiters).toEqual([]);
     });
 
     it('normalizes a corrupt record into an empty lock', () => {
@@ -175,11 +274,14 @@ describe('lock-record reducers', () => {
     it('removes the holder and any stale waiter entry', () => {
       const held: LockRecord = {
         holders: [{ holderId: 'a', leaseExpiresAt: 6_000 }],
-        waiters: ['a', 'b'],
+        waiters: [
+          { holderId: 'a', expiresAt: 31_000 },
+          { holderId: 'b', expiresAt: 31_000 },
+        ],
       };
       const released = reduceRelease(held, { holderId: 'a', now: 2_000 });
       expect(released.holders).toEqual([]);
-      expect(released.waiters).toEqual(['b']);
+      expect(released.waiters).toEqual([{ holderId: 'b', expiresAt: 31_000 }]);
     });
 
     it('is a no-op for a holder that does not hold the lock', () => {
@@ -277,6 +379,28 @@ describe('DurableSemaphore (promise-flavoured AtomicState slot)', () => {
     expect(record?.holders).toEqual([{ holderId: 'a', leaseExpiresAt: 7_000 }]);
 
     expect(await mutex.renew(slot, { holderId: 'b', now: 2_000 })).toBe(false);
+  });
+
+  it('reclaims the queue from a waiter that crashed without retrying', async () => {
+    const slot = makeSlot();
+    const mutex = new DurableMutex({ leaseMs: 60_000 });
+    // waiterTtlMs defaults to max(30s, leaseMs) = 60s.
+    expect(mutex.waiterTtlMs).toBe(60_000);
+
+    await mutex.tryAcquire(slot, { holderId: 'a', now: 1_000 });
+    // b enqueues once and "crashes" — it never polls again.
+    const waiting = await mutex.tryAcquire(slot, { holderId: 'b', now: 2_000 });
+    expect(waiting.acquired).toBe(false);
+    await mutex.release(slot, { holderId: 'a', now: 3_000 });
+
+    // While b's TTL is live, c honours FIFO behind the ghost.
+    const blocked = await mutex.tryAcquire(slot, { holderId: 'c', now: 4_000 });
+    expect(blocked).toEqual({ acquired: false, position: 1 });
+
+    // After b's TTL (2_000 + 60_000), c's ordinary retry heals the queue.
+    const healed = await mutex.tryAcquire(slot, { holderId: 'c', now: 63_000 });
+    expect(healed.acquired).toBe(true);
+    expect(await holderIds(mutex, slot)).toEqual(['c']);
   });
 
   it('rejects a per-call lease that is not positive', () => {
