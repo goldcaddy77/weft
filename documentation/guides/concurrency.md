@@ -93,7 +93,10 @@ import type { LockRecord } from '@lostgradient/weft';
 
 const record: LockRecord = {
   holders: [{ holderId: 'workflow-a', leaseExpiresAt: 1717000030000 }],
-  waiters: ['workflow-b', 'workflow-c'],
+  waiters: [
+    { holderId: 'workflow-b', expiresAt: 1717000030000 },
+    { holderId: 'workflow-c', expiresAt: 1717000030000 },
+  ],
 };
 void record;
 ```
@@ -203,7 +206,7 @@ Two consequences to design around:
 Leases prevent permanent deadlock from a crashed _holder_: the next contender reclaims the expired permit on its next `tryAcquire`, and `recoverAll()` after a restart replays cleanly because the lock record is ordinary CAS state with nothing process-bound in it.
 
 > [!NOTE] Stale waiters
-> A waiter that crashes _before_ it acquires (after `tryAcquire` enqueued it but before it reaches the head of the queue) leaves a permanent entry in `waiters`. Unlike holders, waiters have no expiry. If the entry is at the head of the queue and a permit is free, it blocks all subsequent waiters indefinitely. Use the admin-side `release` (see below) with the stale waiter's `holderId` to remove it from the queue: `release` strips the id from both `holders` and `waiters`.
+> A waiter that crashes _before_ it acquires (after `tryAcquire` enqueued it but before it reaches the head of the queue) stops refreshing its entry, and the entry ages out: each waiter carries its own `expiresAt`, refreshed on every retry and evicted by the next reduction once it lapses — the waiter-side twin of the holder lease, and the same scheme the rate limiter uses. The TTL defaults to `max(30s, leaseMs)`; tune it with the `waiterTtlMs` option (constructor or per `tryAcquire` call). It must comfortably exceed your retry cadence, or an honest slow poller is evicted and re-enqueues at the back — a fairness loss, never a double-hold. Records persisted by older versions carry bare-string waiter entries; they are stamped a fresh expiry on first read, so a standing ghost queue heals itself one TTL later with no migration. The admin-side `release` (see below) still removes a named entry immediately when you cannot wait out the TTL.
 
 ## Releasing from Outside a Workflow
 
