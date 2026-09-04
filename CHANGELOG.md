@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — inline activity lifecycle events
+
+`executeActivity` now dispatches `activity:started`, `activity:completed`
+(with wall-clock `duration` in ms) and `activity:failed` (with the error and
+`attempt`) on the engine, exactly once per attempt, for inline execution as
+well as worker dispatch. The event classes already existed and the alert
+manager's `activity.p99_duration` rule already listened for
+`activity:completed`, but nothing on the inline path (the default) emitted
+them — so per-activity timing, retries and failures were unobservable from the
+engine event stream. An async deferral (`ctx.completeAsync()`) emits
+`activity:started` only; it is neither a completion nor a failure.
+
 ## [0.18.0] - 2026-08-11
 
 ### Added — principal introspection

@@ -44,6 +44,7 @@ import { executeSubOperation } from './sub-operation.ts';
 function createSignalInternals(storage: unknown): EngineInternals {
   return {
     abortController: new AbortController(),
+    engine: new EventTarget(),
     inlineStrategy: null,
     signalWaiters: new Map<string, () => void>(),
     signalWaitersByWorkflow: new Map(),

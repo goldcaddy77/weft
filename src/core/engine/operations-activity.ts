@@ -20,6 +20,7 @@ import {
   validateActivityResultForReconciliation,
   type ActivityReconciliationMetadata,
 } from './activity-reconciliation.ts';
+import { observeActivityExecution } from './activity-lifecycle-events.ts';
 import { getActivityFunctionWithMetadata, resolveActivityFunction } from './activity-resolution.ts';
 import {
   AsyncActivityDeferral,
@@ -168,8 +169,9 @@ function getActivityStateKey(operation: ActivityOperation): ActivityHeartbeatKey
 /**
  * Execute an activity function, dispatching to a Web Worker pool when
  * `activityExecution` is configured, or running inline on the main thread.
+ * Unobserved: `executeActivity` below wraps this with the lifecycle events.
  */
-export async function executeActivity(
+async function executeActivityUnobserved(
   internals: EngineInternals,
   workflowId: string,
   operation: ActivityOperation,
@@ -502,4 +504,24 @@ export async function processActivityOperation(
       throw error;
     }
   });
+}
+
+/**
+ * Execute an activity function (inline or worker-dispatched) and emit its
+ * lifecycle events — `activity:started`, then `activity:completed` or
+ * `activity:failed` — exactly once per attempt. Both `runOperationWithResult`
+ * and the `ctx.memo` durable-activity path enter here, so every activity
+ * execution is observed regardless of how it was reached.
+ */
+export async function executeActivity(
+  internals: EngineInternals,
+  workflowId: string,
+  operation: ActivityOperation,
+  callbacks: ActivityOperationCallbacks,
+  attempt = getActivityAttempt(operation),
+  coordinatorSignal?: AbortSignal,
+): Promise<unknown> {
+  return observeActivityExecution(internals, workflowId, operation, attempt, () =>
+    executeActivityUnobserved(internals, workflowId, operation, callbacks, attempt, coordinatorSignal),
+  );
 }

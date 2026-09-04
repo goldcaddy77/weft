@@ -172,6 +172,7 @@ describe('engine sub-operations', () => {
       activityRegistry: { resolve: () => undefined },
       activityRegistriesByWorkflow: new Map(),
       activityWorkerDispatcher: null,
+      engine: new EventTarget(),
       heartbeatDetails: new Map(),
       lastHeartbeatDetailsByStep: new Map(),
       inlineStrategy: null,

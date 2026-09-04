@@ -564,6 +564,7 @@ describe('ctx.memo durableActivity helper', () => {
     } as Context;
     const internals = {
       abortController: engineAbortController,
+      engine: new EventTarget(),
       inlineStrategy: { getContext: () => context },
       workflowTypeByWorkflowId: new Map<string, string>(),
     } as unknown as EngineInternals;
@@ -602,6 +603,7 @@ describe('ctx.memo durableActivity helper', () => {
       } as Context;
       const internals = {
         abortController: new AbortController(),
+        engine: new EventTarget(),
         inlineStrategy: { getContext: () => context },
         workflowTypeByWorkflowId: new Map<string, string>(),
       } as unknown as EngineInternals;
