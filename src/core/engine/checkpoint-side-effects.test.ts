@@ -63,6 +63,7 @@ function createEngineInternals(storage: MemoryStorage, checkpoint: Checkpoint): 
     activityRegistriesByWorkflow: new Map(),
     activityRegistry: { resolve: () => undefined },
     activityWorkerDispatcher: null,
+    engine: new EventTarget(),
     checkpoints: new Map([[checkpoint.workflowId, checkpoint]]),
     conditionWaiters: new Map(),
     deliveredPendingUpdateIds: new Map(),

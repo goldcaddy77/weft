@@ -122,3 +122,6 @@ src/dashboard/**/.*-harness.*
 src/dashboard/**/.schedule-list.*.mjs
 src/dashboard/**/.workflow-execution-timeline.*
 .audit/
+
+# bun leaves .<hash>-00000000.bun-build scratch files in the tree when a build/test process is killed mid-run
+.*.bun-build
