@@ -40,7 +40,7 @@ type TimerScanIterators = {
   teardown: AsyncIterable<[string, Uint8Array]>;
 };
 
-type TimerProcessingResult = 'processed' | 'retry';
+type TimerProcessingResult = 'processed' | 'retry' | 'deferred';
 
 /**
  * Maximum expired timers read per timer source on one scheduler tick.
@@ -200,27 +200,14 @@ export class Scheduler implements Disposable {
       if (respectStopped && this.#stopped) break;
 
       seenTimerIds.add(nextEntry.entry.id);
-      if (this.#isDeferred(nextEntry.entry.id, currentTime)) {
-        await advanceTimerSource(selectedSource, this.#storage);
-        continue;
-      }
-
-      const processingResult = await this.#processSelectedTimer(
-        nextEntry,
-        cleanupOperations,
-        currentTime,
-      );
-      if (processingResult === 'retry') {
-        await advanceTimerSource(selectedSource, this.#storage);
-        continue;
-      }
-
+      // A failed or deferred callback leaves the timer in storage; either way
+      // the scan moves on to the next due timer.
+      await this.#processSelectedTimer(nextEntry, cleanupOperations, currentTime);
       await advanceTimerSource(selectedSource, this.#storage);
     }
 
     await this.#deleteProcessedTimerKeys(cleanupOperations);
-    // A scan cut short by stop() did not see every due timer; keep deferrals.
-    if (!(respectStopped && this.#stopped)) this.#pruneDeferrals(seenTimerIds, currentTime);
+    this.#pruneDeferrals(seenTimerIds, currentTime, respectStopped);
   }
 
   /**
@@ -229,7 +216,9 @@ export class Scheduler implements Disposable {
    * bounded by the live deferred set; a forgotten timer that is still durable
    * just fires normally on a later tick.
    */
-  #pruneDeferrals(seenTimerIds: Set<string>, currentTime: number): void {
+  #pruneDeferrals(seenTimerIds: Set<string>, currentTime: number, respectStopped: boolean): void {
+    // A scan cut short by stop() did not see every due timer; keep deferrals.
+    if (respectStopped && this.#stopped) return;
     for (const [id, deferral] of this.#deferredTimers) {
       if (deferral.retryAt <= currentTime && !seenTimerIds.has(id)) {
         this.#deferredTimers.delete(id);
@@ -321,12 +310,13 @@ export class Scheduler implements Disposable {
     cleanupOperations: BatchOperation[],
     currentTime: number,
   ): Promise<TimerProcessingResult> {
+    if (this.#isDeferred(nextEntry.entry.id, currentTime)) return 'deferred';
     try {
       await this.#onTimerFired(nextEntry.entry);
     } catch (error) {
       if (isTimerDeferredError(error)) {
         this.#deferTimer(nextEntry.entry, error, currentTime);
-        return 'retry';
+        return 'deferred';
       }
       // Callback failed — leave the timer in storage so it retries on the
       // next tick. Do not fall through to the delete below.

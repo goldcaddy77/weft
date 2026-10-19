@@ -117,12 +117,12 @@ describe('boot timer storm (HAPS-687)', () => {
       expect(wakes.size).toBe(0);
 
       // Keep ticking while recovery adopts the backlog.
-      let recovered = false;
+      const recoveryState = { done: false };
       const recovery = engine.recoverAll().finally(() => {
-        recovered = true;
+        recoveryState.done = true;
       });
       let ticksDuringRecovery = 0;
-      while (!recovered) {
+      while (!recoveryState.done) {
         ticksDuringRecovery += 1;
         now += POLL_INTERVAL_MS;
         await engine.scheduler.tick(now);
@@ -178,7 +178,7 @@ describe('boot timer storm (HAPS-687)', () => {
 
     // Adopt slowly and in reverse key order, so the not-yet-adopted head of
     // the keyspace would starve the adopted tail if deferrals ate the scan budget.
-    const adoptionOrder = [...entries].reverse();
+    const adoptionOrder = entries.toReversed();
     let tick = 0;
     while (fired.size < RUN_COUNT) {
       tick += 1;
