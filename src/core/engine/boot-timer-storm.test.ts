@@ -12,10 +12,11 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
 import { MemoryStorage } from '../../storage/memory.ts';
 import { Engine } from '../engine.ts';
-import { Scheduler } from '../scheduler.ts';
+import { buildTimerBatchOperations, Scheduler } from '../scheduler.ts';
 import { TimerDeferredError } from '../scheduler/timer-deferral.ts';
 import type { TimerEntry } from '../types.ts';
 import { activity, workflow } from '../types.ts';
+import { getInternals } from './internals.ts';
 
 // Production restarts adopt 2,800 to 4,000 parked runs. The scheduler test uses
 // that scale directly; the engine test uses 1,000 runs (one full scheduler scan
@@ -209,5 +210,93 @@ describe('boot timer storm (HAPS-687)', () => {
     expect(warnLines.filter(carriesStack)).toEqual([]);
     expect(warnLines.every((call) => call.length === 1)).toBe(true);
     expect(loggedLines(errorSpy)).toEqual([]);
+  });
+
+  it('an adopted run that is not ready defers its timer quietly instead of failing it', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    engine.register(
+      workflow({ name: 'adopted-not-ready' }).execute(async function* (ctx) {
+        return yield* ctx.waitForSignal<string>('go');
+      }),
+    );
+    try {
+      const handle = await engine.start('adopted-not-ready', null, { id: 'adopted-run' });
+      const internals = getInternals(engine);
+      while (!internals.parkedInlineWorkflows.has('adopted-run')) await Bun.sleep(1);
+      // Adopted (parked in memory), running, but with no sleep resolver and no
+      // recorded durable operation: the window between a sleep timer's write and
+      // its resolver registration.
+      internals.durableInlineOperations.delete('adopted-run');
+      const entry: TimerEntry = {
+        id: 'sleep:adopted-run:7',
+        workflowId: 'adopted-run',
+        fireAt: Date.now(),
+        kind: 'sleep',
+      };
+      await expect(engine.fireTimer(entry)).rejects.toBeInstanceOf(TimerDeferredError);
+
+      await engine.signal('adopted-run', 'go', 'done');
+      await expect(handle.result()).resolves.toBe('done');
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('cancelling or losing a deferred timer forgets its backoff, and the backoff is capped', async () => {
+    const storage = new MemoryStorage();
+    let now = 1_000_000;
+    let ready = false;
+    const calls: string[] = [];
+    const scheduler = new Scheduler({
+      storage,
+      pollIntervalMs: POLL_INTERVAL_MS,
+      getNow: () => now,
+      onTimerFired: (entry: TimerEntry) => {
+        calls.push(entry.id);
+        if (!ready) throw new TimerDeferredError('not ready');
+      },
+    });
+    const kept: TimerEntry = { id: 'sleep:kept:0', workflowId: 'kept', fireAt: now, kind: 'sleep' };
+    const cancelled: TimerEntry = {
+      id: 'sleep:cancelled:0',
+      workflowId: 'cancelled',
+      fireAt: now,
+      kind: 'sleep',
+    };
+    const swept: TimerEntry = {
+      id: 'sleep:swept:0',
+      workflowId: 'swept',
+      fireAt: now,
+      kind: 'sleep',
+    };
+    await scheduler.schedule(kept);
+    await scheduler.schedule(cancelled);
+    await scheduler.schedule(swept);
+    await scheduler.tick(now);
+    await scheduler.cancel(cancelled.id, cancelled.workflowId);
+    // Rows removed behind the scheduler's back (terminal cleanup, purge): the
+    // deferral is pruned once it is due and the timer is no longer scanned.
+    await storage.batch(
+      buildTimerBatchOperations(swept).map((operation) => ({ type: 'delete', key: operation.key })),
+    );
+
+    // Many deferrals: the gap between attempts stops growing at the cap.
+    const attemptTimes: number[] = [];
+    for (let step = 0; step < 400; step += 1) {
+      now += POLL_INTERVAL_MS;
+      const before = calls.length;
+      await scheduler.tick(now);
+      if (calls.length > before) attemptTimes.push(now);
+    }
+    const gaps = attemptTimes.slice(1).map((time, index) => time - attemptTimes[index]!);
+    expect(Math.max(...gaps)).toBe(30_000);
+
+    ready = true;
+    now += 30_000;
+    await scheduler.tick(now);
+    expect(await storage.get(`timer-idx:${kept.id}`)).toBeNull();
+    expect(calls.filter((id) => id === cancelled.id)).toHaveLength(1);
+    expect(calls.filter((id) => id === swept.id)).toHaveLength(1);
   });
 });
