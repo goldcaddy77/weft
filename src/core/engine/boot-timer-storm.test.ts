@@ -17,7 +17,11 @@ import { TimerDeferredError } from '../scheduler/timer-deferral.ts';
 import type { TimerEntry } from '../types.ts';
 import { activity, workflow } from '../types.ts';
 
+// Production restarts adopt 2,800 to 4,000 parked runs. The scheduler test uses
+// that scale directly; the engine test uses 1,000 runs (one full scheduler scan
+// budget) to keep its wall time reasonable while still exceeding one tick.
 const RUN_COUNT = 3_000;
+const ENGINE_RUN_COUNT = 1_000;
 const POLL_INTERVAL_MS = 1_000;
 
 type ConsoleSpy = ReturnType<typeof spyOn>;
@@ -36,8 +40,14 @@ function carriesStack(call: unknown[]): boolean {
 
 /** Slows reads of workflow state so recovery adopts the backlog gradually. */
 class SlowRecoveryStorage extends MemoryStorage {
+  #workflowReads = 0;
+
   override async get(key: string): Promise<Uint8Array | null> {
-    if (key.startsWith('wf:')) await new Promise((resolve) => setTimeout(resolve, 0));
+    // Yield a macrotask every few workflow-state reads so scheduler ticks
+    // interleave with recovery instead of running only before or after it.
+    if (key.startsWith('wf:') && (this.#workflowReads += 1) % 8 === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
     return super.get(key);
   }
 }
@@ -83,10 +93,10 @@ describe('boot timer storm (HAPS-687)', () => {
 
     const firstEngine = new Engine({ storage, getNow: () => now });
     firstEngine.register(gate);
-    const workflowIds = Array.from({ length: RUN_COUNT }, (_, index) => `gate-${index}`);
+    const workflowIds = Array.from({ length: ENGINE_RUN_COUNT }, (_, index) => `gate-${index}`);
     for (const id of workflowIds) await firstEngine.start('parked-gate', id, { id });
     // Every run must be parked on its durable sleep before the "crash".
-    while ((await countSleepTimerRows(storage)) < RUN_COUNT) await Bun.sleep(5);
+    while ((await countSleepTimerRows(storage)) < ENGINE_RUN_COUNT) await Bun.sleep(5);
     await firstEngine[Symbol.asyncDispose]();
 
     // Restart well past every deadline, Haps-style: the scheduler is live before
@@ -111,24 +121,27 @@ describe('boot timer storm (HAPS-687)', () => {
       const recovery = engine.recoverAll().finally(() => {
         recovered = true;
       });
+      let ticksDuringRecovery = 0;
       while (!recovered) {
+        ticksDuringRecovery += 1;
         now += POLL_INTERVAL_MS;
         await engine.scheduler.tick(now);
         await Bun.sleep(1);
       }
       const handles = await recovery;
-      expect(handles).toHaveLength(RUN_COUNT);
+      expect(ticksDuringRecovery).toBeGreaterThan(1);
+      expect(handles).toHaveLength(ENGINE_RUN_COUNT);
       await Promise.all(handles.map((handle) => handle.result()));
 
       // Every run woke exactly once, after adoption.
-      expect(wakes.size).toBe(RUN_COUNT);
+      expect(wakes.size).toBe(ENGINE_RUN_COUNT);
       for (const id of workflowIds) expect(wakes.get(id)).toBe(1);
       expect(await countSleepTimerRows(storage)).toBe(0);
 
       // No storm: no failed-callback lines, at most one line per timer, no stack.
       const lines = [...loggedLines(errorSpy), ...loggedLines(warnSpy)];
       const timerLines = lines.filter((call) => String(call[0]).includes('sleep:'));
-      expect(timerLines.length).toBeLessThanOrEqual(RUN_COUNT);
+      expect(timerLines.length).toBeLessThanOrEqual(ENGINE_RUN_COUNT);
       expect(lines.filter((call) => String(call[0]).includes('Timer callback failed'))).toEqual([]);
       expect(lines.filter(carriesStack)).toEqual([]);
     } finally {
