@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
 import { MemoryStorage } from '../../storage/memory.ts';
+import { sleepForTesting, waitForCondition } from '../../testing/fake-timers.test-support.ts';
 import { Engine } from '../engine.ts';
 import { buildTimerBatchOperations, Scheduler } from '../scheduler.ts';
 import { TimerDeferredError } from '../scheduler/timer-deferral.ts';
@@ -97,7 +98,11 @@ describe('boot timer storm (HAPS-687)', () => {
     const workflowIds = Array.from({ length: ENGINE_RUN_COUNT }, (_, index) => `gate-${index}`);
     for (const id of workflowIds) await firstEngine.start('parked-gate', id, { id });
     // Every run must be parked on its durable sleep before the "crash".
-    while ((await countSleepTimerRows(storage)) < ENGINE_RUN_COUNT) await Bun.sleep(5);
+    await waitForCondition(async () => (await countSleepTimerRows(storage)) === ENGINE_RUN_COUNT, {
+      timeoutMs: 30_000,
+      intervalMs: 5,
+      label: 'every run parked on its sleep timer',
+    });
     await firstEngine[Symbol.asyncDispose]();
 
     // Restart well past every deadline, Haps-style: the scheduler is live before
@@ -127,7 +132,8 @@ describe('boot timer storm (HAPS-687)', () => {
         ticksDuringRecovery += 1;
         now += POLL_INTERVAL_MS;
         await engine.scheduler.tick(now);
-        await Bun.sleep(1);
+        // Yield a macrotask so recovery advances between ticks.
+        await sleepForTesting(1);
       }
       const handles = await recovery;
       expect(ticksDuringRecovery).toBeGreaterThan(1);
@@ -223,7 +229,9 @@ describe('boot timer storm (HAPS-687)', () => {
     try {
       const handle = await engine.start('adopted-not-ready', null, { id: 'adopted-run' });
       const internals = getInternals(engine);
-      while (!internals.parkedInlineWorkflows.has('adopted-run')) await Bun.sleep(1);
+      await waitForCondition(() => internals.parkedInlineWorkflows.has('adopted-run'), {
+        label: 'run parked on its signal',
+      });
       // Adopted (parked in memory), running, but with no sleep resolver and no
       // recorded durable operation: the window between a sleep timer's write and
       // its resolver registration.
