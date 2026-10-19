@@ -85,19 +85,22 @@ jobs:
       - run: bun install --frozen-lockfile
       # Cache Playwright's pinned browser binary (keyed on the lockfile, which
       # pins the playwright version). The Linux system libraries are NOT stored
-      # under ~/.cache/ms-playwright, so they are (re)installed on every run via
-      # `install-deps`; only the multi-hundred-MB browser download is cached.
+      # under ~/.cache/ms-playwright, so they are (re)installed on every run.
+      #
+      # Always run the full `install --with-deps`, even on a cache hit: it skips
+      # the browser download when the cached binary is present, so the cache
+      # still saves the multi-hundred-MB fetch. The old cache-hit branch ran only
+      # `install-deps`, and on 2026-10-19 every cache-hit run crashed the shared
+      # Chromium in the third Service Worker smoke test (page.goto: "Target page,
+      # context or browser has been closed") while every fresh-install run of the
+      # same commit passed (HAPS-687). One install path removes that divergence.
       - uses: actions/cache@v4
-        id: playwright-cache
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: |
             playwright-chromium-${{ runner.os }}-
-      - if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: bunx playwright install --with-deps chromium
-      - if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: bunx playwright install-deps chromium
+      - run: bunx playwright install --with-deps chromium
       - run: bun run test:browser-smoke
   build:
     runs-on: ubuntu-latest

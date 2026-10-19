@@ -1,4 +1,5 @@
 import type { ContextOperationRequest } from '../context.ts';
+import { TimerDeferredError } from '../scheduler/timer-deferral.ts';
 import type { TimerEntry, WorkflowState } from '../types.ts';
 import type {
   DurableInlineOperation,
@@ -45,10 +46,37 @@ async function shouldIgnoreUnclaimedSleepTimer(
   if (durableOperationBelongsToAnotherOperation(durableOperation, operationId)) return true;
   if (workflowReplayIsAdvancing(internals, entry.workflowId)) return false;
 
+  // A run this engine has not adopted (boot recovery has not reached it yet, or
+  // never will in this process) has no in-memory sleep to wake. Its timer row is
+  // derived state: when the run is adopted, replay re-issues the sleep from the
+  // checkpoint and processSleepOperation either completes it at once (deadline
+  // already past, which is always true for a timer the scheduler just fired) or
+  // re-arms the same timer key. Dropping the fire is therefore crash-safe, and it
+  // is what keeps a restart with thousands of parked sleepers from re-firing
+  // every one of them on every tick until adoption catches up (HAPS-687).
+  if (!engineHoldsWorkflowInMemory(internals, entry.workflowId)) return true;
+
   const state = await loadWorkflowState(entry.workflowId);
   if (state?.status !== 'running') return true;
-  throw new Error(
+  // Adopted but between the timer write and resolver registration: keep the
+  // timer durable and let the scheduler back off quietly. registerSleepResolver
+  // releases the backoff so the wake is not delayed.
+  throw new TimerDeferredError(
     `Sleep timer "${entry.id}" fired before workflow "${entry.workflowId}" was ready to consume it.`,
+  );
+}
+
+/**
+ * True when this engine has adopted the run: it is executing, queued to launch,
+ * or parked inline in this process. Every path that replays a run's generator
+ * records its type in `workflowTypeByWorkflowId` before the first operation.
+ */
+function engineHoldsWorkflowInMemory(internals: EngineInternals, workflowId: string): boolean {
+  return (
+    internals.workflowTypeByWorkflowId.has(workflowId) ||
+    internals.queuedOrLaunchingInlineWorkflowStartIds.has(workflowId) ||
+    internals.parkedInlineWorkflows.has(workflowId) ||
+    internals.inlineStrategy?.hasGenerator(workflowId) === true
   );
 }
 

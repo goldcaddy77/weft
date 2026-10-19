@@ -518,12 +518,15 @@ describe('processSleepOperation', () => {
   // Shared fixture for both race-condition tests.
   function createSleepInternals(
     storage: MemoryStorage,
-    scheduler: { schedule(entry: TimerEntry): Promise<void> },
+    scheduler: {
+      schedule(entry: TimerEntry): Promise<void>;
+      releaseDeferredTimer?(id: string): void;
+    },
     sleepTimersFiredWithoutResolver = new Map<string, Map<string, number>>(),
   ) {
     return {
       options: { getNow: () => 0 },
-      scheduler,
+      scheduler: { releaseDeferredTimer: () => {}, ...scheduler },
       sleepResolvers: new Map<string, SleepResolver>(),
       sleepResolversByWorkflow: new Map<string, Set<string>>(),
       sleepTimersFiredWithoutResolver,
@@ -576,8 +579,9 @@ describe('processSleepOperation', () => {
     operationId: string;
     storage: MemoryStorage;
     workflowId: string;
-  }): { schedule(entry: TimerEntry): Promise<void> } {
+  }): { schedule(entry: TimerEntry): Promise<void>; releaseDeferredTimer(id: string): void } {
     return {
+      releaseDeferredTimer: () => {},
       schedule: async (entry: TimerEntry) => {
         await storage.batch(buildTimerBatchOperations(entry));
         await deleteTimerIndex(storage, entry);
