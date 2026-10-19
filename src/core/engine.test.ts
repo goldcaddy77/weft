@@ -511,7 +511,7 @@ describe('Engine', () => {
     }
   });
 
-  it('retains a sleep timer that fires before recovery is ready to consume it', async () => {
+  it('drops a sleep timer that fires before recovery adopts its run, and recovery still wakes it', async () => {
     const storage = new MemoryStorage();
     const workflowId = 'fire-timer-before-recovery';
     const workflowName = 'sleep-before-recovery';
@@ -533,22 +533,24 @@ describe('Engine', () => {
 
     const recoveredEngine = new Engine({ storage, getNow: () => now });
     recoveredEngine.register(definition);
-    const originalConsoleError = console.error;
-    console.error = () => {};
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
 
     try {
       now = timerEntry.fireAt;
+      // The run is not adopted yet: the fire is dropped (HAPS-687) instead of
+      // failing and retrying, because recovery re-derives the sleep from the
+      // checkpoint.
       await recoveredEngine.scheduler.tick(now);
-      expect(await storage.get(`timer-idx:${timerEntry.id}`)).not.toBeNull();
+      expect(await storage.get(`timer-idx:${timerEntry.id}`)).toBeNull();
 
       const [recoveredHandle] = await recoveredEngine.recoverAll();
-      await flush();
-      await recoveredEngine.scheduler.tick(now);
-
-      expect(await storage.get(`timer-idx:${timerEntry.id}`)).toBeNull();
       await expect(recoveredHandle!.result()).resolves.toBe('done');
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
     } finally {
-      console.error = originalConsoleError;
+      errorSpy.mockRestore();
+      warnSpy.mockRestore();
       await recoveredEngine[Symbol.asyncDispose]();
     }
   });

@@ -238,26 +238,30 @@ export class Scheduler implements Disposable {
   }
 
   #scanExpiredTimers(currentTime: number): TimerScanIterators {
+    // Deferred timers are skipped without running their callback, so they must
+    // not eat the per-tick budget: otherwise a backlog of deferred timers at the
+    // head of the keyspace would starve every due timer behind it (HAPS-687).
+    const limit = EXPIRED_TIMER_SCAN_LIMIT_PER_SOURCE + this.#deferredTimers.size;
     return {
       deadline: this.#storage.scan('wf-deadline:', {
         lt: resolvePrefixRangeEnd(KEYS.deadline(currentTime, '')),
-        limit: EXPIRED_TIMER_SCAN_LIMIT_PER_SOURCE,
+        limit,
       }),
       delayedStart: this.#storage.scan('wf-delayed:', {
         lt: resolvePrefixRangeEnd(KEYS.delayedStart(currentTime, '')),
-        limit: EXPIRED_TIMER_SCAN_LIMIT_PER_SOURCE,
+        limit,
       }),
       schedule: this.#storage.scan('schedule-due:', {
         lt: resolvePrefixRangeEnd(KEYS.scheduleTick(currentTime, '')),
-        limit: EXPIRED_TIMER_SCAN_LIMIT_PER_SOURCE,
+        limit,
       }),
       terminalCleanup: this.#storage.scan('wf-cleanup:', {
         lt: resolvePrefixRangeEnd(KEYS.terminalCleanup(currentTime, '')),
-        limit: EXPIRED_TIMER_SCAN_LIMIT_PER_SOURCE,
+        limit,
       }),
       teardown: this.#storage.scan('wf-teardown:', {
         lt: resolvePrefixRangeEnd(KEYS.teardownTimer(currentTime, '')),
-        limit: EXPIRED_TIMER_SCAN_LIMIT_PER_SOURCE,
+        limit,
       }),
     };
   }
