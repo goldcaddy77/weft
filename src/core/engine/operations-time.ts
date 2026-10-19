@@ -166,6 +166,9 @@ export function registerSleepResolver(
     internals.sleepResolversByWorkflow.set(workflowId, workflowOperations);
   }
   workflowOperations.add(operationId);
+  // A tick that fired this sleep before the resolver existed was deferred with a
+  // backoff; release it so the next tick delivers the wake (HAPS-687).
+  internals.scheduler.releaseDeferredTimer(`sleep:${operationId}`);
 
   const readinessWaiters = internals.sleepResolverReadyWaitersForTesting?.get(workflowId);
   if (readinessWaiters !== undefined) {

@@ -4,6 +4,8 @@ import { decode } from '../codec.ts';
 import type { TimerEntry } from '../types.ts';
 import { DEFAULT_POLL_INTERVAL_MS } from '../types/constants.ts';
 import { buildTimerBatchOperations } from './timer-batch.ts';
+import type { TimerDeferral } from './timer-deferral.ts';
+import { isTimerDeferredError, timerDeferralBackoffMs } from './timer-deferral.ts';
 import type { ScannedTimerEntry, TimerSource } from './timer-sources.ts';
 import {
   advanceTimerSource,
@@ -77,6 +79,13 @@ export class Scheduler implements Disposable {
   readonly #commitTimerCleanup: (operations: BatchOperation[]) => Promise<void>;
   #intervalHandle: ReturnType<typeof setInterval> | null = null;
   #stopped = false;
+  /**
+   * Timers whose callback deferred them ({@link TimerDeferredError}), keyed by
+   * timer id. A deferred timer stays durable but is skipped until `retryAt`, so a
+   * consumer that is not ready yet never turns into a retry on every tick
+   * (HAPS-687). In-memory only: a fresh process simply fires it again.
+   */
+  readonly #deferredTimers = new Map<string, TimerDeferral>();
 
   constructor(options: SchedulerOptions) {
     this.#storage = options.storage;
@@ -113,6 +122,7 @@ export class Scheduler implements Disposable {
 
   /** Cancel a timer (removes from storage). */
   async cancel(id: string, _workflowId: string): Promise<void> {
+    this.#deferredTimers.delete(id);
     const indexKey = `timer-idx:${id}`;
     const indexValue = await this.#storage.get(indexKey);
 
@@ -131,6 +141,15 @@ export class Scheduler implements Disposable {
       { type: 'delete', key: deadlineKey },
       { type: 'delete', key: indexKey },
     ]);
+  }
+
+  /**
+   * Clear a timer's deferral backoff so the next tick fires it again. Called
+   * when the consumer that deferred the timer becomes ready (for a sleep: when
+   * its resolver registers), so readiness never waits out the backoff.
+   */
+  releaseDeferredTimer(id: string): void {
+    this.#deferredTimers.delete(id);
   }
 
   /** Force an immediate scan for expired timers (for tests). */
@@ -162,6 +181,7 @@ export class Scheduler implements Disposable {
     const currentTime = now ?? this.#getNow();
     const timerSources = this.#createTimerSources(this.#scanExpiredTimers(currentTime));
     const cleanupOperations: BatchOperation[] = [];
+    const seenTimerIds = new Set<string>();
 
     for (const timerSource of timerSources) {
       await advanceTimerSource(timerSource, this.#storage);
@@ -179,7 +199,17 @@ export class Scheduler implements Disposable {
       // skips this check because its purpose is to drain remaining timers.
       if (respectStopped && this.#stopped) break;
 
-      const processingResult = await this.#processSelectedTimer(nextEntry, cleanupOperations);
+      seenTimerIds.add(nextEntry.entry.id);
+      if (this.#isDeferred(nextEntry.entry.id, currentTime)) {
+        await advanceTimerSource(selectedSource, this.#storage);
+        continue;
+      }
+
+      const processingResult = await this.#processSelectedTimer(
+        nextEntry,
+        cleanupOperations,
+        currentTime,
+      );
       if (processingResult === 'retry') {
         await advanceTimerSource(selectedSource, this.#storage);
         continue;
@@ -189,6 +219,22 @@ export class Scheduler implements Disposable {
     }
 
     await this.#deleteProcessedTimerKeys(cleanupOperations);
+    // A scan cut short by stop() did not see every due timer; keep deferrals.
+    if (!(respectStopped && this.#stopped)) this.#pruneDeferrals(seenTimerIds, currentTime);
+  }
+
+  /**
+   * Forget deferrals for timers that were due but absent from this tick's scan
+   * (cancelled, deleted by cleanup, or past the scan limit). Keeps the map
+   * bounded by the live deferred set; a forgotten timer that is still durable
+   * just fires normally on a later tick.
+   */
+  #pruneDeferrals(seenTimerIds: Set<string>, currentTime: number): void {
+    for (const [id, deferral] of this.#deferredTimers) {
+      if (deferral.retryAt <= currentTime && !seenTimerIds.has(id)) {
+        this.#deferredTimers.delete(id);
+      }
+    }
   }
 
   #scanExpiredTimers(currentTime: number): TimerScanIterators {
@@ -250,19 +296,41 @@ export class Scheduler implements Disposable {
     return timerSources.some((timerSource) => timerSource.next !== null);
   }
 
+  #isDeferred(id: string, currentTime: number): boolean {
+    const deferral = this.#deferredTimers.get(id);
+    return deferral !== undefined && deferral.retryAt > currentTime;
+  }
+
+  #deferTimer(entry: TimerEntry, error: Error, currentTime: number): void {
+    const attempts = (this.#deferredTimers.get(entry.id)?.attempts ?? 0) + 1;
+    const backoffMs = timerDeferralBackoffMs(this.#pollIntervalMs, attempts);
+    this.#deferredTimers.set(entry.id, { attempts, retryAt: currentTime + backoffMs });
+    // One line per timer, never a stack: a deferral is an expected condition,
+    // and thousands of them at boot must not flood the log (HAPS-687).
+    if (attempts === 1) {
+      console.warn(`Timer ${entry.id} deferred: ${error.message}`);
+    }
+  }
+
   async #processSelectedTimer(
     nextEntry: ScannedTimerEntry,
     cleanupOperations: BatchOperation[],
+    currentTime: number,
   ): Promise<TimerProcessingResult> {
     try {
       await this.#onTimerFired(nextEntry.entry);
     } catch (error) {
+      if (isTimerDeferredError(error)) {
+        this.#deferTimer(nextEntry.entry, error, currentTime);
+        return 'retry';
+      }
       // Callback failed — leave the timer in storage so it retries on the
       // next tick. Do not fall through to the delete below.
       console.error(`Timer callback failed for timer ${nextEntry.entry.id}:`, error);
       return 'retry';
     }
 
+    this.#deferredTimers.delete(nextEntry.entry.id);
     await this.#appendTimerCleanupOperationsAfterCallback(nextEntry, cleanupOperations);
     return 'processed';
   }
